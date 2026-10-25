@@ -44,45 +44,81 @@ pub enum FillError<P> {
     Refused(P),
 }
 
+/// What a [`Utf8Copy`] is copied from: a thing of known length that copies
+/// itself out - into a buffer as given, or appended to a `Vec` whose room is
+/// already reserved for it, which it must not grow. A byte slice is one; a
+/// Ruby String is another (the bridge's, over `RString::copy_to` /
+/// `append_to`), which hands no slice of itself out.
+pub trait Source {
+    /// How many bytes there are.
+    fn byte_len(&self) -> usize;
+    /// Copy them into `dst`, as many as fit; how many.
+    fn copy_into(&self, dst: &mut [u8]) -> usize;
+    /// Append them to `v`, whose spare room holds them; `false`, with `v`
+    /// unchanged, when it does not.
+    fn append_into(&self, v: &mut Vec<u8>) -> bool;
+}
+
+impl Source for &[u8] {
+    fn byte_len(&self) -> usize {
+        <[u8]>::len(self)
+    }
+
+    fn copy_into(&self, dst: &mut [u8]) -> usize {
+        let n = <[u8]>::len(self).min(dst.len());
+        if let (Some(d), Some(s)) = (dst.get_mut(..n), self.get(..n)) {
+            d.copy_from_slice(s);
+        }
+        n
+    }
+
+    fn append_into(&self, v: &mut Vec<u8>) -> bool {
+        if v.capacity() - v.len() < <[u8]>::len(self) {
+            return false;
+        }
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "the room was checked above, so it cannot grow"
+        )]
+        v.extend_from_slice(self);
+        true
+    }
+}
+
 impl Utf8Copy {
     /// A copy of `src`, checked to be UTF-8.
     pub fn new(src: &[u8]) -> Result<Utf8Copy, CopyError> {
-        Utf8Copy::filled(
-            src.len(),
-            |dst| {
-                let n = src.len().min(dst.len());
-                if let (Some(d), Some(s)) = (dst.get_mut(..n), src.get(..n)) {
-                    d.copy_from_slice(s);
-                }
-                n
-            },
-            |_| None::<core::convert::Infallible>,
-        )
-        .map_err(|e| match e {
+        Utf8Copy::from_source(&src, |_| None::<core::convert::Infallible>).map_err(|e| match e {
             FillError::Copy(e) => e,
             FillError::Refused(never) => match never {},
         })
     }
 
-    /// `len` bytes that `fill` writes - a copy out of something that hands
-    /// no slice of itself out (a Ruby String's `copy_to`) - put to `refuse`
-    /// and then checked to be UTF-8. `fill` reports how many it wrote; fewer
-    /// than `len` is kept as written.
+    /// A copy of `src`, put to `refuse` and then checked to be UTF-8.
+    ///
+    /// Up to [`INLINE`] bytes the copy is on the stack (`copy_into`); past
+    /// that it is a heap buffer reserved for exactly them and appended to
+    /// (`append_into`), so it is written once, not zeroed first.
     ///
     /// `refuse` sees the copy before the UTF-8 check, so a caller's own rule
     /// (a NUL, a length) is reported ahead of invalid UTF-8, and both look at
     /// the same bytes that are read back later.
-    pub fn filled<P>(
-        len: usize,
-        fill: impl FnOnce(&mut [u8]) -> usize,
+    pub fn from_source<P>(
+        src: &impl Source,
         refuse: impl FnOnce(&[u8]) -> Option<P>,
     ) -> Result<Utf8Copy, FillError<P>> {
+        let len = src.byte_len();
         let bytes = if len <= INLINE {
             let mut buf = [0u8; INLINE];
-            let n = fill(buf.get_mut(..len).unwrap_or_default()).min(len);
+            let n = src
+                .copy_into(buf.get_mut(..len).unwrap_or_default())
+                .min(len);
             Bytes::Inline { len: n as u8, buf }
         } else {
-            Bytes::Heap(OwnedBuf::fill(len, fill).ok_or(FillError::Copy(CopyError::Oom))?)
+            Bytes::Heap(
+                OwnedBuf::reserved(len, |v| src.append_into(v))
+                    .ok_or(FillError::Copy(CopyError::Oom))?,
+            )
         };
         let copy = Utf8Copy(bytes);
         if let Some(p) = refuse(copy.as_bytes()) {
@@ -106,7 +142,7 @@ impl Utf8Copy {
 
     /// The text.
     pub fn as_str(&self) -> &str {
-        // SAFETY: a `Utf8Copy` is made only by `filled`, which returns it only
+        // SAFETY: a `Utf8Copy` is made only by `from_source`, which returns it only
         // once `from_utf8` accepted exactly these bytes, and nothing changes
         // them after: the fields are private to this module, and no method
         // here writes them.
@@ -143,30 +179,27 @@ mod tests {
             let mut src = vec![b'a'; n];
             src[0] = 0;
             src[n - 1] = 0xff;
-            let got = Utf8Copy::filled(
-                n,
-                |d| {
-                    d.copy_from_slice(&src);
-                    n
-                },
-                |b| b.contains(&0).then_some("nul"),
-            );
+            let got = Utf8Copy::from_source(&src.as_slice(), |b| b.contains(&0).then_some("nul"));
             assert_eq!(got.err(), Some(FillError::Refused("nul")));
         }
     }
 
+    /// A source whose room check fails is out of memory, not a short copy.
     #[test]
-    fn a_short_fill_keeps_what_was_written() {
-        for n in [8, INLINE * 2] {
-            let got = Utf8Copy::filled(
-                n,
-                |d| {
-                    d[..2].copy_from_slice(b"ok");
-                    2
-                },
-                |_| None::<()>,
-            );
-            assert_eq!(got.unwrap().as_str(), "ok");
+    fn a_source_that_will_not_append_is_refused() {
+        struct Short;
+        impl Source for Short {
+            fn byte_len(&self) -> usize {
+                INLINE * 2
+            }
+            fn copy_into(&self, _: &mut [u8]) -> usize {
+                0
+            }
+            fn append_into(&self, _: &mut Vec<u8>) -> bool {
+                false
+            }
         }
+        let got = Utf8Copy::from_source(&Short, |_| None::<()>);
+        assert_eq!(got.err(), Some(FillError::Copy(CopyError::Oom)));
     }
 }

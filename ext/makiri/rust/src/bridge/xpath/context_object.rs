@@ -87,7 +87,7 @@ impl Payload for XPathCtx {
 }
 
 /// `Makiri::XPathContext`'s data type.
-pub static XPATH_CTX_TYPE: TypedType<XPathCtx> = TypedType::base(c"Makiri::XPathContext".as_ptr());
+pub static XPATH_CTX_TYPE: TypedType<XPathCtx> = TypedType::base(c"Makiri::XPathContext");
 
 /// An `XPathContext` method's receiver: the object, checked to be one, read
 /// as its [`XPathCtx`] for the call.

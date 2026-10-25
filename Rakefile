@@ -98,6 +98,8 @@ VERUS_COPIES = [
   ["ext/makiri/rust/src/falloc/mod.rs", "ext/makiri/rust/verus/cbuf.rs", "grow_capacity"],
   ["ext/makiri/rust/src/limits.rs", "ext/makiri/rust/verus/limits.rs", "admit"],
   ["ext/makiri/rust/src/cbuf.rs", "ext/makiri/rust/verus/cbuf.rs", "copy_small"],
+  # nupur's copy of it, which writes a String in place (`utf8_str_filled`).
+  ["ext/makiri/rust/nupur/src/raw.rs", "ext/makiri/rust/verus/cbuf.rs", "copy_small"],
   *%w[as_slice append append_growing raise_limit reserve steal content_limit
       content_limit_for grow_to].map do |name|
     ["ext/makiri/rust/src/cbuf.rs", "ext/makiri/rust/verus/cbuf.rs", "Buf::#{name}"]
@@ -349,7 +351,11 @@ DYLINT = %w[cargo dylint --path lints/makiri_lints --no-deps --
             --no-default-features --features ruby].freeze
 # The binding layer, a workspace member of its own: the same lints, which
 # read its items as `makiri::nupur::...` (`boundaries::path_of`).
-DYLINT_NUPUR = %w[cargo dylint --path lints/makiri_lints --no-deps -- -p nupur].freeze
+# With `alloc-inject` on, so the raise sweep's hook (`set_raise_injector`,
+# the armed path of `injected_raise`) is linted too: nupur has no code that
+# only a build without it compiles.
+DYLINT_NUPUR = %w[cargo dylint --path lints/makiri_lints --no-deps -- -p nupur
+                  --features alloc-inject].freeze
 
 desc "Run the crate's own lint (makiri_lints; needs cargo-dylint and its nightly)"
 task :dylint do

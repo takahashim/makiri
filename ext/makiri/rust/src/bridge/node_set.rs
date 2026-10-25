@@ -42,7 +42,7 @@ use crate::bridge::rb::{prelude::*, Error, Ruby, Value};
 use crate::bridge::ruby::makiri_error;
 
 use crate::bridge::node_wrap::wrap_doc_node;
-use crate::bridge::typed::{Payload, TypedType};
+use crate::bridge::typed::{Payload, Typed, TypedType};
 use crate::bridge::wrapper::{keepalive_document, node_raw, DocKind, NodeWord};
 use crate::init::{CLASS_DOCUMENT, CLASS_NODE, CLASS_NODE_SET};
 
@@ -309,37 +309,39 @@ impl Payload for NodeSet {
 pub type NodeSetType = TypedType<NodeSet, 1>;
 
 /// `Makiri::NodeSet`'s data type.
-pub static NODE_SET_TYPE: NodeSetType = TypedType::base(c"Makiri::NodeSet".as_ptr());
+pub static NODE_SET_TYPE: NodeSetType = TypedType::base(c"Makiri::NodeSet");
 
 /// A `NodeSet` method's receiver, or an operand checked to be a set: the
 /// object, read as its [`NodeSet`] for the call. It owns the `Value`, which
 /// is on the caller's stack, so the data it reads stays rooted.
+///
+/// Its type is checked once, when it is made (a [`Typed`]): `NodeSet#each`
+/// reads the nodes, the kind and the Document once per element.
 #[derive(Clone, Copy)]
-pub struct NodeSetSelf(Value);
+pub struct NodeSetSelf(Typed<NodeSet, 1>);
 
 impl crate::bridge::rb::TryConvert for NodeSetSelf {
     fn try_convert(_: &Ruby, value: Value) -> Result<Self, Error> {
-        NODE_SET_TYPE.get(&value)?;
-        Ok(NodeSetSelf(value))
+        NODE_SET_TYPE.check(value).map(NodeSetSelf)
     }
 }
 
 impl core::ops::Deref for NodeSetSelf {
     type Target = NodeSet;
     fn deref(&self) -> &NodeSet {
-        NODE_SET_TYPE.get_known(&self.0)
+        self.0.data()
     }
 }
 
 impl NodeSetSelf {
     /// The set itself.
     pub fn value(self) -> Value {
-        self.0
+        self.0.value()
     }
 
     /// The Document whose nodes the set holds.
     fn document(&self) -> Value {
-        NODE_SET_TYPE.root_known::<0>(&self.0)
+        self.0.root::<0>()
     }
 }
 

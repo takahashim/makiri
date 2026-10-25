@@ -186,17 +186,17 @@ pub fn read_node(ty: &'static NodeWrapperType, v: Value) -> Result<NodeRef, Erro
  * replaced. Pinned as a growth ratchet: a field that pushes wrapper data past
  * three words fails the build. */
 const _: () = assert!(
-    core::mem::size_of::<NodeData>() + core::mem::size_of::<Value>() <= 24,
+    crate::bridge::typed::envelope_size::<NodeData, 1>() <= 24,
     "a node wrapper's data grew past three words; re-measure the wrapper cost before raising this"
 );
 
-pub static NODE_DATA_TYPE: NodeWrapperType = EmbeddedType::base(c"Makiri::Node".as_ptr());
+pub static NODE_DATA_TYPE: NodeWrapperType = EmbeddedType::base(c"Makiri::Node");
 
 pub static HTML_NODE_TYPE: NodeWrapperType =
-    EmbeddedType::derived(c"Makiri::HTML::Node".as_ptr(), &NODE_DATA_TYPE);
+    EmbeddedType::derived(c"Makiri::HTML::Node", &NODE_DATA_TYPE);
 
 pub static XML_NODE_TYPE: NodeWrapperType =
-    EmbeddedType::derived(c"Makiri::XML::Node".as_ptr(), &NODE_DATA_TYPE);
+    EmbeddedType::derived(c"Makiri::XML::Node", &NODE_DATA_TYPE);
 
 /// Which representation a wrapped Ruby node is, decided by its TypedData type
 /// rather than its Ruby class. A Document, a NodeSet or any non-node is

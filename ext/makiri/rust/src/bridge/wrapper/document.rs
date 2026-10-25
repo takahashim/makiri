@@ -192,16 +192,15 @@ pub type DocType = TypedType<DocData, 1>;
 
 /// The base type: the kind-agnostic accessors (`doc_content`, `#errors`) accept
 /// either representation.
-pub static DOC_TYPE: DocType = TypedType::base(c"Makiri::Document".as_ptr());
+pub static DOC_TYPE: DocType = TypedType::base(c"Makiri::Document");
 
 /// HTML and XML Documents share the layout and the GC functions but are wrapped
 /// under DISTINCT types deriving from the base, so `html_doc_unwrap` - which
 /// reinterprets the handle as an HTML document - raises TypeError on an XML
 /// Document through Ruby's own type machinery rather than relying on an assert
 /// that NDEBUG erases.
-pub static HTML_DOC_TYPE: DocType =
-    TypedType::derived(c"Makiri::HTML::Document".as_ptr(), &DOC_TYPE);
-pub static XML_DOC_TYPE: DocType = TypedType::derived(c"Makiri::XML::Document".as_ptr(), &DOC_TYPE);
+pub static HTML_DOC_TYPE: DocType = TypedType::derived(c"Makiri::HTML::Document", &DOC_TYPE);
+pub static XML_DOC_TYPE: DocType = TypedType::derived(c"Makiri::XML::Document", &DOC_TYPE);
 
 /// Which leaf class a Document wrapper is.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

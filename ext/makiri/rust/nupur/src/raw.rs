@@ -135,14 +135,6 @@ fn c_len(n: usize) -> Result<c_long, Error> {
     c_long::try_from(n).map_err(|_| crate::helpers::arg_error("string too large"))
 }
 
-/// A String's length, read without a call.
-#[inline]
-fn rstring_len(s: RString) -> usize {
-    use rb_sys::stable_api::StableApiDefinition;
-    // SAFETY: `s` is a live String, by type.
-    unsafe { rb_sys::stable_api::get_default().rstring_len(s.as_raw()) as usize }
-}
-
 /* ---- what bridge::rb's values and errors are made of ---- */
 
 /// The `rb_protect` state of a raise (`TAG_RAISE` in CRuby's `vm_core.h`).
@@ -167,7 +159,7 @@ pub fn take_errinfo() -> Value {
 /// `rb_jump_tag`: resume the non-local exit `state` stands for. Raises, by
 /// design - only `Error::raise` calls it, with nothing owned.
 #[inline]
-pub fn jump_tag(state: c_int) -> ! {
+pub(crate) fn jump_tag(state: c_int) -> ! {
     // SAFETY: `state` is one `rb_protect` reported; resuming it is the point.
     unsafe { rb_sys::rb_jump_tag(state) }
 }
@@ -175,7 +167,7 @@ pub fn jump_tag(state: c_int) -> ! {
 /// `rb_exc_raise`: raise `exc`. Raises, by design - only `Error::raise` calls
 /// it, with nothing owned.
 #[inline]
-pub fn exc_raise(exc: Value) -> ! {
+pub(crate) fn exc_raise(exc: Value) -> ! {
     // SAFETY: `exc` is a live exception object.
     unsafe { rb_sys::rb_exc_raise(exc.as_raw()) }
 }
@@ -452,7 +444,7 @@ pub fn obj_freeze(v: Value) {
 /// `Init_makiri`, where a half-defined extension must not be used. Raises,
 /// by design.
 #[inline]
-pub fn exc_fatal(exc: Value) -> ! {
+pub(crate) fn exc_fatal(exc: Value) -> ! {
     // SAFETY: `exc` is a live exception object.
     unsafe { rb_sys::rb_exc_fatal(exc.as_raw()) }
 }
@@ -721,9 +713,11 @@ impl Unwritten<'_> {
 }
 
 /// `dst.copy_from_slice(src)` for slices of one length, with no `memcpy`
-/// call for 16 bytes or fewer: two fixed-size copies that overlap. Text
-/// slices are mostly a few bytes. (Makiri's `cbuf::copy_small` is the same
-/// copy over `u8`, the one Verus proves.)
+/// call for 16 elements or fewer: two fixed-size copies that overlap. Text
+/// slices are mostly a few bytes, and a `memcpy` call each measured
+/// `doc.text` ~50% slower. The extension's `cbuf::copy_small`, token for
+/// token, which Verus proves (`verus/cbuf.rs`); `rake verus:sync` holds this
+/// copy to it too, since this crate cannot depend on the extension.
 #[inline(always)]
 #[allow(
     clippy::indexing_slicing,
@@ -770,24 +764,6 @@ pub fn str_dup(s: RString) -> Result<RString, Error> {
         rb_sys::rb_str_dup(v)
     })?;
     typed(d, RString::from_value, "a C call made no String")
-}
-
-/// `rb_str_subseq`: the `len` bytes of `s` from `beg`, which must lie inside
-/// it - checked here, since the C function reads them unchecked. Raises
-/// `NoMemoryError`.
-#[inline]
-pub fn str_subseq(s: RString, beg: usize, len: usize) -> Result<RString, Error> {
-    if beg.checked_add(len).is_none_or(|end| end > rstring_len(s)) {
-        return Err(crate::helpers::internal_error(
-            "a substring past its String",
-        ));
-    }
-    let (v, b, n) = (s.as_raw(), c_len(beg)?, c_len(len)?);
-    let u = call(|| unsafe {
-        injected_raise();
-        rb_sys::rb_str_subseq(v, b, n)
-    })?;
-    typed(u, RString::from_value, "a C call made no String")
 }
 
 /// `rb_enc_associate`: `s` itself, tagged `enc`. Raises `FrozenError` for a
@@ -1049,24 +1025,17 @@ pub fn enumeratorize(obj: Value, meth: Symbol) -> Result<Value, Error> {
 
 /// `rb_check_typeddata`: raises `TypeError` for a value that is not of `ty`.
 #[inline]
-pub unsafe fn check_typeddata(v: VALUE, ty: *const rb_data_type_t) -> Result<*mut c_void, Error> {
+pub(crate) unsafe fn check_typeddata(
+    v: VALUE,
+    ty: *const rb_data_type_t,
+) -> Result<*mut c_void, Error> {
     call(|| unsafe { rb_sys::rb_check_typeddata(v, ty) })
-}
-
-/// `ruby_xrealloc2`: raises `NoMemoryError`, and `ArgumentError` when
-/// `n * size` overflows.
-#[inline]
-pub unsafe fn xrealloc2(p: *mut c_void, n: usize, size: usize) -> Result<*mut c_void, Error> {
-    call(|| unsafe {
-        injected_raise();
-        rb_sys::ruby_xrealloc2(p, n as rb_sys::size_t, size as rb_sys::size_t)
-    })
 }
 
 /// `rb_data_typed_object_zalloc`: raises `NoMemoryError`. For an embeddable
 /// type small enough, the zeroed data is the object's own slot.
 #[inline]
-pub unsafe fn typed_object_zalloc(
+pub(crate) unsafe fn typed_object_zalloc(
     klass: VALUE,
     size: usize,
     ty: *const rb_data_type_t,

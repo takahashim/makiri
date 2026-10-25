@@ -25,7 +25,7 @@
 
 #![allow(unsafe_code)]
 
-use core::ffi::{c_char, c_void};
+use core::ffi::{c_char, c_void, CStr};
 use core::marker::PhantomData;
 
 use crate::rb::value::AsRawValue;
@@ -77,6 +77,13 @@ pub trait Payload: Sized {
 pub fn report_external(_: &crate::rb::Ruby, delta: isize) {
     // SAFETY: a plain counter adjustment, with the GVL held.
     unsafe { rb_sys::rb_gc_adjust_memory_usage(delta as rb_sys::ssize_t) };
+}
+
+/// The bytes an object of payload `T` with `N` slots keeps as its data - its
+/// envelope, padding included: what a size ratchet over a wrapper should
+/// measure, since a sum of the parts misses the padding.
+pub const fn envelope_size<T, const N: usize>() -> usize {
+    core::mem::size_of::<Envelope<T, N>>()
 }
 
 /// What an object's data is: its `N` slots, then its payload.
@@ -227,15 +234,17 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
         }
     }
 
-    /// A base type.
-    pub const fn base(name: *const c_char) -> TypedType<T, N> {
-        Self::with_parent(name, core::ptr::null(), false)
+    /// A base type. `name` is what Ruby calls the type in its messages and
+    /// `ObjectSpace`, read as a C string for the life of the process - so a
+    /// `'static` one, NUL-terminated by type.
+    pub const fn base(name: &'static CStr) -> TypedType<T, N> {
+        Self::with_parent(name.as_ptr(), core::ptr::null(), false)
     }
 
     /// A type deriving from `parent`, which holds the same payload and
     /// slots: an object of this type is also one of `parent`'s.
-    pub const fn derived(name: *const c_char, parent: &TypedType<T, N>) -> TypedType<T, N> {
-        Self::with_parent(name, parent.raw.as_ptr(), false)
+    pub const fn derived(name: &'static CStr, parent: &TypedType<T, N>) -> TypedType<T, N> {
+        Self::with_parent(name.as_ptr(), parent.raw.as_ptr(), false)
     }
 
     /// Whether `v` is an object of this type or one deriving from it. Never
@@ -277,6 +286,18 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
         unsafe { value((*self.known_ptr(*v)).roots[I]) }
     }
 
+    /// `v` checked once to be an object of this type (or one deriving from
+    /// it), or Ruby's own `TypeError`: a [`Typed`], which reads the data and
+    /// the slots with no check of its own.
+    #[inline]
+    pub fn check(&'static self, v: Value) -> Result<Typed<T, N>, Error> {
+        typed_data(v, &self.raw)?;
+        Ok(Typed {
+            obj: v,
+            _t: PhantomData,
+        })
+    }
+
     /// The envelope behind an object whose type the caller established. The
     /// pointer is valid while `v` is rooted.
     fn known_ptr(&'static self, v: Value) -> *const Envelope<T, N> {
@@ -311,20 +332,65 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
     }
 }
 
+/// An object of a [`TypedType<T, N>`], its type checked once
+/// ([`TypedType::check`]): a hot path that reads an object's data and slots
+/// several times - a NodeSet's nodes, kind and Document per element - pays
+/// for the check once.
+///
+/// Sound with no further check because an object's type never changes after
+/// it is made, and a non-embedded type's data, which is all this reads, is
+/// its own allocation, which compaction does not move. The `Value` is the
+/// caller's, on its stack, which keeps the object alive while the handle is
+/// used (`rake dylint`'s `ruby_value_on_heap` sees it as a Ruby value).
+pub struct Typed<T: Payload + 'static, const N: usize> {
+    obj: Value,
+    _t: PhantomData<fn() -> T>,
+}
+
+impl<T: Payload + 'static, const N: usize> Clone for Typed<T, N> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T: Payload + 'static, const N: usize> Copy for Typed<T, N> {}
+
+impl<T: Payload + 'static, const N: usize> Typed<T, N> {
+    /// The object.
+    #[inline]
+    pub fn value(self) -> Value {
+        self.obj
+    }
+
+    /// The payload, borrowed for as long as the handle is.
+    #[inline]
+    pub fn data(&self) -> &T {
+        // SAFETY: `check` established the object's type, which is `T`'s with
+        // `N` slots (a derived type holds the same); the data is the
+        // envelope `wrap_built` wrote, and the object is alive while the
+        // caller holds its `Value`.
+        unsafe { &(*(data_pointer(self.obj.as_raw()) as *const Envelope<T, N>)).data }
+    }
+
+    /// Slot `I` (`I < N`, checked when it compiles).
+    #[inline]
+    pub fn root<const I: usize>(&self) -> Value {
+        const { assert!(I < N, "no such slot") };
+        // SAFETY: as `data`; the slots hold live values the object marks.
+        unsafe { value((*(data_pointer(self.obj.as_raw()) as *const Envelope<T, N>)).roots[I]) }
+    }
+}
+
 impl<T: Payload + 'static, const N: usize> TypedType<T, N> {
-    /// [`wrap`](Self::wrap), and then the object HIDDEN (`rb_obj_hide`: no
-    /// class, so `ObjectSpace` does not list it and no Ruby code can find it)
-    /// until [`Hidden::reveal`]: for an object whose data is not complete
-    /// when it is made - a Document before its content.
-    ///
-    /// `ivars`, its hidden ivars (names without `@`), are written first,
-    /// while it still has its class: Ruby 4.0's ivar storage reads the
-    /// object's shape through its class, and an ivar set on a hidden object
-    /// crashed there (`rb_shape_transition_add_ivar`). No Ruby code runs
-    /// between the wrap and the hide - the writes may allocate, and so
-    /// collect, but a collection runs none - so none can find it. A failed
-    /// ivar write hides the object and returns the error; one never revealed
-    /// stays hidden for the GC to free.
+    /// [`wrap`](Self::wrap), the object HIDDEN (`rb_obj_hide`: no class, so
+    /// `ObjectSpace` does not list it and no Ruby code can find it) until
+    /// [`Hidden::reveal`]: for an object whose data is not complete when it
+    /// is made - a Document before its content. `ivars` are its hidden ivars
+    /// (names without `@`), written first, while it still has its class:
+    /// generic ivar storage may read an object's class, so nothing is set on
+    /// one that has none. Ruby code runs between none of these steps. A
+    /// failed ivar write hides the object and returns the error, and one
+    /// never revealed stays hidden for the GC to free.
     pub fn wrap_hidden(
         &'static self,
         ruby: &crate::rb::Ruby,
@@ -390,17 +456,25 @@ pub struct EmbeddedType<T: Payload + Copy, const N: usize = 0>(TypedType<T, N>);
 
 impl<T: Payload + Copy, const N: usize> EmbeddedType<T, N> {
     /// A base type.
-    pub const fn base(name: *const c_char) -> EmbeddedType<T, N> {
+    pub const fn base(name: &'static CStr) -> EmbeddedType<T, N> {
         const { assert!(core::mem::size_of::<Envelope<T, N>>() <= EMBED_MAX) };
         const { assert!(core::mem::align_of::<Envelope<T, N>>() <= EMBED_ALIGN) };
-        EmbeddedType(TypedType::with_parent(name, core::ptr::null(), true))
+        EmbeddedType(TypedType::with_parent(
+            name.as_ptr(),
+            core::ptr::null(),
+            true,
+        ))
     }
 
     /// A type deriving from `parent`, which holds the same payload and slots.
-    pub const fn derived(name: *const c_char, parent: &EmbeddedType<T, N>) -> EmbeddedType<T, N> {
+    pub const fn derived(name: &'static CStr, parent: &EmbeddedType<T, N>) -> EmbeddedType<T, N> {
         const { assert!(core::mem::size_of::<Envelope<T, N>>() <= EMBED_MAX) };
         const { assert!(core::mem::align_of::<Envelope<T, N>>() <= EMBED_ALIGN) };
-        EmbeddedType(TypedType::with_parent(name, parent.0.raw.as_ptr(), true))
+        EmbeddedType(TypedType::with_parent(
+            name.as_ptr(),
+            parent.0.raw.as_ptr(),
+            true,
+        ))
     }
 
     /// Whether `v` is an object of this type or one deriving from it. Never

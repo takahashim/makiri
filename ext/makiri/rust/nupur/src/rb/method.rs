@@ -289,10 +289,15 @@ macro_rules! method {
         ) -> $crate::rb::Value {
             #[allow(unused_imports)]
             use $crate::rb::method::{MethodCAry as _, RubyMethodCAry as _};
+            /* Bound OUTSIDE the `unsafe` block: inside it, an unsafe
+             * operation written in `$f` would need no `unsafe` of its own,
+             * and the caller's `forbid(unsafe_code)` sees none in an
+             * external macro's expansion. */
+            let f = $f;
             // SAFETY: Ruby is calling this trampoline, with the arguments it
             // passed.
             unsafe {
-                $crate::rb::method::finish_cary(argc, argv, |ruby, args| $f.invoke(ruby, rb_self, args))
+                $crate::rb::method::finish_cary(argc, argv, |ruby, args| f.invoke(ruby, rb_self, args))
             }
         }
         $crate::rb::method::Func::cary(anon)
@@ -316,10 +321,15 @@ macro_rules! function {
         ) -> $crate::rb::Value {
             #[allow(unused_imports)]
             use $crate::rb::method::{FunctionCAry as _, RubyFunctionCAry as _};
+            /* Bound OUTSIDE the `unsafe` block: inside it, an unsafe
+             * operation written in `$f` would need no `unsafe` of its own,
+             * and the caller's `forbid(unsafe_code)` sees none in an
+             * external macro's expansion. */
+            let f = $f;
             // SAFETY: Ruby is calling this trampoline, with the arguments it
             // passed.
             unsafe {
-                $crate::rb::method::finish_cary(argc, argv, |ruby, args| $f.invoke(ruby, rb_self, args))
+                $crate::rb::method::finish_cary(argc, argv, |ruby, args| f.invoke(ruby, rb_self, args))
             }
         }
         $crate::rb::method::Func::cary(anon)
@@ -341,8 +351,10 @@ macro_rules! __trampoline {
         ) -> $crate::rb::Value {
             #[allow(unused_imports)]
             use $crate::rb::method::{$plain as _, $ruby as _};
+            /* Bound outside the `unsafe` block, as `method!`'s `-1` arm. */
+            let f = $f;
             // SAFETY: Ruby is calling this trampoline.
-            unsafe { $crate::rb::method::finish(|ruby| $f.invoke(ruby, rb_self $(, $a)*)) }
+            unsafe { $crate::rb::method::finish(|ruby| f.invoke(ruby, rb_self $(, $a)*)) }
         }
         $crate::rb::method::Func::$new(anon)
     }};

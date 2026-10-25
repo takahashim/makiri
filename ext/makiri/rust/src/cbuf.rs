@@ -240,7 +240,9 @@ impl Buf {
 const FIRST_ROOM: usize = 64;
 
 /// Copy `src` into `dst` (the same length), without a `memcpy` call when it
-/// is at most 16 bytes.
+/// is at most 16 elements. Generic only so that `nupur`'s copy of it (over
+/// `MaybeUninit<u8>`, where a String is written in place) can be this one
+/// token for token, which `rake verus:sync` holds both to.
 ///
 /// Serializer output is mostly chunks of a few bytes - `<`, a tag name, `="` -
 /// and a call per chunk into libc's `memcpy` measured about a fifth of
@@ -248,9 +250,9 @@ const FIRST_ROOM: usize = 64;
 /// overlap in the middle (`[0, k)` and `[n - k, n)` for the largest power of
 /// two `k <= n`), which covers every byte; each is a load and a store.
 #[inline(always)]
-pub(crate) fn copy_small(dst: &mut [u8], src: &[u8]) {
+pub(crate) fn copy_small<T: Copy>(dst: &mut [T], src: &[T]) {
     #[inline(always)]
-    fn two<const K: usize>(dst: &mut [u8], src: &[u8]) {
+    fn two<const K: usize, T: Copy>(dst: &mut [T], src: &[T]) {
         let n = src.len();
         dst[..K].copy_from_slice(&src[..K]);
         dst[n - K..n].copy_from_slice(&src[n - K..]);
@@ -258,9 +260,9 @@ pub(crate) fn copy_small(dst: &mut [u8], src: &[u8]) {
     match src.len() {
         0 => {}
         1 => dst[0] = src[0],
-        2..=3 => two::<2>(dst, src),
-        4..=7 => two::<4>(dst, src),
-        8..=16 => two::<8>(dst, src),
+        2..=3 => two::<2, T>(dst, src),
+        4..=7 => two::<4, T>(dst, src),
+        8..=16 => two::<8, T>(dst, src),
         _ => dst.copy_from_slice(src),
     }
 }

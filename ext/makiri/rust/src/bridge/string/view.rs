@@ -101,13 +101,11 @@ impl<C: Checked> RubyStr<C> {
         let s = utf8_strict(ruby, s).map_err(Refusal::Encoding)?;
         /* Copied first, then checked: `check` and the UTF-8 check both read
          * the copy, which is what the view holds. */
-        let bytes = Utf8Copy::filled(s.len(), |dst| s.copy_to(ruby, 0, dst), check).map_err(
-            |e| match e {
-                FillError::Refused(problem) => Refusal::Check(problem),
-                FillError::Copy(CopyError::NotUtf8) => Refusal::Check(not_utf8),
-                FillError::Copy(CopyError::Oom) => Refusal::Oom,
-            },
-        )?;
+        let bytes = Utf8Copy::from_source(&StrSource(ruby, s), check).map_err(|e| match e {
+            FillError::Refused(problem) => Refusal::Check(problem),
+            FillError::Copy(CopyError::NotUtf8) => Refusal::Check(not_utf8),
+            FillError::Copy(CopyError::Oom) => Refusal::Oom,
+        })?;
         Ok(RubyStr {
             bytes,
             contract: core::marker::PhantomData,
@@ -132,6 +130,24 @@ impl RubyText {
 }
 
 /* ---- reading a String's bytes ---- */
+
+/// A live String as what a [`Utf8Copy`] copies from: nupur's copying reads,
+/// which hand no slice of the String out.
+struct StrSource<'a>(&'a Ruby, RString);
+
+impl crate::utf8_copy::Source for StrSource<'_> {
+    fn byte_len(&self) -> usize {
+        self.1.len()
+    }
+
+    fn copy_into(&self, dst: &mut [u8]) -> usize {
+        self.1.copy_to(self.0, 0, dst)
+    }
+
+    fn append_into(&self, v: &mut Vec<u8>) -> bool {
+        self.1.append_to(self.0, 0, v).is_ok()
+    }
+}
 
 /// The first `N` bytes of `s` (all of them when it is shorter), copied, with
 /// how many there are: what a sniff of a document's start reads, owned.

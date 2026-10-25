@@ -145,9 +145,11 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   which reads `Payload::reported_external` before the drop: no `Drop` of
   Makiri's calls Ruby. An object whose data is not complete when it is
   made - a Document before its content (`DocumentShell`), an XPathContext
-  before its ivars - is made by `wrap_hidden`, hidden from `ObjectSpace`
-  from birth, as a `Hidden` that hands out no `Value` (a hidden object has
-  no class, and Ruby code given one would crash on it) until `reveal`; a
+  before its ivars - is made by `wrap_hidden`, which writes its hidden
+  ivars while it still has its class (generic ivar storage may read it) and
+  then hides it from `ObjectSpace`, as a `Hidden` that hands out no `Value`
+  (a hidden object has no class, and Ruby code given one would crash on it)
+  until `reveal`; a
   Document's node table is `raw::hidden_hash_new`'s, never shown. There is
   no bare `hide` / `reveal`.
   The other half - no Ruby value kept where the GC's stack scan cannot
@@ -192,8 +194,9 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   `bridge::string::Encoding`, check what the C function would not (a Hash
   key's kind, a substring's bounds, `to_encoding`'s argument), and one with
   no Ruby value takes `&Ruby` as the GVL's proof. Only those over raw memory
-  stay `unsafe` (`typed_object_zalloc`, `xrealloc2`,
-  `check_typeddata`); a String made in place is `utf8_str_filled`, safe,
+  stay `unsafe`, and are `nupur`'s alone (`typed_object_zalloc`,
+  `check_typeddata`; `pub(crate)`, as are the three that longjmp - `exc_raise`,
+  `jump_tag`, `exc_fatal` - which only a trampoline's raise may call); a String made in place is `utf8_str_filled`, safe,
   whose `fill` writes front to back through an `Unwritten` and must reach
   the end. A raw `VALUE` - an integer to
   Rust, which no lint can tell from a `u64` in a `Vec` - is spelled only in

@@ -354,14 +354,14 @@ impl Buf {
     }
 }
 
-pub fn copy_small(dst: &mut [u8], src: &[u8])
+pub fn copy_small<T: Copy>(dst: &mut [T], src: &[T])
     requires // [verus]
         old(dst)@.len() == src@.len(), // [verus]
     ensures // [verus]
         final(dst)@ == src@, // [verus]
 {
     #[inline(always)]
-    fn two<const K: usize>(dst: &mut [u8], src: &[u8])
+    fn two<const K: usize, T: Copy>(dst: &mut [T], src: &[T])
         requires // [verus]
             old(dst)@.len() == src@.len(), // [verus]
             K <= src@.len() <= 2 * K, // [verus]
@@ -377,9 +377,9 @@ pub fn copy_small(dst: &mut [u8], src: &[u8])
     match src.len() {
         0 => {}
         1 => dst[0] = src[0],
-        2..=3 => two::<2>(dst, src),
-        4..=7 => two::<4>(dst, src),
-        8..=16 => two::<8>(dst, src),
+        2..=3 => two::<2, T>(dst, src),
+        4..=7 => two::<4, T>(dst, src),
+        8..=16 => two::<8, T>(dst, src),
         _ => dst.copy_from_slice(src),
     }
     // [canary]
