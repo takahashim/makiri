@@ -128,7 +128,7 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
             "expected a Makiri::Document or Node as the first argument",
         ));
     };
-    let nodes = match list.filter(|v| !v.is_nil()) {
+    let nodes = match list {
         None => None,
         Some(v) => Some(RArray::from_value(v).ok_or_else(|| {
             Error::new(

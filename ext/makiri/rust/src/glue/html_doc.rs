@@ -123,14 +123,15 @@ fn doc_errors(_ruby: &Ruby, self_: Value) -> Result<Value, Error> {
 
 /* ---- fragment entry points ---- */
 
-/// `document.fragment(html, context: ..., max_tree_depth: ...)` -> a
-/// DocumentFragment bound to this document. `context` defaults to `<body>`,
-/// `max_tree_depth` to 400 (see `glue::kwargs::max_tree_depth`).
+/// `document.fragment(html, context: ..., max_tree_depth: ...,
+/// max_amplification: ...)` -> a DocumentFragment bound to this document.
+/// `context` defaults to `<body>`, the limits to `ParseLimits::DEFAULT` (see
+/// `glue::kwargs::parse_limits`).
 fn doc_fragment(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, Error> {
     fragment_from_args(ruby, args, || Ok(self_))
 }
 
-/// `(html, context:, max_tree_depth:)` from the argument list, parsed as a
+/// `(html, context:, max_tree_depth:, max_amplification:)` from the argument list, parsed as a
 /// fragment bound to the document `document` supplies - the one thing the two
 /// entry points differ in.
 fn fragment_from_args(
@@ -152,7 +153,8 @@ fn fragment_from_args(
     fragment::build_fragment(document, a.required(0), at, limit)
 }
 
-/// `DocumentFragment.parse(html, context: ..., max_tree_depth: ...)` -> a
+/// `DocumentFragment.parse(html, context: ..., max_tree_depth: ...,
+/// max_amplification: ...)` -> a
 /// standalone fragment with its own backing document, kept alive by the
 /// fragment's wrapper.
 fn frag_s_parse(ruby: &Ruby, _klass: Value, args: &[Value]) -> Result<Value, Error> {
@@ -192,14 +194,9 @@ fn doc_import_node(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, E
 /// `Node#clone_node(deep = false)`: a copy owned by the same document and
 /// detached from any parent - the DOM cloneNode, whose `deep` defaults to false.
 pub fn node_clone_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    /* The 0..1 arity by hand, takes no keywords: a match is cheaper than
-     * `glue::args::scan` on a shallow clone, which costs little else. */
-    let deep = match args {
-        [] => false,
-        /* Truthiness: anything but nil and false. */
-        [v] => v.to_bool(),
-        _ => return Err(crate::glue::args::arity_error(ruby, args.len(), 0, Some(1))),
-    };
+    let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::positional(0, 1))?;
+    /* Truthiness: anything but nil and false. */
+    let deep = a.optional(0).is_some_and(|v| v.to_bool());
     crate::bridge::doc::clone_node(rb_self, deep)
 }
 

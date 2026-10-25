@@ -44,6 +44,8 @@ RSpec.describe "argument shapes and block exits" do
 
     it "raises Ruby's arity error" do
       expect { doc.xpath }.to arity_error(0, "1..2")
+      expect { doc.xpath(s: svg) }.to arity_error(0, "1..2")
+      expect { doc.at_xpath(s: svg) }.to arity_error(0, "1..2")
       expect { doc.xpath("//p", {}, {}) }.to arity_error(3, "1..2")
       expect { xml.root.css("p", {}, {}) }.to arity_error(3, "1..2")
     end

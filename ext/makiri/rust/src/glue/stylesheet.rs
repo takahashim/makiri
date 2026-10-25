@@ -139,11 +139,7 @@ fn rules_to_ruby(k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
 }
 
 /// `Makiri.parse_stylesheet(text)`.
-fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
-    parse_stylesheet_inner(ruby, text)
-}
-
-fn parse_stylesheet_inner(_ruby: &Ruby, text: Value) -> Result<RArray, Error> {
+fn parse_stylesheet(_ruby: &Ruby, text: Value) -> Result<RArray, Error> {
     let tv = ruby_verified_text(text, "CSS stylesheet")?;
     /* `tv` is this frame's own copy of the String's bytes, so nothing Ruby
      * does can move or mutate them. */

@@ -42,13 +42,11 @@ impl QueryArgs {
     /// `(text, [namespaces], namespace_matching:, **prefix_bindings)`.
     ///
     /// The one-argument call - `node.xpath(expr)`, much the commonest - is
-    /// answered before `scan_args` runs at all. That is not a
-    /// micro-optimisation: `scan_args` with a keyword type allocates an empty
-    /// Hash even when no keywords were passed, and `at_xpath` spends about 650ns
-    /// per call in total, so the allocation and the symbol lookups behind it
-    /// measured ~32% of it.
+    /// answered before the keywords are read at all. One argument that is
+    /// the call's keywords (`xpath(s: uri)`, no expression) is not that call:
+    /// it goes through the scan, whose arity error it is.
     pub fn scan(ruby: &Ruby, args: &[Value]) -> Result<QueryArgs, Error> {
-        if let [text] = args {
+        if let ([text], false) = (args, crate::bridge::raw::keyword_given(ruby)) {
             return Ok(QueryArgs {
                 text: *text,
                 namespaces: None,

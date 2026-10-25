@@ -7,8 +7,7 @@ use crate::bridge::rb::{prelude::*, Error, RHash, Ruby, Value};
 ///
 /// The no-argument call is `Kwargs(None)`, answered before any scan. It is
 /// the overwhelmingly common one - `to_html` with a keyword is the exception -
-/// and a scan cost about a quarter of the per-call throughput on a small
-/// element, which is all such a method does at that size.
+/// and on a small element the call does little else.
 #[derive(Clone, Copy)]
 pub(crate) struct Kwargs(Option<RHash>);
 
