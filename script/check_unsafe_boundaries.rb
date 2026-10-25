@@ -34,16 +34,16 @@ RUST_FILES = Dir.glob(File.join(RUST, "**", "*.rs")).sort
 # (the unsafe did not disappear, it moved); what ratchets is the total, and the
 # summary prints the `glue/` + `xpath/` subtotal that must reach 0.
 UNSAFE_ISLANDS = {
-  "bridge/alloc.rs" => 6,
+  "bridge/alloc.rs" => 5,
   "bridge/gvl.rs" => 3,
   "bridge/node_set.rs" => 3,
   "bridge/node_wrap.rs" => 1,
-  "bridge/raw.rs" => 92,
+  "bridge/raw.rs" => 94,
   "bridge/rb/class.rs" => 2,
   "bridge/rb/method.rs" => 11,
   "bridge/rb/ruby.rs" => 5,
-  "bridge/rb/value.rs" => 16,
-  "bridge/ruby.rs" => 13,
+  "bridge/rb/value.rs" => 14,
+  "bridge/ruby.rs" => 9,
   "bridge/stack.rs" => 1,
   "bridge/string/build.rs" => 2,
   "bridge/string/encoding.rs" => 10,

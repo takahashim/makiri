@@ -165,8 +165,7 @@ impl core::fmt::Display for Describe {
             return f.write_str("nil");
         }
         f.write_str("an instance of ")?;
-        // SAFETY: a live value.
-        unsafe { v.write_classname(f) }
+        v.write_classname(f)
     }
 }
 
@@ -190,8 +189,7 @@ struct ClassName(Value);
 
 impl core::fmt::Display for ClassName {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // SAFETY: a live value.
-        unsafe { self.0.write_classname(f) }
+        self.0.write_classname(f)
     }
 }
 
@@ -326,11 +324,8 @@ impl core::fmt::Display for ExceptionText {
         let Ok(id) = super::raw::intern_cstr(&gvl_ruby(), c"mesg") else {
             return f.write_str("error");
         };
-        // SAFETY: `self.0` is a live exception; reading an attribute runs no
-        // Ruby and raises nothing.
-        let msg = unsafe { rb_sys::rb_attr_get(self.0.as_raw(), id) };
-        // SAFETY: `msg` is the live VALUE the call returned.
-        let Some(r) = RString::from_value(unsafe { Value::from_raw(msg) }) else {
+        /* An attribute read: it runs no Ruby and raises nothing. */
+        let Some(r) = RString::from_value(super::raw::ivar_get(self.0, id)) else {
             return f.write_str("error");
         };
         // SAFETY: written out at once; formatting runs no Ruby.

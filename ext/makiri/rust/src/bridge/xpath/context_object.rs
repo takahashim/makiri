@@ -114,12 +114,19 @@ impl XPathCtxSelf {
             NotInDocument::Unusable(e) => e,
             NotInDocument::Foreign => makiri_error("context node must belong to the same document"),
         })?;
-        self.ctx
-            .set_context_node(token)
-            .map_err(|e| refused(e, BUSY, BUSY))?;
-        /* Kept alive once it is the context node: a refusal above leaves the
-         * old node and its keepalive as they were. */
-        crate::bridge::raw::ivar_set(self.0, crate::bridge::wrapper::ivar_node(), rb_node)
+        let ivar = crate::bridge::wrapper::ivar_node();
+        let old = crate::bridge::raw::ivar_get(self.0, ivar);
+        /* The keepalive first, since the ivar write can raise (a frozen
+         * context, `NoMemoryError`): a failure there leaves the context node
+         * as it was, never rebound behind a raise. */
+        crate::bridge::raw::ivar_set(self.0, ivar, rb_node)?;
+        if let Err(e) = self.ctx.set_context_node(token) {
+            /* Refused: the old node stays the context node, and its keepalive
+             * with it. */
+            crate::bridge::raw::ivar_set(self.0, ivar, old)?;
+            return Err(refused(e, BUSY, BUSY));
+        }
+        Ok(())
     }
 
     /// The keepalive Document.

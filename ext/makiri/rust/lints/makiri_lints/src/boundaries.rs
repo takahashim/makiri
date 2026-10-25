@@ -291,6 +291,7 @@ const RAISING: &[&str] = &[
     "rb_range_values",
     "rb_funcallv",
     "rb_ivar_set",
+    "rb_obj_classname",
 ];
 
 /// The functions of `bridge::raw` that raise on purpose, outside `call`:

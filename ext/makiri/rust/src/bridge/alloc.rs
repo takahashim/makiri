@@ -11,7 +11,7 @@
 use core::ffi::c_void;
 
 pub use crate::raw_vec::GrowError;
-use crate::raw_vec::{Block, RawAlloc, RawVec};
+use crate::raw_vec::{RawAlloc, RawVec};
 
 /// Ruby's allocator as a [`RawAlloc`].
 pub struct RubyAlloc;
@@ -38,10 +38,3 @@ unsafe impl RawAlloc for RubyAlloc {
 /// A growable array of `Copy` elements held in Ruby's allocator. Its users
 /// (`NodeSet`'s node array) are safe code over this.
 pub type RubyVec<T> = RawVec<T, RubyAlloc>;
-
-/* SAFETY: a `RubyVec` is read or written only while the GVL is held, which
- * serialises every Ruby thread; it may be freed on whichever thread runs the
- * GC, still under the GVL. `Block` (a `RawVec`'s memory) holds a raw pointer and so is not `Send`
- * by itself; this states it for Ruby's allocator alone. The elements must
- * permit transfer: `Copy` alone includes references to !Sync data. */
-unsafe impl<T: Copy + Default + Send> Send for Block<T, RubyAlloc> {}

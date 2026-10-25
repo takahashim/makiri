@@ -14,7 +14,7 @@
 
 #![allow(unsafe_code)]
 
-use core::ffi::{c_long, CStr};
+use core::ffi::c_long;
 use core::marker::PhantomData;
 
 use rb_sys::stable_api::{get_default, StableApiDefinition};
@@ -76,21 +76,14 @@ pub trait ReprValue: Copy {
         crate::bridge::raw::obj_is_kind_of(self.as_value(), class.as_value())
     }
 
-    /// The name of the value's class, for a message, written into `f`.
-    ///
-    /// # Safety
-    /// The value must be live. The name is Ruby's own C string, owned by the
-    /// class, and is read here with nothing in between that runs Ruby.
-    unsafe fn write_classname(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // SAFETY: `rb_obj_classname` returns a C string owned by the class,
-        // live while the value is; written out at once.
-        unsafe {
-            let p = rb_sys::rb_obj_classname(self.as_value().0);
-            if p.is_null() {
-                return f.write_str("Object");
-            }
-            core::fmt::Display::fmt(&crate::msg::Lossy(CStr::from_ptr(p).to_bytes()), f)
-        }
+    /// The name of the value's class, for a message, written into `f` -
+    /// "Object" when the name cannot be made (an anonymous class's is a fresh
+    /// String, and so an allocation that can fail).
+    fn write_classname(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        crate::bridge::raw::with_classname(self.as_value(), |name| {
+            core::fmt::Display::fmt(&crate::msg::Lossy(name), f)
+        })
+        .unwrap_or_else(|_| f.write_str("Object"))
     }
 }
 

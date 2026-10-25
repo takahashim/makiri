@@ -514,13 +514,14 @@ fn typed_data_known(v: Value, ty: &'static DataType) -> *mut c_void {
 /// parses with no Ruby allocation of a Document's data ran no GC at all
 /// (`spec/gc_accounting_spec.rb`).
 ///
-/// The order is the point. The data is zeroed until `build`'s value is
-/// written, which is not a valid `T`; nothing runs between - `build` is plain
-/// Rust and runs no Ruby - so no collection sees it. And the value has its
-/// VALUE fields `Qfalse` until `store` sets them, once the object exists, so a
-/// VALUE is never held where no mark reaches it. Built AFTER the allocation,
-/// by a closure, so a failed allocation - `Err`, from `raw`'s protected call -
-/// builds nothing.
+/// The order is the point. The data is zeroed until the built value is
+/// written, which is not a valid `T`, so the value is built BEFORE the object
+/// exists: nothing runs between the allocation and the write, and a panic in
+/// `build` leaves no object whose free callback would drop zeroed memory as a
+/// `T`. A failed allocation - `Err`, from `raw`'s protected call - drops the
+/// built value. And the value has its VALUE fields `Qfalse` until `store`
+/// sets them, once the object exists, so a VALUE is never held where no mark
+/// reaches it.
 ///
 /// # Safety
 /// Under the GVL. `build` runs no Ruby and returns a `T` that holds no VALUE
@@ -534,6 +535,7 @@ unsafe fn wrap_built<T>(
 ) -> Result<VALUE, Error> {
     const { assert!(core::mem::size_of::<T>() != 0) };
     const { assert!(core::mem::align_of::<T>() <= 16) }; /* malloc's alignment */
+    let built = build();
     let obj = super::raw::typed_object_zalloc(klass, core::mem::size_of::<T>(), ty)?;
     let p = data_pointer(obj) as *mut T;
     if p.is_null() {
@@ -541,7 +543,7 @@ unsafe fn wrap_built<T>(
             "a TypedData object was made without its data",
         ));
     }
-    p.write(build());
+    p.write(built);
     /* An object: from here the mark sees what `store` puts in. */
     store(&mut *p, &Store(()));
     Ok(obj)

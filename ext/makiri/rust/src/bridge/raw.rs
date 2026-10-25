@@ -112,6 +112,8 @@ fn call<T: Copy, F: FnOnce() -> T + Copy>(f: F) -> Result<T, Error> {
 fn typed<T>(v: VALUE, of: fn(Value) -> Option<T>, what: &'static str) -> Result<T, Error> {
     // SAFETY: `v` is what a Ruby C call just returned: a live value, on this
     // frame's stack until it is converted.
+    /* `what` is the whole message, a literal: this runs on the path that
+     * raises a caught panic, which must stay `fmt`-free (`rake no_unwind`). */
     of(unsafe { Value::from_raw(v) }).ok_or_else(|| crate::bridge::ruby::internal_error(what))
 }
 
@@ -193,6 +195,26 @@ pub fn obj_is_kind_of(v: Value, class: Value) -> bool {
     }
     // SAFETY: both live; `class` is a class or module, so this raises nothing.
     unsafe { rb_sys::rb_obj_is_kind_of(v.as_raw(), class.as_raw()) == rb_sys::Qtrue as VALUE }
+}
+
+/// `rb_obj_classname`: the name of `v`'s class, handed to `f` as bytes. Raises
+/// `NoMemoryError`: an anonymous class's name (`#<Class:0x...>`) is a String
+/// made on each call. That String is referenced by nothing once the call
+/// returns, so `f` reads it before anything can allocate - it must run no
+/// Ruby.
+pub fn with_classname<R>(v: Value, f: impl FnOnce(&[u8]) -> R) -> Result<R, Error> {
+    let v = v.as_raw();
+    let p = call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_obj_classname(v)
+    })?;
+    if p.is_null() {
+        return Ok(f(b"Object"));
+    }
+    // SAFETY: a NUL-terminated C string owned by the class, or by the
+    // temporary name String, which no collection can free before `f` is done
+    // (`f` allocates nothing).
+    Ok(f(unsafe { core::ffi::CStr::from_ptr(p) }.to_bytes()))
 }
 
 /// `rb_class_inherited_p`: is `sub` `sup` or a descendant of it? `false`
@@ -282,7 +304,7 @@ pub fn module_new(_: &Ruby) -> Result<RModule, Error> {
         injected_raise();
         rb_sys::rb_module_new()
     })?;
-    typed(v, RModule::from_value, "Module")
+    typed(v, RModule::from_value, "a C call made no Module")
 }
 
 /// `rb_big2ll`: raises `RangeError` past an `i64`.
@@ -501,7 +523,7 @@ pub fn sym2str(sym: Symbol) -> Result<RString, Error> {
         injected_raise();
         rb_sys::rb_sym2str(v)
     })?;
-    typed(s, RString::from_value, "String")
+    typed(s, RString::from_value, "a C call made no String")
 }
 
 /// `rb_check_frozen`: raises `FrozenError` for a frozen value.
@@ -567,7 +589,7 @@ pub fn sym(ruby: &Ruby, name: &str) -> Result<Symbol, Error> {
         injected_raise();
         rb_sys::rb_id2sym(id)
     })?;
-    typed(v, Symbol::from_value, "Symbol")
+    typed(v, Symbol::from_value, "a C call made no Symbol")
 }
 
 /* ---- Strings ---- */
@@ -582,7 +604,7 @@ pub fn utf8_str_new(_: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
         injected_raise();
         rb_sys::rb_utf8_str_new(p, n)
     })?;
-    typed(v, RString::from_value, "String")
+    typed(v, RString::from_value, "a C call made no String")
 }
 
 /// A UTF-8 String of `len` bytes NOT YET WRITTEN, for a caller that fills it
@@ -598,7 +620,7 @@ pub unsafe fn utf8_str_unwritten(_: &Ruby, len: usize) -> Result<RString, Error>
         injected_raise();
         rb_sys::rb_utf8_str_new(core::ptr::null(), n)
     })?;
-    typed(v, RString::from_value, "String")
+    typed(v, RString::from_value, "a C call made no String")
 }
 
 /// `rb_enc_interned_str` of `bytes` in `enc`: raises `NoMemoryError`.
@@ -613,7 +635,7 @@ pub fn enc_interned_str(_: &Ruby, bytes: &[u8], enc: Encoding) -> Result<RString
         injected_raise();
         rb_sys::rb_enc_interned_str(p, n, e)
     })?;
-    typed(v, RString::from_value, "String")
+    typed(v, RString::from_value, "a C call made no String")
 }
 
 /// `rb_str_dup`: raises `NoMemoryError`.
@@ -624,7 +646,7 @@ pub fn str_dup(s: RString) -> Result<RString, Error> {
         injected_raise();
         rb_sys::rb_str_dup(v)
     })?;
-    typed(d, RString::from_value, "String")
+    typed(d, RString::from_value, "a C call made no String")
 }
 
 /// `rb_str_subseq`: the `len` bytes of `s` from `beg`, which must lie inside
@@ -642,7 +664,7 @@ pub fn str_subseq(s: RString, beg: usize, len: usize) -> Result<RString, Error> 
         injected_raise();
         rb_sys::rb_str_subseq(v, b, n)
     })?;
-    typed(u, RString::from_value, "String")
+    typed(u, RString::from_value, "a C call made no String")
 }
 
 /// `rb_enc_associate`: `s` itself, tagged `enc`. Raises `FrozenError` for a
@@ -651,7 +673,7 @@ pub fn str_subseq(s: RString, beg: usize, len: usize) -> Result<RString, Error> 
 pub fn enc_associate(s: RString, enc: Encoding) -> Result<RString, Error> {
     let (v, e) = (s.as_raw(), enc.as_raw());
     let r = call(|| unsafe { rb_sys::rb_enc_associate(v, e) })?;
-    typed(r, RString::from_value, "String")
+    typed(r, RString::from_value, "a C call made no String")
 }
 
 /// `rb_str_encode` to `enc` with `flags`: raises `Encoding::ConverterNotFoundError`
@@ -668,7 +690,7 @@ pub fn str_encode(s: RString, enc: Encoding, flags: c_int) -> Result<RString, Er
             rb_sys::Qnil as VALUE,
         )
     })?;
-    typed(r, RString::from_value, "String")
+    typed(r, RString::from_value, "a C call made no String")
 }
 
 /// `rb_to_encoding` of an `Encoding` or a String: raises `ArgumentError` for
@@ -718,7 +740,7 @@ pub fn ary_new_capa(_: &Ruby, capa: usize) -> Result<RArray, Error> {
         injected_raise();
         rb_sys::rb_ary_new_capa(n)
     })?;
-    typed(v, RArray::from_value, "Array")
+    typed(v, RArray::from_value, "a C call made no Array")
 }
 
 /// `rb_ary_push`: raises `NoMemoryError`, and `FrozenError` for a frozen
@@ -801,7 +823,7 @@ pub fn hash_new(_: &Ruby) -> Result<RHash, Error> {
         injected_raise();
         rb_sys::rb_hash_new()
     })?;
-    typed(v, RHash::from_value, "Hash")
+    typed(v, RHash::from_value, "a C call made no Hash")
 }
 
 /// `rb_hash_aset` for a String or Symbol key, whose hash Ruby computes itself:
@@ -842,7 +864,7 @@ pub fn int_from_i64(_: &Ruby, n: i64) -> Result<Integer, Error> {
         injected_raise();
         rb_sys::rb_ll2inum(n)
     })?;
-    typed(v, Integer::from_value, "Integer")
+    typed(v, Integer::from_value, "a C call made no Integer")
 }
 
 /// `rb_ull2inum`: as [`int_from_i64`].
@@ -862,7 +884,7 @@ pub fn int_from_u64(_: &Ruby, n: u64) -> Result<Integer, Error> {
         injected_raise();
         rb_sys::rb_ull2inum(n)
     })?;
-    typed(v, Integer::from_value, "Integer")
+    typed(v, Integer::from_value, "a C call made no Integer")
 }
 
 /// `rb_float_new`: raises `NoMemoryError` for a value that is not a flonum.
@@ -872,7 +894,7 @@ pub fn float_new(_: &Ruby, f: f64) -> Result<Float, Error> {
         injected_raise();
         rb_sys::rb_float_new(f)
     })?;
-    typed(v, Float::from_value, "Float")
+    typed(v, Float::from_value, "a C call made no Float")
 }
 
 /// `rb_enumeratorize_with_size` with no arguments and no size: raises

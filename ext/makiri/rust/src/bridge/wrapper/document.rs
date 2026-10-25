@@ -282,6 +282,10 @@ impl DocumentShell {
         let nodes = crate::bridge::rb::ReprValue::as_value(crate::bridge::raw::hash_new(
             &crate::bridge::ruby::gvl_ruby(),
         )?);
+        /* Hidden, so no Ruby code reaches the table through `ObjectSpace` to
+         * clear, freeze or fill it: its values are handed out as node
+         * wrappers unchecked. */
+        crate::bridge::ruby::hide(nodes);
         let obj = ty.wrap(
             &crate::bridge::ruby::gvl_ruby(),
             klass,
@@ -535,7 +539,7 @@ static IVAR_DOCUMENT: core::sync::atomic::AtomicUsize = core::sync::atomic::Atom
 static IVAR_ERRORS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 static IVAR_NODE: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
-/// The hidden ivar a node wrapper keeps its Document in.
+/// The hidden ivar an XPathContext keeps its Document in.
 pub(in crate::bridge) fn ivar_document() -> crate::bridge::ruby::ID {
     IVAR_DOCUMENT.load(core::sync::atomic::Ordering::Relaxed) as crate::bridge::ruby::ID
 }
