@@ -3,17 +3,19 @@
 use super::block::MaybeFail;
 use super::*;
 
-/// Any sequence of up to four pushes and reserves, each of which may find
+/// Any sequence of up to three pushes and reserves, each of which may find
 /// the allocator failing, keeps the array's contents what was pushed and
 /// accepted, in order, with every access in bounds and the block freed
-/// once.
+/// once. (Three, and reserves of at most four: four of up to eight ran
+/// CI's runner out of memory beside the other harnesses. Verus's
+/// `verus/raw_vec.rs` covers any length, over `Block`'s contract.)
 #[kani::proof]
 #[kani::unwind(10)]
 fn any_pushes_and_reserves_keep_the_contents() {
     let mut v: RawVec<u8, MaybeFail> = RawVec::new();
-    let mut want = [0u8; 4];
+    let mut want = [0u8; 3];
     let mut n = 0usize;
-    for _ in 0..4 {
+    for _ in 0..3 {
         if kani::any() {
             let x: u8 = kani::any();
             let r = v.push(x);
@@ -24,11 +26,11 @@ fn any_pushes_and_reserves_keep_the_contents() {
             }
         } else {
             let r: usize = kani::any();
-            kani::assume(r <= 8);
+            kani::assume(r <= 4);
             let _ = v.reserve(r);
         }
         assert!(v.len() <= v.capacity());
         assert_eq!(v.as_slice(), &want[..n]);
     }
-    kani::cover!(n == 4, "four pushes accepted");
+    kani::cover!(n == 3, "three pushes accepted");
 }
