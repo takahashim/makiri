@@ -202,12 +202,14 @@ impl XPathCtx {
                 ctx,
             },
             [],
+            /* The Document and the context node, as hidden ivars: ordinary
+             * Ruby references. A write that raises leaves the context hidden,
+             * where no Ruby code can find it without them. */
+            &[
+                (crate::bridge::wrapper::ivar_document(), document),
+                (crate::bridge::wrapper::ivar_node(), rb_node),
+            ],
         )?;
-        /* The Document and the context node, as hidden ivars: ordinary Ruby
-         * references. The context is hidden until both are written, so a
-         * write that raises leaves it where no Ruby code can find it. */
-        obj.ivar_set(crate::bridge::wrapper::ivar_document(), document)?;
-        obj.ivar_set(crate::bridge::wrapper::ivar_node(), rb_node)?;
         Ok(obj.reveal())
     }
 

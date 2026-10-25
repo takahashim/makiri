@@ -311,23 +311,35 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
 }
 
 impl<T: Payload + 'static, const N: usize> TypedType<T, N> {
-    /// [`wrap`](Self::wrap), the object HIDDEN from birth (`rb_obj_hide`: no
-    /// class, so `ObjectSpace` does not list it and no Ruby code can find
-    /// it) until [`Hidden::reveal`]: for an object whose data is not
-    /// complete when it is made - a Document before its content, a context
-    /// before its ivars. Hidden right after the wrap, with nothing run
-    /// between. One never revealed stays hidden for the GC to free.
+    /// [`wrap`](Self::wrap), and then the object HIDDEN (`rb_obj_hide`: no
+    /// class, so `ObjectSpace` does not list it and no Ruby code can find it)
+    /// until [`Hidden::reveal`]: for an object whose data is not complete
+    /// when it is made - a Document before its content.
+    ///
+    /// `ivars`, its hidden ivars (names without `@`), are written first,
+    /// while it still has its class: Ruby 4.0's ivar storage reads the
+    /// object's shape through its class, and an ivar set on a hidden object
+    /// crashed there (`rb_shape_transition_add_ivar`). No Ruby code runs
+    /// between the wrap and the hide - the writes may allocate, and so
+    /// collect, but a collection runs none - so none can find it. A failed
+    /// ivar write hides the object and returns the error; one never revealed
+    /// stays hidden for the GC to free.
     pub fn wrap_hidden(
         &'static self,
         ruby: &crate::nupur::rb::Ruby,
         klass: crate::nupur::rb::RClass,
         data: T,
         roots: [Value; N],
+        ivars: &[(crate::nupur::helpers::ID, Value)],
     ) -> Result<Hidden<T, N>, Error> {
         let obj = self.wrap(ruby, klass, data, roots)?;
+        let written = ivars
+            .iter()
+            .try_for_each(|&(id, v)| crate::nupur::raw::ivar_set(obj, id, v));
         // SAFETY: the object just made, of ours; hiding writes only its class
         // field, which `reveal` restores.
         unsafe { rb_sys::rb_obj_hide(obj.as_raw()) };
+        written?;
         Ok(Hidden {
             obj,
             klass,
@@ -340,9 +352,9 @@ impl<T: Payload + 'static, const N: usize> TypedType<T, N> {
 ///
 /// It hands out no `Value`: a hidden object has no class, so Ruby code given
 /// one - a return value, an Array element - would crash on it. What a builder
-/// does with it is reach its data ([`data`](Self::data)), set a hidden ivar
-/// ([`ivar_set`](Self::ivar_set)), and [`reveal`](Self::reveal) it, which
-/// gives the object back as the class it was made with.
+/// does with it is reach its data ([`data`](Self::data)) and
+/// [`reveal`](Self::reveal) it, which gives the object back as the class it
+/// was made with.
 pub struct Hidden<T: Payload + 'static, const N: usize> {
     obj: Value,
     klass: crate::nupur::rb::RClass,
@@ -353,12 +365,6 @@ impl<T: Payload + 'static, const N: usize> Hidden<T, N> {
     /// The payload, borrowed from the object.
     pub fn data(&self) -> &T {
         self.ty.get_known(&self.obj)
-    }
-
-    /// `rb_ivar_set` of a hidden ivar (a name without `@`, which Ruby code
-    /// cannot read) on the object.
-    pub fn ivar_set(&self, id: crate::nupur::helpers::ID, v: Value) -> Result<(), Error> {
-        crate::nupur::raw::ivar_set(self.obj, id, v)
     }
 
     /// The object, shown again with its class (`rb_obj_reveal`).

@@ -288,10 +288,11 @@ impl DocumentShell {
                 child_memo: RefCell::new(ChildPositionMemo::default()),
             },
             [nodes],
+            /* Written before it is hidden, and a failure hides it all the
+             * same: no content-less Document is left where `ObjectSpace`
+             * lists it. */
+            &[(ivar_errors(), errors)],
         )?;
-        /* Hidden from its birth (`wrap_hidden`), so a failure here leaves no
-         * content-less Document where `ObjectSpace` lists it. */
-        obj.ivar_set(ivar_errors(), errors)?;
         Ok(DocumentShell { obj })
     }
 
