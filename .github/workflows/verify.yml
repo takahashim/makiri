@@ -165,7 +165,11 @@ jobs:
           gh release download "release/$VERUS_VERSION" -R verus-lang/verus \
             -p "verus-$VERUS_VERSION-x86-linux.zip"
           unzip -q "verus-$VERUS_VERSION-x86-linux.zip"
-          toolchain=$( (./verus-x86-linux/verus --version 2>&1 || true) | sed -n 's/.*rustup install \([^ ]*\).*/\1/p')
+          # The message is coloured: take the toolchain name as its characters,
+          # so no escape sequence comes with it.
+          toolchain=$( (./verus-x86-linux/verus --version 2>&1 || true) \
+            | grep -oE 'rustup install [0-9]+\.[0-9]+\.[0-9]+-[A-Za-z0-9_]+(-[A-Za-z0-9_]+)*' \
+            | head -1 | sed 's/^rustup install //')
           if [ -n "$toolchain" ]; then rustup install "$toolchain" --profile minimal; fi
           ./verus-x86-linux/verus --version
           echo "VERUS=$RUNNER_TEMP/verus/verus-x86-linux/verus" >> "$GITHUB_ENV"
