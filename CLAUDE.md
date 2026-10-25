@@ -763,9 +763,12 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            the contents are what was pushed, a failure changes
                            nothing, every `set` and `prefix` within the block;
                            `ptr_table.rs` the same for `src/ptr_table.rs`: `probe`
-                           always stops (at the key or an empty slot), and every
+                           always stops (at the key or an empty slot), every
                            `PtrTable` / `PtrMap` operation, `grow` included, keeps
-                           a slot free - the load factor - so it always can;
+                           a slot free - the load factor - so it always can, and
+                           each table is the `Map` it stands for (`view`): `get`
+                           finds exactly what was put, since `wf` keeps keys
+                           `unique` and probe paths `clustered`;
                            `cbuf.rs` for `src/cbuf.rs`: a `Buf` holds exactly
                            what was appended, its room never passes the ceiling,
                            a failure changes nothing, and `copy_small` copies

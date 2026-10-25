@@ -16,6 +16,12 @@
 //!
 //! Both keep their load factor at or below 1/2, which is what makes every probe
 //! find a free slot or its key.
+//!
+//! Verus proves both, over a copy `rake verus:sync` holds to this file
+//! (`verus/ptr_table.rs`): every probe stops, and each table is the map it
+//! stands for - `get` answers `Some(value)` exactly for a key put in it, and
+//! `grow` keeps every entry. `lookup` names its probe's slot (`let i`) so the
+//! proof can.
 
 #![forbid(unsafe_code)]
 
@@ -136,7 +142,8 @@ fn lookup<K: TableKey, V: Copy>(slots: &[(K, V)], key: K) -> Option<V> {
     if key == K::EMPTY || slots.is_empty() {
         return None;
     }
-    let (k, v) = slots[probe(slots, key)];
+    let i = probe(slots, key);
+    let (k, v) = slots[i];
     if k != K::EMPTY {
         Some(v)
     } else {
