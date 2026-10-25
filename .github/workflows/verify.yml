@@ -137,9 +137,10 @@ jobs:
         # Quoted: an unquoted `name:: ` would be read as a YAML mapping.
         run: "cargo +nightly miri test --no-default-features --lib -- raw_vec:: utf8_copy:: falloc:: cbuf:: ptr_table::"
 
-  # Verus over ext/makiri/rust/verus/: `falloc::grow_capacity` (copied,
-  # and checked against the source by `rake verus:sync`) and a model of
-  # `RawVec`, unbounded where Kani is bounded. Verus is a pinned release
+  # Verus over ext/makiri/rust/verus/: `falloc::grow_capacity`, `RawVec`,
+  # `ptr_table` and `cbuf::Buf` (copied, and checked against the source by
+  # `rake verus:sync`), unbounded where Kani is bounded, each with canaries
+  # that must fail. Verus is a pinned release
   # (Rakefile's VERUS_VERSION) and brings the Rust toolchain it names.
   verus:
     name: Verus proofs

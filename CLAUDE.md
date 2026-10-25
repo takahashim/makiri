@@ -392,8 +392,9 @@ bundle exec rake miri              # the Ruby-free unsafe modules' tests (raw_ve
                                    # cbuf) under Miri, strict provenance (nightly + miri;
                                    # CI: verify.yml)
 bundle exec rake verus             # Verus proofs (ext/makiri/rust/verus/): falloc's
-                                   # grow_capacity, RawVec, and ptr_table's probing and
-                                   # load factor, copied and checked against the source
+                                   # grow_capacity, RawVec, ptr_table's probing and
+                                   # load factor, and cbuf's Buf (content, ceiling,
+                                   # fail-closed) with copy_small, copied and checked against the source
                                    # (`verus:sync`) - unbounded.
                                    # VERUS=path/to/verus (Rakefile's VERUS_VERSION); CI:
                                    # verify.yml. Heavy tools stay in CI, like Miri and Kani.
@@ -764,7 +765,11 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            `ptr_table.rs` the same for `src/ptr_table.rs`: `probe`
                            always stops (at the key or an empty slot), and every
                            `PtrTable` / `PtrMap` operation, `grow` included, keeps
-                           a slot free - the load factor - so it always can
+                           a slot free - the load factor - so it always can;
+                           `cbuf.rs` for `src/cbuf.rs`: a `Buf` holds exactly
+                           what was appended, its room never passes the ceiling,
+                           a failure changes nothing, and `copy_small` copies
+                           exactly - at every length, where Kani ran out of memory
   fuzz/                    cargo-fuzz harnesses (xml/html, xpath/xml_xpath/
                            html_xpath, css = the XML matcher held to the lowering, html_css = the
                            HTML matcher over an arbitrary document, asserting

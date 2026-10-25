@@ -98,10 +98,16 @@ VERUS_COPIES = [
   *%w[capacity_for probe lookup PtrTable::with_keys PtrTable::insert PtrTable::get
       PtrMap::clear PtrMap::get PtrMap::insert PtrMap::set PtrMap::grow].map do |name|
     ["ext/makiri/rust/src/ptr_table.rs", "ext/makiri/rust/verus/ptr_table.rs", name]
+  end,
+  ["ext/makiri/rust/src/falloc/mod.rs", "ext/makiri/rust/verus/cbuf.rs", "grow_capacity"],
+  ["ext/makiri/rust/src/cbuf.rs", "ext/makiri/rust/verus/cbuf.rs", "copy_small"],
+  *%w[as_slice append append_growing raise_limit reserve steal content_limit
+      content_limit_for grow_to].map do |name|
+    ["ext/makiri/rust/src/cbuf.rs", "ext/makiri/rust/verus/cbuf.rs", "Buf::#{name}"]
   end
 ].freeze
 # The files `rake verus` verifies.
-VERUS_PROOFS = %w[raw_vec.rs ptr_table.rs].freeze
+VERUS_PROOFS = %w[raw_vec.rs ptr_table.rs cbuf.rs].freeze
 
 # The body of `fn name` in `src` - `Type::name` for the one in `impl ... Type`
 # - as tokens: lines marked `// [verus]` and
@@ -112,7 +118,7 @@ def verus_body_tokens(src, name)
   text = src.lines.reject { |l| l.rstrip.end_with?("// [verus]") }
             .map { |l| l.sub(%r{//.*$}, "") }.join.gsub(%r{/\*.*?\*/}m, " ")
   type, name = name.include?("::") ? name.split("::", 2) : [nil, name]
-  from = type ? (text.index(/^impl\b[^{]*\b#{Regexp.escape(type)}\s*</) or return nil) : 0
+  from = type ? (text.index(/^impl\b[^{]*\b#{Regexp.escape(type)}\b\s*[<{]/) or return nil) : 0
   at = text.index(/\bfn\s+#{Regexp.escape(name)}\b/, from) or return nil
   open = text.index("{", at) or return nil
   depth = 0
@@ -146,7 +152,7 @@ end
 # (std's spec assumed), an `assume(` or `admit(`. Each one is named in its
 # file's module doc; a new one is a new axiom, and this count moves with it on
 # purpose. The canaries may hold none.
-VERUS_TRUSTED = { "raw_vec.rs" => 5, "ptr_table.rs" => 3 }.freeze
+VERUS_TRUSTED = { "raw_vec.rs" => 5, "ptr_table.rs" => 3, "cbuf.rs" => 4 }.freeze
 VERUS_TRUST = /#\[verifier::external(?:_body)?\]|\bassume_specification\b|\b(?:assume|admit)\(/
 
 def verus_trusted_count(src)
