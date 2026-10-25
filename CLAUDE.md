@@ -397,8 +397,9 @@ bundle exec rake miri              # the Ruby-free unsafe modules' tests (raw_ve
                                    # CI: verify.yml)
 bundle exec rake verus             # Verus proofs (ext/makiri/rust/verus/): falloc's
                                    # grow_capacity, RawVec, ptr_table's probing and
-                                   # load factor, and cbuf's Buf (content, ceiling,
-                                   # fail-closed) with copy_small, copied and checked against the source
+                                   # load factor, cbuf's Buf (content, ceiling,
+                                   # fail-closed) with copy_small, and limits::admit,
+                                   # the one rule every work budget charges through, copied and checked against the source
                                    # (`verus:sync`) - unbounded.
                                    # VERUS=path/to/verus (Rakefile's VERUS_VERSION); CI:
                                    # verify.yml. Heavy tools stay in CI, like Miri and Kani.

@@ -218,14 +218,14 @@ pub(crate) const MAX_COMPOUNDS: usize = 64;
 /// `.x ~ li` over n siblings tests n^2/2 compounds, `.none p` candidates
 /// times depth.
 #[cfg(not(fuzzing))]
-const DEFAULT_WORK_BUDGET: u64 = 50 * 1000 * 1000;
+const DEFAULT_WORK_BUDGET: usize = 50 * 1000 * 1000;
 /// Under cargo-fuzz (`--cfg fuzzing`) the cap is lower: `html_css` runs up to
 /// ~130 queries per input, and a few that each stay just under 50M - triply
 /// nested `:has()` over a 4 KiB document - took 42 s under ASan, past
 /// libFuzzer's timeout. Ordinary queries on such a document cost far less,
 /// and an expensive one now reaches the refusal path instead.
 #[cfg(fuzzing)]
-const DEFAULT_WORK_BUDGET: u64 = 250 * 1000;
+const DEFAULT_WORK_BUDGET: usize = 250 * 1000;
 
 /// One top-level call's work budget: every step charges it once - each
 /// compound tested, each `:has()` candidate visited, each alternative tried
@@ -241,11 +241,11 @@ const DEFAULT_WORK_BUDGET: u64 = 250 * 1000;
 ///
 /// A plain `Cell`, not `xpath::limits::Budget`'s `Rc<RefCell<Error>>` sink:
 /// the Ruby glue (`glue::html_node::css`) only needs to know WHICH failure
-/// happened, not a formatted diagnostic, so one `u64` counter local to a
+/// happened, not a formatted diagnostic, so one `usize` counter local to a
 /// single call needs no shared ownership.
 struct Budget {
-    spent: std::cell::Cell<u64>,
-    limit: u64,
+    spent: std::cell::Cell<usize>,
+    limit: usize,
 }
 
 /// Why a match/query could not be answered - propagated as a hard failure,
@@ -292,11 +292,10 @@ impl Budget {
     /// to match.
     #[inline]
     fn charge(&self) -> Result<(), MatchFailure> {
-        let n = self.spent.get() + 1;
-        self.spent.set(n);
-        if n > self.limit {
+        let Some(n) = crate::limits::admit(self.spent.get(), 1, self.limit) else {
             return Err(MatchFailure::WorkExceeded);
-        }
+        };
+        self.spent.set(n);
         Ok(())
     }
 }
@@ -343,7 +342,7 @@ fn with_query<'d, N: CssNode<'d>, R, E: From<MatchFailure>>(
     groups: Lists<'_>,
     ns: &Namespaces<'_>,
     walk_in: Option<N::Doc>,
-    limit: u64,
+    limit: usize,
     f: impl FnOnce(&mut Query<'_, '_, 'd, N>) -> Result<R, E>,
 ) -> Result<R, E> {
     let compiled = compile(&mut scratch.tables, groups, ns)?;
@@ -406,7 +405,7 @@ fn select_all_with_limit<'d, N: CssNode<'d>>(
     root: N,
     groups: Lists<'_>,
     ns: &Namespaces<'_>,
-    limit: u64,
+    limit: usize,
 ) -> Result<Vec<N>, QueryFailure> {
     let walk_in = Some(root.owner_document());
     with_query(scratch, groups, ns, walk_in, limit, |query| {
@@ -435,7 +434,7 @@ fn select_all_with_limit<'d, N: CssNode<'d>>(
 pub(crate) fn select_all_with_work_limit<'d, N: CssNode<'d>>(
     root: N,
     groups: Lists<'_>,
-    limit: u64,
+    limit: usize,
 ) -> Result<Vec<N>, QueryFailure> {
     select_all_with_limit(&mut Scratch::new(), root, groups, &Namespaces::NONE, limit)
 }

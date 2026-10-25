@@ -252,7 +252,7 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
     pub(super) fn new(
         compiled: &'c Compiled<'p>,
         walk_in: Option<N::Doc>,
-        limit: u64,
+        limit: usize,
         scratch: &mut Scratch<N::Host>,
     ) -> Result<Self, MatchFailure> {
         Ok(Query {
