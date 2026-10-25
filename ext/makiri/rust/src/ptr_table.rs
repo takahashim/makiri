@@ -263,13 +263,7 @@ impl<K: TableKey, V: Copy + Default> PtrMap<K, V> {
     /// Remove every entry, keeping the allocation for the next fill.
     pub fn clear(&mut self) {
         if self.len != 0 {
-            /* By index rather than `fill`, so `verus/ptr_table.rs` can copy
-             * it as written. */
-            let mut j = 0;
-            while j < self.slots.len() {
-                self.slots[j] = (K::EMPTY, V::default());
-                j += 1;
-            }
+            self.slots.fill((K::EMPTY, V::default()));
             self.len = 0;
         }
     }
@@ -332,16 +326,11 @@ impl<K: TableKey, V: Copy + Default> PtrMap<K, V> {
         };
         let mut slots: Vec<(K, V)> =
             crate::falloc::try_vec_filled(cap, (K::EMPTY, V::default())).or_oom()?;
-        /* By index rather than an iterator chain, so `verus/ptr_table.rs`
-         * can copy it as written. */
-        let mut j = 0;
-        while j < self.slots.len() {
-            let (k, v) = self.slots[j];
+        for &(k, v) in self.slots.iter() {
             if k != K::EMPTY {
                 let i = probe(&slots, k);
                 slots[i] = (k, v);
             }
-            j += 1;
         }
         self.slots = slots;
         Ok(())

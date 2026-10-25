@@ -152,7 +152,7 @@ end
 # (std's spec assumed), an `assume(` or `admit(`. Each one is named in its
 # file's module doc; a new one is a new axiom, and this count moves with it on
 # purpose. The canaries may hold none.
-VERUS_TRUSTED = { "raw_vec.rs" => 5, "ptr_table.rs" => 3, "cbuf.rs" => 4 }.freeze
+VERUS_TRUSTED = { "raw_vec.rs" => 5, "ptr_table.rs" => 4, "cbuf.rs" => 4 }.freeze
 VERUS_TRUST = /#\[verifier::external(?:_body)?\]|\bassume_specification\b|\b(?:assume|admit)\(/
 
 def verus_trusted_count(src)

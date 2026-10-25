@@ -24,7 +24,8 @@
 //! `*const T`, `NodeKey` and `Token`, all derived), a key's hash is a
 //! function of the key alone (`TableKey::hash_spec`: the source's
 //! `table_hash` impls, a pointer's address and two fields' mix, are taken to
-//! be, not proved), std's
+//! be, not proved), std's `fill` (each element the value: a clone of a
+//! `Copy` pair is the pair), std's
 //! `checked_next_power_of_two`, and `falloc::try_vec_filled` (a `Vec` of
 //! `len` copies of `value`, or `None`).
 
@@ -60,6 +61,14 @@ pub open spec fn is_pow2(n: usize) -> bool {
 pub assume_specification[ usize::checked_next_power_of_two ](x: usize) -> (r: Option<usize>)
     ensures
         r.is_some() ==> is_pow2(r.unwrap()) && r.unwrap() >= x,
+;
+
+/// `fill` writes `value` into every element: what a clone is for the one
+/// type it fills here, a table's (key, value) pair of `Copy` types.
+pub assume_specification<T: Clone>[ <[T]>::fill ](s: &mut [T], value: T)
+    ensures
+        final(s)@.len() == old(s)@.len(),
+        forall|i: int| 0 <= i < final(s)@.len() ==> #[trigger] final(s)@[i] == value,
 ;
 
 proof fn lemma_and_mask(x: usize, n: usize)
@@ -887,19 +896,8 @@ impl<K: TableKey + PartialEqSpec, V: Copy + Default> PtrMap<K, V> {
             final(self).map() == Map::<K, V>::empty(), // [verus]
     {
         if self.len != 0 {
-            let mut j = 0;
-            while j < self.slots.len()
-                invariant // [verus]
-                    self.slots.len() == old(self).slots.len(), // [verus]
-                    old(self).wf(), // [verus]
-                    j <= self.slots.len(), // [verus]
-                    forall|k: int| 0 <= k < j ==> (#[trigger] self.slots@[k]).0 == K::EMPTY, // [verus]
-                decreases self.slots.len() - j, // [verus]
-            {
-                // [canary]
-                self.slots[j] = (K::EMPTY, V::default());
-                j += 1;
-            }
+            // [canary]
+            self.slots.fill((K::EMPTY, V::default()));
             assert(occ(self.slots@) =~= Set::<int>::empty()); // [verus]
             proof { lemma_all_empty(self.slots@); } // [verus]
             self.len = 0;
@@ -1040,8 +1038,9 @@ impl<K: TableKey + PartialEqSpec, V: Copy + Default> PtrMap<K, V> {
             crate::falloc::try_vec_filled(cap, (K::EMPTY, V::default())).or_oom()?;
         assert(occ(slots@) =~= Set::<int>::empty()); // [verus]
         proof { lemma_all_empty(slots@); lemma_view_below_ends(self.slots@); } // [verus]
-        let mut j = 0;
-        while j < self.slots.len()
+        for &(k, v) in
+            iter: // [verus]
+            self.slots.iter()
             invariant // [verus]
                 eq_is_equality::<K>(), // [verus]
                 old(self).wf(), // [verus]
@@ -1050,14 +1049,14 @@ impl<K: TableKey + PartialEqSpec, V: Copy + Default> PtrMap<K, V> {
                 slots.len() == cap, // [verus]
                 is_pow2(cap), // [verus]
                 self.slots.len() < cap, // [verus]
-                j <= self.slots.len(), // [verus]
-                occ(slots@).len() <= occ_below(self.slots@, j as int).len(), // [verus]
+                iter.index@ <= self.slots.len(), // [verus]
+                occ(slots@).len() <= occ_below(self.slots@, iter.index@ as int).len(), // [verus]
                 clustered(slots@), // [verus]
                 unique(slots@), // [verus]
-                view(slots@) == view_below(self.slots@, j as int), // [verus]
-            decreases self.slots.len() - j, // [verus]
+                view(slots@) == view_below(self.slots@, iter.index@ as int), // [verus]
         {
-            let (k, v) = self.slots[j];
+            let ghost j = iter.index@; // [verus]
+            assert((k, v) == self.slots@[j as int]); // [verus]
             proof { lemma_view_below_step(self.slots@, j as int); lemma_view_dom(slots@, 0); lemma_view_dom(self.slots@, j as int); } // [verus]
             proof { // [verus]
                 lemma_occ_finite(self.slots@, j as int); // [verus]
@@ -1084,11 +1083,11 @@ impl<K: TableKey + PartialEqSpec, V: Copy + Default> PtrMap<K, V> {
                 // [canary]
                 slots[i] = (k, v);
             }
-            j += 1;
         }
         proof { // [verus]
-            lemma_occ_finite(self.slots@, j as int); // [verus]
-            assert(occ_below(self.slots@, j as int) =~= occ(self.slots@)); // [verus]
+            let n = self.slots.len() as int; // [verus]
+            lemma_occ_finite(self.slots@, n); // [verus]
+            assert(occ_below(self.slots@, n) =~= occ(self.slots@)); // [verus]
             lemma_view_below_ends(self.slots@); // [verus]
         } // [verus]
         // [canary]
