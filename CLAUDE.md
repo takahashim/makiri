@@ -340,6 +340,11 @@ bundle exec rake clean             # wipe the build dir (regenerates the Makefil
 bundle exec rake clean:lexbor      # wipe vendor/lexbor/{build,dist} (full Lexbor rebuild)
 bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'   # smoke load
 
+bundle exec rake deny              # cargo-deny over the extension's dependencies
+                                   # (ext/makiri/rust/deny.toml): RustSec advisories and
+                                   # yanked releases, licenses, crates.io only. CI:
+                                   # security.yml, nightly too. An advisory that does not
+                                   # apply is ignored in deny.toml with its reason
 bundle exec rake symbols           # THE export gate - see Hard constraints
 bundle exec rake no_unwind         # release build proving no extern "C" fn / GC-run Drop
                                    # can unwind (src/no_unwind.rs) - see Hard constraints

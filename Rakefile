@@ -74,6 +74,14 @@ namespace :unsafe do
   end
 end
 
+# The extension's dependencies against ext/makiri/rust/deny.toml: RustSec
+# advisories and yanked releases, licenses, sources (CI: security.yml, nightly
+# too). Needs cargo-deny (`cargo install cargo-deny --locked`).
+desc "Check the extension's dependencies with cargo-deny (advisories, licenses, sources)"
+task :deny do
+  Dir.chdir("ext/makiri/rust") { sh "cargo", "deny", "check" }
+end
+
 # Verus over what Kani proves bounded (ext/makiri/rust/verus/): the growth
 # arithmetic, copied from falloc, and RawVec over its Block's contract. The
 # copies are checked
