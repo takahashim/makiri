@@ -34,11 +34,12 @@ use super::grow_capacity;
 /// the proof runs once per element size a caller actually passes rather than
 /// quantifying over all of them - the live callers are 1 (the byte buffer) and
 /// `size_of::<usize>()` (the node set's word).
-fn holds_for<const ELEM: usize>() {
+fn holds_for<const ELEM: usize>() -> Option<usize> {
     let cap: usize = kani::any();
     let need: usize = kani::any();
 
-    match grow_capacity(cap, need, ELEM) {
+    let r = grow_capacity(cap, need, ELEM);
+    match r {
         Some(nc) => {
             kani::cover!(cap != 0 && nc > cap, "a live allocation grows");
             assert!(nc >= need, "the new capacity must cover what was needed");
@@ -60,15 +61,17 @@ fn holds_for<const ELEM: usize>() {
                 need.checked_mul(ELEM).is_none(),
                 "the only failure is need not fitting"
             );
-            kani::cover!(true, "a need that does not fit");
         }
     }
+    r
 }
 
 /// `elem == 1`: `Buf` (the byte buffer, the most-used path).
 #[kani::proof]
 #[kani::unwind(80)]
 fn grow_capacity_covers_need_without_overflow_bytes() {
+    /* No `need` fails at one byte an element, so the failure branch is
+     * unreachable here, and its cover is the words harness's. */
     holds_for::<1>();
 }
 
@@ -76,5 +79,6 @@ fn grow_capacity_covers_need_without_overflow_bytes() {
 #[kani::proof]
 #[kani::unwind(80)]
 fn grow_capacity_covers_need_without_overflow_words() {
-    holds_for::<{ core::mem::size_of::<usize>() }>();
+    let r = holds_for::<{ core::mem::size_of::<usize>() }>();
+    kani::cover!(r.is_none(), "a need that does not fit");
 }
