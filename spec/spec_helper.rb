@@ -93,4 +93,13 @@ RSpec.configure do |config|
     config.filter_run_excluding :timing
     config.before(:suite) { warn "[spec] skipping :timing examples under Valgrind" }
   end
+
+  # A dev-profile build (MAKIRI_DEBUG_BUILD, from `rake debug`) is unoptimised
+  # as well as asserting, 10-50x slower like Valgrind: a :timing bound would
+  # measure the build, and a :slow volume test took a quarter of an hour. The
+  # run is for the `debug_assert!`s, which the other examples reach.
+  unless ENV["MAKIRI_DEBUG_BUILD"].to_s.empty?
+    config.filter_run_excluding :timing, :slow
+    config.before(:suite) { warn "[spec] skipping :timing and :slow examples on a debug build" }
+  end
 end

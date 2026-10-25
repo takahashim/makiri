@@ -363,6 +363,10 @@ bundle exec rake no_unwind         # release build proving no extern "C" fn / GC
                                    # can unwind (src/no_unwind.rs) - see Hard constraints
 bundle exec rake diff              # answers vs the recorded C-build baseline (see below)
 bundle exec rake sanitize          # rebuild w/ -Zsanitizer=address (nightly), run suite
+bundle exec rake debug             # rebuild as a dev profile (debug_assert! compiled
+                                   # in; asked via Makiri.__debug_assertions?) and run
+                                   # the suite bar :timing/:slow; every other run is
+                                   # release. Leaves the debug build: `rake clean compile`
 bundle exec rake fuzz              # robustness fuzzer (spec/fuzz/); FUZZ_ARGS to tune
 bundle exec rake invariants        # randomized property checks (spec/invariants/):
                                    # namespaces, tree shape, index staleness,

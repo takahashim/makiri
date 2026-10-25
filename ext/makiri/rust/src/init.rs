@@ -215,6 +215,13 @@ fn raise_inject_calls(ruby: &Ruby) -> Result<u64, Error> {
     }
 }
 
+/// `Makiri.__debug_assertions?` - whether this extension was built with
+/// `debug_assertions` (a dev-profile build, `MAKIRI_CARGO_PROFILE=dev`), so
+/// `rake debug` can refuse a run whose `debug_assert!`s are compiled out.
+fn debug_assertions_p() -> bool {
+    cfg!(debug_assertions)
+}
+
 /// `Makiri.__borrowed?(doc)` - whether `doc`'s content is borrowed, which
 /// between Ruby calls it never is: what the raise sweep checks after each
 /// injected raise. Any build.
@@ -538,6 +545,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     makiri.define_singleton_method("__raise_inject", function!(raise_inject, 1))?;
     makiri.define_singleton_method("__raise_inject_calls", function!(raise_inject_calls, 0))?;
     makiri.define_singleton_method("__borrowed?", function!(borrowed_p, 1))?;
+    makiri.define_singleton_method("__debug_assertions?", function!(debug_assertions_p, 0))?;
     m_xml.define_singleton_method("__decode", function!(xml_decode, 1))?;
 
     Ok(())
