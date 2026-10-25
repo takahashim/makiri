@@ -22,8 +22,8 @@
 #
 # Every raising call of `bridge::raw` is protected now, so each injected raise
 # comes back as `Err`; the sweep checks that each such `Err` is answered
-# cleanly. magnus's own allocating calls are banned in the glue (clippy.toml),
-# so the Arrays, Hashes and numbers a method builds go through `raw` too.
+# cleanly. The Arrays, Hashes and numbers a method builds, and the exception
+# it raises, go through `raw` too.
 #
 #   bundle exec rake oom                                     # rebuild + both sweeps
 #   bundle exec ruby -Ilib script/check_raise_injection.rb   # this sweep, current build

@@ -9,7 +9,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{prelude::*, Error, RHash, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, RHash, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
 use crate::css_cache::ParseError;
@@ -34,11 +34,11 @@ pub struct CssArgs {
 impl CssArgs {
     /// Read `(selector, namespaces = nil)` from `args`.
     pub fn scan(ruby: &Ruby, args: &[Value]) -> Result<CssArgs, Error> {
-        let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
+        let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::positional(1, 1))?;
         CssArgs::new(
             ruby,
-            a.required.0,
-            a.optional.0.unwrap_or_else(|| ruby.qnil().as_value()),
+            a.required(0),
+            a.optional(0).unwrap_or_else(|| ruby.qnil().as_value()),
         )
     }
 
@@ -83,7 +83,7 @@ pub fn syntax_error(selector: Value, reason: Option<&str>) -> Error {
     let reason = reason.unwrap_or("invalid CSS selector");
     Error::new(
         EXC_CSS_SYNTAX_ERROR.exception(),
-        format!("{reason}: {selector}"),
+        format_args!("{reason}: {}", crate::bridge::ruby::Display(selector)),
     )
 }
 
@@ -102,7 +102,7 @@ pub fn parse_error(err: ParseError, selector: Value) -> Error {
 /// error) as the Ruby exception it maps to.
 pub fn query_error(err: QueryFailure, selector: Value) -> Error {
     match err {
-        QueryFailure::Overflow => makiri_error(format!(
+        QueryFailure::Overflow => makiri_error(format_args!(
             "CSS result set exceeded the node limit ({NODE_SET_MAX})"
         )),
         QueryFailure::Match(e) => match_error(e, selector),
@@ -126,7 +126,7 @@ pub fn match_error(err: MatchFailure, selector: Value) -> Error {
         /* A construct the matcher does not run (`||`, `:current()`) is a
          * selector error, as a browser's SyntaxError is. */
         MatchFailure::Unsupported => syntax_error(selector, Some("CSS selector could not be run")),
-        MatchFailure::TooComplex => makiri_error(format!(
+        MatchFailure::TooComplex => makiri_error(format_args!(
             "CSS selector chain too complex (more than {MAX_COMPOUNDS} compounds)"
         )),
         MatchFailure::Oom => makiri_error("out of memory matching CSS selector"),

@@ -9,9 +9,15 @@
 //! a failure leaves the buffer as it was. It used to be libc memory under a
 //! raw pointer, NUL-terminated for the C callers it once had; nothing reads a
 //! terminator any more - every reader takes [`Buf::as_slice`] - so there is
-//! none, and no `unsafe` either. (The Kani proof that made the libc version
-//! worth keeping holds over this one too, and in a seventh of the time: see
-//! `verify`.)
+//! none, and no `unsafe` either.
+//!
+//! Verus proves `Buf` at every length (`verus/cbuf.rs`, its copy held to this
+//! file by `rake verus:sync`): the content is what was appended, the room
+//! never passes the ceiling - which `append`'s fast path rests on - and a
+//! failure changes nothing, a `Limit` exactly when the content would pass
+//! the ceiling. `grow_to` tests each falloc result rather than `map_err`ing
+//! it, and `append_growing` copies through `as_mut_slice()`, because those
+//! are what Verus's std specs can follow; both compile to the same code.
 
 #![forbid(unsafe_code)]
 
@@ -140,7 +146,7 @@ impl Buf {
                 .min(limit);
             self.grow_to(room)?;
         }
-        self.data[self.len..need].copy_from_slice(bytes);
+        self.data.as_mut_slice()[self.len..need].copy_from_slice(bytes);
         self.len = need;
         Ok(())
     }
@@ -201,10 +207,17 @@ impl Buf {
     /// `try_reserve_exact`, which does, and the zeroing after it cannot
     /// allocate.
     fn grow_to(&mut self, room: usize) -> Result<(), BufError> {
-        self.data
+        if self
+            .data
             .falloc_reserve_exact(room - self.data.len())
-            .map_err(|()| BufError::Oom)?;
-        self.data.falloc_resize(room, 0).map_err(|()| BufError::Oom)
+            .is_err()
+        {
+            return Err(BufError::Oom);
+        }
+        if self.data.falloc_resize(room, 0).is_err() {
+            return Err(BufError::Oom);
+        }
+        Ok(())
     }
 }
 
@@ -329,7 +342,9 @@ mod tests {
     /// over the `Vec`. The domain is small enough to try whole, and the bytes
     /// are distinct per position, so a copy that misplaced or dropped one
     /// would show: the code under test never branches on a byte's value,
-    /// which is all the proof's symbolic bytes added.
+    /// which is all the proof's symbolic bytes added. Verus now proves the
+    /// same at every length (`verus/cbuf.rs`); this stays as the test that
+    /// runs the real `Vec`.
     #[test]
     fn append_matches_a_shadow_model_over_the_whole_small_domain() {
         const { assert!(super::BUF_HARD_MAX >= 6 && super::BUF_DEFAULT_LIMIT >= 6) };

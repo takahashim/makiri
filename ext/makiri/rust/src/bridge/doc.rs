@@ -18,21 +18,19 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{Error, RString, Ruby, Value};
+use crate::bridge::rb::{Error, RString, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
 
 use crate::bridge::html::new_node;
 use crate::bridge::html::{html_node_key, with_html_node, wrap_html_node};
 use crate::bridge::string::DocumentSource;
-use crate::bridge::wrapper::{
-    html_read, node_repr, xml_read, DocKind, DocumentShell, NodeRepr, DOC_TYPE,
-};
+use crate::bridge::wrapper::{html_read, node_repr, xml_read, DocKind, DocumentShell, NodeRepr};
 use crate::bridge::xml::xml_node_document;
 use crate::bridge::xml::{xml_mut_result, xml_node_unwrap};
 use crate::html_dom::html::RawNode;
 use crate::html_dom::post_parse::{empty_html_document, HtmlParseError};
-use crate::html_dom::tree_guard::{DepthLimit, GuardStop};
+use crate::html_dom::tree_guard::{GuardStop, ParseLimits};
 
 /* ------------------------------------------------------------------ *
  * parsing                                                            *
@@ -40,17 +38,26 @@ use crate::html_dom::tree_guard::{DepthLimit, GuardStop};
 
 /// The error for a parse the guard refused (`GuardStop`), for a document and
 /// a fragment alike: the one place that maps a stop to its exception.
-pub fn guard_error(stop: GuardStop, limit: DepthLimit) -> Error {
+pub fn guard_error(stop: GuardStop, limit: ParseLimits) -> Error {
     match stop {
         GuardStop::TooDeep => tree_depth_error(limit),
+        GuardStop::TooLarge => match limit.max_amplification() {
+            Some(r) => makiri_error(format_args!(
+                "document size limit exceeded ({r} times the input; see max_amplification:)"
+            )),
+            /* An unlimited parse is never refused for size. */
+            None => crate::bridge::ruby::internal_error(
+                "a parse with no amplification limit was refused for size",
+            ),
+        },
     }
 }
 
 /// The error for a parse the tree-depth limit refused: `Makiri::Error`, naming
 /// the limit, for a document and a fragment alike.
-pub fn tree_depth_error(limit: DepthLimit) -> Error {
+pub fn tree_depth_error(limit: ParseLimits) -> Error {
     match limit.max_depth() {
-        Some(n) => makiri_error(format!("document tree depth limit exceeded ({n})")),
+        Some(n) => makiri_error(format_args!("document tree depth limit exceeded ({n})")),
         /* An unlimited parse is never refused for depth. */
         None => crate::bridge::ruby::internal_error(
             "a parse with no tree-depth limit was refused for depth",
@@ -66,7 +73,7 @@ pub fn tree_depth_error(limit: DepthLimit) -> Error {
 /// A tree deeper than `limit` fails the parse (see `html_dom::tree_guard`).
 pub fn parse_document(
     source: Value,
-    limit: DepthLimit,
+    limit: ParseLimits,
     given: Option<crate::bridge::string::GivenEncoding>,
 ) -> Result<Value, Error> {
     let s = crate::bridge::ruby::string_arg(source)?;
@@ -116,6 +123,13 @@ pub fn new_empty_document(compat_mode: u32, encoding: &'static str) -> Result<Va
 /// `Document#root`: the root Element node, or nil - for `Document.new`, or once
 /// the root is removed (the HTML parser inserts html/head/body even for empty
 /// input).
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        raw_node_crossing,
+        reason = "the root element, wrapped once the read is over"
+    )
+)]
 pub fn document_root(rb_doc: Value) -> Result<Option<Value>, Error> {
     let root = {
         let read = html_read(&rb_doc)?;
@@ -151,7 +165,7 @@ pub fn document_quirks_mode(_ruby: &Ruby, rb_doc: Value) -> Result<Value, Error>
 /// `Document#errors`: the (currently always empty) parse-warning Array.
 pub fn document_errors(rb_doc: Value) -> Value {
     /* A Document method, so the receiver is a Document. */
-    DOC_TYPE.get_known(&rb_doc).errors()
+    crate::bridge::raw::ivar_get(rb_doc, crate::bridge::wrapper::ivar_errors())
 }
 
 /* ------------------------------------------------------------------ *

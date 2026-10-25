@@ -14,21 +14,21 @@
 
 use libfuzzer_sys::fuzz_target;
 use makiri::html_dom::post_parse::parse_html;
-use makiri::html_dom::tree_guard::DepthLimit;
+use makiri::html_dom::tree_guard::ParseLimits;
 
 fuzz_target!(|data: &[u8]| {
     let Some((&mode, data)) = data.split_first() else {
         return;
     };
     let parsed = if mode & 1 == 0 {
-        parse_html(data, false, DepthLimit::DEFAULT)
+        parse_html(data, false, ParseLimits::DEFAULT)
     } else {
         let input = makiri::html::encoding::DocumentInput {
             bytes: data,
             transport: None,
             known_valid_utf8: false,
         };
-        makiri::html::tree::parse_document_bytes(input, DepthLimit::DEFAULT)
+        makiri::html::tree::parse_document_bytes(input, ParseLimits::DEFAULT)
     };
     let Ok(p) = parsed else {
         return;

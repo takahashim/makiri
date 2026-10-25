@@ -4,8 +4,8 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::rb_sys::AsRawValue;
-use magnus::{Error, RString};
+use crate::bridge::rb::value::AsRawValue;
+use crate::bridge::rb::{Error, RString};
 
 /// The shared owned buffer.
 use crate::cbuf::OwnedBuf;

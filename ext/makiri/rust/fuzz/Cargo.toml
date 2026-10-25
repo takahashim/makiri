@@ -10,7 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 
-# No Ruby: the glue needs magnus -> rb-sys -> a live Ruby, which a fuzz binary
+# No Ruby: the glue needs rb-sys -> a live Ruby, which a fuzz binary
 # has no business linking. The targets drive the engine's front door the glue
 # drives - the XML reader, the HTML parse and its indexes, XPath over both
 # engine instances, and the CSS matcher over both DOMs - and so need `lexbor`,

@@ -41,6 +41,11 @@ fn short_copies_move_exactly_their_bytes() {
         dst[..off].iter().chain(&dst[off + n..]).all(|&b| b == 0x5A),
         "copy: nothing outside the n bytes is written"
     );
+    kani::cover!(n == W, "a full 16-byte copy");
+    kani::cover!(
+        n > 0 && off > 0 && off + n < W,
+        "a copy with bytes on both sides"
+    );
 }
 
 /// `steal` on a buffer nothing was ever appended to hands back an empty
@@ -55,4 +60,5 @@ fn steal_of_an_empty_buffer_is_empty() {
         "steal: an empty buffer has length 0"
     );
     assert!(b.len == 0 && b.data.is_empty(), "steal: still empty");
+    kani::cover!(true, "the steal returns");
 }

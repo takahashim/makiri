@@ -16,6 +16,12 @@
 //!
 //! Both keep their load factor at or below 1/2, which is what makes every probe
 //! find a free slot or its key.
+//!
+//! Verus proves both, over a copy `rake verus:sync` holds to this file
+//! (`verus/ptr_table.rs`): every probe stops, and each table is the map it
+//! stands for - `get` answers `Some(value)` exactly for a key put in it, and
+//! `grow` keeps every entry. `lookup` names its probe's slot (`let i`) so the
+//! proof can.
 
 #![forbid(unsafe_code)]
 
@@ -136,8 +142,13 @@ fn lookup<K: TableKey, V: Copy>(slots: &[(K, V)], key: K) -> Option<V> {
     if key == K::EMPTY || slots.is_empty() {
         return None;
     }
-    let (k, v) = slots[probe(slots, key)];
-    (k != K::EMPTY).then_some(v)
+    let i = probe(slots, key);
+    let (k, v) = slots[i];
+    if k != K::EMPTY {
+        Some(v)
+    } else {
+        None
+    }
 }
 
 /// A key -> `V` table for a key count known before it is filled.
@@ -315,11 +326,60 @@ impl<K: TableKey, V: Copy + Default> PtrMap<K, V> {
         };
         let mut slots: Vec<(K, V)> =
             crate::falloc::try_vec_filled(cap, (K::EMPTY, V::default())).or_oom()?;
-        for &(k, v) in self.slots.iter().filter(|(k, _)| *k != K::EMPTY) {
-            let i = probe(&slots, k);
-            slots[i] = (k, v);
+        for &(k, v) in self.slots.iter() {
+            if k != K::EMPTY {
+                let i = probe(&slots, k);
+                slots[i] = (k, v);
+            }
         }
         self.slots = slots;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A map grown past several doublings keeps every key, `set` replaces a
+    /// value where `insert` keeps the first, and `clear` empties it for a
+    /// refill.
+    #[test]
+    fn a_map_keeps_its_keys_across_growth_and_clear() {
+        let mut m: PtrMap<NodeKey, u32> = PtrMap::new();
+        for k in 1..=1000usize {
+            m.insert(NodeKey::new(k), k as u32).unwrap();
+        }
+        assert_eq!(m.len(), 1000);
+        assert!(m.capacity() >= 2000 && m.capacity().is_power_of_two());
+        assert!((1..=1000usize).all(|k| m.get(NodeKey::new(k)) == Some(k as u32)));
+        assert_eq!(m.get(NodeKey::new(1001)), None);
+        m.insert(NodeKey::new(7), 0).unwrap();
+        assert_eq!(m.get(NodeKey::new(7)), Some(7));
+        m.set(NodeKey::new(7), 70).unwrap();
+        assert_eq!(m.get(NodeKey::new(7)), Some(70));
+        assert_eq!(m.insert(NodeKey::EMPTY, 1), Err(InsertRefused));
+        let cap = m.capacity();
+        m.clear();
+        assert_eq!((m.len(), m.capacity()), (0, cap));
+        assert_eq!(m.get(NodeKey::new(7)), None);
+        m.insert(NodeKey::new(7), 1).unwrap();
+        assert_eq!(m.get(NodeKey::new(7)), Some(1));
+    }
+
+    /// A table takes the keys it was sized for and refuses one more.
+    #[test]
+    fn a_table_takes_exactly_its_keys() {
+        let mut t: PtrTable<NodeKey, u32> = PtrTable::with_keys(10, 0).unwrap();
+        for k in 1..=10usize {
+            assert!(t.insert(NodeKey::new(k), k as u32).is_some());
+        }
+        assert_eq!(t.insert(NodeKey::new(11), 11), None);
+        assert_eq!(t.insert(NodeKey::new(3), 99).map(|_| ()), Some(()));
+        assert!((1..=10usize).all(|k| t.get(NodeKey::new(k)) == Some(k as u32)));
+        assert!(PtrTable::<NodeKey, u32>::with_keys(0, 0)
+            .unwrap()
+            .get(NodeKey::new(1))
+            .is_none());
     }
 }

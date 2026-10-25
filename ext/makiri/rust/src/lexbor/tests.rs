@@ -420,7 +420,7 @@ mod css_match {
     use crate::gvl::Gvl;
     use crate::html_dom::html::{HtmlElement, HtmlNode, NsId, RawNode};
     use crate::lexbor::adapter::post_parse::parse_html;
-    use crate::lexbor::adapter::tree_guard::DepthLimit;
+    use crate::lexbor::adapter::tree_guard::ParseLimits;
     use crate::lexbor::twin::Twin;
     use crate::selectors::ast::Lists;
 
@@ -482,7 +482,7 @@ mod css_match {
     }
 
     fn parsed(html: &[u8]) -> Box<HtmlParsed> {
-        let lexbor = parse_html(html, true, DepthLimit::DEFAULT).expect("a document parses");
+        let lexbor = parse_html(html, true, ParseLimits::DEFAULT).expect("a document parses");
         // SAFETY: `lexbor` owns the document for the copy's walk.
         let twin = Twin::new(unsafe { lexbor.raw_doc().as_doc() }).expect("the copy");
         Box::new(HtmlParsed { lexbor, twin })
@@ -1503,7 +1503,7 @@ mod css_match {
     /// smallest_fiber_stack` measured the OLD design's own bound: a depth past
     /// the 300-level crash threshold above (comfortably beyond what the OLD,
     /// native-recursive design could survive on this stack - it died before
-    /// 302), capped by the HTML parser's own `DepthLimit::DEFAULT` (400) for
+    /// 302), capped by the HTML parser's own `ParseLimits::DEFAULT` (400) for
     /// this test's fixture rather than a limit of the matcher's, on a thread
     /// given only a `RUBY_FIBER_MACHINE_STACK_SIZE`-sized (128 KiB) stack,
     /// must still answer correctly rather than overflow - proving the
@@ -1520,7 +1520,7 @@ mod css_match {
     fn has_nested_inside_has_is_heap_based_not_native_recursion() {
         // Past the 300-level crash threshold measured against the OLD design
         // (see this test's doc), comfortably under the HTML parser's own
-        // `DepthLimit::DEFAULT` (400) so `parsed()` need not raise that
+        // `ParseLimits::DEFAULT` (400) so `parsed()` need not raise that
         // separately - the property under test is the MATCHER's stack
         // safety, not the parser's (already covered elsewhere).
         const DEPTH: usize = 350;

@@ -10,7 +10,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{prelude::*, Error, RArray, RHash, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, RHash, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::namespace_arg;
@@ -35,23 +35,21 @@ use crate::xml::qname::Split;
 
 /// `#remove` / `#unlink` -> self.
 pub fn remove(mut this: XmlSelf) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let rb_self = this.value;
-        let kind = this.read()?.type_(this.id);
-        if !dom_rules::removable(kind.map_or(NodeType::Other, NodeType::from)) {
-            return Err(makiri_error(DOCUMENT_NOT_REMOVABLE));
-        }
-        /* An Attr leaves its element's attribute list: an attribute edit,
-         * which changes no child list. */
-        let attr = kind == Some(ArenaKind::Attribute);
-        let edit = begin_edit(&mut this)?;
-        if attr {
-            edit.with_attributes(mutate::remove)?;
-        } else {
-            edit.with_arena(mutate::remove)?;
-        }
-        Ok(rb_self)
-    })
+    let rb_self = this.value;
+    let kind = this.read()?.type_(this.id);
+    if !dom_rules::removable(kind.map_or(NodeType::Other, NodeType::from)) {
+        return Err(makiri_error(DOCUMENT_NOT_REMOVABLE));
+    }
+    /* An Attr leaves its element's attribute list: an attribute edit,
+     * which changes no child list. */
+    let attr = kind == Some(ArenaKind::Attribute);
+    let edit = begin_edit(&mut this)?;
+    if attr {
+        edit.with_attributes(mutate::remove)?;
+    } else {
+        edit.with_arena(mutate::remove)?;
+    }
+    Ok(rb_self)
 }
 
 /// The receiver cleared for an edit, which must be an element.
@@ -67,16 +65,14 @@ fn element_for(this: &mut XmlSelf) -> Result<Editing<'_>, Error> {
 
 /// `element[name] = value` -> value.
 pub fn aset(_ruby: &Ruby, mut this: XmlSelf, name: Value, val: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let edit = element_for(&mut this)?;
-        let nv = verified_name(name, "attribute name")?;
-        let vv = verified_data(val, "attribute value")?;
-        let (name, value) = (nv.as_bytes(), vv.as_bytes());
-        /* A bad name is refused before the edit is recorded. */
-        xml_mut_result(mutate::checked_attribute_name(name))?;
-        xml_mut_result(edit.with_attributes(|d, n| mutate::set_attribute(d, n, name, value))?)?;
-        Ok(val)
-    })
+    let edit = element_for(&mut this)?;
+    let nv = verified_name(name, "attribute name")?;
+    let vv = verified_data(val, "attribute value")?;
+    let (name, value) = (nv.as_bytes(), vv.as_bytes());
+    /* A bad name is refused before the edit is recorded. */
+    xml_mut_result(mutate::checked_attribute_name(name))?;
+    xml_mut_result(edit.with_attributes(|d, n| mutate::set_attribute(d, n, name, value))?)?;
+    Ok(val)
 }
 
 /// `element.set_attribute_ns(namespace_or_nil, qualified_name, value)` -> value.
@@ -87,23 +83,19 @@ pub fn set_attribute_ns(
     qname: Value,
     val: Value,
 ) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let edit = element_for(&mut this)?;
-        let qv = verified_name(qname, "attribute qualified name")?;
-        let vv = verified_data(val, "attribute value")?;
-        let nv = namespace_arg(ns, "namespace")?;
-        let (ns, qname, value) = (
-            nv.as_ref().map_or(&b""[..], |n| n.as_bytes()),
-            qv.as_bytes(),
-            vv.as_bytes(),
-        );
-        /* A bad name is refused before the edit is recorded. */
-        xml_mut_result(mutate::checked_attribute_ns_name(ns, qname))?;
-        xml_mut_result(
-            edit.with_attributes(|d, n| mutate::set_attribute_ns(d, n, ns, qname, value))?,
-        )?;
-        Ok(val)
-    })
+    let edit = element_for(&mut this)?;
+    let qv = verified_name(qname, "attribute qualified name")?;
+    let vv = verified_data(val, "attribute value")?;
+    let nv = namespace_arg(ns, "namespace")?;
+    let (ns, qname, value) = (
+        nv.as_ref().map_or(&b""[..], |n| n.as_bytes()),
+        qv.as_bytes(),
+        vv.as_bytes(),
+    );
+    /* A bad name is refused before the edit is recorded. */
+    xml_mut_result(mutate::checked_attribute_ns_name(ns, qname))?;
+    xml_mut_result(edit.with_attributes(|d, n| mutate::set_attribute_ns(d, n, ns, qname, value))?)?;
+    Ok(val)
 }
 
 /// `element.set_loose_dom_attribute(qualified_name, value)` -> value.
@@ -117,18 +109,16 @@ pub fn set_loose_dom_attribute(
     name: Value,
     val: Value,
 ) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let edit = element_for(&mut this)?;
-        let nv = verified_name(name, "attribute name")?;
-        let vv = verified_data(val, "attribute value")?;
-        let (name, value) = (nv.as_bytes(), vv.as_bytes());
-        /* A bad name is refused before the edit is recorded. */
-        xml_mut_result(mutate::checked_loose_dom_attribute_name(name))?;
-        xml_mut_result(
-            edit.with_attributes(|d, n| mutate::set_loose_dom_attribute(d, n, name, value))?,
-        )?;
-        Ok(val)
-    })
+    let edit = element_for(&mut this)?;
+    let nv = verified_name(name, "attribute name")?;
+    let vv = verified_data(val, "attribute value")?;
+    let (name, value) = (nv.as_bytes(), vv.as_bytes());
+    /* A bad name is refused before the edit is recorded. */
+    xml_mut_result(mutate::checked_loose_dom_attribute_name(name))?;
+    xml_mut_result(
+        edit.with_attributes(|d, n| mutate::set_loose_dom_attribute(d, n, name, value))?,
+    )?;
+    Ok(val)
 }
 
 /// `element.remove_attribute_ns(namespace_or_nil, local_name)` -> self.
@@ -138,59 +128,53 @@ pub fn remove_attribute_ns(
     ns: Value,
     local: Value,
 ) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let rb_self = this.value;
-        let edit = begin_edit(&mut this)?;
-        if edit.read()?.type_(edit.id()) != Some(ArenaKind::Element) {
-            return Ok(rb_self);
-        }
-        let lv = verified_text(local, "attribute local name")?;
-        let nv = namespace_arg(ns, "namespace")?;
-        let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
-        let local = lv.as_bytes();
-        edit.with_attributes(|d, n| mutate::remove_attribute_ns(d, n, ns, local))?;
-        Ok(rb_self)
-    })
+    let rb_self = this.value;
+    let edit = begin_edit(&mut this)?;
+    if edit.read()?.type_(edit.id()) != Some(ArenaKind::Element) {
+        return Ok(rb_self);
+    }
+    let lv = verified_text(local, "attribute local name")?;
+    let nv = namespace_arg(ns, "namespace")?;
+    let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
+    let local = lv.as_bytes();
+    edit.with_attributes(|d, n| mutate::remove_attribute_ns(d, n, ns, local))?;
+    Ok(rb_self)
 }
 
 /// `element.delete(name)` / `#remove_attribute` -> self.
 pub fn delete(_ruby: &Ruby, mut this: XmlSelf, name: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let rb_self = this.value;
-        let edit = begin_edit(&mut this)?;
-        if edit.read()?.type_(edit.id()) != Some(ArenaKind::Element) {
-            return Ok(rb_self);
-        }
-        let nv = verified_text(name, "attribute name")?;
-        let name = nv.as_bytes();
-        edit.with_attributes(|d, n| mutate::remove_attribute(d, n, name))?;
-        Ok(rb_self)
-    })
+    let rb_self = this.value;
+    let edit = begin_edit(&mut this)?;
+    if edit.read()?.type_(edit.id()) != Some(ArenaKind::Element) {
+        return Ok(rb_self);
+    }
+    let nv = verified_text(name, "attribute name")?;
+    let name = nv.as_bytes();
+    edit.with_attributes(|d, n| mutate::remove_attribute(d, n, name))?;
+    Ok(rb_self)
 }
 
 /// `node.content = text` -> text.
 pub fn set_content(_ruby: &Ruby, mut this: XmlSelf, text: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        /* A node's type never changes, so it is read before the argument's
-         * conversion: a Text, Comment, CDATA or PI node's content is its data,
-         * and an Attr's its value - neither changes a child list. */
-        let kind = this.read()?.type_(this.id);
-        let edit = begin_edit(&mut this)?;
-        let tv = verified_data(text, "node content")?;
-        let bytes = tv.as_bytes();
-        let set = |d: &mut XmlDoc, n| mutate::set_content(d, n, bytes);
-        /* A Document's or DocumentType's content is nothing: no edit is
-         * recorded for it. */
-        xml_mut_result(
-            match kind.map(|k| dom_rules::text_content(NodeType::from(k))) {
-                Some(TextContent::Data) => edit.with_data(set)?,
-                Some(TextContent::AttrValue) => edit.with_attributes(set)?,
-                Some(TextContent::Nothing) => return Ok(text),
-                Some(TextContent::ReplaceChildren) | None => edit.with_arena(set)?,
-            },
-        )?;
-        Ok(text)
-    })
+    /* A node's type never changes, so it is read before the argument's
+     * conversion: a Text, Comment, CDATA or PI node's content is its data,
+     * and an Attr's its value - neither changes a child list. */
+    let kind = this.read()?.type_(this.id);
+    let edit = begin_edit(&mut this)?;
+    let tv = verified_data(text, "node content")?;
+    let bytes = tv.as_bytes();
+    let set = |d: &mut XmlDoc, n| mutate::set_content(d, n, bytes);
+    /* A Document's or DocumentType's content is nothing: no edit is
+     * recorded for it. */
+    xml_mut_result(
+        match kind.map(|k| dom_rules::text_content(NodeType::from(k))) {
+            Some(TextContent::Data) => edit.with_data(set)?,
+            Some(TextContent::AttrValue) => edit.with_attributes(set)?,
+            Some(TextContent::Nothing) => return Ok(text),
+            Some(TextContent::ReplaceChildren) | None => edit.with_arena(set)?,
+        },
+    )?;
+    Ok(text)
 }
 
 /* ------------------------------------------------------------------ */
@@ -201,25 +185,23 @@ pub fn set_content(_ruby: &Ruby, mut this: XmlSelf, text: Value) -> Result<Value
  * are on the HTML side. */
 
 pub fn add_child(_ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| insert(this, arg, Place::Child))
+    insert(this, arg, Place::Child)
 }
 pub fn before(_ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| insert(this, arg, Place::Before))
+    insert(this, arg, Place::Before)
 }
 pub fn after(_ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| insert(this, arg, Place::After))
+    insert(this, arg, Place::After)
 }
 pub fn replace(_ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| insert(this, arg, Place::Replace))
+    insert(this, arg, Place::Replace)
 }
 
 /// `element << node` -> self.
 pub fn lshift(_ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let rb_self = this.value;
-        insert(this, arg, Place::Child)?;
-        Ok(rb_self)
-    })
+    let rb_self = this.value;
+    insert(this, arg, Place::Child)?;
+    Ok(rb_self)
 }
 
 /// `clone_node(deep = false)` -> a detached copy in the same document.
@@ -234,18 +216,16 @@ pub fn lshift(_ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
 /// same arena, which wraps back to the receiver - so the caller got the
 /// original under the name of a copy (and `#clone(freeze: true)` froze it),
 /// with a stray node left behind. `XML::Document#dup` is the document copy.
-pub fn clone_node(this: XmlSelf, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let a = magnus::scan_args::scan_args::<(), (Option<Value>,), (), (), (), ()>(args)?;
-        let deep = a.optional.0.is_some_and(|v| v.to_bool());
-        if crate::bridge::ruby::same_value(this.value, this.document) {
-            return Err(makiri_error("clone_node cannot copy a document; use #dup"));
-        }
-        let copy = xml_mut_result(with_arena_for_new_node(this.document, |d| {
-            mutate::clone_node(d, this.id, deep)
-        })?)?;
-        wrap(copy, this.document)
-    })
+pub fn clone_node(ruby: &Ruby, this: XmlSelf, args: &[Value]) -> Result<Value, Error> {
+    let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::positional(0, 1))?;
+    let deep = a.optional(0).is_some_and(|v| v.to_bool());
+    if crate::bridge::ruby::same_value(this.value, this.document) {
+        return Err(makiri_error("clone_node cannot copy a document; use #dup"));
+    }
+    let copy = xml_mut_result(with_arena_for_new_node(this.document, |d| {
+        mutate::clone_node(d, this.id, deep)
+    })?)?;
+    wrap(copy, this.document)
 }
 
 /* ------------------------------------------------------------------ */
@@ -254,49 +234,54 @@ pub fn clone_node(this: XmlSelf, args: &[Value]) -> Result<Value, Error> {
 
 /// `create_element(name, content = nil, attributes = {})` -> Element.
 pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let a = magnus::scan_args::scan_args::<(Value,), (), RArray, (), (), ()>(args)?;
-        let (name,) = a.required;
-        let mut content = ruby.qnil().as_value();
-        let mut attrs: Option<RHash> = None;
-        for v in a.splat.into_iter() {
-            if let Some(h) = RHash::from_value(v) {
-                attrs = Some(h);
-            } else if !v.is_nil() {
-                content = v;
-            }
+    let a = crate::glue::args::scan(
+        ruby,
+        args,
+        crate::glue::args::Shape {
+            rest: true,
+            ..crate::glue::args::Shape::positional(1, 0)
+        },
+    )?;
+    let name = a.required(0);
+    let mut content = ruby.qnil().as_value();
+    let mut attrs: Option<RHash> = None;
+    for &v in a.rest() {
+        if let Some(h) = RHash::from_value(v) {
+            attrs = Some(h);
+        } else if !v.is_nil() {
+            content = v;
         }
+    }
 
-        let nv = verified_name(name, "element name")?;
-        let cv = verified_data_opt(content, "element content")?;
-        let name = nv.as_bytes();
-        let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
-            mutate::new_element(d, name)
+    let nv = verified_name(name, "element name")?;
+    let cv = verified_data_opt(content, "element content")?;
+    let name = nv.as_bytes();
+    let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
+        mutate::new_element(d, name)
+    })?)?;
+    if let Some(cv) = &cv {
+        let text = cv.as_bytes();
+        xml_mut_result(with_arena_for_new_node(rb_self, |d| {
+            mutate::set_content(d, el, text)
         })?)?;
-        if let Some(cv) = &cv {
-            let text = cv.as_bytes();
-            xml_mut_result(with_arena_for_new_node(rb_self, |d| {
-                mutate::set_content(d, el, text)
-            })?)?;
-        }
-        /* Both views are done with. Drop them before any Ruby runs again (the
-         * wrapper allocation, the attribute loop's), so no borrow of a
-         * Ruby String is held across a GC point. */
-        drop((nv, cv));
-        let rb_el = wrap(el, rb_self)?;
-        if let Some(h) = attrs {
-            /* Each pair goes through the normal validated setter (a key may be
-             * a Symbol, a value must be a String), after the pairs are out of
-             * the Hash (`hash::each_pair`). */
-            /* `rb_el` was wrapped just above, so it converts. */
-            let el_self = <XmlSelf as magnus::TryConvert>::try_convert(rb_el)?;
-            crate::glue::hash::each_pair(ruby, h, |k, v| {
-                aset(ruby, el_self, k, v)?;
-                Ok(())
-            })?;
-        }
-        Ok(rb_el)
-    })
+    }
+    /* Both views are done with. Drop them before any Ruby runs again (the
+     * wrapper allocation, the attribute loop's), so no borrow of a
+     * Ruby String is held across a GC point. */
+    drop((nv, cv));
+    let rb_el = wrap(el, rb_self)?;
+    if let Some(h) = attrs {
+        /* Each pair goes through the normal validated setter (a key may be
+         * a Symbol, a value must be a String), after the pairs are out of
+         * the Hash (`hash::each_pair`). */
+        /* `rb_el` was wrapped just above, so it converts. */
+        let el_self = <XmlSelf as crate::bridge::rb::TryConvert>::try_convert(rb_el)?;
+        crate::glue::hash::each_pair(ruby, h, |k, v| {
+            aset(ruby, el_self, k, v)?;
+            Ok(())
+        })?;
+    }
+    Ok(rb_el)
 }
 
 /// `Document#create_element_ns(namespace_uri, qualified_name)` -> Element.
@@ -313,31 +298,29 @@ pub fn create_element_ns(
     ns: Value,
     qname: Value,
 ) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let nv = namespace_arg(ns, "namespace")?;
-        let qv = verified_name(qname, "element qualified name")?;
-        let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
-        let qname = qv.as_bytes();
-        let (prefix, local) = dom_extract(
-            ruby,
-            ns,
-            qname,
-            dom_name::valid_element_local_name,
-            "DOM element",
-        )?;
-        /* `verified_name` held the name to `u32`, and both halves are in it. */
-        let sp = if prefix.is_empty() {
-            Split::unprefixed(qname.len() as u32)
-        } else {
-            Split::prefixed(prefix.len() as u32, local.len() as u32)
-        };
-        let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
-            mutate::new_dom_element_ns(d, qname, sp, ns)
-        })?)?;
-        /* Before the wrap, whose allocation can raise past this frame. */
-        drop((nv, qv));
-        wrap(el, rb_self)
-    })
+    let nv = namespace_arg(ns, "namespace")?;
+    let qv = verified_name(qname, "element qualified name")?;
+    let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
+    let qname = qv.as_bytes();
+    let (prefix, local) = dom_extract(
+        ruby,
+        ns,
+        qname,
+        dom_name::valid_element_local_name,
+        "DOM element",
+    )?;
+    /* `verified_name` held the name to `u32`, and both halves are in it. */
+    let sp = if prefix.is_empty() {
+        Split::unprefixed(qname.len() as u32)
+    } else {
+        Split::prefixed(prefix.len() as u32, local.len() as u32)
+    };
+    let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
+        mutate::new_dom_element_ns(d, qname, sp, ns)
+    })?)?;
+    /* Before the wrap, whose allocation can raise past this frame. */
+    drop((nv, qv));
+    wrap(el, rb_self)
 }
 
 /// `create_loose_dom_element(qualified_name, prefix, local_name, namespace_uri)`
@@ -355,58 +338,47 @@ pub fn create_loose_dom_element(
     local: Value,
     ns: Value,
 ) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let qv = verified_name(qname, "qualified name")?;
-        let lv = verified_name(local, "local name")?;
-        let pv = verified_name_opt(prefix, "prefix")?;
-        let nv = namespace_arg(ns, "namespace URI")?;
+    let qv = verified_name(qname, "qualified name")?;
+    let lv = verified_name(local, "local name")?;
+    let pv = verified_name_opt(prefix, "prefix")?;
+    let nv = namespace_arg(ns, "namespace URI")?;
 
-        let qname = qv.as_bytes();
-        let sp = split_loose_dom_name(qname, pv.as_ref().map(|p| p.as_bytes()), lv.as_bytes())
-            .map_err(|e| Error::new(ruby.exception_arg_error(), e.message()))?;
-        let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
-        let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
-            mutate::new_loose_dom_element(d, qname, sp, ns)
-        })?)?;
-        /* Before the wrap, whose allocation can raise past this frame. */
-        drop((qv, lv, pv, nv));
-        wrap(el, rb_self)
-    })
+    let qname = qv.as_bytes();
+    let sp = split_loose_dom_name(qname, pv.as_ref().map(|p| p.as_bytes()), lv.as_bytes())
+        .map_err(|e| Error::new(ruby.exception_arg_error(), e.message()))?;
+    let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
+    let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
+        mutate::new_loose_dom_element(d, qname, sp, ns)
+    })?)?;
+    /* Before the wrap, whose allocation can raise past this frame. */
+    drop((qv, lv, pv, nv));
+    wrap(el, rb_self)
 }
 
 /// `create_document_type(name, public_id = "", system_id = "")` -> DocumentType.
 pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let a = magnus::scan_args::scan_args::<
-            (Value,),
-            (Option<Value>, Option<Value>),
-            (),
-            (),
-            (),
-            (),
-        >(args)?;
-        let name = a.required.0;
-        let nil = ruby.qnil().as_value();
-        let nv = verified_name(name, "doctype name")?;
-        let pv = verified_text_opt(a.optional.0.unwrap_or(nil), "doctype public id")?;
-        let sv = verified_text_opt(a.optional.1.unwrap_or(nil), "doctype system id")?;
-        /* An empty id is absent, like nil, matching the HTML factory and
-         * Nokogiri. Built as a `DoctypeId`, never an `Option<&[u8]>` (its doc
-         * says why). */
-        fn id(v: &Option<crate::bridge::string::RubyText>) -> DoctypeId<'_> {
-            match v {
-                Some(t) if !t.is_empty() => DoctypeId::written(t.as_bytes()),
-                _ => DoctypeId::omitted(),
-            }
+    let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::positional(1, 2))?;
+    let name = a.required(0);
+    let nil = ruby.qnil().as_value();
+    let nv = verified_name(name, "doctype name")?;
+    let pv = verified_text_opt(a.optional(0).unwrap_or(nil), "doctype public id")?;
+    let sv = verified_text_opt(a.optional(1).unwrap_or(nil), "doctype system id")?;
+    /* An empty id is absent, like nil, matching the HTML factory and
+     * Nokogiri. Built as a `DoctypeId`, never an `Option<&[u8]>` (its doc
+     * says why). */
+    fn id(v: &Option<crate::bridge::string::RubyText>) -> DoctypeId<'_> {
+        match v {
+            Some(t) if !t.is_empty() => DoctypeId::written(t.as_bytes()),
+            _ => DoctypeId::omitted(),
         }
-        let (name, pub_id, sys_id) = (nv.as_bytes(), id(&pv), id(&sv));
-        let dt = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
-            mutate::new_document_type(d, name, pub_id, sys_id)
-        })?)?;
-        /* Before the wrap, whose allocation can raise past this frame. */
-        drop((nv, pv, sv));
-        wrap(dt, rb_self)
-    })
+    }
+    let (name, pub_id, sys_id) = (nv.as_bytes(), id(&pv), id(&sv));
+    let dt = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
+        mutate::new_document_type(d, name, pub_id, sys_id)
+    })?)?;
+    /* Before the wrap, whose allocation can raise past this frame. */
+    drop((nv, pv, sv));
+    wrap(dt, rb_self)
 }
 
 /// The shared body of the leaf-data factories.
@@ -427,38 +399,30 @@ fn create_chardata(
 }
 
 pub fn create_text_node(_ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| create_chardata(rb_self, t, ArenaKind::Text, "text content"))
+    create_chardata(rb_self, t, ArenaKind::Text, "text content")
 }
 pub fn create_comment(_ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        create_chardata(rb_self, t, ArenaKind::Comment, "comment content")
-    })
+    create_chardata(rb_self, t, ArenaKind::Comment, "comment content")
 }
 pub fn create_cdata(_ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        create_chardata(rb_self, t, ArenaKind::CDataSection, "CDATA content")
-    })
+    create_chardata(rb_self, t, ArenaKind::CDataSection, "CDATA content")
 }
 
 pub fn create_pi(_ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let tg = verified_name(target, "PI target")?;
-        let dt = verified_data(data, "PI data")?;
-        let (target, data) = (tg.as_bytes(), dt.as_bytes());
-        let pi = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
-            mutate::new_pi(d, target, data)
-        })?)?;
-        /* Before the wrap, whose allocation can raise past this frame. */
-        drop((tg, dt));
-        wrap(pi, rb_self)
-    })
+    let tg = verified_name(target, "PI target")?;
+    let dt = verified_data(data, "PI data")?;
+    let (target, data) = (tg.as_bytes(), dt.as_bytes());
+    let pi = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
+        mutate::new_pi(d, target, data)
+    })?)?;
+    /* Before the wrap, whose allocation can raise past this frame. */
+    drop((tg, dt));
+    wrap(pi, rb_self)
 }
 
 /// `Document#import_node(node, deep = false)` - the DOM's importNode.
-pub fn import_node(_ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let a = magnus::scan_args::scan_args::<(Value,), (Option<Value>,), (), (), (), ()>(args)?;
-        let deep = a.optional.0.is_some_and(|v| v.to_bool());
-        wrap(import_copy(rb_self, a.required.0, deep)?, rb_self)
-    })
+pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
+    let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::positional(1, 1))?;
+    let deep = a.optional(0).is_some_and(|v| v.to_bool());
+    wrap(import_copy(rb_self, a.required(0), deep)?, rb_self)
 }

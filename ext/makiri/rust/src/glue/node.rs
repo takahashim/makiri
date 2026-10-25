@@ -9,7 +9,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{Error, Ruby, Value};
+use crate::bridge::rb::{Error, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
 use crate::xml::dom_name;
@@ -75,9 +75,10 @@ pub fn dom_extract<'q>(
     what: &str,
 ) -> Result<(&'q [u8], &'q [u8]), Error> {
     dom_name::validate_and_extract(ns, qname, local_ok).map_err(|e| match e {
-        dom_name::ExtractError::Name => {
-            Error::new(ruby.exception_arg_error(), format!("invalid {what} name"))
-        }
+        dom_name::ExtractError::Name => Error::new(
+            ruby.exception_arg_error(),
+            format_args!("invalid {what} name"),
+        ),
         dom_name::ExtractError::Namespace => makiri_error(NS_MISFIT),
     })
 }
@@ -85,13 +86,11 @@ pub fn dom_extract<'q>(
 /// Node identity: equal iff both wrappers name the same node of the same
 /// Document, so an HTML node is never equal to an XML one, nor a node to one
 /// of another document that happens to share its word (see [`node_key`]).
-pub fn node_equals(rb_self: Value, other: Value) -> Result<bool, magnus::Error> {
-    crate::bridge::ruby::entry(|| {
-        if !crate::bridge::ruby::is_kind_of(other, &CLASS_NODE) {
-            return Ok(false);
-        }
-        Ok(node_key(rb_self)? == node_key(other)?)
-    })
+pub fn node_equals(rb_self: Value, other: Value) -> Result<bool, crate::bridge::rb::Error> {
+    if !crate::bridge::ruby::is_kind_of(other, &CLASS_NODE) {
+        return Ok(false);
+    }
+    Ok(node_key(rb_self)? == node_key(other)?)
 }
 
 /// Nokogiri-compatible identity: the underlying node pointer as an Integer.
@@ -99,43 +98,46 @@ pub fn node_equals(rb_self: Value, other: Value) -> Result<bool, magnus::Error> 
 /// freed-then-reallocated node may reuse an address (the same caveat as
 /// `Nokogiri::XML::Node#pointer_id`). `a.pointer_id == b.pointer_id` iff
 /// `a.eql?(b)`.
-pub fn node_pointer_id(_ruby: &Ruby, rb_self: Value) -> Result<Value, magnus::Error> {
-    crate::bridge::ruby::entry(|| crate::bridge::build::uint(node_identity(rb_self)? as u64))
+pub fn node_pointer_id(_ruby: &Ruby, rb_self: Value) -> Result<Value, crate::bridge::rb::Error> {
+    crate::bridge::build::uint(node_identity(rb_self)? as u64)
 }
 
 /// A stable hash from the node word, so `a == b` implies `a.hash == b.hash`
 /// even across separately-created wrappers. Shares the value with
 /// `#pointer_id`; an HTML and an XML node may share it, which a hash allows.
-pub fn node_hash(ruby: &Ruby, rb_self: Value) -> Result<Value, magnus::Error> {
-    crate::bridge::ruby::entry(|| node_pointer_id(ruby, rb_self))
+pub fn node_hash(ruby: &Ruby, rb_self: Value) -> Result<Value, crate::bridge::rb::Error> {
+    node_pointer_id(ruby, rb_self)
 }
 
 /// A `child_at` / `element_child_at` index argument: None (so nil) for a
 /// negative one, or one too large for any list. Not an Integer is a
 /// `TypeError` (`bridge::ruby::integer_arg`): no `to_int` is called.
-fn child_index_arg(i: Value) -> Result<Option<usize>, magnus::Error> {
+fn child_index_arg(i: Value) -> Result<Option<usize>, crate::bridge::rb::Error> {
     let i = crate::bridge::ruby::integer_arg(i)?;
-    Ok(i.to_u64().ok().and_then(|n| usize::try_from(n).ok()))
+    i.to_usize_within()
 }
 
 /// `#child_count` (DOM `childNodes.length`): every child node, counted
 /// without building `#children`.
-pub fn child_count<S: ChildListHost>(this: S) -> Result<usize, magnus::Error> {
-    crate::bridge::ruby::entry(|| this.child_count(ChildList::Nodes))
+pub fn child_count<S: ChildListHost>(this: S) -> Result<usize, crate::bridge::rb::Error> {
+    this.child_count(ChildList::Nodes)
 }
 
 /// `#element_child_count` (DOM `childElementCount`).
-pub fn element_child_count<S: ChildListHost>(this: S) -> Result<usize, magnus::Error> {
-    crate::bridge::ruby::entry(|| this.child_count(ChildList::Elements))
+pub fn element_child_count<S: ChildListHost>(this: S) -> Result<usize, crate::bridge::rb::Error> {
+    this.child_count(ChildList::Elements)
 }
 
 /// `#child_at(i)` (DOM `childNodes[i]`): the child node at `i`, or nil when
 /// `i` is negative or past the end.
-pub fn child_at<S: ChildListHost>(this: S, i: Value) -> Result<Option<Value>, magnus::Error> {
-    crate::bridge::ruby::entry(|| match child_index_arg(i)? {
+pub fn child_at<S: ChildListHost>(
+    this: S,
+    i: Value,
+) -> Result<Option<Value>, crate::bridge::rb::Error> {
+    match child_index_arg(i)? {
         Some(i) => this.child_at(ChildList::Nodes, i),
         None => Ok(None),
-    })
+    }
 }
 
 /// `#element_child_at(i)` (DOM `children[i]`): the child element at `i`, or
@@ -143,11 +145,11 @@ pub fn child_at<S: ChildListHost>(this: S, i: Value) -> Result<Option<Value>, ma
 pub fn element_child_at<S: ChildListHost>(
     this: S,
     i: Value,
-) -> Result<Option<Value>, magnus::Error> {
-    crate::bridge::ruby::entry(|| match child_index_arg(i)? {
+) -> Result<Option<Value>, crate::bridge::rb::Error> {
+    match child_index_arg(i)? {
         Some(i) => this.child_at(ChildList::Elements, i),
         None => Ok(None),
-    })
+    }
 }
 
 /// `Document#tree_version`: an Integer that grows with every edit that can
@@ -156,8 +158,8 @@ pub fn element_child_at<S: ChildListHost>(
 /// `content=` and the like, and both documents of a move between them.
 /// Attribute edits (`attribute_version`'s) and character-data edits (a Text,
 /// Comment, CDATA or PI node's `content=`) leave it alone. A reader caching a child list keys it by this.
-pub fn document_tree_version(rb_self: Value) -> Result<u64, magnus::Error> {
-    crate::bridge::ruby::entry(|| crate::bridge::wrapper::tree_version(rb_self))
+pub fn document_tree_version(rb_self: Value) -> Result<u64, crate::bridge::rb::Error> {
+    crate::bridge::wrapper::tree_version(rb_self)
 }
 
 /// `Document#attribute_version`: an Integer that grows with every edit of an
@@ -165,6 +167,6 @@ pub fn document_tree_version(rb_self: Value) -> Result<u64, magnus::Error> {
 /// (to the same value too), an Attr's `content=` included. Child-list edits
 /// (`tree_version`'s) and character-data edits leave it alone. A reader
 /// caching what depends on attributes keys it by this.
-pub fn document_attribute_version(rb_self: Value) -> Result<u64, magnus::Error> {
-    crate::bridge::ruby::entry(|| crate::bridge::wrapper::attribute_version(rb_self))
+pub fn document_attribute_version(rb_self: Value) -> Result<u64, crate::bridge::rb::Error> {
+    crate::bridge::wrapper::attribute_version(rb_self)
 }

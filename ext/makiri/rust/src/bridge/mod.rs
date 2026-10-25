@@ -14,7 +14,7 @@
 //! `rake unsafe:boundaries` holds that: no method is defined, and no argument
 //! list scanned, in this layer.
 //!
-//! A failure comes back as `Err(magnus::Error)` rather than as a raise: `ruby`
+//! A failure comes back as `Err(crate::bridge::rb::Error)` rather than as a raise: `ruby`
 //! holds the few places a raising C function is still called, and turns each
 //! raise into an `Err` there.
 
@@ -26,6 +26,9 @@ pub mod build;
 
 /// The Ruby C calls that can raise, each with its raise stated.
 pub mod raw;
+
+/// The Ruby layer over rb-sys: values, errors, method registration, classes.
+pub mod rb;
 
 pub mod gvl;
 

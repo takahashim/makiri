@@ -48,9 +48,9 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   sanitized run is launched.
 
 - **A panic must not kill the host.** The crate builds with `panic = "unwind"`,
-  so magnus's `catch_unwind` turns a panic into Ruby's `fatal`: on the thread
-  that ran the query, which dies alone while the process keeps working, with
-  `ensure` and `at_exit` run and every `Drop` executed on the way out. `abort`
+  so every method's trampoline (`bridge::rb::method::finish`) catches a panic
+  and raises `Makiri::InternalError` in its place, with every `Drop` of the
+  method's frames executed on the way out. `abort`
   did none of that - no destructor, no cleanup, SIGABRT for the whole process -
   so **do not set it back**; `spec/panic_spec.rb` is what would catch that,
   through the `Makiri.__panic(kind)` hook that exists for no other purpose.
@@ -68,9 +68,11 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   `caught::PanicLatch` is that, and it is deliberately the same shape the
   callbacks already used for the node cap and OOM. The build that ships
   installs it in two: `bridge::gvl`'s trampoline (which carries the whole
-  parser) and `glue::hash::hash_foreach`. For the same reason a Hash is walked only through
-  `hash_foreach` (magnus's `RHash::foreach` protects without one;
-  `rake unsafe:boundaries` fails on a direct `.foreach(`). The reference-only
+  parser) and `bridge::raw::hash_foreach`'s `rb_hash_foreach` callback, which
+  answers "stop" for a latched panic or an error and never raises from inside
+  the walk. For the same reason a Hash is walked only through
+  `glue::hash::hash_foreach` over it (`RHash` has no walk of its own, so
+  there is no latch-less one to call, as magnus's `foreach` was). The reference-only
   Lexbor callbacks carry it too (`lexbor::selectors`' traversal,
   `lexbor::chunks::chunk_cb`, `tree_guard::hook_token_cb`).
   Two `extern "C"` functions have no latch ON PURPOSE. The GC callbacks in
@@ -78,26 +80,65 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   worse than a stop, so they keep aborting - keep their bodies trivial. The
   `rb_protect` thunk of `bridge::raw::call` holds one C call and the `Copy`
   values it reads (`F: Copy`, `T: Copy`), so there is no Rust there to panic
-  and no `catch_unwind` for a raise to cross; keep it that way.
+  and no `catch_unwind` for a raise to cross; keep it that way. The one C
+  call that calls back into Rust is `rb_hash_foreach`, and its callback is
+  latched (above) and raises nothing.
+
+  **Nothing that must not unwind can, and the compiler proves it**
+  (`src/no_unwind.rs`, `rake no_unwind`). An unwind out of an `extern "C"`
+  function aborts, so does a panic in a `Drop` the GC runs or that runs
+  while another panic unwinds. Each such body is a `Site` run through
+  `must_not_unwind`; a release build with `--cfg makiri_no_unwind` gives each
+  site's guard a `Drop` that calls `makiri_unwinds_<site>`, which nobody
+  defines and only an unwind reaches, so the optimizer removes the call
+  exactly where it proves the body unwind-free, and `nm -u` lists the sites
+  that can. The `self_test` control site can unwind by design and must be
+  the one left, or the check is not live. `rake dylint`'s
+  `unguarded_no_unwind_site` fails on an `extern "C"` fn or a `Drop` in the
+  compiled crate (macro-generated ones included) whose body does not run
+  under it. What the proof needed: post-catch code free of `fmt`
+  (`Msg::copy`, `&'static str` errors in `raw::typed`/`c_len` - a
+  `format_args!` there brought the unwind back), no abort call left at all
+  (an `abort(3)` declared `extern "C"` stood in for `std::process::abort`
+  until nothing needed one), and `caught::quietly` (catch, leak the payload) around what the compiler cannot
+  see through - a payload's drop and `downcast`, a type's drop glue in the
+  free callback (the XPath AST's recursive glue), and the memsize callback,
+  whose answer is advisory (0 on a panic). mark and compact are NOT caught -
+  a value left unmarked is freed while referenced - so they are proven
+  unwind-free as they are. CI runs it in one cell.
 
   **A VALUE inside a wrapped object is a `bridge::typed::Held`**, and a
   `Held` that holds anything can only be made with a `Store`, which exists
   only where the owner is already a Ruby object (`TypedType::wrap`'s store
-  step, `TypedType::with_store`). So "store a VALUE into a struct only after
-  its wrapper exists" - the `DocData.errors` crash - is a type rule, not a
-  convention: a struct is built holding `Held::empty()`, and its
-  `Hooks::trace` hands each `Held` it keeps to the `Tracer`, as
-  `pinned` or `movable` - one walk for both the mark and the compaction
-  callback, so a value marked movable cannot be left out of the relocation.
-  The type enforces that ORDER only: that a `Held` stays where its owner's
-  trace finds it is beyond the type system, so reading one back
-  (`Held::get`) is `unsafe` with that as its contract, and both types are
-  visible to `bridge/` alone. A `Held` is a `Cell`, and a `DocData`'s
-  changing fields are cells too, so the GC callbacks and every method read
-  a wrapper's data through `&T`: no `&mut` of it is made at all.
-  The other half - no magnus value kept where the GC's stack scan cannot
-  see it (a `Vec`, a `Box`, a static or `thread_local!`, a `TypedData` /
-  `Hooks` type's own field) - is `rake dylint`'s `ruby_value_on_heap`,
+  step). So "store a VALUE into a struct only after its wrapper exists" -
+  the `DocData.errors` crash - is a type rule, not a convention: a struct is
+  built holding `Held::empty()`, and its `Hooks::trace` hands each `Held` it
+  keeps to the `Tracer`, which marks it PINNED. The type enforces that ORDER
+  only: that a `Held` stays where its owner's trace finds it is beyond the
+  type system, so reading one back (`Held::get`) is `unsafe` with that as
+  its contract, and both types are visible to `bridge/` alone.
+  **Only three `Held`s exist, each one field written once in the store
+  step**: a node wrapper's Document, a Document's node table, a NodeSet's
+  Document - the reads too hot for an ivar. Nothing re-points one and none
+  is movable, so there is no compaction callback and no relocation to get
+  wrong. Every other value a wrapper keeps alive is a hidden ivar of its
+  object (`raw::ivar_set` / `ivar_get`, names without `@`, so Ruby code
+  cannot see them): an XPathContext's Document and node (`#node=` is an
+  ivar write), a Document's errors. The node table - one wrapper per node,
+  so a node navigated to twice is the SAME object - is a Ruby Hash from the
+  node's token (a Fixnum) to its wrapper, which the GC marks and moves
+  itself, in place of the Rust map of movable values it replaced; its
+  entries are written only once the wrapper exists, and a wrapper is handed
+  out only once it is in the table. Measured against the Rust map
+  (`notes/magnus_replacement_plan.ja.md`): the light readers unchanged,
+  a cached traverse +4-8%, wrapping fresh nodes about +12%; moving the
+  node's and the NodeSet's Document to ivars too cost +15-65% and was not
+  taken. A `DocData`'s changing fields are cells, so the GC callbacks and
+  every method read a wrapper's data through `&T`: no `&mut` of it is made
+  at all.
+  The other half - no Ruby value kept where the GC's stack scan cannot
+  see it (a `Vec`, a `Box`, a static or `thread_local!`, a `Hooks` type's
+  own field) - is `rake dylint`'s `ruby_value_on_heap`,
   which reads the types; it is why raw `VALUE`s stay in `bridge/raw.rs` and
   `bridge/typed.rs`, since a lint sees a `VALUE` only as an integer. What it
   cannot see is a temporary handed straight to a call (`f(vec![v])`).
@@ -120,31 +161,33 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   wrapper hands its one C call to `raw::call`, whose `extern "C"` thunk is the
   only frame a raise crosses, and the raise comes back as `Err`. A caller may
   then own copies, hold document guards and build Ruby objects in any order.
-  `rake unsafe:boundaries` pins the raising names to `raw.rs` and fails on one
-  outside a `call(|| ...)` there (`raw_unprotected`); a new raising call is a
-  new wrapper with its raise stated. magnus's allocating constructors raise
-  instead, so `clippy.toml` bans them (and the `funcall`/`respond_to`/`eql`
-  family, which runs the caller's Ruby): the glue builds Arrays, Hashes,
-  numbers and Symbols through `bridge::build`, Strings through
-  `bridge::string::utf8_str`, and NodeSets through `typed::wrap_magnus`. Only
-  `Init_makiri` (where a raise is `require`'s) carries an `#[allow]`. Each
+  `rake dylint`'s `raising_call_outside_protect` fails on one called outside
+  the closure handed to `bridge::raw::call`, by resolved path - and `call` is
+  private to `raw.rs`, so that is also where they all are; a new raising call
+  is a new wrapper with its raise stated. The glue builds Arrays, Hashes, numbers
+  and Symbols through `bridge::build`, Strings through
+  `bridge::string::utf8_str`, and every wrapped object - a NodeSet included -
+  through `typed::TypedType::wrap`, each over those wrappers. Each
   protected call costs a `setjmp`, ~8 ns: a light reader that allocates one
   String (`#name`, `#[]`, `#text`) measured ~15-20 ns slower than the
   unprotected allocation it replaced, about half of which dropping the
   lifting (below) took back (`notes/ruby_boundary_simplification_plan.ja.md`).
-  The value-level wrappers are SAFE and typed: they take and return magnus's
-  values (`RString`, `RArray`, `RHash`, `Value`), slices and
+  The value-level wrappers are SAFE and typed: they take and return
+  `bridge::rb`'s values (`RString`, `RArray`, `RHash`, `Value`), slices and
   `bridge::string::Encoding`, check what the C function would not (a Hash
   key's kind, a substring's bounds, `to_encoding`'s argument), and one with
   no Ruby value takes `&Ruby` as the GVL's proof. Only those over raw memory
-  stay `unsafe` (`typed_object_wrap` / `_zalloc`, `xmalloc`, `xrealloc2`,
+  stay `unsafe` (`typed_object_zalloc`, `xrealloc2`,
   `check_typeddata`, `utf8_str_unwritten`). A raw `VALUE` - an integer to
   Rust, which no lint can tell from a `u64` in a `Vec` - is spelled only in
-  `raw.rs` and `typed.rs` (`unsafe:boundaries`' `VALUE_COUNTS`, empty), so
+  `raw.rs`, `typed.rs` and the `bridge::rb` files that are the typed values
+  (`rake dylint`'s `raw_ruby_outside_bridge`, which also fails on any
+  `rb_sys::` outside `bridge/`), so
   everything else holds typed values; `TypedType::wrap` is safe for that
   reason (`&Ruby`, and a `T` can keep a Ruby value only in a `Held`). A
   `Held` is a private field beside the `trace` that marks it, read through
-  that module's accessor (`NodeData::document`, `DocData::errors`).
+  that module's accessor (`NodeData`'s snapshot, `node_table`,
+  `NodeSet::document`).
 
   **A Document's content is reached only through a guard** (`bridge::dom`,
   over `crate::doc_cell`, which is Ruby-free so its `compile_fail` doctests
@@ -169,28 +212,26 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   `notes/ruby_boundary_simplification_plan.ja.md`, and the light readers got
   faster for it (`#text` ~124 -> ~112 ns).
 
-  **A Ruby method raises `Makiri::InternalError`, not `fatal`.**
-  `bridge::ruby::entry` wraps the body of EVERY method the glue registers, and
-  turns a panic there into that exception. It used to wrap only the methods
-  judged to reach untrusted input, and the judgement left readers such as
-  `children`, `[]` and `NodeSet#each` out; so `rake unsafe:boundaries` finds
-  every `method!`/`function!` in the glue (a registration table included),
-  resolves it to its one definition, and fails unless the whole body is a
-  `crate::bridge::ruby::entry(...)` call. `ENTRY_EXEMPT` there names the few
-  that stay out - the `__panic` / `__alloc_inject*` test hooks - and a new
-  exemption needs a reason.
+  **A Ruby method raises `Makiri::InternalError`, not `fatal`.** Every
+  `method!`/`function!` expands to a trampoline whose body runs inside
+  `bridge::rb::method::finish`, which catches a panic and raises that
+  exception, the test hooks' included, so no method needs a wrapper of its
+  own (the per-method `bridge::ruby::entry` and its gate went with magnus).
   `InternalError` descends from `Exception`, NOT `StandardError`, which is the
   point: a bare `rescue => e` keeps passing it through, because a broken
   invariant is not a bad selector, while a host that wants to turn one request
   into a 500 can catch it WITHOUT a thread boundary to re-raise at (a `fatal`
-  cannot be rescued in its own frame at all). Outside a registered method - the
-  exempt ones, GC callbacks, init - a panic stays `fatal`.
+  cannot be rescued in its own frame at all). Outside a registered method -
+  the GC callbacks, `Init_makiri` - a panic is not this: the GC callbacks
+  abort (above), and a panic in `Init_makiri` is `fatal`, since
+  `InternalError` may not exist yet and a half-defined extension must not be
+  used (`bridge::rb::method::run_init`).
 
   `clippy::unwrap_used`, `clippy::expect_used` and `clippy::panic` (in `Cargo.toml`) keep a new panic
   from arriving by accident; a site that wants one carries an `#[allow]` with a
   reason. `spec/panic_spec.rb` drives `Makiri.__panic(kind)`: kind 4 panics
   below the GVL-release frame, the case that proves the latch since without it
-  that one aborts, kind 5 goes through `entry`, and kind 6 panics in the
+  that one aborts, kind 5 panics in a method body, and kind 6 panics in the
   token-done path of a real document parse (`html::tree`'s
   `parse_with_panicking_hook`, its own sink, so no real parse carries it).
 
@@ -293,19 +334,33 @@ bundle exec rake spec
 bundle exec rake rust:test         # Ruby-free core tests, Lexbor-feature tests, fuzz-crate check
 bundle exec rake lint              # cargo clippy --all-features -D warnings + cargo fmt --check
 bundle exec rake unsafe:boundaries # reviewed unsafe islands and safe-module boundaries
-bundle exec rake dylint            # the crate's own lints (lints/makiri_lints):
-                                   # ruby_value_on_heap - a magnus value in a heap
-                                   # container, a static/thread_local or a wrapped
-                                   # object's data; converted_argument - a registered
-                                   # method taking a type magnus converts (RString,
-                                   # i64, ...); then their self-test
+bundle exec rake dylint            # the crate's own lints (lints/makiri_lints), on the
+                                   # compiled code by resolved path: ruby_value_on_heap
+                                   # (a Ruby value in a heap container, a static or a
+                                   # wrapped object's data), ruby_layer_in_engine,
+                                   # unguarded_no_unwind_site, ruby_in_gvl_released_body,
+                                   # infallible_allocation, raising_call_outside_protect,
+                                   # raw_ruby_outside_bridge, runs_callers_ruby,
+                                   # raw_node_crossing, ruby_surface_in_bridge,
+                                   # discarded_ruby_error (an Err of bridge::rb::Error
+                                   # thrown away by .ok() / .unwrap_or* / .is_ok() /
+                                   # let _ =)
+                                   # (a sanctioned site is an allow with its reason);
+                                   # then their self-test
                                    # (src/lint_probe.rs). Needs the nightly
                                    # rust-toolchain.toml pins + cargo-dylint/dylint-link
 bundle exec rake clean             # wipe the build dir (regenerates the Makefile next compile)
 bundle exec rake clean:lexbor      # wipe vendor/lexbor/{build,dist} (full Lexbor rebuild)
 bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'   # smoke load
 
+bundle exec rake deny              # cargo-deny over the extension's dependencies
+                                   # (ext/makiri/rust/deny.toml): RustSec advisories and
+                                   # yanked releases, licenses, crates.io only. CI:
+                                   # security.yml, nightly too. An advisory that does not
+                                   # apply is ignored in deny.toml with its reason
 bundle exec rake symbols           # THE export gate - see Hard constraints
+bundle exec rake no_unwind         # release build proving no extern "C" fn / GC-run Drop
+                                   # can unwind (src/no_unwind.rs) - see Hard constraints
 bundle exec rake diff              # answers vs the recorded C-build baseline (see below)
 bundle exec rake sanitize          # rebuild w/ -Zsanitizer=address (nightly), run suite
 bundle exec rake fuzz              # robustness fuzzer (spec/fuzz/); FUZZ_ARGS to tune
@@ -337,6 +392,22 @@ bundle exec rake oom               # OOM-injection sweep: rebuilds with
                                    # borrowed (`Makiri.__borrowed?`) or unusable - the
                                    # runtime check of the guards-across-raises rule.
                                    # Prefix with MAKIRI_SANITIZE=address to combine ASan.
+bundle exec rake miri              # the Ruby-free unsafe modules' tests (raw_vec, falloc,
+                                   # cbuf) under Miri, strict provenance (nightly + miri;
+                                   # CI: verify.yml)
+bundle exec rake verus             # Verus proofs (ext/makiri/rust/verus/): falloc's
+                                   # grow_capacity, RawVec, ptr_table's probing and
+                                   # load factor, and cbuf's Buf (content, ceiling,
+                                   # fail-closed) with copy_small, copied and checked against the source
+                                   # (`verus:sync`) - unbounded.
+                                   # VERUS=path/to/verus (Rakefile's VERUS_VERSION); CI:
+                                   # verify.yml. Heavy tools stay in CI, like Miri and Kani.
+                                   # Vacuity is checked by what must FAIL: an
+                                   # assert(false) at each `// [canary]` mark, one
+                                   # variant each, and verus/canaries/'s callers; what
+                                   # each proof trusts (external_body,
+                                   # assume_specification, assume) is pinned
+                                   # (VERUS_TRUSTED)
 bundle exec rake kani              # Kani proofs over the Ruby-free core (needs cargo-kani).
                                    # The successor to the C-era CBMC harnesses: the
                                    # allocator, cbuf, UTF-8 validate/decode.
@@ -345,6 +416,10 @@ bundle exec rake kani              # Kani proofs over the Ruby-free core (needs 
                                    # depends on); CI runs only the groups whose
                                    # code changed (`rake kani:groups`), and all of
                                    # them weekly. KANI_JOBS=N runs N in parallel.
+                                   # Every harness states with kani::cover! that its
+                                   # claim is reached, and the task fails on a harness
+                                   # with no cover or an unsatisfied one - a proof an
+                                   # over-strong assume made vacuous still says "0 failed"
 bundle exec rake bench             # perf vs Nokogiri (bench-only gems; runs outside bundle)
 ```
 
@@ -501,11 +576,28 @@ by the check that concluded "every undefined symbol is legitimate".
   cannot ban `Clone::clone` per type; the tokenizer's `Token` derives `Clone`
   with a `Vec` inside, and nothing that ships clones one), and what a
   third-party crate allocates inside itself (`encoding_rs`, `chardetng`). The glue's
-  Ruby-side storage - TypedData wrappers (`bridge::typed::wrap_built`, freed by
-  running the struct's `Drop` in place before `ruby_xfree`) and
-  `NodeSet`'s node array - uses Ruby's `ruby_xmalloc` family instead: its failure
-  is `NoMemoryError`, Ruby's own, which `bridge::raw`'s protected calls hand
-  back as `Err` (a failed wrap drops the built struct and frees its memory).
+  Ruby-side storage is Ruby's own memory instead. A TypedData wrapper's struct
+  is its object's data, made with it in one call by
+  `rb_data_typed_object_zalloc` (`TypedData_Make_Struct`'s function;
+  `bridge::typed::wrap_built`) and freed by running the struct's `Drop` in
+  place - a non-embedded type's data is `xcalloc`'d, which is also where Ruby
+  decides whether malloc pressure calls for a GC, so a Document's arena
+  report (`rb_gc_adjust_memory_usage`, which only adds to that pressure) gets
+  its collection (`spec/gc_accounting_spec.rb`). `NodeSet`'s node array is
+  `ruby_xrealloc2`'s. Their failure is `NoMemoryError`, Ruby's own, which
+  `bridge::raw`'s protected calls hand back as `Err`. An exception message
+  allocates nothing at all: a `bridge::rb::Error` holds a `&'static str` or a
+  `format_args!` written into `crate::msg::Msg` (256 bytes, inline; longer is
+  cut with `...`), and the exception is made only when the trampoline raises
+  it - so an error can be made inside an edit's closure, which must run no
+  Ruby. What a message quotes is written in by `Display` types that read
+  without a call (`bridge::ruby::Describe` / `Display` / `ExceptionText`,
+  `msg::Lossy`). `rake dylint`'s `infallible_allocation` holds the whole
+  shipped crate to no `format!` / `to_owned` / `to_string` / `vec!` /
+  `from_utf8_lossy` / `into_owned` / `CString::new`, by the path each resolves
+  to (`lexbor/`, which that build leaves out, stays `unsafe:boundaries`'
+  text check); a site that must is `#[cfg_attr(dylint_lib = "makiri_lints",
+  allow(infallible_allocation))]` with its reason - one, the `__panic(1)` hook.
   std's STABLE sorts (`sort`, `sort_by`, `sort_by_key`, `sort_by_cached_key`)
   are banned there too: they take a scratch buffer from the global allocator
   and abort on OOM, invisibly to `rake oom`. Sort in place (`sort_unstable_by`)
@@ -519,7 +611,9 @@ by the check that concluded "every undefined symbol is legitimate".
   (`html/dom/copy.rs`).
 - Pointer-keyed
   tables hash with `crate::ptr_table::ptr_hash`, and are a `PtrTable` (sized
-  once) or a `PtrMap` (grows) rather than another hand-written probe loop; a
+  once) or a `PtrMap` (grows) rather than another hand-written probe loop -
+  Verus proves the probe always stops (`verus/ptr_table.rs`), so a change to
+  either table goes through `rake verus:sync`; a
   key that can be 0 (an XML token) supplies its own empty marker through
   `TableKey`. An XPath step's name test is compiled once into a
   `nodetest::CompiledTest` - where an unknown prefix is reported, via
@@ -549,12 +643,30 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            else Ruby-free is `forbid(unsafe_code)`
     doc_cell.rs            `DocCell`: a Document's content behind counted
                            read/write guards (Ruby-free; `bridge::dom` wraps it)
+    utf8_copy.rs           `Utf8Copy`: owned bytes checked by std's `from_utf8` over
+                           the copy itself - what a checked view of a Ruby String
+                           (`RubyText` / `RubyData`) is, so a `&str` never rests on
+                           a String's cached coderange
+    raw_vec/               `RawVec<T, A>`: a growable array over an allocator that is
+                           only realloc + free - a NodeSet's node array, with Ruby's
+                           allocator in `bridge::alloc` (`RubyVec`). The pointer is
+                           `block.rs`'s alone (`Block`: `cap` elements, all
+                           initialised - growth fills with `T::default()` - seen as
+                           a slice); `mod.rs` is safe code over it, which Verus
+                           proves as written (`verus/`), Kani bounded against an
+                           allocator that may fail at any call (`verify.rs`), and
+                           Miri runs
     cbuf.rs                `Buf`: the owned, capped, growable byte buffer
     cutf8.rs               the one UTF-8 validator + strict 1-codepoint decoder
     utf8_input.rs          HTML input sanitiser: invalid UTF-8 -> U+FFFD, per
                            WHATWG; `cbuf`+`cutf8` only, so Ruby/Lexbor-free
     bridge/                the Ruby boundary - the ONLY layer allowed raw Ruby String
-                           access (RSTRING) and verified-string minting, and where
+                           access (RSTRING) and verified-string minting. `rb/` is
+                           its value and method layer over rb-sys (`Value` and the
+                           class-checked handles, `Error`, the `method!` /
+                           `function!` trampolines, class definitions), which
+                           replaced magnus under its names; `raw.rs` is every
+                           raising C call Makiri makes. It is also where
                            the C calls that can raise (`bridge/raw.rs`) and the
                            wrap-then-store constructor live; a raise becomes `Err`
                            there. `rake unsafe:boundaries` pins that boundary:
@@ -565,10 +677,15 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            every `forbid` file, which it counts. `glue/**`, `xpath/**`,
                            `css/**` and `css_match/**` are fully safe
                            (their module roots carry
-                           `#![forbid(unsafe_code)]`, which the gate pins), and
-                           `rb_sys::` and `Value::from_raw` are 0 outside
-                           `bridge/`, and the C calls that can raise live only
-                           in `bridge/raw.rs`
+                           `#![forbid(unsafe_code)]`, which the gate pins);
+                           `rake dylint` holds `rb_sys::` to `bridge/` and the
+                           C calls that can raise to `bridge/raw.rs`, and
+                           `Value::from_raw` is `pub(in crate::bridge)`. A
+                           borrowed HTML handle made a lifetime-free `RawNode`
+                           in `bridge/` is `raw_node_crossing`, each crossing
+                           an allow with its reason (`with_html_node` /
+                           `HtmlParsed::mint_key` / `resolve` are the checked
+                           entries to reach for instead)
     glue/                  THE Ruby surface: every method Makiri defines, with
                            its argument reading, its errors and its
                            registration, one module per feature
@@ -577,8 +694,9 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            read/mutate/css/serialize). All `unsafe`-free; the
                            wrappers, TypedData and the operations that keep a
                            structure's invariants are `bridge/`'s, and
-                           `rake unsafe:boundaries` fails on a method defined -
-                           or an argument list scanned - in `bridge/`
+                           `rake dylint`'s `ruby_surface_in_bridge` fails on a
+                           method defined - or an argument list split - in
+                           `bridge/`
     xpath/                 native XPath 1.0 engine, generic over a `Dom` trait;
                            `#![forbid(unsafe_code)]` and Lexbor/Ruby-free. The
                            two `Dom` instances live with their layers:
@@ -641,6 +759,24 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            (`stylesheet.rs`) and the CSSOM selector writer
                            (`text.rs`); Ruby- and Lexbor-free,
                            `#![forbid(unsafe_code)]` at its root
+  verus/                   Verus proofs: `raw_vec.rs` holds falloc's `grow_capacity`
+                           and `RawVec`'s `as_slice` / `reserve` / `grow_to` / `push`,
+                           copied (lines only Verus needs end in `// [verus]`, and
+                           `rake verus:sync` holds the rest to the source token for
+                           token), proved over `Block`'s contract as the one axiom:
+                           the contents are what was pushed, a failure changes
+                           nothing, every `set` and `prefix` within the block;
+                           `ptr_table.rs` the same for `src/ptr_table.rs`: `probe`
+                           always stops (at the key or an empty slot), every
+                           `PtrTable` / `PtrMap` operation, `grow` included, keeps
+                           a slot free - the load factor - so it always can, and
+                           each table is the `Map` it stands for (`view`): `get`
+                           finds exactly what was put, since `wf` keeps keys
+                           `unique` and probe paths `clustered`;
+                           `cbuf.rs` for `src/cbuf.rs`: a `Buf` holds exactly
+                           what was appended, its room never passes the ceiling,
+                           a failure changes nothing, and `copy_small` copies
+                           exactly - at every length, where Kani ran out of memory
   fuzz/                    cargo-fuzz harnesses (xml/html, xpath/xml_xpath/
                            html_xpath, css = the XML matcher held to the lowering, html_css = the
                            HTML matcher over an arbitrary document, asserting
@@ -663,7 +799,8 @@ docs/design_doc.ja.md      authoritative design (read this)
 ```
 
 Seven features, and the default is the extension: **`ruby`** (the
-magnus boundary + `glue` + `init`), **`html-dom`** (the parser port's
+Ruby boundary over rb-sys - `bridge`, whose `bridge::rb` is the value and
+method layer - + `glue` + `init`), **`html-dom`** (the parser port's
 index-arena DOM, `html::dom`, behind the `html_dom` facade and parsed by the
 ported tree builder `html::tree`, with what sits over it - the HTML CSS
 matcher, XPath's HTML instance, the bridge's HTML half; `ruby` and `lexbor`
@@ -757,9 +894,13 @@ repaired - and any other raise in the transcode (`NoMemoryError`, an
 interrupt) is passed through as it is. A length cap (`ruby_try_verified_text`)
 is on the UTF-8. Both checked views (`RubyText`, `RubyData`) deref to
 `&str`, and each OWNS A COPY of the (UTF-8) String's bytes, taken with no
-Ruby between the read and the copy (`string::copy_bytes`; up to 64 bytes
-inline, so a UTF-8 selector or expression allocates nothing; one in another
-encoding allocates its transcode) and checked after. Nothing Ruby
+Ruby between the read and the copy (`crate::utf8_copy::Utf8Copy`; up to 64
+bytes inline, so a UTF-8 selector or expression allocates nothing; one in
+another encoding allocates its transcode) and checked after - its UTF-8 by
+std's `from_utf8` over the copy, ALWAYS: the cached coderange is not
+consulted there, since a wrong one (another C extension's, a Ruby bug) would
+make the `&str` undefined behaviour. The parse source and the XML input check
+still take the coderange as a hint, where a wrong one stays safe code. Nothing Ruby
 does afterwards - a GC, the caller rewriting or growing the String - reaches
 the copy. The HTML source (`HtmlSource`) is a copy too, the
 one a document parse needs to read it with the GVL released. The only borrow
@@ -781,13 +922,16 @@ selector, expression, encoding - a `String` or a `Symbol` (`name_arg`), and
 anything else is a `TypeError`, since a `to_s`/`to_str` is the caller's Ruby.
 What converts with `to_s` is `lib/`'s, outside the extension: the parse
 entries (`String(source)`, an IO's `read`) and `XML::Builder`. `rake
-unsafe:boundaries` counts every call that would run the caller's Ruby
-(`USER_CODE_API`); `NodeSet#each`'s `yield` and `XML::Namespace.new` are the
-two allowed. The registered methods' parameter types are held to
-it by `rake dylint`'s `converted_argument`: a `method!` / `function!` whose
-receiver or argument is a type magnus's own `TryConvert` converts (`RString`
-by `to_str`, `i64` by `to_int`, `RHash`, `Symbol`, ...) fails; `Value`, `bool`, a
-`TypedData` reference and the crate's own `TryConvert` types pass.
+dylint`'s `runs_callers_ruby` fails on every call that would run the caller's
+Ruby, by resolved path; `NodeSet#each`'s `yield` (through
+`bridge::raw::yield_value`, over `rb_yield`) and `XML::Namespace.new`
+(`Module::call_method`, over `rb_funcallv`) are the two allowed, each wrapper
+along the way an allow with its reason. A registered method's parameters are held to it by
+type: `bridge::rb::TryConvert` exists only for `Value`, `bool` and Makiri's
+receiver types (`HtmlSelf`, `XmlSelf`, `XPathCtxSelf`, `NodeSetSelf`), so a
+`method!` / `function!` taking an `RString` or an `i64` does not compile.
+(magnus converted those with `to_str` / `to_int`; `rake dylint`'s
+`converted_argument` lint held the line until the switch.)
 
 **Parsing & source location.** The tree builder stamps an element when it
 is CREATED FOR ITS OWN START TAG (`TreeBuilder::created_offset`,
@@ -811,9 +955,19 @@ parse, and parser-made elements stole later tags' lines.)
 **HTML parse guard** (`html/tree/guard.rs`). Every parse runs under a
 `Guard` the tree builder checks after each token - `Guard::for_document`
 from `parse_html`, `Guard::for_fragment` (below the synthetic `<html>`) from
-`parse_fragment` - bounding the tree depth (`max_tree_depth:`, `DepthLimit`,
-default 400, Nokogiri's). The check is per token, not per insertion, so a
-void element at the limit is not refused. There is no limit on a
+`parse_fragment` - bounding the tree depth (`max_tree_depth:`, default 400,
+Nokogiri's) and the document's size against its input
+(`max_amplification:`, default 256 times the input and never less than
+64 MiB; `ParseLimits` carries both, a negative keyword lifting either). The
+second exists because "reconstruct the active formatting elements" re-creates
+every unclosed formatting element before each character: ~390 `<b>`s with
+distinct attributes then `<div>x</div>` repeated built a 62 KB input into a
+344 MB document, where ordinary documents build 10-46 times their input
+(`spec/html_amplification_spec.rb`). It reads `Document::approx_bytes`, O(1)
+per token, and a refused parse fails closed (`Makiri::Error`, "document
+size limit exceeded"); the tree of an accepted one is the Standard's. The
+check is per token, not per insertion, so a void element at the limit is
+not refused. There is no limit on a
 `<select>`'s options: the selectedness setting algorithm is decided from
 each select's state (`html/tree/select.rs`, `SelectStates`), so a select
 builds in linear time - keep it so, or the 10,000 limit it replaced has to
@@ -1332,9 +1486,10 @@ Key decisions that got there, worth not regressing:
   interrupted parse. `bridge::gvl::without_gvl` delivers an interrupt only
   when the body never started, under `protect`. Its `Send` bound keeps a
   Ruby handle from being carried into the body but not from being MADE
-  there (`bridge::ruby::gvl_ruby`), so `rake unsafe:boundaries` holds the
-  body's closure to engine functions by `crate::` path (no method call, bare
-  function or macro: hoist it). A runtime check in `gvl_ruby` was tried and
+  there (`bridge::ruby::gvl_ruby`), so `rake dylint`'s
+  `ruby_in_gvl_released_body` holds the body's closure to calls into the
+  engine or a library, by resolved path - a call through a function value,
+  whose target no one can see, is refused too (hoist it). A runtime check in `gvl_ruby` was tried and
   dropped: always on it cost the light readers 5-10%, and it could not see
   the one hole left, a function pointer the engine calls into Ruby's C.
   **XPath holds

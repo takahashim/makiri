@@ -74,6 +74,221 @@ namespace :unsafe do
   end
 end
 
+# The extension's dependencies against ext/makiri/rust/deny.toml: RustSec
+# advisories and yanked releases, licenses, sources (CI: security.yml, nightly
+# too). Needs cargo-deny (`cargo install cargo-deny --locked`).
+desc "Check the extension's dependencies with cargo-deny (advisories, licenses, sources)"
+task :deny do
+  Dir.chdir("ext/makiri/rust") { sh "cargo", "deny", "check" }
+end
+
+# Verus over what Kani proves bounded (ext/makiri/rust/verus/): the growth
+# arithmetic, copied from falloc, and RawVec over its Block's contract. The
+# copies are checked
+# against the source first - every line only Verus needs ends in `// [verus]`,
+# and the rest of the body must be the source's, token for token - so a
+# change to `grow_capacity` fails here until the proof is redone. VERUS names
+# the binary (else `verus` on PATH); CI: verify.yml, at VERUS_VERSION.
+VERUS_VERSION = "0.2026.10.04.426d8b0"
+VERUS_COPIES = [
+  ["ext/makiri/rust/src/falloc/mod.rs", "ext/makiri/rust/verus/raw_vec.rs", "grow_capacity"],
+  *%w[as_slice reserve grow_to push].map do |name|
+    ["ext/makiri/rust/src/raw_vec/mod.rs", "ext/makiri/rust/verus/raw_vec.rs", name]
+  end,
+  *%w[capacity_for probe lookup PtrTable::with_keys PtrTable::insert PtrTable::get
+      PtrMap::clear PtrMap::get PtrMap::insert PtrMap::set PtrMap::grow].map do |name|
+    ["ext/makiri/rust/src/ptr_table.rs", "ext/makiri/rust/verus/ptr_table.rs", name]
+  end,
+  ["ext/makiri/rust/src/falloc/mod.rs", "ext/makiri/rust/verus/cbuf.rs", "grow_capacity"],
+  ["ext/makiri/rust/src/cbuf.rs", "ext/makiri/rust/verus/cbuf.rs", "copy_small"],
+  *%w[as_slice append append_growing raise_limit reserve steal content_limit
+      content_limit_for grow_to].map do |name|
+    ["ext/makiri/rust/src/cbuf.rs", "ext/makiri/rust/verus/cbuf.rs", "Buf::#{name}"]
+  end
+].freeze
+# The files `rake verus` verifies.
+VERUS_PROOFS = %w[raw_vec.rs ptr_table.rs cbuf.rs].freeze
+
+# The body of `fn name` in `src` - `Type::name` for the one in `impl ... Type`
+# - as tokens: lines marked `// [verus]` and
+# comments (line and block) dropped, from the brace that opens the body to the one closing it,
+# and a trailing comma before a closing bracket dropped too - `cargo fmt`
+# adds one when it breaks a call across lines, and it changes nothing.
+def verus_body_tokens(src, name)
+  text = src.lines.reject { |l| l.rstrip.end_with?("// [verus]") }
+            .map { |l| l.sub(%r{//.*$}, "") }.join.gsub(%r{/\*.*?\*/}m, " ")
+  type, name = name.include?("::") ? name.split("::", 2) : [nil, name]
+  from = type ? (text.index(/^impl\b[^{]*\b#{Regexp.escape(type)}\b\s*[<{]/) or return nil) : 0
+  at = text.index(/\bfn\s+#{Regexp.escape(name)}\b/, from) or return nil
+  open = text.index("{", at) or return nil
+  depth = 0
+  close = (open...text.length).find do |i|
+    depth += 1 if text[i] == "{"
+    depth -= 1 if text[i] == "}"
+    depth.zero?
+  end
+  return nil unless close
+
+  toks = text[open..close].scan(/\w+|[^\s\w]/)
+  toks.each_index.reject { |i| toks[i] == "," && ")]}".include?(toks[i + 1].to_s) }.map { |i| toks[i] }
+end
+
+namespace :verus do
+  desc "Check that the Verus copies match the source they were copied from"
+  task :sync do
+    VERUS_COPIES.each do |source, copy, name|
+      want = verus_body_tokens(File.read(source), name) or abort "verus: no fn #{name} in #{source}"
+      got = verus_body_tokens(File.read(copy), name) or abort "verus: no fn #{name} in #{copy}"
+      next if want == got
+
+      abort "verus: #{copy}'s #{name} is not #{source}'s - redo the copy and its proof"
+    end
+    puts "verus: the copies match their sources"
+  end
+end
+
+# What each proof takes on trust, pinned: a `#[verifier::external_body]` (a
+# body Verus does not read, its spec assumed), an `assume_specification`
+# (std's spec assumed), an `assume(` or `admit(`. Each one is named in its
+# file's module doc; a new one is a new axiom, and this count moves with it on
+# purpose. The canaries may hold none.
+VERUS_TRUSTED = { "raw_vec.rs" => 5, "ptr_table.rs" => 4, "cbuf.rs" => 4 }.freeze
+VERUS_TRUST = /#\[verifier::external(?:_body)?\]|\bassume_specification\b|\b(?:assume|admit)\(/
+
+def verus_trusted_count(src)
+  src.gsub(%r{/\*.*?\*/}m, "").lines.map { |l| l.sub(%r{//.*$}, "") }.join.scan(VERUS_TRUST).length
+end
+
+# A proof is vacuous when what it assumes - an axiom, a precondition, a fact
+# met along the way - contradicts itself: then every claim after it verifies.
+# Verus has no `cover`, so `rake verus` checks the same way the dylint
+# self-test does, by a check that must FAIL:
+#
+# - each `// [canary]` line of a proof marks a point the proved code reaches;
+#   for each, the proof is verified again with an `assert(false)` there, which
+#   must be the one thing that fails. (One variant per mark: a failed assert is
+#   assumed after, so two in one run would hide the second.) This is what sees
+#   a contradiction inside a body, which the body's callers cannot - they see
+#   only its `ensures`;
+# - verus/canaries/<proof> adds `canary_` functions that call the proved code
+#   from outside and `assert(false)` on each outcome, so a precondition no
+#   caller can meet, or `ensures` that contradict, is caught too.
+def verus_assertions_failing(verus, path)
+  out, = Open3.capture2e(verus, path)
+  lines = out.scan(/^error: assertion failed\s*\n\s*--> [^\n]*:(\d+):/).flatten.map(&:to_i)
+  errors = out[/verification results:: \d+ verified, (\d+) errors?/, 1]
+  [lines, errors&.to_i, out]
+end
+
+def verus_canaries(verus, proof)
+  dir = File.join(__dir__, "tmp/verus_canaries")
+  FileUtils.mkdir_p(dir)
+  src = File.read(proof)
+  lines = src.lines
+  marks = lines.each_index.select { |i| lines[i].strip == "// [canary]" }
+  abort "verus: #{proof} has no `// [canary]` marks" if marks.empty?
+
+  jobs = marks.map do |i|
+    variant = lines.dup
+    variant[i] = lines[i].sub("// [canary]", "assert(false); // [canary]")
+    path = File.join(dir, "#{File.basename(proof, '.rs')}_mark#{i + 1}.rs")
+    File.write(path, variant.join)
+    [path, [i + 1]]
+  end
+
+  canary = File.read("canaries/#{proof}")
+  at = src.rindex("} // verus!") or abort "verus: #{proof} has no `} // verus!` to put the canaries before"
+  first = src[0...at].count("\n") + 1
+  outside = File.join(dir, proof)
+  File.write(outside, src[0...at] + canary + src[at..])
+  want = (canary.lines.each_index.select { |i| canary.lines[i].include?("assert(false)") }).map { |i| first + i }
+  jobs << [outside, want]
+
+  queue = Queue.new
+  jobs.each { |j| queue << j }
+  failures = Queue.new
+  Array.new(4) do
+    Thread.new do
+      while (job = (queue.pop(true) rescue nil))
+        path, expected = job
+        got, errors, out = verus_assertions_failing(verus, path)
+        failures << [path, expected, got, out] unless got.sort == expected.sort && errors == expected.length
+      end
+    end
+  end.each(&:join)
+  return puts("verus: #{proof}: #{marks.length} marks and #{want.length} canaries, each failing where it must") if failures.empty?
+
+  failures.size.times do
+    path, expected, got, out = failures.pop
+    puts out
+    puts "verus: #{path}: expected assert(false) to fail at lines #{expected}, failed at #{got}"
+  end
+  abort "verus: #{proof}: a canary verified - an assumption the proof rests on proves anything there"
+end
+
+desc "Verify the Verus proofs (ext/makiri/rust/verus/; needs Verus #{VERUS_VERSION})"
+task verus: "verus:sync" do
+  require "open3"
+  verus = ENV.fetch("VERUS", "verus")
+  Dir.chdir("ext/makiri/rust/verus") do
+    trusted = VERUS_PROOFS.to_h { |f| [f, verus_trusted_count(File.read(f))] }
+    abort "verus: what the proofs take on trust changed: #{trusted} (recorded #{VERUS_TRUSTED})" \
+      unless trusted == VERUS_TRUSTED
+    untrusting = VERUS_PROOFS.reject { |f| verus_trusted_count(File.read("canaries/#{f}")).zero? }
+    abort "verus: canaries may assume nothing: #{untrusting}" unless untrusting.empty?
+
+    VERUS_PROOFS.each do |f|
+      sh verus, f
+      verus_canaries(verus, f)
+    end
+  end
+  puts "verus: every proof verified, its canaries failed as they must; trusted #{VERUS_TRUSTED}"
+end
+
+# Miri over the Ruby-free modules that hold `unsafe`, and the buffer built on
+# them: their tests on Miri's interpreter, which reports undefined behaviour a
+# run on hardware passes over (CI: verify.yml). Needs the nightly toolchain
+# with the `miri` component. MIRI_FILTERS replaces the module list.
+MIRI_FILTERS = %w[raw_vec:: utf8_copy:: falloc:: cbuf:: ptr_table::].freeze # raw_vec:: covers raw_vec::block
+desc "Run the Ruby-free unsafe modules' tests under Miri (nightly)"
+task :miri do
+  filters = ENV["MIRI_FILTERS"] ? ENV["MIRI_FILTERS"].split(",") : MIRI_FILTERS
+  env = { "MIRIFLAGS" => ENV.fetch("MIRIFLAGS", "-Zmiri-strict-provenance") }
+  Dir.chdir("ext/makiri/rust") do
+    sh env, "cargo", "+nightly", "miri", "test", "--no-default-features", "--lib", "--", *filters
+  end
+end
+
+# The places that must not unwind (`src/no_unwind.rs`): every `extern "C"`
+# function of ours, and the `Drop`s the GC's free callback runs. An unwind out
+# of one aborts the process. Each body runs under a guard whose `Drop` - which
+# only an unwind runs - calls `makiri_unwinds_<site>`, a symbol nobody
+# defines; built with `--cfg makiri_no_unwind` in the release profile, the
+# optimizer removes that call exactly when it can prove the body never
+# unwinds. So the symbols left undefined are the sites that can. The control
+# site, `self_test`, can unwind by design: it must be the only one left, which
+# also shows the check is live.
+desc "Prove no extern \"C\" function or GC-run Drop can unwind (release build)"
+task :no_unwind do
+  macos = RbConfig::CONFIG["target_os"] =~ /darwin/
+  dir = File.expand_path("ext/makiri/rust", __dir__)
+  target = File.join(dir, "target", "no_unwind")
+  # The check build is the crate alone, linked as cargo would; macOS's linker
+  # refuses undefined symbols unless told otherwise, Linux's does not.
+  link = macos ? %w[-C link-arg=-undefined -C link-arg=dynamic_lookup] : []
+  env = { "RUSTFLAGS" => [ENV.fetch("RUSTFLAGS", nil), "--cfg makiri_no_unwind"].compact.join(" ") }
+  Dir.chdir(dir) do
+    sh env, "cargo", "rustc", "--release", "--lib", "--target-dir", target, "--", *link
+  end
+  lib = Dir[File.join(target, "release", "libmakiri.{dylib,so}")].first or abort "no_unwind: no library built"
+  left = `nm -u #{lib.shellescape}`.lines.map(&:strip)
+                                       .filter_map { |l| l[/(?:\A|\s)_?makiri_unwinds_(\w+)\z/, 1] }.uniq.sort
+  abort "no_unwind: the control site was optimized away - the check is not live" unless left.include?("self_test")
+  sites = left - ["self_test"]
+  abort "no_unwind: these sites can unwind (see src/no_unwind.rs): #{sites.join(", ")}" unless sites.empty?
+  puts "no_unwind: every site is unwind-free; the control is live"
+end
+
 # The vendored Lexbor, built alone. The extension no longer needs it - the
 # arena DOM and the ported parsers are all Rust - so `rake compile` does not
 # build it; what still does is everything that compares against Lexbor or
@@ -110,25 +325,27 @@ task lint: :lexbor do
   end
 end
 
-# `rake dylint` - the crate's own lints (ext/makiri/rust/lints/makiri_lints),
-# two rules magnus states or implies and leaves to its users, checked by type:
-# `ruby_value_on_heap`, a Ruby value kept where the GC's stack scan does not
+# `rake dylint` - the crate's own lint (ext/makiri/rust/lints/makiri_lints),
+# `ruby_value_on_heap`: a Ruby value kept where the GC's stack scan does not
 # see it (a heap container, a static or thread-local, a wrapped object's data
-# outside a traced field), and `converted_argument`, a registered method whose
-# argument magnus converts with the caller's Ruby (`RString`, `i64`, ...). The
-# lints are a rustc plugin, so they build on the nightly their
+# outside a traced field), the rule every Ruby extension keeps by hand, checked
+# by type. The lint is a rustc plugin, so it builds on the nightly its
 # rust-toolchain.toml pins, with cargo-dylint and dylint-link installed. The
 # second run is the self-test: `lint_probe.rs`, compiled only under
-# `--cfg makiri_lint_probe`, ends with `//~` each line a lint must report, and
-# the task fails unless exactly those lines are reported - so a lint that has
-# stopped seeing a case cannot pass by reporting nothing.
+# `--cfg makiri_lint_probe`, ends with `//~` each line the lint must report,
+# and the task fails unless exactly those lines are reported - so a lint that
+# has stopped seeing a case cannot pass by reporting nothing.
 DYLINT = %w[cargo dylint --path lints/makiri_lints --no-deps --
             --no-default-features --features ruby].freeze
 
-desc "Run the crate's own lints (makiri_lints; needs cargo-dylint and its nightly)"
+desc "Run the crate's own lint (makiri_lints; needs cargo-dylint and its nightly)"
 task :dylint do
   require "open3"
   Dir.chdir("ext/makiri/rust") do
+    # cargo keeps the crate's last check when only the lint library changed,
+    # and dylint then answers from it - the old lints' verdict. A touch makes
+    # every run check afresh.
+    FileUtils.touch("src/lib.rs")
     sh(*DYLINT)
     probe = "src/lint_probe.rs"
     expected = File.readlines(probe).each_with_index
@@ -678,8 +895,8 @@ end
 desc "Kani proofs over the Ruby-free core - the allocator, mkr_buf, UTF-8 " \
      "validate/decode (needs cargo-kani; successor to the C-era CBMC harnesses)"
 task :kani do
-  # Only the Ruby-free features: anything under glue needs magnus -> rb-sys ->
-  # a live Ruby, which Kani cannot build.
+  # Only the Ruby-free features: anything under glue needs rb-sys -> a live
+  # Ruby, which Kani cannot build.
   #
   #   rake kani                                   # all six
   #   rake kani HARNESS=accepted_is_utf8          # one
@@ -713,7 +930,29 @@ task :kani do
   # names each harness and its verdict.
   jobs = ENV["KANI_JOBS"].to_s.strip
   argv += ["--jobs", jobs, "--output-format=terse"] unless jobs.empty?
-  Dir.chdir("ext/makiri/rust") { sh(*argv) }
+  # A proof whose assertions no execution reaches - an `assume` too strong, a
+  # bound too small - still reports "0 failed". So every harness states, with
+  # `kani::cover!`, that its claim is reached, and Kani (which only reports a
+  # cover it cannot satisfy) is held to it here: each harness must report
+  # covers, all of them satisfied.
+  puts argv.join(" ")
+  out = +""
+  ok = Dir.chdir("ext/makiri/rust") do
+    IO.popen(argv, err: %i[child out]) do |io|
+      io.each_line { |line| print line; out << line }
+    end
+    $?.success?
+  end
+  abort "rake kani: cargo kani failed" unless ok
+  harnesses = out.scan(/Checking harness (\S+?)\.\.\./).flatten.uniq
+  covers = out.scan(/\*\* (\d+) of (\d+) cover properties satisfied/)
+  unsatisfied = covers.count { |got, of| got != of }
+  if covers.length != harnesses.length || unsatisfied.positive?
+    abort "rake kani: #{harnesses.length} harnesses, #{covers.length} reported covers, " \
+          "#{unsatisfied} with a cover unsatisfied - every harness needs a kani::cover! " \
+          "its claim reaches, and each must be satisfiable (see the output above)"
+  end
+  puts "rake kani: every harness's covers satisfied (#{harnesses.length} harnesses)"
 end
 
 # The Kani harnesses in groups, each with the code its proofs depend on, so CI
@@ -732,6 +971,11 @@ KANI_GROUPS = {
   "alloc" => {
     harnesses: %w[cbuf::verify:: falloc::verify::],
     paths: %W[#{RUST_SRC}/cbuf.rs #{RUST_SRC}/cbuf/ #{RUST_SRC}/falloc/]
+  },
+  # `RawVec`, a NodeSet's node array: its growth over `falloc::grow_capacity`.
+  "raw_vec" => {
+    harnesses: %w[raw_vec::verify::],
+    paths: %W[#{RUST_SRC}/raw_vec/ #{RUST_SRC}/falloc/ #{RUST_SRC}/no_unwind.rs]
   },
   "utf8" => {
     harnesses: %w[cutf8::verify::],

@@ -1,3 +1,9 @@
+# `bridge::rb::Error` holds its formatted message inline (`crate::msg::Msg`,
+# 256 bytes), so making one allocates nothing and touches no Ruby - an edit's
+# closure may make one. That puts it past clippy's 128-byte default; a large
+# `Err` costs a copy on the error path only.
+large-error-threshold = 288
+
 # The allocation chokepoint, enforced (see src/falloc/mod.rs).
 #
 # Rust's own allocating APIs are either infallible - they abort the process on
@@ -82,48 +88,4 @@ disallowed-methods = [
   { path = "std::collections::HashSet::insert", reason = "grows and aborts on OOM; use MapInsert::falloc_insert" },
   { path = "std::collections::HashMap::entry", reason = "an insert through it grows and aborts on OOM; falloc_reserve(1) first, under an allow" },
   { path = "core::iter::Iterator::collect", reason = "a collection built by it grows and aborts on OOM; push with falloc" },
-  # magnus's constructors and growers RAISE on a failed allocation - a
-  # `longjmp` over the caller's frames - and its `funcall`/`respond_to?`/`eql?`
-  # family runs the caller's Ruby. `bridge::build` and `bridge::string` spell
-  # every allocation through `bridge::raw`'s protected calls instead, so a
-  # failure is `Err`; init (`Init_makiri`, where a raise is `require`'s) and
-  # the two calls `rake unsafe:boundaries` allows (`USER_CODE_API`) carry an
-  # `#[allow]` with a reason.
-  { path = "magnus::Ruby::ary_new", reason = "raises on OOM; use bridge::build::ary" },
-  { path = "magnus::Ruby::ary_new_capa", reason = "raises on OOM; use bridge::build::ary" },
-  { path = "magnus::Ruby::ary_new_from_values", reason = "raises on OOM; use bridge::build::ary + push" },
-  { path = "magnus::Ruby::ary_from_iter", reason = "raises on OOM; use bridge::build::ary + push" },
-  { path = "magnus::Ruby::ary_from_vec", reason = "raises on OOM; use bridge::build::ary + push" },
-  { path = "magnus::Ruby::hash_new", reason = "raises on OOM; use bridge::build::hash" },
-  { path = "magnus::Ruby::hash_new_capa", reason = "raises on OOM; use bridge::build::hash" },
-  { path = "magnus::Ruby::integer_from_i64", reason = "raises on OOM; use bridge::build::int" },
-  { path = "magnus::Ruby::integer_from_u64", reason = "raises on OOM; use bridge::build::uint" },
-  { path = "magnus::Ruby::float_from_f64", reason = "raises on OOM; use bridge::build::float" },
-  { path = "magnus::Ruby::sym_new", reason = "raises on OOM; use bridge::build::sym" },
-  { path = "magnus::Ruby::to_symbol", reason = "raises on OOM; use bridge::build::sym" },
-  { path = "magnus::Ruby::str_new", reason = "raises on OOM; use bridge::string::utf8_str" },
-  { path = "magnus::Ruby::str_from_slice", reason = "raises on OOM; use bridge::string::utf8_str" },
-  { path = "magnus::Ruby::str_with_capacity", reason = "raises on OOM; use bridge::string::utf8_str_from_slices" },
-  { path = "magnus::Ruby::str_buf_new", reason = "raises on OOM; use bridge::string::utf8_str_from_slices" },
-  { path = "magnus::Ruby::enc_str_new", reason = "raises on OOM; use bridge::string" },
-  { path = "magnus::Ruby::wrap", reason = "raises on OOM; use bridge::typed" },
-  { path = "magnus::Ruby::wrap_as", reason = "raises on OOM; use bridge::typed" },
-  { path = "magnus::RString::new", reason = "raises on OOM; use bridge::string::utf8_str" },
-  { path = "magnus::RString::from_slice", reason = "raises on OOM; use bridge::string::utf8_str" },
-  { path = "magnus::RString::with_capacity", reason = "raises on OOM; use bridge::string::utf8_str_from_slices" },
-  { path = "magnus::RString::buf_new", reason = "raises on OOM; use bridge::string::utf8_str_from_slices" },
-  { path = "magnus::RString::cat", reason = "raises on OOM; use bridge::string::utf8_str_from_slices" },
-  { path = "magnus::RArray::push", reason = "goes through magnus's protect; use bridge::build::push" },
-  { path = "magnus::RArray::store", reason = "goes through magnus's protect; use bridge::build::push" },
-  { path = "magnus::RHash::aset", reason = "goes through magnus's protect; use bridge::build::aset" },
-  { path = "magnus::value::ReprValue::funcall", reason = "runs the caller's Ruby; Makiri runs none" },
-  { path = "magnus::value::ReprValue::funcall_public", reason = "runs the caller's Ruby; Makiri runs none" },
-  { path = "magnus::value::ReprValue::check_funcall", reason = "runs the caller's Ruby; Makiri runs none" },
-  { path = "magnus::value::ReprValue::funcall_with_block", reason = "runs the caller's Ruby; Makiri runs none" },
-  { path = "magnus::value::ReprValue::respond_to", reason = "runs the caller's Ruby; Makiri runs none" },
-  { path = "magnus::value::ReprValue::to_r_string", reason = "runs the caller's to_s; use bridge::ruby::string_arg" },
-  { path = "magnus::value::ReprValue::eql", reason = "runs the caller's eql?; compare by identity (bridge::ruby::same_value)" },
-  { path = "magnus::value::ReprValue::equal", reason = "runs the caller's ==; compare by identity (bridge::ruby::same_value)" },
-  { path = "magnus::value::ReprValue::inspect", reason = "runs the caller's inspect" },
-  { path = "magnus::value::ReprValue::enumeratorize", reason = "raises on OOM; use bridge::build::enumerator" },
 ]

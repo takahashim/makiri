@@ -28,7 +28,7 @@ path = "src/lib.rs"
 # about an unexpected cfg name (and CI's `clippy -D warnings` turns that into an
 # error). The proof modules are compiled only under it.
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(fuzzing)', 'cfg(makiri_lint_probe)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(fuzzing)', 'cfg(makiri_lint_probe)', 'cfg(makiri_no_unwind)', 'cfg(dylint_lib, values(any()))'] }
 
 # The panic gate. A panic now reaches Ruby as an exception (see the profile
 # below), but it is still an INTERNAL error nobody asked for - `rescue => e`
@@ -60,11 +60,11 @@ panic = "warn"
 # replace, so a flag per former file only described history.
 default = ["ruby"]
 
-# The Ruby boundary: magnus, rb-sys, and everything under `bridge/`, `glue/`
+# The Ruby boundary: rb-sys, and everything under `bridge/`, `glue/`
 # and `init.rs`. Off, the crate is the engine alone - which is what Kani and
 # cargo-fuzz build, since neither can link a live Ruby. It needs no Lexbor:
 # its HTML DOM is the arena's (`html-dom`).
-ruby = ["dep:magnus", "dep:rb-sys", "html-dom"]
+ruby = ["dep:rb-sys", "html-dom"]
 
 # The vendored Lexbor: build.rs runs bindgen over its headers, so this also
 # decides whether a build needs `vendor/lexbor/dist` to exist at all. `rake
@@ -110,17 +110,24 @@ html-dom = ["dep:encoding_rs", "dep:chardetng"]
 # it (`falloc`'s), and the detector keeps fixed-size state.
 chardetng = { version = "=1.0.0", optional = true }
 encoding_rs = { version = "=0.8.35", optional = true }
-# Only the `ruby` feature needs these; the engine builds without them, which is
-# what lets Kani and cargo-fuzz compile it. `rb-sys` is magnus's own binding
-# layer, taken directly for the raw VALUEs the boundary passes around and
+# Only the `ruby` feature needs it; the engine builds without it, which is
+# what lets Kani and cargo-fuzz compile it. `rb-sys` is the generated binding
+# to Ruby's C API that `bridge::raw` and `bridge::rb` are written over - the
+# one layer between the glue and Ruby (magnus stood here until 2026-10) - and
 # deliberately WITHOUT `link-ruby`: the extension is dlopen'd into a Ruby that
 # already provides the rb_* symbols.
-magnus = { version = "0.8", features = ["rb-sys"], optional = true }
-rb-sys = { version = "0.9", optional = true }
+# The features are the ones magnus asked of it, so the bindings are the ones
+# the crate was written against: the `rbimpl_*` flag enums, the struct
+# layouts (`RBasic`, for a String's coderange flags) and the stable API.
+rb-sys = { version = "0.9", optional = true, features = [
+    "bindgen-rbimpls",
+    "bindgen-deprecated-types",
+    "stable-api",
+] }
 
 # `unwind`, so a panic reaches Ruby as an exception instead of killing the host
-# process. magnus already wraps every method body in `catch_unwind`; `abort`
-# was what stopped that from ever running. With `unwind` a panic becomes a Ruby
+# process. Every method's trampoline (`bridge::rb::method::finish`) catches a
+# panic; `abort` was what stopped such a catch from ever running. With `unwind` a panic becomes a Ruby
 # `fatal` - not caught by `rescue => e`, caught by `rescue Exception`, and it
 # runs `ensure` blocks and `at_exit` on the way out. `abort` ran neither, and
 # ran no destructor either, so this also RELEASES what the old setting leaked.

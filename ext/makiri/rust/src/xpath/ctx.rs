@@ -333,7 +333,13 @@ struct Running<'a> {
 
 impl Drop for Running<'_> {
     fn drop(&mut self) {
-        self.cx.evaluating.set(self.cx.evaluating.get() - 1);
+        crate::no_unwind::must_not_unwind::<crate::no_unwind::DropXPathRunning, _>(|| {
+            /* Saturating: this runs as a panic unwinds, where an overflow
+             * check's own panic would abort. */
+            self.cx
+                .evaluating
+                .set(self.cx.evaluating.get().saturating_sub(1));
+        })
     }
 }
 

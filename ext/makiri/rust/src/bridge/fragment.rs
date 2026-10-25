@@ -10,7 +10,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{prelude::*, Error, Value};
+use crate::bridge::rb::{prelude::*, Error, Value};
 
 use crate::bridge::ruby::makiri_error;
 
@@ -22,11 +22,11 @@ pub use crate::html_dom::fragment::FragmentTag;
 use crate::html_dom::fragment::{FragmentContext, FragmentError, TransientFragment};
 use crate::html_dom::html::{HtmlDoc, HtmlDocMut, HtmlNode, HtmlNodeKey, Place, RawNode};
 use crate::html_dom::post_parse::parse_html;
-pub use crate::html_dom::tree_guard::DepthLimit;
+pub use crate::html_dom::tree_guard::ParseLimits;
 use crate::init::CLASS_NODE;
 
 /// A fragment-parse failure as `Makiri::Error`.
-fn fragment_error(e: FragmentError, limit: DepthLimit) -> Error {
+fn fragment_error(e: FragmentError, limit: ParseLimits) -> Error {
     match e {
         FragmentError::Guard(stop) => crate::bridge::doc::guard_error(stop, limit),
         _ => makiri_error(e.message()),
@@ -119,9 +119,9 @@ fn not_an_element() -> Error {
 }
 
 fn unknown_context(name: &[u8]) -> Error {
-    crate::bridge::ruby::arg_error(format!(
+    crate::bridge::ruby::arg_error(format_args!(
         "unknown fragment context element: {}",
-        String::from_utf8_lossy(name)
+        crate::msg::Lossy(name)
     ))
 }
 
@@ -143,7 +143,7 @@ fn element_context(node: HtmlNode<'_>, target: HtmlDoc<'_>) -> Result<FragmentCo
 fn parse(
     src: &HtmlSource,
     context: &FragmentContext,
-    limit: DepthLimit,
+    limit: ParseLimits,
 ) -> Result<TransientFragment, Error> {
     TransientFragment::parse(src.bytes(), src.known_valid(), context, limit)
         .map_err(|e| fragment_error(e, limit))
@@ -185,8 +185,8 @@ fn import_into(
     /* The setters take no keyword, so they parse under the default limit, as
      * Nokogiri's do. */
     let context = FragmentContext::element(d.read(), context)
-        .map_err(|e| fragment_error(e, DepthLimit::DEFAULT))?;
-    let parsed = parse(src, &context, DepthLimit::DEFAULT)?;
+        .map_err(|e| fragment_error(e, ParseLimits::DEFAULT))?;
+    let parsed = parse(src, &context, ParseLimits::DEFAULT)?;
     parsed
         .import_into_doc(&mut d.new_nodes(), into)
         .map_err(|_| makiri_error("failed to import a fragment child"))
@@ -219,7 +219,7 @@ pub fn build_fragment(
     document: Value,
     rb_html: Value,
     at: ContextArg,
-    limit: DepthLimit,
+    limit: ParseLimits,
 ) -> Result<Value, Error> {
     /* A String only, transcoded to UTF-8 (a Ruby allocation, which may raise). */
     let src = HtmlSource::from_ruby(string_arg(rb_html)?)?;
@@ -258,7 +258,7 @@ pub fn fragment_shell_document() -> Result<Value, Error> {
     const SHELL: &[u8] = b"<html><body></body></html>";
     /* The wrapper first, while nothing needs freeing - see DocumentShell. */
     let shell = DocumentShell::new(DocKind::Html)?;
-    let Ok(parsed) = parse_html(SHELL, true, DepthLimit::DEFAULT) else {
+    let Ok(parsed) = parse_html(SHELL, true, ParseLimits::DEFAULT) else {
         return Err(makiri_error("failed to create fragment document"));
     };
     Ok(shell.install_html(parsed))

@@ -8,7 +8,7 @@
 //!            This is what Kani proves and what cargo-fuzz drives.
 //!   lexbor   `lexbor` (its `abi` and DOM facade), `css`, and the XPath HTML
 //!            instance - everything that reads the vendored Lexbor DOM.
-//!   ruby     `bridge`, `glue`, `init` - the magnus boundary and `Init_makiri`
+//!   ruby     `bridge`, `glue`, `init` - the Ruby boundary and `Init_makiri`
 //!            (`ruby`, on by default; it implies `lexbor`).
 //!
 //! No SYMBOL here carries the C ABI's `mkr_` prefix any more: the crate exports only
@@ -16,9 +16,8 @@
 //! Lexbor's own names stay `lxb_*`.
 
 #![deny(unsafe_code)]
-// A panic unwinds into Ruby's `fatal` (or `Makiri::InternalError` at an
-// `entry`), which kills the calling thread - a broken invariant, never an
-// answer. `Cargo.toml`'s clippy lints therefore refuse a
+// A panic unwinds into `Makiri::InternalError` at a method's trampoline (or
+// `fatal` outside one) - a broken invariant, never an answer. `Cargo.toml`'s clippy lints therefore refuse a
 // new `unwrap()` or `panic!` in the shipped crate; a site that genuinely wants
 // one carries an `#[allow]` saying why. Test code is exempt: there a panic IS
 // the failure report.
@@ -62,6 +61,22 @@ pub mod falloc;
 
 /// `Buf`, the capped byte buffer more than one subsystem writes into.
 pub mod cbuf;
+
+/// `Msg`: an exception message written into a fixed buffer on the stack,
+/// so an error path allocates nothing.
+pub mod msg;
+
+/// `Utf8Copy`: owned bytes checked to be UTF-8 - what the bridge's checked
+/// views of a Ruby String are, so a `&str` rests on no Ruby-side flag.
+pub mod utf8_copy;
+
+/// `RawVec`: the growable array behind a NodeSet's node array, over an
+/// allocator that is only `realloc` and `free` (Ruby's, in the bridge).
+pub mod raw_vec;
+
+/// The bodies that must not unwind (an `extern "C"` function's, a `Drop`
+/// run from the GC), and the build that checks they cannot.
+pub mod no_unwind;
 
 /// Catching a panic at a C boundary and re-raising it past one, so a panic in a
 /// Lexbor or Ruby callback becomes an exception rather than an abort.
@@ -151,7 +166,7 @@ pub mod dom_rules;
 /// position memo a document keeps. Unconditional, like `dom_rules`.
 pub mod child_index;
 
-/// The Ruby boundary - the only part of the crate that depends on magnus.
+/// The Ruby boundary - the only part of the crate that depends on rb-sys.
 #[cfg(feature = "ruby")]
 pub mod bridge;
 #[cfg(feature = "ruby")]

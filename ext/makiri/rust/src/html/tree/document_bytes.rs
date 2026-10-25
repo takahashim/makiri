@@ -4,7 +4,7 @@
 //! The one part of the tree builder that reads a decoder, so the one built
 //! only with `html-dom` (which brings `encoding_rs`).
 
-use super::guard::DepthLimit;
+use super::guard::ParseLimits;
 use super::parse::{parse_html_probing, Utf8Text};
 use super::{HtmlParseError, MetaProbe};
 use crate::html::dom::HtmlParsed;
@@ -20,7 +20,7 @@ use crate::html::encoding::{
 /// it was read in.
 pub fn parse_document_bytes(
     input: DocumentInput<'_>,
-    limit: DepthLimit,
+    limit: ParseLimits,
 ) -> Result<Box<HtmlParsed>, HtmlParseError> {
     let decision = sniff(input.bytes, input.transport);
     let mut watch = EncodingWatch::new(decision.encoding);
@@ -48,7 +48,7 @@ pub fn parse_document_bytes(
 fn parse_under(
     input: &DocumentInput<'_>,
     decision: &Decision,
-    limit: DepthLimit,
+    limit: ParseLimits,
     probe: Option<&mut (dyn MetaProbe + 'static)>,
 ) -> Result<Box<HtmlParsed>, HtmlParseError> {
     let (body, known_valid) = decision.body(input);

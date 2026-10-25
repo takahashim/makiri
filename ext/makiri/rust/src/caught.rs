@@ -47,12 +47,23 @@ impl PanicLatch {
     ///
     /// The FIRST panic is the one kept. A traversal can call back many times,
     /// and the later ones are consequences of stopping, not new information.
-    #[inline]
+    /// Always inlined: inside an `extern "C"` callback, where nothing may
+    /// unwind (`crate::no_unwind`), the compiler shows the catch complete
+    /// only when it sees it in place.
+    #[inline(always)]
     pub fn guard<R>(&mut self, stop: R, f: impl FnOnce() -> R) -> R {
         match std::panic::catch_unwind(AssertUnwindSafe(f)) {
             Ok(v) => v,
             Err(payload) => {
-                self.0.get_or_insert(payload); /* the first panic is the one kept */
+                /* The first panic is the one kept; a later one is dropped -
+                 * through `quietly`, as a payload's drop is its own code. */
+                if self.0.is_none() {
+                    /* `replace`, not `=`: an assignment drops the old value,
+                     * which the compiler cannot see is `None`. */
+                    core::mem::forget(self.0.replace(payload));
+                } else {
+                    quietly((), || drop(payload));
+                }
                 stop
             }
         }
@@ -66,6 +77,25 @@ impl PanicLatch {
     pub fn resume(&mut self) {
         if let Some(payload) = self.0.take() {
             std::panic::resume_unwind(payload);
+        }
+    }
+}
+
+/// Run `f` where nothing may unwind: a panic in it is caught and answered
+/// by `fallback`, and its payload is leaked rather than dropped - a payload's
+/// drop is its own type's code, which could panic in turn. A few bytes, on a
+/// path that is already a bug.
+///
+/// For the code the compiler cannot show unwind-free (`crate::no_unwind`): a
+/// payload's drop or its `downcast` (calls through its vtable), a tree's
+/// recursive drop glue, the GC's advisory size.
+#[inline(always)]
+pub fn quietly<R>(fallback: R, f: impl FnOnce() -> R) -> R {
+    match std::panic::catch_unwind(AssertUnwindSafe(f)) {
+        Ok(v) => v,
+        Err(payload) => {
+            core::mem::forget(payload);
+            fallback
         }
     }
 }

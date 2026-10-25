@@ -33,14 +33,11 @@ use crate::falloc::{Reserve, SetInsert};
 use std::cell::RefCell;
 use std::collections::HashSet;
 
-use magnus::rb_sys::AsRawValue;
-
+use crate::bridge::rb::{prelude::*, Error, Ruby, Value};
 use crate::bridge::ruby::makiri_error;
-use magnus::value::Opaque;
-use magnus::{gc::Marker, prelude::*, DataTypeFunctions, Error, Ruby, TypedData, Value};
 
 use crate::bridge::node_wrap::wrap_doc_node;
-use crate::bridge::typed::typed_data_unprotected;
+use crate::bridge::typed::{Held, Hooks, Tracer, TypedType};
 use crate::bridge::wrapper::{keepalive_document, node_raw, DocKind, NodeWord};
 use crate::init::{CLASS_DOCUMENT, CLASS_NODE, CLASS_NODE_SET};
 
@@ -75,7 +72,7 @@ struct NodeVec {
 
 /// Why a push was refused.
 ///
-/// Deliberately small rather than a `magnus::Error`: a push runs once per node
+/// Deliberately small rather than a `crate::bridge::rb::Error`: a push runs once per node
 /// of every result, and returning the large error type from each successful
 /// push measured about 2ns a node. Callers convert through `From` on the failure path only.
 #[derive(Clone, Copy)]
@@ -88,27 +85,18 @@ pub enum PushError {
     Busy,
 }
 
-impl PushError {
-    fn message(self) -> String {
-        match self {
-            PushError::SizeLimit => {
-                format!("node set size limit exceeded ({NODE_SET_MAX} nodes)")
-            }
-            PushError::CapacityOverflow => "node set capacity overflow".to_string(),
-            PushError::NoMemory => "failed to allocate memory".to_string(),
-            PushError::Busy => "node set is already in use".to_string(),
-        }
-    }
-}
-
 impl From<PushError> for Error {
     fn from(e: PushError) -> Error {
         match e {
+            PushError::SizeLimit => makiri_error(format_args!(
+                "node set size limit exceeded ({NODE_SET_MAX} nodes)"
+            )),
+            PushError::CapacityOverflow => makiri_error("node set capacity overflow"),
             PushError::NoMemory => Error::new(
                 crate::bridge::ruby::gvl_ruby().exception_no_mem_error(),
-                e.message(),
+                "failed to allocate memory",
             ),
-            _ => makiri_error(e.message()),
+            PushError::Busy => makiri_error("node set is already in use"),
         }
     }
 }
@@ -237,53 +225,27 @@ impl NodeVec {
 /// the arena holding every node in this set could be collected underneath it.
 /// Fields that never change after construction belong outside the cell.
 ///
-/// `TypedData` is implemented by hand rather than derived: the derive looks
-/// the class up with a `funcall` of `const_get` (Ruby code, and a raise),
-/// where `init` has the class already (`CLASS_NODE_SET`, whose allocator
-/// `glue::node_set` undefines).
+/// A [`TypedType`] like every other wrapped struct of Makiri's, but not an
+/// embedded one: a fill holds `&NodeSet` across the set's own growth, which
+/// is an allocation, and compaction would move embedded data out from under
+/// it.
 pub struct NodeSet {
-    /// The owning Document. `Opaque` is magnus's form for a Ruby value stored
-    /// in a Rust struct: it cannot be read back without a `&Ruby` (so never off
-    /// a Ruby thread), and it is `Mark`, which is what makes storing it sound -
-    /// `mark` below is what the GC follows to reach it.
-    document: Opaque<Value>,
+    /// The owning Document: a [`Held`], stored once the set is wrapped
+    /// ([`node_set_new`]) and pinned by [`Hooks::trace`].
+    document: Held,
     /// Decided once: whether the stored words are XML arena handles (wrapped as
     /// `Makiri::XML::*`) or HTML arena nodes.
     kind: DocKind,
     nodes: RefCell<NodeVec>,
 }
 
-// SAFETY: `data_type` describes `NodeSet` - its mark, size and free are
-// `DataTypeFunctions`' below, as the derive would build them - and `class`
-// is the class `init` defined for it.
-unsafe impl TypedData for NodeSet {
-    fn class(_ruby: &Ruby) -> magnus::RClass {
-        #[allow(
-            clippy::expect_used,
-            reason = "every NodeSet is made after Init_makiri"
-        )]
-        CLASS_NODE_SET
-            .get()
-            .expect("Makiri::NodeSet is defined at init")
-    }
-
-    fn data_type() -> &'static magnus::DataType {
-        static DATA_TYPE: magnus::DataType = magnus::data_type_builder!(NodeSet, "Makiri::NodeSet")
-            .mark()
-            .size()
-            .free_immediately()
-            .build();
-        &DATA_TYPE
-    }
-}
-
-impl DataTypeFunctions for NodeSet {
-    fn mark(&self, marker: &Marker) {
+impl Hooks for NodeSet {
+    fn trace(&self, tracer: &Tracer) {
         /* No borrow: see the note on the struct. A GC can land mid-push. */
-        marker.mark(self.document);
+        tracer.pinned(&self.document);
     }
 
-    fn size(&self) -> usize {
+    fn memsize(&self) -> usize {
         let base = core::mem::size_of::<Self>();
         /* Advisory only, so a busy cell just reports the header. */
         match self.nodes.try_borrow() {
@@ -294,6 +256,36 @@ impl DataTypeFunctions for NodeSet {
             ),
             Err(_) => base,
         }
+    }
+}
+
+/// `Makiri::NodeSet`'s data type.
+pub static NODE_SET_TYPE: TypedType<NodeSet> = TypedType::base(c"Makiri::NodeSet".as_ptr());
+
+/// A `NodeSet` method's receiver, or an operand checked to be a set: the
+/// object, read as its [`NodeSet`] for the call. It owns the `Value`, which
+/// is on the caller's stack, so the data it reads stays rooted.
+#[derive(Clone, Copy)]
+pub struct NodeSetSelf(Value);
+
+impl crate::bridge::rb::TryConvert for NodeSetSelf {
+    fn try_convert(value: Value) -> Result<Self, Error> {
+        NODE_SET_TYPE.get(&value)?;
+        Ok(NodeSetSelf(value))
+    }
+}
+
+impl core::ops::Deref for NodeSetSelf {
+    type Target = NodeSet;
+    fn deref(&self) -> &NodeSet {
+        NODE_SET_TYPE.get_known(&self.0)
+    }
+}
+
+impl NodeSetSelf {
+    /// The set itself.
+    pub fn value(self) -> Value {
+        self.0
     }
 }
 
@@ -312,8 +304,9 @@ impl NodeSet {
             .map_err(|_| makiri_error("node set is already in use"))
     }
 
-    fn document(&self, ruby: &Ruby) -> Value {
-        ruby.get_inner(self.document)
+    fn document(&self) -> Value {
+        // SAFETY: a field `trace` traces, of a set the caller holds.
+        unsafe { self.document.get() }
     }
 
     /// Append a node to a set this module built or checked; see [`Fill`]. `Err`
@@ -359,17 +352,18 @@ pub fn node_set_new(document: Value) -> Result<Value, Error> {
         "a NodeSet needs the Document its nodes belong to"
     );
     let kind = DocKind::of(document);
-    let obj = crate::bridge::typed::wrap_magnus(NodeSet {
-        document: document.into(),
-        kind,
-        nodes: RefCell::new(NodeVec::new()),
-    })?;
-    /* While `wrap` allocates the object - a GC point - `document` is held only by
-     * the boxed struct, where no mark sees it. Using it afterwards keeps it on
-     * the machine stack across that call, pinned by the conservative scan, so
-     * compaction cannot move it out from under the stored copy. */
-    core::hint::black_box(document);
-    Ok(obj)
+    /* The struct is built holding no value; the Document is stored once the
+     * object exists, so it is traced from the moment it is held. */
+    NODE_SET_TYPE.wrap(
+        &crate::bridge::ruby::gvl_ruby(),
+        CLASS_NODE_SET.defined()?,
+        || NodeSet {
+            document: Held::empty(),
+            kind,
+            nodes: RefCell::new(NodeVec::new()),
+        },
+        |s, store| s.document = store.hold(document),
+    )
 }
 
 /// A NodeSet built here, plus a fill handle whose pushes are safe.
@@ -411,11 +405,9 @@ impl Fill<'_> {
 /// Build a NodeSet over `document` and return it with a [`Fill`] handle.
 pub fn node_set_with_fill<'a>(document: Value) -> Result<(Value, Fill<'a>), Error> {
     let value = node_set_new(document)?;
-    // SAFETY: built as a NodeSet by the line above, so the type is known and
-    // the conversion cannot raise - which is what lets it skip the checked one
-    // (a quarter of the throughput on the per-node path). `value` is returned
+    // SAFETY: built as a NodeSet by the line above, and `value` is returned
     // alongside, so the caller keeps it rooted for the reference's lifetime.
-    let set: &NodeSet = unsafe { typed_data_unprotected(value.as_raw()) };
+    let set: &NodeSet = unsafe { NODE_SET_TYPE.get_unbound(value) };
     Ok((value, Fill { value, set }))
 }
 
@@ -474,33 +466,33 @@ impl NodeSet {
     ///
     /// O(1): the one word is read under a short borrow that is released
     /// before the wrap, which allocates and so can run arbitrary Ruby.
-    pub fn at(&self, ruby: &Ruby, i: usize) -> Result<Option<Value>, Error> {
+    pub fn at(&self, i: usize) -> Result<Option<Value>, Error> {
         let node = self.read()?.as_slice().get(i).copied();
         node.map(|n| {
             // SAFETY: a node this set stored, under its own `kind`, and its
             // document is rooted by the set.
-            unsafe { wrap_doc_node(self.kind, n, self.document(ruby)) }
+            unsafe { wrap_doc_node(self.kind, n, self.document()) }
         })
         .transpose()
     }
 
     /// A new set of `len` nodes from `beg`, clamped to the end; `None` when
     /// `beg` is past it.
-    pub fn slice(&self, ruby: &Ruby, beg: usize, len: usize) -> Result<Option<Value>, Error> {
+    pub fn slice(&self, beg: usize, len: usize) -> Result<Option<Value>, Error> {
         let Some(room) = self.count()?.checked_sub(beg) else {
             return Ok(None);
         };
-        self.take(ruby, beg, len.min(room)).map(Some)
+        self.take(beg, len.min(room)).map(Some)
     }
 
     /// A new set holding every node of this one.
-    pub fn copy(&self, ruby: &Ruby) -> Result<Value, Error> {
-        self.take(ruby, 0, self.count()?)
+    pub fn copy(&self) -> Result<Value, Error> {
+        self.take(0, self.count()?)
     }
 
     /// A new set of at most `len` nodes from `beg`.
-    fn take(&self, ruby: &Ruby, beg: usize, len: usize) -> Result<Value, Error> {
-        let (result, mut w) = new_result_with_room(self.document(ruby), len)?;
+    fn take(&self, beg: usize, len: usize) -> Result<Value, Error> {
+        let (result, mut w) = new_result_with_room(self.document(), len)?;
         let mine = self.read()?;
         let tail = mine.as_slice().get(beg..).unwrap_or_default();
         for &n in &tail[..len.min(tail.len())] {
@@ -517,15 +509,15 @@ impl NodeSet {
     /// representation flag to wrap its nodes, so mixing two documents - which
     /// also means possibly mixing HTML and XML - would wrap a node under the
     /// wrong representation and fail to keep its document alive. Fail closed.
-    pub fn operand<'a>(&self, ruby: &Ruby, other: Value) -> Result<&'a NodeSet, Error> {
+    pub fn operand(&self, ruby: &Ruby, other: Value) -> Result<NodeSetSelf, Error> {
         if !is_kind_of(other, &CLASS_NODE_SET) {
             return Err(Error::new(
                 ruby.exception_type_error(),
                 "expected a Makiri::NodeSet",
             ));
         }
-        let o = <&NodeSet>::try_convert(other)?;
-        if !crate::bridge::ruby::same_value(o.document(ruby), self.document(ruby)) {
+        let o = NodeSetSelf::try_convert(other)?;
+        if !crate::bridge::ruby::same_value(o.document(), self.document()) {
             return Err(makiri_error(
                 "cannot combine node sets from different documents",
             ));
@@ -549,9 +541,9 @@ impl NodeSet {
      * only then takes the long ones, so the pushes fit and allocate nothing. */
 
     /// `self | other`: the union, deduped, self first.
-    pub fn union(&self, ruby: &Ruby, other: &NodeSet) -> Result<Value, Error> {
+    pub fn union(&self, other: &NodeSet) -> Result<Value, Error> {
         let room = self.count()?.saturating_add(other.count()?);
-        let (result, mut w) = new_result_with_room(self.document(ruby), room)?;
+        let (result, mut w) = new_result_with_room(self.document(), room)?;
         let (mine, theirs) = (self.read()?, other.read()?);
         let mut seen = Index::empty(mine.len() + theirs.len());
         for &n in mine.as_slice().iter().chain(theirs.as_slice()) {
@@ -564,9 +556,9 @@ impl NodeSet {
     }
 
     /// `self + other`: the concatenation, duplicates kept.
-    pub fn concat(&self, ruby: &Ruby, other: &NodeSet) -> Result<Value, Error> {
+    pub fn concat(&self, other: &NodeSet) -> Result<Value, Error> {
         let room = self.count()?.saturating_add(other.count()?);
-        let (result, mut w) = new_result_with_room(self.document(ruby), room)?;
+        let (result, mut w) = new_result_with_room(self.document(), room)?;
         let (mine, theirs) = (self.read()?, other.read()?);
         for &n in mine.as_slice().iter().chain(theirs.as_slice()) {
             w.push(n)?;
@@ -577,8 +569,8 @@ impl NodeSet {
 
     /// `&` ([`Membership::In`]) and `-` ([`Membership::NotIn`]): each node of
     /// self with that membership in `other`, deduped, in self's order.
-    pub fn filter(&self, ruby: &Ruby, other: &NodeSet, keep: Membership) -> Result<Value, Error> {
-        let (result, mut w) = new_result_with_room(self.document(ruby), self.count()?)?;
+    pub fn filter(&self, other: &NodeSet, keep: Membership) -> Result<Value, Error> {
+        let (result, mut w) = new_result_with_room(self.document(), self.count()?)?;
         let (mine, theirs) = (self.read()?, other.read()?);
         let theirs_index = Index::build(theirs.as_slice());
         let mut seen = Index::empty(mine.len());
@@ -626,9 +618,9 @@ pub fn node_set_of_nodes(
 
 /// An empty NodeSet over `document`, plus the handle to fill it through.
 ///
-/// The reference's lifetime is unconstrained, as magnus's own `try_convert` for
-/// a wrapped type gives: the data lives as long as the Ruby object, which the
-/// returned `Value` keeps rooted on the caller's stack.
+/// The reference's lifetime is unconstrained (`TypedType::get_unbound`): the
+/// data lives as long as the Ruby object, which the returned `Value` keeps
+/// rooted on the caller's stack.
 fn new_result<'a>(document: Value) -> Result<(Value, &'a NodeSet), Error> {
     /* The one unchecked borrow of a fresh set is `node_set_with_fill`'s. */
     let (set, fill) = node_set_with_fill(document)?;

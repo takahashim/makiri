@@ -7,7 +7,8 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{method, prelude::*, Error, Ruby, Value};
+use crate::bridge::rb::{prelude::*, Error, Ruby, Value};
+use crate::method;
 
 use crate::bridge::ruby::makiri_error;
 use crate::glue::kwargs::Kwargs;
@@ -16,7 +17,7 @@ use crate::init::MOD_XML_NODE_METHODS;
 use crate::xml::serialize::{self as xml_serialize, Failure};
 
 fn to_xml_opts(ruby: &Ruby, args: &[Value]) -> Result<(i32, Value), Error> {
-    let kw = Kwargs::scan(args)?;
+    let kw = Kwargs::scan(ruby, args)?;
     let mut width = 0i32;
     if kw.flag(ruby, "pretty")? {
         width = 2;
@@ -34,57 +35,61 @@ fn to_xml_opts(ruby: &Ruby, args: &[Value]) -> Result<(i32, Value), Error> {
 fn failure_error(f: Failure, verb: &str) -> Error {
     let msg = match f {
         Failure::DomLooseName => {
-            format!("cannot {verb} XML containing a DOM-loose element name")
+            format_args!("cannot {verb} XML containing a DOM-loose element name")
         }
         Failure::DomLooseDoctype => {
-            format!(
+            format_args!(
                 "cannot {verb} XML containing a DOM-loose doctype (a name or id XML cannot write)"
             )
         }
-        Failure::UnwritableData => format!(
+        Failure::UnwritableData => format_args!(
             "cannot {verb} XML containing character data XML cannot hold (a character \
 outside XML's, -- in a comment, or ?> in a processing instruction)"
         ),
-        Failure::ForbiddenDeclaration => format!(
+        Failure::ForbiddenDeclaration => format_args!(
             "cannot {verb} XML containing a namespace declaration XML forbids \
 (such as xmlns:p=\"\", held as set_attribute_ns made it)"
         ),
         Failure::DomLooseAttributeName => {
-            format!("cannot {verb} XML containing a DOM-loose attribute name")
+            format_args!("cannot {verb} XML containing a DOM-loose attribute name")
         }
         Failure::XmlnsElement => {
-            format!("cannot {verb} XML containing an element in the XMLNS namespace")
+            format_args!("cannot {verb} XML containing an element in the XMLNS namespace")
         }
         Failure::PiTargetColon => {
-            format!("cannot {verb} XML containing a processing-instruction target with a colon")
+            format_args!(
+                "cannot {verb} XML containing a processing-instruction target with a colon"
+            )
         }
         Failure::PiTargetReserved => {
-            format!("cannot {verb} XML containing a processing instruction whose target is xml")
+            format_args!(
+                "cannot {verb} XML containing a processing instruction whose target is xml"
+            )
         }
         Failure::OutputCap => {
-            format!("failed to {verb} XML: output exceeded the size limit")
+            format_args!("failed to {verb} XML: output exceeded the size limit")
         }
         Failure::Oom => {
-            format!("failed to {verb} XML: out of memory")
+            format_args!("failed to {verb} XML: out of memory")
         }
         Failure::ScopeOverflow => {
-            format!("failed to {verb} XML: too many namespace bindings in scope")
+            format_args!("failed to {verb} XML: too many namespace bindings in scope")
         }
-        Failure::TooDeep => format!(
+        Failure::TooDeep => format_args!(
             "failed to {verb} XML: the tree nests deeper than {} levels",
             crate::xml::model::MAX_DEPTH
         ),
         Failure::PrefixSpace => {
-            format!("failed to {verb} XML: ran out of namespace prefixes to declare")
+            format_args!("failed to {verb} XML: ran out of namespace prefixes to declare")
         }
         Failure::NamespaceBudget => {
-            format!("failed to {verb} XML: namespace planning exceeded its step budget")
+            format_args!("failed to {verb} XML: namespace planning exceeded its step budget")
         }
-        Failure::UnboundPrefix => format!(
+        Failure::UnboundPrefix => format_args!(
             "cannot {verb} XML with a namespace prefix bound to nothing (declare it, \
 or insert the node where it is declared)"
         ),
-        Failure::NamespaceMismatch => format!(
+        Failure::NamespaceMismatch => format_args!(
             "cannot {verb} XML where one prefix would have to mean two namespaces on an \
 element, or an unprefixed attribute has a namespace (canonical form invents no \
 prefix); to_xml writes such a tree"
@@ -94,56 +99,50 @@ prefix); to_xml writes such a tree"
 }
 
 fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let (width, enc_opt) = to_xml_opts(ruby, args)?;
-        let (to_enc, enc_name) = if enc_opt.is_nil() {
-            (None, None)
-        } else {
-            /* An unknown name raises, and this frame is about to own the
-             * serializer's buffer: the lookup returns the error instead. The
-             * name is a copy, so the bytes stay valid across the serializer's
-             * call. */
-            let (e, bytes) = crate::bridge::string::encoding_arg(enc_opt)?;
-            (Some(e), Some(bytes))
-        };
+    let (width, enc_opt) = to_xml_opts(ruby, args)?;
+    let (to_enc, enc_name) = if enc_opt.is_nil() {
+        (None, None)
+    } else {
+        /* An unknown name raises, and this frame is about to own the
+         * serializer's buffer: the lookup returns the error instead. The
+         * name is a copy, so the bytes stay valid across the serializer's
+         * call. */
+        let (e, bytes) = crate::bridge::string::encoding_arg(enc_opt)?;
+        (Some(e), Some(bytes))
+    };
 
-        let out = xml_serialize::to_xml(
-            &*this.read()?,
-            this.id,
-            width,
-            enc_name.as_ref().map(|b| b.as_slice()),
-        );
-        let buf = out.map_err(|f| failure_error(f, "serialize"))?;
-        /* A failed allocation is `Err`, and `buf` (and `enc_name`) drop. */
-        let mut str = crate::bridge::string::utf8_rstring(buf.as_slice())?;
-        drop(buf);
+    let out = xml_serialize::to_xml(
+        &*this.read()?,
+        this.id,
+        width,
+        enc_name.as_ref().map(|b| b.as_slice()),
+    );
+    let buf = out.map_err(|f| failure_error(f, "serialize"))?;
+    /* A failed allocation is `Err`, and `buf` (and `enc_name`) drop. */
+    let mut str = crate::bridge::string::utf8_rstring(buf.as_slice())?;
+    drop(buf);
 
-        if let Some(enc) = to_enc {
-            if enc.needs_transcode() {
-                str = enc.encode_charref(str)?;
-            }
+    if let Some(enc) = to_enc {
+        if enc.needs_transcode() {
+            str = enc.encode_charref(str)?;
         }
-        Ok(str.as_value())
-    })
+    }
+    Ok(str.as_value())
 }
 
 fn canonicalize(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        let comments = Kwargs::scan(args)?.flag(ruby, "comments")?;
-        let buf = xml_serialize::canonicalize(&*this.read()?, this.id, comments)
-            .map_err(|f| failure_error(f, "canonicalize"))?;
-        Ok(crate::bridge::string::utf8_rstring(buf.as_slice())?.as_value())
-    })
+    let comments = Kwargs::scan(ruby, args)?.flag(ruby, "comments")?;
+    let buf = xml_serialize::canonicalize(&*this.read()?, this.id, comments)
+        .map_err(|f| failure_error(f, "canonicalize"))?;
+    Ok(crate::bridge::string::utf8_rstring(buf.as_slice())?.as_value())
 }
 
 fn no_serialize(ruby: &Ruby, _rb_self: Value, _args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::ruby::entry(|| {
-        Err(Error::new(
-            ruby.exception_not_imp_error(),
-            "Makiri::XML does not HTML-serialize (to_html / inner_html / outer_html); \
+    Err(Error::new(
+        ruby.exception_not_imp_error(),
+        "Makiri::XML does not HTML-serialize (to_html / inner_html / outer_html); \
          use #to_xml for XML output.",
-        ))
-    })
+    ))
 }
 
 /// From `Init_makiri`.

@@ -3,9 +3,9 @@
 
 #![allow(unsafe_code)]
 
-use magnus::rb_sys::AsRawValue;
+use crate::bridge::rb::value::AsRawValue;
 
-use magnus::{Error, Value};
+use crate::bridge::rb::{Error, Value};
 
 use super::*;
 use crate::bridge::typed::{EmbeddedType, Held, Hooks, Snapshot, Store, Tracer};
@@ -32,7 +32,7 @@ use crate::xml::model::NodeId;
 /// `repr(transparent)` over `usize`: a NodeSet's buffer keeps the layout it had
 /// as `*mut c_void`. (A [`NodeData`] does not use it any more - it stores an
 /// opaque [`NodeHandle`], which is larger by design.)
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 #[repr(transparent)]
 pub struct NodeWord(usize);
 
@@ -238,6 +238,10 @@ pub enum NodeRepr {
 }
 
 /// Why [`node_token_in`] refused a node.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "an Error holds its message inline (`crate::msg::Msg`), so it is never boxed"
+)]
 pub enum NotInDocument {
     /// Not a usable Makiri node - the `TypeError` or `Makiri::Error` its
     /// wrapper raised.
@@ -269,6 +273,10 @@ pub fn node_token_in(rb_node: Value, document: Value) -> Result<Token, NotInDocu
 ///
 /// The Document branch is kind-aware: an XML Document resolves to its arena's
 /// document node, an HTML one to the HTML arena's.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(raw_node_crossing, reason = "a node's word, for identity alone")
+)]
 pub fn node_raw(rb_node: Value) -> Result<NodeWord, Error> {
     if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_DOCUMENT) {
         DOC_TYPE.get(&rb_node)?; /* TypeError for a non-Document */

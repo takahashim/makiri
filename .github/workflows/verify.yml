@@ -17,6 +17,7 @@ on:
       - "!ext/makiri/rust/src/lexbor/**"
       - "!ext/makiri/rust/src/css/**"
       - "!ext/makiri/rust/src/init.rs"
+      - "ext/makiri/rust/verus/**"
       - "ext/makiri/rust/build.rs"
       - "ext/makiri/rust/Cargo.toml"
       - "ext/makiri/rust/Cargo.lock"
@@ -108,3 +109,71 @@ jobs:
           KANI_GROUPS: ${{ steps.groups.outputs.groups }}
           KANI_JOBS: "4"
         run: bundle exec rake kani
+
+  # Miri over the Ruby-free modules that hold `unsafe` (`raw_vec`,
+  # `utf8_copy`, `falloc`)
+  # and the buffer built on them (`cbuf`): their tests run on Miri's
+  # interpreter, which reports undefined behaviour - an out-of-bounds or
+  # dangling access, a misaligned or provenance-less pointer - that a test on
+  # hardware passes over. Kani proves the same code bounded; this runs it
+  # unbounded. `bridge/` needs Ruby and is not here.
+  miri:
+    name: Miri (Ruby-free unsafe)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install nightly with Miri
+        run: |
+          rustup toolchain install nightly --profile minimal --component miri
+          cargo +nightly miri setup
+
+      - name: Run the tests under Miri
+        working-directory: ext/makiri/rust
+        env:
+          MIRIFLAGS: "-Zmiri-strict-provenance"
+        # Quoted: an unquoted `name:: ` would be read as a YAML mapping.
+        run: "cargo +nightly miri test --no-default-features --lib -- raw_vec:: utf8_copy:: falloc:: cbuf:: ptr_table::"
+
+  # Verus over ext/makiri/rust/verus/: `falloc::grow_capacity`, `RawVec`,
+  # `ptr_table` and `cbuf::Buf` (copied, and checked against the source by
+  # `rake verus:sync`), unbounded where Kani is bounded, each with canaries
+  # that must fail. Verus is a pinned release
+  # (Rakefile's VERUS_VERSION) and brings the Rust toolchain it names.
+  verus:
+    name: Verus proofs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      VERUS_VERSION: "0.2026.10.04.426d8b0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - name: Install Verus
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/verus" && cd "$RUNNER_TEMP/verus"
+          gh release download "release/$VERUS_VERSION" -R verus-lang/verus \
+            -p "verus-$VERUS_VERSION-x86-linux.zip"
+          unzip -q "verus-$VERUS_VERSION-x86-linux.zip"
+          # The message is coloured: take the toolchain name as its characters,
+          # so no escape sequence comes with it.
+          toolchain=$( (./verus-x86-linux/verus --version 2>&1 || true) \
+            | grep -oE 'rustup install [0-9]+\.[0-9]+\.[0-9]+-[A-Za-z0-9_]+(-[A-Za-z0-9_]+)*' \
+            | head -1 | sed 's/^rustup install //')
+          if [ -n "$toolchain" ]; then rustup install "$toolchain" --profile minimal; fi
+          ./verus-x86-linux/verus --version
+          echo "VERUS=$RUNNER_TEMP/verus/verus-x86-linux/verus" >> "$GITHUB_ENV"
+
+      - name: Run the Verus proofs
+        run: bundle exec rake verus

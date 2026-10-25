@@ -5,8 +5,8 @@
 
 use core::ffi::c_int;
 
-use magnus::rb_sys::AsRawValue;
-use magnus::{prelude::*, Error, RString, Value};
+use crate::bridge::rb::value::AsRawValue;
+use crate::bridge::rb::{prelude::*, Error, RString, Value};
 
 /* ---- encoding ---- */
 
@@ -16,7 +16,9 @@ pub fn encoding_arg(v: Value) -> Result<(Encoding, crate::cbuf::OwnedBuf), Error
     let e = to_encoding(v)?;
     let name = match RString::from_value(v) {
         Some(s) => s,
-        None if magnus::Symbol::from_value(v).is_some() => crate::bridge::ruby::name_arg(v)?,
+        None if crate::bridge::rb::Symbol::from_value(v).is_some() => {
+            crate::bridge::ruby::name_arg(v)?
+        }
         None => {
             // SAFETY: a live encoding's name is a NUL-terminated C string that
             // lives as long as the encoding, which is the process.
@@ -60,6 +62,13 @@ impl Encoding {
     /// knows, so it reads as None rather than being truncated at the NUL. So
     /// does a lookup whose autoload failed (`LoadError`, `NoMemoryError`): the
     /// caller then refuses the name as unknown, never reads with another.
+    #[cfg_attr(
+        dylint_lib = "makiri_lints",
+        allow(
+            discarded_ruby_error,
+            reason = "a lookup that fails is an unknown name, which the caller refuses"
+        )
+    )]
     pub(in crate::bridge) fn find(name: &[u8]) -> Option<Encoding> {
         let mut buf = [0u8; 64];
         if name.is_empty() || name.len() >= buf.len() || name.contains(&0) {

@@ -522,7 +522,7 @@ mod speed {
     #![allow(clippy::disallowed_methods, clippy::unwrap_used)]
     use super::*;
     use crate::html::dom::xpath::{context, dom, HtmlDom};
-    use crate::html::tree::guard::DepthLimit;
+    use crate::html::tree::guard::ParseLimits;
     use crate::text::VerifiedText;
     use crate::xpath::ctx::XPathValue;
     use crate::xpath::limits::Budget;
@@ -572,7 +572,7 @@ mod speed {
             .unwrap_or(20_000);
         let html = bench_html(items);
         let mut parsed =
-            crate::html::tree::parse_html(html.as_bytes(), false, DepthLimit::DEFAULT).unwrap();
+            crate::html::tree::parse_html(html.as_bytes(), false, ParseLimits::DEFAULT).unwrap();
         let exprs = [
             "//a",
             "//span",
@@ -675,7 +675,7 @@ mod kept {
     #![allow(clippy::unwrap_used)]
     use super::*;
     use crate::html::dom::xpath::{dom, HtmlDom};
-    use crate::html::tree::guard::DepthLimit;
+    use crate::html::tree::guard::ParseLimits;
 
     #[test]
     fn the_kept_index_numbers_as_the_per_evaluate_walk() {
@@ -684,7 +684,7 @@ mod kept {
             <svg viewBox='0 0 1 1' xmlns:xlink='http://www.w3.org/1999/xlink'><a xlink:href=x>s</a></svg>\
             <table><tr><td>cell</td></tr></table>tail</body></html>";
         let parsed =
-            crate::html::tree::parse_html(html.as_bytes(), false, DepthLimit::DEFAULT).unwrap();
+            crate::html::tree::parse_html(html.as_bytes(), false, ParseLimits::DEFAULT).unwrap();
         assert!(parsed.ensure_doc_order());
         let d = dom(&parsed);
         let mut idx = OrderIndex::new();

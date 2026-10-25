@@ -1,0 +1,42 @@
+# cargo-deny: what the extension's dependencies may be (`rake deny`; CI:
+# security.yml). The shipped crate is this one; the fuzz and lint crates
+# are their own and not shipped.
+
+[graph]
+all-features = true
+
+# RustSec: a dependency with a known vulnerability, or a yanked release,
+# fails the check. An advisory that does not apply is ignored HERE, with the
+# reason, never by loosening the rule.
+[advisories]
+version = 2
+yanked = "deny"
+ignore = []
+
+# Licenses the dependencies may carry: every one is compatible with
+# Makiri's Apache-2.0. A new one is a decision, made here.
+[licenses]
+version = 2
+allow = [
+  "Apache-2.0",
+  "BSD-3-Clause",
+  "ISC",
+  "MIT",
+  "Unicode-3.0",
+  "Unlicense",
+]
+confidence-threshold = 0.9
+
+# Makiri's own crate is not published from here.
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+# crates.io alone: no other registry, no git dependency.
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

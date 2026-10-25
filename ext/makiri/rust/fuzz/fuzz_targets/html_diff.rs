@@ -14,7 +14,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use makiri::lexbor::adapter::tree_guard::DepthLimit;
+use makiri::lexbor::adapter::tree_guard::ParseLimits;
 use makiri::lexbor::tree_diff::{
     check, check_fragment, check_fragment_serialization, check_fragment_verdict,
     check_serialization, check_verdict,
@@ -62,7 +62,7 @@ fuzz_target!(|data: &[u8]| {
     /* Depths 1..=32: deep enough for the guard's interesting cases (foster
      * parenting, templates, foreign content, the adoption agency's clones)
      * within an input libFuzzer grows to. */
-    let limit = DepthLimit::at_most(usize::from(input.first().copied().unwrap_or(0) % 32) + 1);
+    let limit = ParseLimits::at_most(usize::from(input.first().copied().unwrap_or(0) % 32) + 1);
     let result = match mode as usize % (CONTEXTS.len() + 1) {
         0 => check(input, true)
             .and_then(|()| check_serialization(input))

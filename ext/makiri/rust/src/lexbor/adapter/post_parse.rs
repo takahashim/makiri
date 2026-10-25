@@ -36,7 +36,7 @@ use crate::lexbor::abi::{
 };
 use crate::lexbor::adapter::html::{HtmlDoc as DomDoc, RawDoc, RawNode};
 use crate::lexbor::adapter::source_loc::{lines_build, Lines, Stamper};
-use crate::lexbor::adapter::tree_guard::{DepthLimit, TokenHook};
+use crate::lexbor::adapter::tree_guard::{ParseLimits, TokenHook};
 use crate::utf8_input::sanitize;
 
 type HtmlDoc = lxb::lxb_html_document_t;
@@ -147,7 +147,7 @@ pub use crate::html::tree::HtmlParseError;
 /// nothing the stamper does can switch it off (see `tree_guard`).
 unsafe fn parse_tracked<const PANIC_PROBE: bool>(
     src: &[u8],
-    limit: DepthLimit,
+    limit: ParseLimits,
 ) -> Result<Tracked, HtmlParseError> {
     let parser = lxb::HtmlParser::create().ok_or(HtmlParseError::Failed)?;
 
@@ -197,7 +197,7 @@ unsafe fn parse_tracked<const PANIC_PROBE: bool>(
 pub fn parse_html(
     src: &[u8],
     assume_valid: bool,
-    limit: DepthLimit,
+    limit: ParseLimits,
 ) -> Result<Box<HtmlParsed>, HtmlParseError> {
     let input = sanitize(src, assume_valid).ok_or(HtmlParseError::Failed)?;
     // SAFETY: a live slice, which the parse only reads and is done with when it
@@ -232,6 +232,6 @@ pub fn empty_html_document(compat_mode: u32) -> Result<Box<HtmlParsed>, HtmlPars
 /// normally; the result exists only so the type says nothing leaks if it did.
 pub fn parse_with_panicking_hook() -> bool {
     // SAFETY: a static slice, which the parse only reads.
-    let parsed = unsafe { parse_tracked::<true>(b"<p>x</p>", DepthLimit::DEFAULT) };
+    let parsed = unsafe { parse_tracked::<true>(b"<p>x</p>", ParseLimits::DEFAULT) };
     parsed.map(|(doc, _)| drop(DocOwner(doc))).is_ok()
 }

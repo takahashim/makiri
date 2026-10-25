@@ -2,7 +2,7 @@
 
 #![forbid(unsafe_code)]
 
-use magnus::{Error, Value};
+use crate::bridge::rb::{Error, Value};
 
 use super::*;
 use crate::child_index::{ChildList, ChildPositionMemo, Children, TokenTree};
@@ -92,7 +92,7 @@ fn with_child_memo<R>(
 /// says which tree and node it is and how a child is wrapped; counting and
 /// indexing are written once, here, and the four Ruby methods once, over
 /// this, in `glue::node`.
-pub trait ChildListHost: magnus::TryConvert {
+pub trait ChildListHost: crate::bridge::rb::TryConvert {
     type Tree<'a>: TokenTree
     where
         Self: 'a;

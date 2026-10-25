@@ -1,15 +1,14 @@
 //! Ruby objects the glue builds - Arrays, Hashes, Integers, Floats, Symbols -
 //! each made through `raw`'s protected calls, so a failed allocation is `Err`.
 //!
-//! magnus's own constructors (`Ruby::ary_new`, `Ruby::hash_new`,
-//! `Ruby::integer_from_i64`, ...) raise instead, a `longjmp` over the caller's
-//! frames; `clippy.toml` bans them outside this module and init, so the glue
-//! spells every one of these here. Strings are `bridge::string`'s.
+//! The C constructors raise on a failed allocation, a `longjmp` over the
+//! caller's frames, and are `bridge::raw`'s alone; the glue spells every one
+//! of these here. Strings are `bridge::string`'s.
 
 #![forbid(unsafe_code)]
 
-use magnus::value::ReprValue;
-use magnus::{Error, RArray, RHash, Value};
+use crate::bridge::rb::ReprValue;
+use crate::bridge::rb::{Error, RArray, RHash, Value};
 
 use super::raw;
 use super::ruby::gvl_ruby;
@@ -56,6 +55,11 @@ pub fn enumerator(obj: Value, meth: &str) -> Result<Value, Error> {
 }
 
 /// The Symbol named by the UTF-8 `name`.
+pub fn symbol(name: &str) -> Result<crate::bridge::rb::Symbol, Error> {
+    crate::bridge::raw::sym(&crate::bridge::ruby::gvl_ruby(), name)
+}
+
+/// [`symbol`] as a plain `Value`.
 pub fn sym(name: &str) -> Result<Value, Error> {
     raw::sym(&gvl_ruby(), name).map(|s| s.as_value())
 }

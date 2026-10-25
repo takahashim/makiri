@@ -42,7 +42,7 @@ use core::ffi::c_void;
 /// - It did not run: the interrupt is delivered HERE, under `protect`, so it
 ///   comes back as `Err` through ordinary Rust returns. If delivering it raised
 ///   nothing (a trap handler that returned), the call is simply made again.
-pub fn without_gvl<F: FnOnce() -> R + Send, R>(f: F) -> Result<R, magnus::Error> {
+pub fn without_gvl<F: FnOnce() -> R + Send, R>(f: F) -> Result<R, crate::bridge::rb::Error> {
     struct Slot<F, R> {
         f: Option<F>,
         out: Option<R>,
@@ -50,20 +50,23 @@ pub fn without_gvl<F: FnOnce() -> R + Send, R>(f: F) -> Result<R, magnus::Error>
     }
 
     unsafe extern "C" fn run<F: FnOnce() -> R, R>(p: *mut c_void) -> *mut c_void {
-        // SAFETY: `p` is the `&mut Slot` passed below, live for this call.
-        let slot = unsafe { &mut *(p as *mut Slot<F, R>) };
-        /* Never a panic here: this frame is Ruby's C, outside the guard below,
-         * so one would abort the process. The body is present on the first
-         * run; if it somehow were not, `out` stays None and the caller reports
-         * that under the GVL. */
-        let Some(f) = slot.f.take() else {
-            return core::ptr::null_mut();
-        };
-        /* Catch here rather than let the panic reach Ruby's C frame: `out`
-         * simply stays None, and the caller re-raises once the GVL is back. */
-        let out = &mut slot.out;
-        slot.panic.guard((), || *out = Some(f()));
-        core::ptr::null_mut()
+        crate::no_unwind::must_not_unwind::<crate::no_unwind::GvlBody, _>(|| {
+            // SAFETY: `p` is the `&mut Slot` passed below, live for this call.
+            let slot = unsafe { &mut *(p as *mut Slot<F, R>) };
+            /* Never a panic here: this frame is Ruby's C, outside the guard
+             * below, so one would abort the process. The body is present on
+             * the first run; if it somehow were not, `out` stays None and the
+             * caller reports that under the GVL. */
+            let Some(f) = slot.f.take() else {
+                return core::ptr::null_mut();
+            };
+            /* Catch here rather than let the panic reach Ruby's C frame: `out`
+             * simply stays None, and the caller re-raises once the GVL is
+             * back. */
+            let out = &mut slot.out;
+            slot.panic.guard((), || *out = Some(f()));
+            core::ptr::null_mut()
+        })
     }
 
     let mut slot = Slot {

@@ -28,6 +28,24 @@ jobs:
   # `sanitize` job already does (Ruby 3.4 and 4.0) and adds the Ruby-free engine
   # tests under ASan, so this was a second copy of the same run.
 
+  # The extension's dependencies, against ext/makiri/rust/deny.toml: no
+  # crate with a RustSec advisory or a yanked release, licenses Makiri's
+  # Apache-2.0 can carry, crates.io as the only source. Nightly too, since a
+  # new advisory can land on a dependency nothing here changed.
+  cargo-deny:
+    name: Dependencies (cargo-deny)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Check the dependencies
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: ext/makiri/rust/Cargo.toml
+          command: check
+
   security-fuzz-short:
     name: Short sanitized fuzz
     runs-on: ubuntu-latest

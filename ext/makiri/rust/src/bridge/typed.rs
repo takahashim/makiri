@@ -7,23 +7,24 @@
 //! [`Hooks`], and the callbacks below are the one monomorphised bridge from
 //! Ruby's GC to it, so no glue module writes an `extern "C"` GC function.
 //!
-//! The wrapper struct lives in memory from `ruby_xmalloc` ([`wrap_built`]),
-//! and the free callback runs the struct's `Drop` in place before handing that
-//! memory back to `ruby_xfree` - `xfree` alone would skip the destructor, and
-//! with it everything the struct owns.
+//! The wrapper struct is the object's data, made with the object by
+//! `rb_data_typed_object_zalloc` ([`wrap_built`]) - in the object's own slot
+//! for an embedded type, from `xcalloc` otherwise - and the free callback runs
+//! the struct's `Drop` in place before the memory goes back: freeing alone
+//! would skip the destructor, and with it everything the struct owns.
 
 #![allow(unsafe_code)]
 
 use core::ffi::{c_char, c_void};
 use core::marker::PhantomData;
 
-use magnus::rb_sys::{AsRawValue, FromRawValue};
-use magnus::{Error, Value};
+use crate::bridge::rb::value::AsRawValue;
+use crate::bridge::rb::{Error, Value};
 use rb_sys::{rb_data_type_t, VALUE};
 
 /// A `Value` from a raw handle this module holds - a stored field, or what a
 /// wrap returned. With `raw.rs`, the only place a raw `VALUE` becomes a
-/// `Value` (`rake unsafe:boundaries`' `VALUE_COUNTS`).
+/// `Value` (`rake dylint`'s `raw_ruby_outside_bridge`).
 ///
 /// # Safety
 /// `raw` is a live Ruby value of the current process, kept rooted by the
@@ -44,8 +45,9 @@ unsafe fn value(raw: VALUE) -> Value {
 /// wrap's own allocation could free the value or compaction move it from
 /// under the stored copy (the `DocData.errors` bug). A `Held` holding a value
 /// can only be made with a [`Store`], and a `Store` exists only where the
-/// owner is already a Ruby object: in [`TypedType::wrap`]'s store step and
-/// in [`TypedType::with_store`]. A struct is built holding [`Held::empty`].
+/// owner is already a Ruby object: in [`TypedType::wrap`]'s store step. A
+/// struct is built holding [`Held::empty`], and a `Held` never changes after
+/// that step - nothing re-points it, so it is marked pinned and never moved.
 ///
 /// What the type enforces is the ORDER: the value goes in after the wrap. It
 /// cannot enforce what comes after - that the `Held` stays where its owner's
@@ -56,24 +58,18 @@ unsafe fn value(raw: VALUE) -> Value {
 /// type is visible to the bridge alone. Neither `Copy` nor `Clone`, so it is
 /// read through its owner rather than carried off.
 ///
-/// A cell, so compaction re-points it through a shared reference
-/// ([`Tracer::movable`]): the compaction callback then never makes a `&mut`
-/// of an object a method may be reading.
+/// Only three are left, each a single field set once: a node wrapper's
+/// Document, a Document's node table, a NodeSet's Document. Every other value
+/// a wrapper keeps alive is a hidden ivar of its object (an XPathContext's
+/// Document and node, a Document's errors), which the GC marks and moves
+/// itself - where reading it per call would cost more than it saves.
 #[repr(transparent)]
-pub(in crate::bridge) struct Held(core::cell::Cell<VALUE>);
+pub(in crate::bridge) struct Held(VALUE);
 
 impl Held {
     /// What a struct is built with: `Qfalse`, which a mark ignores.
     pub(in crate::bridge) const fn empty() -> Held {
-        Held(core::cell::Cell::new(rb_sys::Qfalse as VALUE))
-    }
-
-    /// Hold `new`'s value in place of this one: a field that changes after
-    /// the wrap (an `XPathContext`'s node). `new` comes from a [`Store`], so
-    /// the rule [`Held`] carries holds for it too.
-    #[inline]
-    pub(in crate::bridge) fn replace(&self, new: Held) {
-        self.0.set(new.0.get());
+        Held(rb_sys::Qfalse as VALUE)
     }
 
     /// The value.
@@ -81,13 +77,12 @@ impl Held {
     /// # Safety
     /// `self` is a field of a live wrapped object whose [`Hooks::trace`]
     /// traces it, and the caller keeps that object reachable for the call (a
-    /// method argument, a VALUE on the stack). Then the value is marked, so
-    /// live - pinned when traced [`Tracer::pinned`], and current after any
-    /// move when traced [`Tracer::movable`], which relocates it too.
+    /// method argument, a VALUE on the stack). Then the value is marked and
+    /// pinned, so live and where it was stored.
     #[inline]
     pub(in crate::bridge) unsafe fn get(&self) -> Value {
         // SAFETY: the caller's contract - a marked value of a reachable object.
-        unsafe { value(self.0.get()) }
+        unsafe { value(self.0) }
     }
 }
 
@@ -100,50 +95,24 @@ impl Store {
     /// object's data, where its mark finds it - see [`Held`].
     #[inline]
     pub(in crate::bridge) fn hold(&self, v: Value) -> Held {
-        Held(core::cell::Cell::new(v.as_raw()))
+        Held(v.as_raw())
     }
 }
 
-/// A GC phase, handed to [`Hooks::trace`]: the one walk over an object's
-/// stored values that both the mark and the compaction callback make.
+/// The mark phase, handed to [`Hooks::trace`].
 ///
-/// One walk, not two methods, so a value cannot be marked movable and then
-/// left out of the relocation that must follow it: the field says how it is
-/// held ([`Tracer::pinned`] or [`Tracer::movable`]) once, and each phase does
-/// its half of that.
-pub struct Tracer(Phase);
-
-#[derive(Clone, Copy)]
-enum Phase {
-    Mark,
-    Relocate,
-}
+/// There is no compaction phase: every [`Held`] is marked pinned, so nothing
+/// a Rust struct holds ever moves, and there is no relocation to get wrong. A
+/// table of many - the node table - is a Ruby Hash, which marks its entries
+/// movable and relocates them itself.
+pub struct Tracer(());
 
 impl Tracer {
-    /// A value the object holds once, PINNED where it is: marked, and never
-    /// moved, so never relocated.
-    ///
-    /// A table of many - a node cache - uses [`Tracer::movable`] instead, so
-    /// 50,000 pinned objects do not stop compaction from doing its job.
+    /// A value the object holds, PINNED where it is: marked, and never moved.
     #[inline]
     pub(in crate::bridge) fn pinned(&self, v: &Held) {
-        if let Phase::Mark = self.0 {
-            // SAFETY: called from Ruby's mark phase, with the GVL held.
-            unsafe { rb_sys::rb_gc_mark(v.0.get()) };
-        }
-    }
-
-    /// A value compaction MAY move: marked movable, then re-pointed at where
-    /// its object is now.
-    #[inline]
-    pub(in crate::bridge) fn movable(&self, v: &Held) {
-        match self.0 {
-            // SAFETY: called from Ruby's mark phase, with the GVL held.
-            Phase::Mark => unsafe { rb_sys::rb_gc_mark_movable(v.0.get()) },
-            // SAFETY: called from Ruby's compaction phase, with the GVL held,
-            // on a value the mark phase marked movable - the same walk did.
-            Phase::Relocate => v.0.set(unsafe { rb_sys::rb_gc_location(v.0.get()) }),
-        }
+        // SAFETY: called from Ruby's mark phase, with the GVL held.
+        unsafe { rb_sys::rb_gc_mark(v.0) };
     }
 }
 
@@ -156,12 +125,9 @@ impl Tracer {
 /// and must neither panic nor touch a Ruby object (see the note on the
 /// callbacks below).
 pub trait Hooks: Sized {
-    /// Hand every `VALUE` this object holds to `tracer`, each as it is held.
-    ///
-    /// Through `&self`: a [`Held`] relocates in place, so neither callback
-    /// makes a `&mut` of an object a method may be reading when the collector
-    /// runs. Ruby's `GC.auto_compact` (which `GC_COMPACT_STRESS=1` turns on)
-    /// and `GC.verify_compaction_references` are what exercise the relocation.
+    /// Hand every [`Held`] this object holds to `tracer`. Through `&self`:
+    /// the mark callback makes no `&mut` of an object a method may be
+    /// reading when the collector runs.
     fn trace(&self, tracer: &Tracer);
 
     /// The bytes this object owns, reported to Ruby's GC.
@@ -170,45 +136,79 @@ pub trait Hooks: Sized {
     }
 }
 
-/* The three GC callbacks below are the crate's only `extern "C"` functions
- * with no panic latch, and deliberately so. They run from Ruby's collector,
- * where there is no frame to raise into: `mark_cb` cannot report a failure
- * without risking premature collection of what it did not mark, and `free_cb`
- * cannot report one without leaking or freeing twice. So a panic here keeps
- * the old behaviour - Rust turns the unwind at the boundary into an abort -
- * which is the honest answer when the alternative is a corrupted heap.
- * Keep their bodies trivial; that is what makes the choice cheap. */
+/* The GC callbacks below are the crate's only `extern "C"` functions with no
+ * panic latch, and deliberately so. They run from Ruby's collector, where
+ * there is no frame to raise into: `mark_cb` cannot report a failure without
+ * risking premature collection of what it did not mark, and `free_cb` cannot
+ * report one without leaking or freeing twice. So a panic here keeps the old
+ * behaviour - Rust turns the unwind at the boundary into an abort - which is
+ * the honest answer when the alternative is a corrupted heap. Keep their
+ * bodies trivial; that is what makes the choice cheap.
+ *
+ * Each passes over a null data pointer. `rb_data_typed_object_zalloc` makes
+ * the object before it allocates a non-embedded type's data, so a failed
+ * allocation leaves an object with none; CRuby's collector does not call a
+ * callback for it today, but that is its implementation, not its documented
+ * contract, and one branch here means nothing rests on it. */
 
 unsafe extern "C" fn mark_cb<T: Hooks>(ptr: *mut c_void) {
-    // SAFETY: Ruby hands back the pointer `wrap_built` stored, a live `T`.
-    unsafe { (*(ptr as *const T)).trace(&Tracer(Phase::Mark)) };
+    crate::no_unwind::must_not_unwind::<crate::no_unwind::GcMark, _>(|| {
+        if ptr.is_null() {
+            return;
+        }
+        // SAFETY: Ruby hands back the data pointer of an object `wrap_built`
+        // made, which holds a live `T` (see `wrap_built`).
+        unsafe { (*(ptr as *const T)).trace(&Tracer(())) };
+    })
 }
 
 unsafe extern "C" fn free_cb<T: Hooks>(ptr: *mut c_void) {
-    // SAFETY: as `mark_cb`; the object is being collected, so this is its last
-    // access - the `T` is dropped exactly once, here, and never read again -
-    // and the struct came from `ruby_xmalloc`, so it goes back to `ruby_xfree`.
-    unsafe {
-        core::ptr::drop_in_place(ptr as *mut T);
-        rb_sys::ruby_xfree(ptr);
-    }
+    crate::no_unwind::must_not_unwind::<crate::no_unwind::GcFree, _>(|| {
+        if ptr.is_null() {
+            return;
+        }
+        // SAFETY: as `mark_cb`; the object is being collected, so this is its
+        // last access - the `T` is dropped exactly once, here, and never read
+        // again - and the data came from `rb_data_typed_object_zalloc`'s
+        // `xcalloc`, so it goes back to `ruby_xfree`, as
+        // `TypedData_Make_Struct`'s data does.
+        /* The drop is a read and `quietly`: a type whose drop the compiler
+         * cannot show unwind-free (a tree's recursive glue) is caught rather
+         * than unwound into the collector. */
+        unsafe {
+            let data = core::ptr::read(ptr as *mut T);
+            crate::caught::quietly((), || drop(data));
+            rb_sys::ruby_xfree(ptr);
+        }
+    })
 }
 
 unsafe extern "C" fn free_embedded_cb<T: Hooks>(ptr: *mut c_void) {
-    // SAFETY: as `free_cb`, for data embedded in the object's own slot: the
-    // `T` is dropped, and the memory is the slot, which Ruby reclaims.
-    unsafe { core::ptr::drop_in_place(ptr as *mut T) };
+    crate::no_unwind::must_not_unwind::<crate::no_unwind::GcFreeEmbedded, _>(|| {
+        if ptr.is_null() {
+            return;
+        }
+        // SAFETY: as `free_cb`, for an embeddable type: the `T` is dropped and
+        // the memory is left to Ruby - the object's own slot when it was
+        // embedded, and data Ruby frees after this callback when it was not.
+        let data = unsafe { core::ptr::read(ptr as *mut T) };
+        crate::caught::quietly((), || drop(data));
+    })
 }
 
 unsafe extern "C" fn memsize_cb<T: Hooks>(ptr: *const c_void) -> rb_sys::size_t {
-    // SAFETY: as `mark_cb`.
-    unsafe { (*(ptr as *const T)).memsize() as rb_sys::size_t }
-}
-
-unsafe extern "C" fn compact_cb<T: Hooks>(ptr: *mut c_void) {
-    // SAFETY: as `mark_cb`; compaction has finished moving and is now fixing up
-    // the references to what it moved.
-    unsafe { (*(ptr as *const T)).trace(&Tracer(Phase::Relocate)) };
+    crate::no_unwind::must_not_unwind::<crate::no_unwind::GcMemsize, _>(|| {
+        if ptr.is_null() {
+            return 0;
+        }
+        /* `quietly`: the size is advisory, so a panic in it - an overflow
+         * check in a sum, say - answers 0 rather than unwinding into the
+         * collector. (Not so for mark: a value left unmarked is freed while
+         * still referenced, so it must be unwind-free itself.) */
+        // SAFETY: as `mark_cb`.
+        let data = unsafe { &*(ptr as *const T) };
+        crate::caught::quietly(0, || data.memsize()) as rb_sys::size_t
+    })
 }
 
 /// A `rb_data_type_t` for `T`: its GC callbacks drive [`Hooks`] for `T`, and
@@ -242,7 +242,6 @@ impl<T: Hooks> TypedType<T> {
                     free_cb::<T>
                 }),
                 Some(memsize_cb::<T>),
-                Some(compact_cb::<T>),
                 embedded,
             ),
             _t: PhantomData,
@@ -285,23 +284,23 @@ impl<T: Hooks> TypedType<T> {
         unsafe { &*self.known_ptr(*v) }
     }
 
+    /// [`get_known`](Self::get_known) with the lifetime left to the caller:
+    /// for a reference kept beside the object it reads, as a NodeSet's fill
+    /// handle is.
+    ///
+    /// # Safety
+    /// `v` must be an object of this type (a mismatch panics), and the
+    /// caller must keep it rooted - on its stack - for as long as it uses
+    /// the reference.
+    pub(in crate::bridge) unsafe fn get_unbound<'a>(&'static self, v: Value) -> &'a T {
+        // SAFETY: the caller's contract; `known_ptr` asserts the type.
+        unsafe { &*self.known_ptr(v) }
+    }
+
     /// The `T` behind an object whose type the caller established. The
     /// pointer is valid while `v` is rooted.
     fn known_ptr(&'static self, v: Value) -> *mut T {
         typed_data_known(v, &self.raw) as *mut T
-    }
-
-    /// Run `f` over the data of `v`, an object whose type the caller
-    /// established, with a [`Store`]: `v` is wrapped, so a value stored into
-    /// its data is marked from the moment it is stored. Shared: a type that
-    /// stores into its data after the wrap keeps what it stores into in a
-    /// cell.
-    pub(in crate::bridge) fn with_store<R>(
-        &'static self,
-        v: Value,
-        f: impl FnOnce(&T, &Store) -> R,
-    ) -> R {
-        f(self.get_known(&v), &Store(()))
     }
 
     /// Allocate Ruby memory for a `T`, `build` it there, wrap it as a `klass`
@@ -313,12 +312,12 @@ impl<T: Hooks> TypedType<T> {
     /// `&Ruby` is the GVL, and a `T` keeps a Ruby value only in a [`Held`],
     /// which holds nothing until a [`Store`] exists - and `store` runs after
     /// the wrap. A raw `VALUE` in a field would get around that; none is
-    /// written outside `raw.rs` and this file (`rake unsafe:boundaries`'
-    /// `VALUE_COUNTS`).
+    /// written outside `raw.rs` and this file (`rake dylint`'s
+    /// `raw_ruby_outside_bridge`).
     pub(in crate::bridge) fn wrap(
         &'static self,
-        _: &magnus::Ruby,
-        klass: magnus::RClass,
+        _: &crate::bridge::rb::Ruby,
+        klass: crate::bridge::rb::RClass,
         build: impl FnOnce() -> T,
         store: impl FnOnce(&mut T, &Store),
     ) -> Result<Value, Error> {
@@ -356,12 +355,14 @@ impl<T: Hooks + Snapshot> EmbeddedType<T> {
     /// A base type.
     pub const fn base(name: *const c_char) -> EmbeddedType<T> {
         const { assert!(core::mem::size_of::<T>() <= EMBED_MAX) };
+        const { assert!(core::mem::align_of::<T>() <= EMBED_ALIGN) };
         EmbeddedType(TypedType::with_parent(name, core::ptr::null(), true))
     }
 
     /// A type deriving from `parent`, which holds the same `T`.
     pub const fn derived(name: *const c_char, parent: &EmbeddedType<T>) -> EmbeddedType<T> {
         const { assert!(core::mem::size_of::<T>() <= EMBED_MAX) };
+        const { assert!(core::mem::align_of::<T>() <= EMBED_ALIGN) };
         EmbeddedType(TypedType::with_parent(name, parent.0.raw.as_ptr(), true))
     }
 
@@ -382,8 +383,8 @@ impl<T: Hooks + Snapshot> EmbeddedType<T> {
     /// allocate nothing either: it stores the values `T` holds, no more.
     pub(in crate::bridge) fn wrap(
         &'static self,
-        ruby: &magnus::Ruby,
-        klass: magnus::RClass,
+        ruby: &crate::bridge::rb::Ruby,
+        klass: crate::bridge::rb::RClass,
         build: impl FnOnce() -> T,
         store: impl FnOnce(&mut T, &Store),
     ) -> Result<Value, Error> {
@@ -413,7 +414,6 @@ impl DataType {
         dmark: rb_sys::RUBY_DATA_FUNC,
         dfree: rb_sys::RUBY_DATA_FUNC,
         dsize: Option<unsafe extern "C" fn(*const core::ffi::c_void) -> rb_sys::size_t>,
-        dcompact: rb_sys::RUBY_DATA_FUNC,
         embedded: bool,
     ) -> DataType {
         const FREE_IMMEDIATELY: VALUE =
@@ -425,7 +425,9 @@ impl DataType {
                 dmark,
                 dfree,
                 dsize,
-                dcompact,
+                /* No compaction callback: a struct holds only pinned
+                 * values ([`Tracer`]). */
+                dcompact: None,
                 reserved: [core::ptr::null_mut(); 1],
             },
             parent,
@@ -480,12 +482,13 @@ unsafe fn data_pointer(v: VALUE) -> *mut c_void {
 }
 
 /// The data pointer of a TypedData object whose type the caller has already
-/// established - a receiver magnus converted, or the Document a checked node
-/// holds.
+/// established - a receiver its `TryConvert` checked, or the Document a
+/// checked node holds.
 ///
 /// A mismatch here is a bug in that reasoning, not a user error, so it panics:
 /// the panic unwinds through the Rust frames (running their destructors) and
-/// magnus turns it into a fatal error, where a raise would longjmp past them.
+/// the method's trampoline makes it `Makiri::InternalError`, where a raise
+/// would longjmp past them.
 fn typed_data_known(v: Value, ty: &'static DataType) -> *mut c_void {
     let (v, ty) = (v.as_raw(), ty.as_ptr());
     // SAFETY: as in `typed_data`; the assert is the type check.
@@ -498,138 +501,63 @@ fn typed_data_known(v: Value, ty: &'static DataType) -> *mut c_void {
     }
 }
 
-/// Allocate `ruby_xmalloc` memory for a `T`, write the fully built value
-/// `build` returns into it, wrap it as a `klass` object of data type `ty`, and
-/// only then let `store` write the VALUEs it holds.
+/// Make a `klass` object of data type `ty` with room for a `T`, write the
+/// fully built value `build` returns into it, and only then let `store` write
+/// the VALUEs it holds: `TypedData_Make_Struct`, the C API's own way to make
+/// an object with its data, for every type - embedded or not, which only
+/// decides where Ruby puts the data (`rtypeddata_get_data` finds it either
+/// way).
 ///
-/// The order is the point. The wrap allocates, so it is a GC point, and a VALUE
-/// already sitting in this malloc'd struct is seen by no mark there: a GC can
-/// free it, or compaction move it out from under the stored copy. So the built
-/// value has its VALUE fields `Qfalse` (0), which the mark ignores, until
-/// `store` sets them; and the VALUEs `store` writes are still on the caller's
-/// stack across the wrap, where the conservative scan pins them.
+/// One C call, `rb_data_typed_object_zalloc`, makes the object and its data,
+/// so one protected call per object. A non-embedded type's data is its
+/// `xcalloc`, which also makes it a point where Ruby decides whether malloc
+/// pressure calls for a collection: `rb_gc_adjust_memory_usage`, which a
+/// Document reports its arena with, only adds to that pressure, so a loop of
+/// parses with no Ruby allocation of a Document's data ran no GC at all
+/// (`spec/gc_accounting_spec.rb`).
 ///
-/// Built AFTER the allocation, by a closure, not passed in, so a failed
-/// allocation builds nothing. Both allocations come back as `Err` (`raw`'s
-/// calls are protected); a failed wrap drops the built `T` in place and frees
-/// its memory. Once wrapped, the free callback drops it in place.
+/// The order is the point. The data is zeroed until the built value is
+/// written, which is not a valid `T`, so the value is built BEFORE the object
+/// exists: nothing runs between the allocation and the write, and a panic in
+/// `build` leaves no object whose free callback would drop zeroed memory as a
+/// `T`. A failed allocation - `Err`, from `raw`'s protected call - drops the
+/// built value. And the value has its VALUE fields `Qfalse` until `store`
+/// sets them, once the object exists, so a VALUE is never held where no mark
+/// reaches it.
 ///
 /// # Safety
-/// Under the GVL. `build` returns a `T` that holds no VALUE but `Qfalse` (all
-/// a `Held` can hold before a `Store`); `ty` must be `T`'s type (its free
-/// callback drops a `T` and returns the memory to `ruby_xfree`).
+/// Under the GVL. `build` runs no Ruby and returns a `T` that holds no VALUE
+/// but `Qfalse` (all a `Held` can hold before a `Store`); `ty` must be `T`'s
+/// type.
 unsafe fn wrap_built<T>(
     klass: VALUE,
     ty: *const rb_data_type_t,
     build: impl FnOnce() -> T,
     store: impl FnOnce(&mut T, &Store),
 ) -> Result<VALUE, Error> {
-    const EMBEDDABLE: VALUE = rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_EMBEDDABLE as VALUE;
-    if (*ty).flags & EMBEDDABLE != 0 {
-        return wrap_embedded(klass, ty, build, store);
+    const { assert!(core::mem::size_of::<T>() != 0) };
+    const { assert!(core::mem::align_of::<T>() <= 16) }; /* malloc's alignment */
+    let built = build();
+    let obj = super::raw::typed_object_zalloc(klass, core::mem::size_of::<T>(), ty)?;
+    let p = data_pointer(obj) as *mut T;
+    if p.is_null() {
+        return Err(crate::bridge::ruby::internal_error(
+            "a TypedData object was made without its data",
+        ));
     }
-    /* `ruby_xmalloc` is malloc-aligned; nothing wrapped asks for more. */
-    const { assert!(core::mem::align_of::<T>() <= 16) };
-    let p = super::raw::xmalloc(core::mem::size_of::<T>())? as *mut T;
-    p.write(build());
-    let obj = match super::raw::typed_object_wrap(klass, p as *mut c_void, ty) {
-        Ok(obj) => obj,
-        Err(e) => {
-            core::ptr::drop_in_place(p);
-            super::alloc::free(p);
-            return Err(e);
-        }
-    };
-    /* Wrapped: from here the mark sees what `store` puts in. */
+    p.write(built);
+    /* An object: from here the mark sees what `store` puts in. */
     store(&mut *p, &Store(()));
     Ok(obj)
 }
 
 /// The largest `T` an embedded type takes: with `RTypedData`'s header it fits
-/// the 80-byte slot, well inside Ruby's largest (640), so `rb_data_typed_object_zalloc`
-/// always embeds it - which `free_embedded_cb`, which frees no memory, relies on.
+/// the 80-byte slot, well inside Ruby's largest (640), so
+/// `rb_data_typed_object_zalloc` embeds it. Were it not embedded, the object
+/// would still be right - its data allocated apart, which Ruby frees.
 pub const EMBED_MAX: usize = 40;
 
-/// [`wrap_built`] for an embedded type: the object is allocated with its data
-/// zeroed in its own slot, `build`'s value is written there, and `store`
-/// runs as before. Nothing runs between the allocation and the write - `build`
-/// is plain Rust - so no collection sees the zeroed data.
-unsafe fn wrap_embedded<T>(
-    klass: VALUE,
-    ty: *const rb_data_type_t,
-    build: impl FnOnce() -> T,
-    store: impl FnOnce(&mut T, &Store),
-) -> Result<VALUE, Error> {
-    let obj = super::raw::typed_object_zalloc(klass, core::mem::size_of::<T>(), ty)?;
-    /* `EMBED_MAX` keeps every embedded `T` small enough to be embedded; a
-     * Ruby that did not would have allocated the data apart, which the free
-     * callback would leak - refused rather than handed out. */
-    /* Embedded data starts right after `RTypedData`'s header - `RBasic`'s two
-     * words, `type` and `typed_flag` - where the `data` pointer would be
-     * (`RTYPEDDATA_GET_DATA`); data allocated apart is anywhere else. */
-    let p = data_pointer(obj) as *mut T;
-    if p as usize != obj as usize + 4 * core::mem::size_of::<usize>() {
-        return Err(crate::bridge::ruby::internal_error(
-            "an embeddable object was not embedded",
-        ));
-    }
-    p.write(build());
-    store(&mut *p, &Store(()));
-    Ok(obj)
-}
-
-/* ---- magnus's TypedData, for NodeSet ----
- * NodeSet implements magnus's `TypedData` by hand (its GC hooks are magnus's;
- * no derive, which would look its class up with a `funcall`), not a
- * `TypedType`; this is its one unchecked accessor, and `wrap_magnus` below its
- * one constructor. magnus boxes the value and its free drops the `Box`, so
- * NodeSet gets its `Drop` the same way a `TypedType` object does. */
-
-/// The wrapped Rust value behind a TypedData object, without magnus's
-/// `rb_protect`.
-///
-/// `<&T>::try_convert` - and so every magnus method with a wrapped receiver -
-/// runs `rb_check_typeddata` inside `rb_protect`, which is a `setjmp` per call.
-/// That is the right default when a Rust caller wants a `Result`, but it is not
-/// free: on the per-node path it measured about a quarter of the throughput of
-/// the C it replaced (`Node#css` over 2000 nodes, `notes/node_set_ab.rb`).
-///
-/// # Safety
-/// Only for a VALUE the caller built as a `T` itself (a mismatch panics). The
-/// returned lifetime is unconstrained; the caller must keep `v` rooted.
-pub(in crate::bridge) unsafe fn typed_data_unprotected<'a, T: magnus::TypedData>(
-    v: VALUE,
-) -> &'a T {
-    /* magnus::DataType is #[repr(transparent)] over rb_data_type_t, so this
-     * cast is what the repr promises; the accessor for it is crate-private. */
-    let dt = T::data_type() as *const magnus::typed_data::DataType as *const rb_data_type_t;
-    assert!(
-        rb_sys::rb_typeddata_is_kind_of(v, dt) != 0,
-        "a VALUE built as a NodeSet had a different type"
-    );
-    &*(data_pointer(v) as *const T)
-}
-
-/// magnus's `Ruby::wrap` for a `#[derive(TypedData)]` value (NodeSet), with
-/// both allocations - the box and the object - answered as `Err` rather than
-/// raised (magnus's raises). magnus's free callback drops the box, so the
-/// object is made exactly as `wrap` makes it.
-pub(in crate::bridge) fn wrap_magnus<T: magnus::TypedData>(data: T) -> Result<Value, Error> {
-    let ruby = super::ruby::gvl_ruby();
-    let class = T::class_for(&ruby, &data);
-    let boxed = crate::falloc::try_box(data)
-        .map_err(|_| Error::new(ruby.exception_no_mem_error(), "failed to allocate memory"))?;
-    let dt = T::data_type() as *const magnus::typed_data::DataType as *const rb_data_type_t;
-    let p = Box::into_raw(boxed);
-    // SAFETY: `p` is the box magnus's free callback for `T` expects, and `dt`
-    // is `T`'s data type (magnus::DataType is #[repr(transparent)] over it).
-    match unsafe { super::raw::typed_object_wrap(class.as_raw(), p as *mut c_void, dt) } {
-        // SAFETY: the object just wrapped.
-        Ok(obj) => Ok(unsafe { value(obj) }),
-        Err(e) => {
-            // SAFETY: not wrapped, so the box is still ours alone.
-            drop(unsafe { Box::from_raw(p) });
-            Err(e)
-        }
-    }
-}
+/// The strictest alignment an embedded `T` may have: its data starts right
+/// after `RTypedData`'s header, which a slot places at an 8-byte boundary
+/// only - not the 16 `wrap_built` allows for `xcalloc`'s data.
+pub const EMBED_ALIGN: usize = 8;
