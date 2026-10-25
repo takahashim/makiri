@@ -304,11 +304,11 @@ impl RHash {
     }
 
     /// The value at `key`, or `None` when there is none. A key is a Symbol
-    /// or a String ([`HashKey`]), which Ruby hashes and compares in C, so
-    /// the lookup runs no Ruby code of the caller's (a key of another kind
-    /// could: its `hash` and `eql?`).
+    /// or a String ([`HashKey`]), which Ruby hashes and compares in C; a key
+    /// of the Hash's own that collides with it is compared by its `eql?`,
+    /// which can raise - `Err`, passed on (`raw::hash_lookup`).
     #[inline]
-    pub fn get(self, key: impl HashKey) -> Option<Value> {
+    pub fn get(self, key: impl HashKey) -> Result<Option<Value>, Error> {
         crate::bridge::raw::hash_lookup(self, key.as_value())
     }
 }

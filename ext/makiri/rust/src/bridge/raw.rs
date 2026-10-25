@@ -236,16 +236,22 @@ pub fn ary_entry(a: RArray, i: c_long) -> Value {
     unsafe { Value::from_raw(rb_sys::rb_ary_entry(a.as_raw(), i)) }
 }
 
-/// `rb_hash_lookup2` at `key`, `None` for no entry. A Symbol hashes and
-/// compares by identity and a String by its bytes, both in C, so no Ruby code
-/// runs; protected all the same, since the C function is a lookup Ruby may
-/// extend.
-pub fn hash_lookup(h: RHash, key: Value) -> Option<Value> {
+/// `rb_hash_lookup2` at `key`, `Ok(None)` for no entry. The key is a Symbol
+/// or a String, hashed and compared in C - but a key already IN the Hash may
+/// be any object, and one whose hash collides is compared with its `eql?`,
+/// the caller's Ruby, which can raise or `throw`. That comes back as `Err`,
+/// to be passed on: read as "no entry", the exception would be lost and the
+/// keyword taken as absent. In the raise sweep's set (`injected_raise`), so
+/// that path is run.
+pub fn hash_lookup(h: RHash, key: Value) -> Result<Option<Value>, Error> {
     const UNDEF: VALUE = rb_sys::Qundef as VALUE;
     let (h, key) = (h.as_raw(), key.as_raw());
-    let v = call(|| unsafe { rb_sys::rb_hash_lookup2(h, key, UNDEF) }).ok()?;
+    let v = call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_hash_lookup2(h, key, UNDEF)
+    })?;
     // SAFETY: a value of the Hash's, or `Qundef`, which is not handed out.
-    (v != UNDEF).then(|| unsafe { Value::from_raw(v) })
+    Ok((v != UNDEF).then(|| unsafe { Value::from_raw(v) }))
 }
 
 /// `rb_range_values`: a Range's ends and whether it excludes its end. For a

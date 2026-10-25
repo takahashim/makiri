@@ -113,7 +113,7 @@ pub fn namespaces(_ruby: &Ruby, this: XmlSelf) -> Result<RHash, Error> {
     for id in core::iter::successors(Some(this.id), |&n| d.parent(n)) {
         for (at, _, u) in declarations(&d, id) {
             let key = crate::bridge::string::utf8_rstring(d.qname(at))?;
-            if h.get(key).is_none() {
+            if h.get(key)?.is_none() {
                 aset(h, key.as_value(), utf8_str(u)?)?;
             }
         }

@@ -33,7 +33,7 @@ impl Kwargs {
         let Some(h) = self.0 else {
             return Ok(None);
         };
-        Ok(h.get(crate::bridge::build::symbol(name)?)
+        Ok(h.get(crate::bridge::build::symbol(name)?)?
             .filter(|v: &Value| !v.is_nil()))
     }
 
@@ -60,7 +60,7 @@ impl Kwargs {
             return Ok((None, None));
         };
         let sym = crate::bridge::build::symbol(name)?;
-        let taken = h.get(sym).filter(|v: &Value| !v.is_nil());
+        let taken = h.get(sym)?.filter(|v: &Value| !v.is_nil());
         let sym = sym.as_value();
         /* Made on the first key that stays, so a call passing only `name`
          * allocates no Hash either. */
