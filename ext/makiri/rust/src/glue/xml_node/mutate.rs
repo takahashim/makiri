@@ -64,10 +64,10 @@ fn element_for(this: &mut XmlSelf) -> Result<Editing<'_>, Error> {
 }
 
 /// `element[name] = value` -> value.
-pub fn aset(_ruby: &Ruby, mut this: XmlSelf, name: Value, val: Value) -> Result<Value, Error> {
+pub fn aset(ruby: &Ruby, mut this: XmlSelf, name: Value, val: Value) -> Result<Value, Error> {
     let edit = element_for(&mut this)?;
-    let nv = verified_name(name, "attribute name")?;
-    let vv = verified_data(val, "attribute value")?;
+    let nv = verified_name(ruby, name, "attribute name")?;
+    let vv = verified_data(ruby, val, "attribute value")?;
     let (name, value) = (nv.as_bytes(), vv.as_bytes());
     /* A bad name is refused before the edit is recorded. */
     xml_mut_result(mutate::checked_attribute_name(name))?;
@@ -77,16 +77,16 @@ pub fn aset(_ruby: &Ruby, mut this: XmlSelf, name: Value, val: Value) -> Result<
 
 /// `element.set_attribute_ns(namespace_or_nil, qualified_name, value)` -> value.
 pub fn set_attribute_ns(
-    _ruby: &Ruby,
+    ruby: &Ruby,
     mut this: XmlSelf,
     ns: Value,
     qname: Value,
     val: Value,
 ) -> Result<Value, Error> {
     let edit = element_for(&mut this)?;
-    let qv = verified_name(qname, "attribute qualified name")?;
-    let vv = verified_data(val, "attribute value")?;
-    let nv = namespace_arg(ns, "namespace")?;
+    let qv = verified_name(ruby, qname, "attribute qualified name")?;
+    let vv = verified_data(ruby, val, "attribute value")?;
+    let nv = namespace_arg(ruby, ns, "namespace")?;
     let (ns, qname, value) = (
         nv.as_ref().map_or(&b""[..], |n| n.as_bytes()),
         qv.as_bytes(),
@@ -104,14 +104,14 @@ pub fn set_attribute_ns(
 /// `create_loose_dom_element`'s counterpart: the name is not split, and a new
 /// attribute is in no namespace. `ArgumentError` for a name the DOM refuses.
 pub fn set_loose_dom_attribute(
-    _ruby: &Ruby,
+    ruby: &Ruby,
     mut this: XmlSelf,
     name: Value,
     val: Value,
 ) -> Result<Value, Error> {
     let edit = element_for(&mut this)?;
-    let nv = verified_name(name, "attribute name")?;
-    let vv = verified_data(val, "attribute value")?;
+    let nv = verified_name(ruby, name, "attribute name")?;
+    let vv = verified_data(ruby, val, "attribute value")?;
     let (name, value) = (nv.as_bytes(), vv.as_bytes());
     /* A bad name is refused before the edit is recorded. */
     xml_mut_result(mutate::checked_loose_dom_attribute_name(name))?;
@@ -123,7 +123,7 @@ pub fn set_loose_dom_attribute(
 
 /// `element.remove_attribute_ns(namespace_or_nil, local_name)` -> self.
 pub fn remove_attribute_ns(
-    _ruby: &Ruby,
+    ruby: &Ruby,
     mut this: XmlSelf,
     ns: Value,
     local: Value,
@@ -133,8 +133,8 @@ pub fn remove_attribute_ns(
     if edit.read()?.type_(edit.id()) != Some(ArenaKind::Element) {
         return Ok(rb_self);
     }
-    let lv = verified_text(local, "attribute local name")?;
-    let nv = namespace_arg(ns, "namespace")?;
+    let lv = verified_text(ruby, local, "attribute local name")?;
+    let nv = namespace_arg(ruby, ns, "namespace")?;
     let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
     let local = lv.as_bytes();
     edit.with_attributes(|d, n| mutate::remove_attribute_ns(d, n, ns, local))?;
@@ -142,26 +142,26 @@ pub fn remove_attribute_ns(
 }
 
 /// `element.delete(name)` / `#remove_attribute` -> self.
-pub fn delete(_ruby: &Ruby, mut this: XmlSelf, name: Value) -> Result<Value, Error> {
+pub fn delete(ruby: &Ruby, mut this: XmlSelf, name: Value) -> Result<Value, Error> {
     let rb_self = this.value;
     let edit = begin_edit(&mut this)?;
     if edit.read()?.type_(edit.id()) != Some(ArenaKind::Element) {
         return Ok(rb_self);
     }
-    let nv = verified_text(name, "attribute name")?;
+    let nv = verified_text(ruby, name, "attribute name")?;
     let name = nv.as_bytes();
     edit.with_attributes(|d, n| mutate::remove_attribute(d, n, name))?;
     Ok(rb_self)
 }
 
 /// `node.content = text` -> text.
-pub fn set_content(_ruby: &Ruby, mut this: XmlSelf, text: Value) -> Result<Value, Error> {
+pub fn set_content(ruby: &Ruby, mut this: XmlSelf, text: Value) -> Result<Value, Error> {
     /* A node's type never changes, so it is read before the argument's
      * conversion: a Text, Comment, CDATA or PI node's content is its data,
      * and an Attr's its value - neither changes a child list. */
     let kind = this.read()?.type_(this.id);
     let edit = begin_edit(&mut this)?;
-    let tv = verified_data(text, "node content")?;
+    let tv = verified_data(ruby, text, "node content")?;
     let bytes = tv.as_bytes();
     let set = |d: &mut XmlDoc, n| mutate::set_content(d, n, bytes);
     /* A Document's or DocumentType's content is nothing: no edit is
@@ -184,23 +184,23 @@ pub fn set_content(_ruby: &Ruby, mut this: XmlSelf, text: Value) -> Result<Value
  * adoption and its completion are the bridge's, as `bridge::html::insert`'s
  * are on the HTML side. */
 
-pub fn add_child(_ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
-    insert(this, arg, Place::Child)
+pub fn add_child(ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
+    insert(ruby, this, arg, Place::Child)
 }
-pub fn before(_ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
-    insert(this, arg, Place::Before)
+pub fn before(ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
+    insert(ruby, this, arg, Place::Before)
 }
-pub fn after(_ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
-    insert(this, arg, Place::After)
+pub fn after(ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
+    insert(ruby, this, arg, Place::After)
 }
-pub fn replace(_ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
-    insert(this, arg, Place::Replace)
+pub fn replace(ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
+    insert(ruby, this, arg, Place::Replace)
 }
 
 /// `element << node` -> self.
-pub fn lshift(_ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
+pub fn lshift(ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
     let rb_self = this.value;
-    insert(this, arg, Place::Child)?;
+    insert(ruby, this, arg, Place::Child)?;
     Ok(rb_self)
 }
 
@@ -225,7 +225,7 @@ pub fn clone_node(ruby: &Ruby, this: XmlSelf, args: &[Value]) -> Result<Value, E
     let copy = xml_mut_result(with_arena_for_new_node(this.document, |d| {
         mutate::clone_node(d, this.id, deep)
     })?)?;
-    wrap(copy, this.document)
+    wrap(ruby, copy, this.document)
 }
 
 /* ------------------------------------------------------------------ */
@@ -253,8 +253,8 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
         }
     }
 
-    let nv = verified_name(name, "element name")?;
-    let cv = verified_data_opt(content, "element content")?;
+    let nv = verified_name(ruby, name, "element name")?;
+    let cv = verified_data_opt(ruby, content, "element content")?;
     let name = nv.as_bytes();
     let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
         mutate::new_element(d, name)
@@ -269,13 +269,13 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
      * wrapper allocation, the attribute loop's), so no borrow of a
      * Ruby String is held across a GC point. */
     drop((nv, cv));
-    let rb_el = wrap(el, rb_self)?;
+    let rb_el = wrap(ruby, el, rb_self)?;
     if let Some(h) = attrs {
         /* Each pair goes through the normal validated setter (a key may be
          * a Symbol, a value must be a String), after the pairs are out of
          * the Hash (`hash::each_pair`). */
         /* `rb_el` was wrapped just above, so it converts. */
-        let el_self = <XmlSelf as crate::bridge::rb::TryConvert>::try_convert(rb_el)?;
+        let el_self = <XmlSelf as crate::bridge::rb::TryConvert>::try_convert(ruby, rb_el)?;
         crate::glue::hash::each_pair(ruby, h, |k, v| {
             aset(ruby, el_self, k, v)?;
             Ok(())
@@ -298,17 +298,12 @@ pub fn create_element_ns(
     ns: Value,
     qname: Value,
 ) -> Result<Value, Error> {
-    let nv = namespace_arg(ns, "namespace")?;
-    let qv = verified_name(qname, "element qualified name")?;
+    let nv = namespace_arg(ruby, ns, "namespace")?;
+    let qv = verified_name(ruby, qname, "element qualified name")?;
     let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
     let qname = qv.as_bytes();
-    let (prefix, local) = dom_extract(
-        ruby,
-        ns,
-        qname,
-        dom_name::valid_element_local_name,
-        "DOM element",
-    )?;
+    let (prefix, local) =
+        dom_extract(ns, qname, dom_name::valid_element_local_name, "DOM element")?;
     /* `verified_name` held the name to `u32`, and both halves are in it. */
     let sp = if prefix.is_empty() {
         Split::unprefixed(qname.len() as u32)
@@ -320,7 +315,7 @@ pub fn create_element_ns(
     })?)?;
     /* Before the wrap, whose allocation can raise past this frame. */
     drop((nv, qv));
-    wrap(el, rb_self)
+    wrap(ruby, el, rb_self)
 }
 
 /// `create_loose_dom_element(qualified_name, prefix, local_name, namespace_uri)`
@@ -338,21 +333,21 @@ pub fn create_loose_dom_element(
     local: Value,
     ns: Value,
 ) -> Result<Value, Error> {
-    let qv = verified_name(qname, "qualified name")?;
-    let lv = verified_name(local, "local name")?;
-    let pv = verified_name_opt(prefix, "prefix")?;
-    let nv = namespace_arg(ns, "namespace URI")?;
+    let qv = verified_name(ruby, qname, "qualified name")?;
+    let lv = verified_name(ruby, local, "local name")?;
+    let pv = verified_name_opt(ruby, prefix, "prefix")?;
+    let nv = namespace_arg(ruby, ns, "namespace URI")?;
 
     let qname = qv.as_bytes();
     let sp = split_loose_dom_name(qname, pv.as_ref().map(|p| p.as_bytes()), lv.as_bytes())
-        .map_err(|e| Error::new(ruby.exception_arg_error(), e.message()))?;
+        .map_err(|e| Error::new(crate::bridge::rb::Builtin::ArgumentError, e.message()))?;
     let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
     let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
         mutate::new_loose_dom_element(d, qname, sp, ns)
     })?)?;
     /* Before the wrap, whose allocation can raise past this frame. */
     drop((qv, lv, pv, nv));
-    wrap(el, rb_self)
+    wrap(ruby, el, rb_self)
 }
 
 /// `create_document_type(name, public_id = "", system_id = "")` -> DocumentType.
@@ -360,9 +355,9 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
     let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::positional(1, 2))?;
     let name = a.required(0);
     let nil = ruby.qnil().as_value();
-    let nv = verified_name(name, "doctype name")?;
-    let pv = verified_text_opt(a.optional(0).unwrap_or(nil), "doctype public id")?;
-    let sv = verified_text_opt(a.optional(1).unwrap_or(nil), "doctype system id")?;
+    let nv = verified_name(ruby, name, "doctype name")?;
+    let pv = verified_text_opt(ruby, a.optional(0).unwrap_or(nil), "doctype public id")?;
+    let sv = verified_text_opt(ruby, a.optional(1).unwrap_or(nil), "doctype system id")?;
     /* An empty id is absent, like nil, matching the HTML factory and
      * Nokogiri. Built as a `DoctypeId`, never an `Option<&[u8]>` (its doc
      * says why). */
@@ -378,51 +373,56 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
     })?)?;
     /* Before the wrap, whose allocation can raise past this frame. */
     drop((nv, pv, sv));
-    wrap(dt, rb_self)
+    wrap(ruby, dt, rb_self)
 }
 
 /// The shared body of the leaf-data factories.
 fn create_chardata(
+    ruby: &Ruby,
     rb_self: Value,
     text: Value,
     type_: ArenaKind,
     what: &str,
 ) -> Result<Value, Error> {
-    let tv = verified_data(text, what)?;
+    let tv = verified_data(ruby, text, what)?;
     let bytes = tv.as_bytes();
     let n = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
         mutate::new_chardata(d, type_, bytes)
     })?)?;
     /* Before the wrap, whose allocation can raise past this frame. */
     drop(tv);
-    wrap(n, rb_self)
+    wrap(ruby, n, rb_self)
 }
 
-pub fn create_text_node(_ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    create_chardata(rb_self, t, ArenaKind::Text, "text content")
+pub fn create_text_node(ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
+    create_chardata(ruby, rb_self, t, ArenaKind::Text, "text content")
 }
-pub fn create_comment(_ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    create_chardata(rb_self, t, ArenaKind::Comment, "comment content")
+pub fn create_comment(ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
+    create_chardata(ruby, rb_self, t, ArenaKind::Comment, "comment content")
 }
-pub fn create_cdata(_ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
-    create_chardata(rb_self, t, ArenaKind::CDataSection, "CDATA content")
+pub fn create_cdata(ruby: &Ruby, rb_self: Value, t: Value) -> Result<Value, Error> {
+    create_chardata(ruby, rb_self, t, ArenaKind::CDataSection, "CDATA content")
 }
 
-pub fn create_pi(_ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Result<Value, Error> {
-    let tg = verified_name(target, "PI target")?;
-    let dt = verified_data(data, "PI data")?;
+pub fn create_pi(ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Result<Value, Error> {
+    let tg = verified_name(ruby, target, "PI target")?;
+    let dt = verified_data(ruby, data, "PI data")?;
     let (target, data) = (tg.as_bytes(), dt.as_bytes());
     let pi = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
         mutate::new_pi(d, target, data)
     })?)?;
     /* Before the wrap, whose allocation can raise past this frame. */
     drop((tg, dt));
-    wrap(pi, rb_self)
+    wrap(ruby, pi, rb_self)
 }
 
 /// `Document#import_node(node, deep = false)` - the DOM's importNode.
 pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
     let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::positional(1, 1))?;
     let deep = a.optional(0).is_some_and(|v| v.to_bool());
-    wrap(import_copy(rb_self, a.required(0), deep)?, rb_self)
+    wrap(
+        ruby,
+        import_copy(ruby, rb_self, a.required(0), deep)?,
+        rb_self,
+    )
 }

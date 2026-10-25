@@ -4,6 +4,7 @@
 
 #![forbid(unsafe_code)]
 
+use crate::bridge::rb::Ruby;
 use core::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
@@ -88,7 +89,7 @@ pub static XPATH_CTX_TYPE: TypedType<XPathCtx> = TypedType::base(c"Makiri::XPath
 pub struct XPathCtxSelf(Value);
 
 impl crate::bridge::rb::TryConvert for XPathCtxSelf {
-    fn try_convert(value: Value) -> Result<Self, Error> {
+    fn try_convert(_: &Ruby, value: Value) -> Result<Self, Error> {
         XPATH_CTX_TYPE.get(&value)?;
         Ok(XPathCtxSelf(value))
     }
@@ -109,9 +110,9 @@ impl XPathCtxSelf {
 
     /// Rebind the context node to `rb_node`, a Makiri node of the same
     /// document. Namespace and variable registrations are preserved.
-    pub fn set_node(&self, rb_node: Value) -> Result<(), Error> {
+    pub fn set_node(&self, ruby: &Ruby, rb_node: Value) -> Result<(), Error> {
         const BUSY: &str = "cannot change the context node while the context is evaluating";
-        let token = node_token_in(rb_node, self.document()).map_err(|e| match e {
+        let token = node_token_in(ruby, rb_node, self.document()).map_err(|e| match e {
             NotInDocument::Unusable(e) => e,
             NotInDocument::Foreign => makiri_error("context node must belong to the same document"),
         })?;
@@ -136,9 +137,9 @@ impl XPathCtxSelf {
     }
 
     /// Evaluate `expr`, parsed once and cached.
-    pub fn evaluate(&self, expr: Value) -> Result<Value, Error> {
+    pub fn evaluate(&self, ruby: &Ruby, expr: Value) -> Result<Value, Error> {
         let document = self.document();
-        self.evaluate_in(expr, document)
+        self.evaluate_in(ruby, expr, document)
     }
 }
 
@@ -196,13 +197,13 @@ fn refused(error: ContextError, busy: &'static str, failed: &'static str) -> Err
 
 impl XPathCtx {
     /// A new context rooted at `rb_node`, a node of its keepalive Document.
-    pub fn create(rb_node: Value, lax: bool) -> Result<Value, Error> {
-        let document = keepalive_document(rb_node)?;
-        let mut ctx = context_for(rb_node, document)?;
+    pub fn create(ruby: &Ruby, rb_node: Value, lax: bool) -> Result<Value, Error> {
+        let document = keepalive_document(ruby, rb_node)?;
+        let mut ctx = context_for(ruby, rb_node, document)?;
         ctx.set_lax(lax);
         let obj = XPATH_CTX_TYPE.wrap(
-            &crate::bridge::ruby::gvl_ruby(),
-            CLASS_XPATH_CONTEXT.defined()?,
+            ruby,
+            CLASS_XPATH_CONTEXT.defined(ruby)?,
             || XPathCtx {
                 cache: RefCell::new(AstCache(HashMap::new())),
                 cache_bytes: Cell::new(0),
@@ -227,14 +228,14 @@ impl XPathCtx {
     }
 
     /// Evaluate `expr` in `document`, parsed once and cached.
-    fn evaluate_in(&self, expr: Value, document: Value) -> Result<Value, Error> {
-        let ev = ruby_verified_text(expr, "XPath expression")?;
+    fn evaluate_in(&self, ruby: &Ruby, expr: Value, document: Value) -> Result<Value, Error> {
+        let ev = ruby_verified_text(ruby, expr, "XPath expression")?;
         /* Held until the evaluation is over: the AST is borrowed from it. */
         let mut cache = self.cache()?;
         let (ast, added) =
             cached_ast(&mut cache, self.ctx.limits(), ev).map_err(|error| xpath_error(&error))?;
         self.account_cache(added);
-        evaluate_to_ruby(&self.ctx, ast, document, Answer::All)
+        evaluate_to_ruby(ruby, &self.ctx, ast, document, Answer::All)
     }
 
     /// The engine caps this context evaluates under, for a caller that must
@@ -252,13 +253,13 @@ impl XPathCtx {
     }
 
     /// Bind `$name` to the String `value` for every later evaluate.
-    pub fn register_variable(&self, name: Value, value: Value) -> Result<(), Error> {
+    pub fn register_variable(&self, ruby: &Ruby, name: Value, value: Value) -> Result<(), Error> {
         const BUSY: &str = "cannot register a variable while the context is evaluating";
         const FAILED: &str = "failed to register variable";
         /* The value gets the stricter engine-string check, which adds the
          * byte cap on top of the no-NUL / valid-UTF-8 contract. */
         let sv = crate::bridge::ruby::string_arg(value)?;
-        let nv = ruby_verified_text(name, "variable name")?;
+        let nv = ruby_verified_text(ruby, name, "variable name")?;
         let vv = ruby_try_verified_text(sv, self.ctx.limits().max_string_bytes)
             .map_err(|reason| makiri_error(format_args!("invalid variable value: {reason}")))?;
         self.ctx

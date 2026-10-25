@@ -20,7 +20,7 @@ use core::marker::PhantomData;
 use rb_sys::stable_api::{get_default, StableApiDefinition};
 use rb_sys::{ruby_value_type, VALUE};
 
-use super::error::Error;
+use super::error::{Builtin, Error};
 use super::ruby::Ruby;
 
 /// Any Ruby value.
@@ -194,7 +194,9 @@ handle!(
 handle!(
     /// A Range (or an instance of a subclass).
     Range,
-    |v| v.is_kind_of(Ruby::get_with(v).class_range())
+    // SAFETY: `rb_cRange`, a C global Ruby sets once at boot; a value
+    // existing means this is a Ruby thread, and the test reads its ancestry.
+    |v| v.is_kind_of(RClass::from_known(unsafe { Value::from_raw(rb_sys::rb_cRange) }))
 );
 handle!(
     /// A Class.
@@ -353,7 +355,7 @@ impl Integer {
     pub fn to_u64(self) -> Result<u64, Error> {
         if self.is_negative() {
             return Err(Error::new(
-                Ruby::get_with(self).exception_range_error(),
+                Builtin::RangeError,
                 "can't convert negative integer to unsigned",
             ));
         }
@@ -381,7 +383,7 @@ impl Integer {
          * rather than truncated. */
         usize::try_from(self.to_u64()?).map_err(|_| {
             Error::new(
-                Ruby::get_with(self).exception_range_error(),
+                Builtin::RangeError,
                 "integer too big to convert into a usize",
             )
         })
@@ -390,13 +392,13 @@ impl Integer {
     /// As a `usize`, or `None` when it is negative or past one - and only
     /// then: any other failure of the conversion is passed on, never read as
     /// "out of range" (for a limit, that would lift it).
-    pub fn to_usize_within(self) -> Result<Option<usize>, Error> {
+    pub fn to_usize_within(self, ruby: &Ruby) -> Result<Option<usize>, Error> {
         if self.is_negative() {
             return Ok(None);
         }
         match self.to_u64() {
             Ok(n) => Ok(usize::try_from(n).ok()),
-            Err(e) if e.is_kind_of(Ruby::get_with(self).exception_range_error()) => Ok(None),
+            Err(e) if e.is_kind_of(ruby, Builtin::RangeError) => Ok(None),
             Err(e) => Err(e),
         }
     }

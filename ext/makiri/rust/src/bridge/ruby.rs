@@ -19,14 +19,14 @@ use crate::bridge::rb::{Error, Ruby};
 /// cannot wait for `lib/makiri.rb`. It reads the running Ruby's exported
 /// `ruby_api_version` (three ints, whose layout no Ruby changes) and nothing
 /// else; only a mismatch goes on to build the exception.
-pub fn check_running_ruby_api(ruby: &Ruby) -> Result<(), Error> {
+pub fn check_running_ruby_api() -> Result<(), Error> {
     let running = crate::nupur::helpers::running_ruby_api();
     let built = crate::nupur::helpers::built_ruby_api();
     if running == built {
         return Ok(());
     }
     Err(Error::new(
-        ruby.exception_load_error(),
+        crate::bridge::rb::Builtin::LoadError,
         format_args!(
             "makiri's native extension was built for Ruby {}.{}, but this is Ruby {}.{}; \
              rebuild it (`bundle exec rake clean compile` in a checkout, or reinstall the gem)",
@@ -37,13 +37,13 @@ pub fn check_running_ruby_api(ruby: &Ruby) -> Result<(), Error> {
 
 /// `Makiri::Error` - the one definition; the modules that each kept a private
 /// copy of this now import it.
-pub fn error_class() -> crate::bridge::rb::ExceptionClass {
-    crate::init::EXC_ERROR.exception()
+pub fn error_class(ruby: &Ruby) -> crate::bridge::rb::ExceptionClass {
+    crate::init::EXC_ERROR.exception(ruby)
 }
 
 /// A `Makiri::Error` carrying `msg` - the one way the extension raises its own
 /// error class, so a caller never spells the class (or finds a stale copy of
 /// the lookup) itself.
 pub fn makiri_error(msg: impl crate::bridge::rb::Message) -> Error {
-    Error::new(error_class(), msg)
+    Error::new(&crate::init::EXC_ERROR, msg)
 }

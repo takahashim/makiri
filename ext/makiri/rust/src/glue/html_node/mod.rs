@@ -31,6 +31,7 @@ pub mod serialize;
 
 pub mod mutate;
 
+use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{prelude::*, Error};
 use crate::method;
 
@@ -58,17 +59,17 @@ pub use crate::bridge::html::{with_arg_node, wrap_node, HtmlSelf};
  * ------------------------------------------------------------------ */
 
 /// The whole HTML node surface. From `Init_makiri`, after the classes exist.
-pub fn init() -> Result<(), Error> {
-    init_read()?;
-    init_mutate()?;
-    css::init_css()?;
-    serialize::init_serialize()?;
+pub fn init(ruby: &Ruby) -> Result<(), Error> {
+    init_read(ruby)?;
+    init_mutate(ruby)?;
+    css::init_css(ruby)?;
+    serialize::init_serialize(ruby)?;
     Ok(())
 }
 
 /// The readers, identity, and the DocumentType and `<template>` accessors.
-fn init_read() -> Result<(), Error> {
-    let m = MOD_HTML_NODE_METHODS.defined()?;
+fn init_read(ruby: &Ruby) -> Result<(), Error> {
+    let m = MOD_HTML_NODE_METHODS.defined(ruby)?;
 
     m.define_method("name", method!(read::name, 0))?;
     m.define_method("namespace_uri", method!(read::namespace_uri, 0))?;
@@ -144,22 +145,22 @@ fn init_read() -> Result<(), Error> {
 
     /* DocumentType identifiers (WHATWG DOM names; external_id is the
      * Nokogiri-compatible alias for public_id). */
-    let dt = CLASS_HTML_DOCUMENT_TYPE.defined()?;
+    let dt = CLASS_HTML_DOCUMENT_TYPE.defined(ruby)?;
     for name in ["public_id", "external_id"] {
         dt.define_method(name, method!(read::doctype_public_id, 0))?;
     }
     dt.define_method("system_id", method!(read::doctype_system_id, 0))?;
 
     /* <template> contents (WHATWG DOM HTMLTemplateElement.content). */
-    let el = CLASS_HTML_ELEMENT.defined()?;
+    let el = CLASS_HTML_ELEMENT.defined(ruby)?;
     el.define_method("content_fragment", method!(read::content_fragment, 0))?;
     Ok(())
 }
 
 /// The mutators and the Document factories.
-fn init_mutate() -> Result<(), Error> {
-    let m = MOD_HTML_NODE_METHODS.defined()?;
-    let doc = CLASS_HTML_DOCUMENT.defined()?;
+fn init_mutate(ruby: &Ruby) -> Result<(), Error> {
+    let m = MOD_HTML_NODE_METHODS.defined(ruby)?;
+    let doc = CLASS_HTML_DOCUMENT.defined(ruby)?;
 
     m.define_method("add_child", method!(mutate::add_child, 1))?;
     m.define_method("<<", method!(mutate::lshift, 1))?;

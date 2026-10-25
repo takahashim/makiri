@@ -4,8 +4,9 @@
 #![allow(clippy::missing_safety_doc)]
 
 use crate::bridge::rb::value::AsRawValue;
+use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, ReprValue, Value};
-use crate::bridge::ruby::{gvl_ruby, makiri_error};
+use crate::bridge::ruby::makiri_error;
 use rb_sys::StableApiDefinition;
 
 /* ---- assembling Ruby Strings ---- */
@@ -22,13 +23,14 @@ pub use crate::nupur::build::{utf8_rstring, utf8_str};
 /// valid UTF-8, as text-index slices are by the text-input contract; bytes
 /// that were not would make a wrong String, not a memory error.
 pub fn utf8_str_from_slices<'a>(
+    ruby: &Ruby,
     slices: impl Iterator<Item = &'a [u8]>,
     total: usize,
 ) -> Result<Value, Error> {
     // SAFETY: every one of the `total` bytes is written below before the
     // String is returned - a short or long sum is refused - and nothing
     // reads it before.
-    let str = unsafe { crate::bridge::raw::utf8_str_unwritten(&gvl_ruby(), total) }?;
+    let str = unsafe { crate::bridge::raw::utf8_str_unwritten(ruby, total) }?;
     /* We just created it and hold the only reference, so writing through the
      * buffer is sound - this is what RSTRING_PTR gives the C. It has room for
      * exactly `total` bytes, and nothing else runs while `out` is held. */
@@ -70,9 +72,8 @@ pub fn utf8_str_from_slices<'a>(
 /// Safe to call with any bytes: `rb_enc_interned_str` copies them, and bytes
 /// that were not UTF-8 would make a wrong String, never a memory error. Every
 /// caller passes a document's name, which is UTF-8 by the text-input contract.
-pub fn dom_name_str(bytes: &[u8]) -> Result<Value, Error> {
-    crate::bridge::raw::enc_interned_str(&gvl_ruby(), bytes, super::Encoding::utf8())
-        .map(|s| s.as_value())
+pub fn dom_name_str(ruby: &Ruby, bytes: &[u8]) -> Result<Value, Error> {
+    crate::bridge::raw::enc_interned_str(ruby, bytes, super::Encoding::utf8()).map(|s| s.as_value())
 }
 
 /* ---- a String of bytes a document read lends ---- */
@@ -91,6 +92,7 @@ pub enum StrKind {
 /// String of, or `None` for nil.
 #[inline]
 pub fn str_from_read<G>(
+    ruby: &Ruby,
     read: G,
     kind: StrKind,
     bytes: impl FnOnce(&G) -> Option<&[u8]>,
@@ -99,8 +101,8 @@ pub fn str_from_read<G>(
         return Ok(None);
     };
     match kind {
-        StrKind::Utf8 => utf8_str(b),
-        StrKind::DomName => dom_name_str(b),
+        StrKind::Utf8 => utf8_str(ruby, b),
+        StrKind::DomName => dom_name_str(ruby, b),
     }
     .map(Some)
 }

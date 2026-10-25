@@ -40,7 +40,6 @@ use crate::xml::dom_name;
 /// attributes, and `e['x="y" onload'] = v` as two attributes. Nokogiri's HTML5
 /// does not check either; this is the DOM's rule, and XML already had its own.
 fn check_dom_name(
-    ruby: &Ruby,
     name: &crate::bridge::string::RubyText,
     ok: impl Fn(&[u8]) -> bool,
     what: &str,
@@ -49,7 +48,7 @@ fn check_dom_name(
         return Ok(());
     }
     Err(Error::new(
-        ruby.exception_arg_error(),
+        crate::bridge::rb::Builtin::ArgumentError,
         format_args!("invalid HTML {what} name"),
     ))
 }
@@ -77,29 +76,29 @@ fn with_element<R>(
  * ------------------------------------------------------------------ */
 
 /// `node.add_child(child)` -> child.
-pub fn add_child(_ruby: &Ruby, mut this: HtmlSelf, rb_child: Value) -> Result<Value, Error> {
-    insert(&mut this, rb_child, Place::Child)
+pub fn add_child(ruby: &Ruby, mut this: HtmlSelf, rb_child: Value) -> Result<Value, Error> {
+    insert(ruby, &mut this, rb_child, Place::Child)
 }
 
 /// `node << child` -> node (chainable).
-pub fn lshift(_ruby: &Ruby, mut this: HtmlSelf, rb_child: Value) -> Result<Value, Error> {
-    insert(&mut this, rb_child, Place::Child)?;
+pub fn lshift(ruby: &Ruby, mut this: HtmlSelf, rb_child: Value) -> Result<Value, Error> {
+    insert(ruby, &mut this, rb_child, Place::Child)?;
     Ok(this.value)
 }
 
 /// `node.add_previous_sibling(node)` / `before` -> node.
-pub fn before(_ruby: &Ruby, mut this: HtmlSelf, rb_node: Value) -> Result<Value, Error> {
-    insert(&mut this, rb_node, Place::Before)
+pub fn before(ruby: &Ruby, mut this: HtmlSelf, rb_node: Value) -> Result<Value, Error> {
+    insert(ruby, &mut this, rb_node, Place::Before)
 }
 
 /// `node.add_next_sibling(node)` / `after` -> node.
-pub fn after(_ruby: &Ruby, mut this: HtmlSelf, rb_node: Value) -> Result<Value, Error> {
-    insert(&mut this, rb_node, Place::After)
+pub fn after(ruby: &Ruby, mut this: HtmlSelf, rb_node: Value) -> Result<Value, Error> {
+    insert(ruby, &mut this, rb_node, Place::After)
 }
 
 /// `node.replace(other)` -> other.
-pub fn replace(_ruby: &Ruby, mut this: HtmlSelf, rb_other: Value) -> Result<Value, Error> {
-    insert(&mut this, rb_other, Place::Replace)
+pub fn replace(ruby: &Ruby, mut this: HtmlSelf, rb_other: Value) -> Result<Value, Error> {
+    insert(ruby, &mut this, rb_other, Place::Replace)
 }
 
 /// `node.remove` / `node.unlink` -> node.
@@ -138,9 +137,9 @@ pub fn aset(
     if edit.node_type()? != NodeType::Element {
         return Err(makiri_error(REFUSAL));
     }
-    let nv = ruby_verified_name(rb_name, "attribute name")?;
-    let vv = ruby_verified_data(rb_value, "attribute value")?;
-    check_dom_name(ruby, &nv, dom_name::valid_attribute_local_name, "attribute")?;
+    let nv = ruby_verified_name(ruby, rb_name, "attribute name")?;
+    let vv = ruby_verified_data(ruby, rb_value, "attribute value")?;
+    check_dom_name(&nv, dom_name::valid_attribute_local_name, "attribute")?;
     with_element(edit, |d, el| {
         crate::bridge::html::set_attribute(d, el, &nv, &vv)
     })?
@@ -161,14 +160,13 @@ pub fn set_attribute_ns(
     if edit.node_type()? != NodeType::Element {
         return Err(makiri_error(REFUSAL));
     }
-    let qv = ruby_verified_name(rb_qname, "attribute qualified name")?;
-    let vv = ruby_verified_data(rb_value, "attribute value")?;
-    let nv = namespace_arg(rb_ns, "namespace")?;
+    let qv = ruby_verified_name(ruby, rb_qname, "attribute qualified name")?;
+    let vv = ruby_verified_data(ruby, rb_value, "attribute value")?;
+    let nv = namespace_arg(ruby, rb_ns, "namespace")?;
     /* The DOM's "validate and extract". It named `(nil, "x:y")` a
      * prefixed attribute in no namespace. */
     let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
     extract(
-        ruby,
         ns,
         qv.as_bytes(),
         dom_name::valid_attribute_local_name,
@@ -193,8 +191,8 @@ pub fn remove_attribute_ns(
     if edit.node_type()? != NodeType::Element {
         return Ok(ruby.qnil().as_value());
     }
-    let lv = ruby_verified_text(rb_local, "attribute local name")?;
-    let nv = namespace_arg(rb_ns, "namespace")?;
+    let lv = ruby_verified_text(ruby, rb_local, "attribute local name")?;
+    let nv = namespace_arg(ruby, rb_ns, "namespace")?;
     let ns = nv.as_ref().map(|n| n.as_bytes());
     with_element(edit, |d, el| {
         crate::bridge::html::remove_attribute_ns(d, el, ns, &lv)
@@ -203,9 +201,9 @@ pub fn remove_attribute_ns(
 }
 
 /// `node.content = text` -> text.
-pub fn set_content(_ruby: &Ruby, mut this: HtmlSelf, rb_text: Value) -> Result<Value, Error> {
+pub fn set_content(ruby: &Ruby, mut this: HtmlSelf, rb_text: Value) -> Result<Value, Error> {
     let edit = edit(&mut this)?;
-    let tv = ruby_verified_data(rb_text, "node content")?;
+    let tv = ruby_verified_data(ruby, rb_text, "node content")?;
     /* An Attr's content is its value, an attribute edit; a Text, Comment,
      * CDATA or PI node's is its data. Neither changes a child list. A
      * Document's or DocumentType's is nothing, so no edit is recorded. */
@@ -221,13 +219,13 @@ pub fn set_content(_ruby: &Ruby, mut this: HtmlSelf, rb_text: Value) -> Result<V
 }
 
 /// `element.delete(name)` -> self.
-pub fn delete(_ruby: &Ruby, mut this: HtmlSelf, rb_name: Value) -> Result<Value, Error> {
+pub fn delete(ruby: &Ruby, mut this: HtmlSelf, rb_name: Value) -> Result<Value, Error> {
     let rb_self = this.value;
     let edit = edit(&mut this)?;
     if edit.node_type()? != NodeType::Element {
         return Ok(rb_self);
     }
-    let nv = ruby_verified_text(rb_name, "attribute name")?;
+    let nv = ruby_verified_text(ruby, rb_name, "attribute name")?;
     with_element(edit, |d, el| {
         crate::bridge::html::remove_attribute(d, el, &nv)
     })?;
@@ -307,9 +305,9 @@ pub fn set_outer_html(_ruby: &Ruby, mut this: HtmlSelf, rb_html: Value) -> Resul
 ///
 /// A failed wrap (`NoMemoryError`) is `Err`, and the factory's argument copies
 /// drop with its frame.
-fn created(node: Option<RawNode>, rb_self: Value, what: &str) -> Result<Value, Error> {
+fn created(ruby: &Ruby, node: Option<RawNode>, rb_self: Value, what: &str) -> Result<Value, Error> {
     match node {
-        Some(n) => wrap_html_node(n, rb_self),
+        Some(n) => wrap_html_node(ruby, n, rb_self),
         None => Err(makiri_error(format_args!("failed to create {what}"))),
     }
 }
@@ -317,9 +315,10 @@ fn created(node: Option<RawNode>, rb_self: Value, what: &str) -> Result<Value, E
 /// `Document#create_element(name)` -> Element.
 pub fn create_element(ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Value, Error> {
     check_owning_doc(&rb_self)?;
-    let nv = ruby_verified_name(rb_name, "element name")?;
-    check_dom_name(ruby, &nv, dom_name::valid_element_local_name, "element")?;
+    let nv = ruby_verified_name(ruby, rb_name, "element name")?;
+    check_dom_name(&nv, dom_name::valid_element_local_name, "element")?;
     created(
+        ruby,
         new_node(&rb_self, |d| d.create_element(nv.as_bytes()))?,
         rb_self,
         "element",
@@ -340,17 +339,17 @@ pub fn create_element_ns(
     rb_qname: Value,
 ) -> Result<Value, Error> {
     check_owning_doc(&rb_self)?;
-    let nv = namespace_arg(rb_ns, "namespace")?;
-    let qv = ruby_verified_name(rb_qname, "element qualified name")?;
+    let nv = namespace_arg(ruby, rb_ns, "namespace")?;
+    let qv = ruby_verified_name(ruby, rb_qname, "element qualified name")?;
     let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
     let (prefix, local) = extract(
-        ruby,
         ns,
         qv.as_bytes(),
         dom_name::valid_element_local_name,
         "HTML element",
     )?;
     created(
+        ruby,
         new_node(&rb_self, |d| d.create_element_ns(local, ns, prefix))?,
         rb_self,
         "element",
@@ -375,19 +374,20 @@ pub fn create_loose_dom_element(
     rb_ns: Value,
 ) -> Result<Value, Error> {
     check_owning_doc(&rb_self)?;
-    let qv = ruby_verified_name(rb_qname, "qualified name")?;
-    let lv = ruby_verified_name(rb_local, "local name")?;
+    let qv = ruby_verified_name(ruby, rb_qname, "qualified name")?;
+    let lv = ruby_verified_name(ruby, rb_local, "local name")?;
     let pv = if rb_prefix.is_nil() {
         None
     } else {
-        Some(ruby_verified_name(rb_prefix, "prefix")?)
+        Some(ruby_verified_name(ruby, rb_prefix, "prefix")?)
     };
-    let nv = namespace_arg(rb_ns, "namespace URI")?;
+    let nv = namespace_arg(ruby, rb_ns, "namespace URI")?;
     let prefix = pv.as_ref().map(|p| p.as_bytes());
     dom_name::split_loose_dom_name(qv.as_bytes(), prefix, lv.as_bytes())
-        .map_err(|e| Error::new(ruby.exception_arg_error(), e.message()))?;
+        .map_err(|e| Error::new(crate::bridge::rb::Builtin::ArgumentError, e.message()))?;
     let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
     created(
+        ruby,
         new_node(&rb_self, |d| {
             d.create_element_ns(lv.as_bytes(), ns, prefix.unwrap_or_default())
         })?,
@@ -397,10 +397,11 @@ pub fn create_loose_dom_element(
 }
 
 /// `Document#create_text_node(content)` -> Text.
-pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
+pub fn create_text_node(ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
     check_owning_doc(&rb_self)?;
-    let tv = ruby_verified_data(rb_text, "text content")?;
+    let tv = ruby_verified_data(ruby, rb_text, "text content")?;
     created(
+        ruby,
         new_node(&rb_self, |d| d.create_text(tv.as_bytes()))?,
         rb_self,
         "text node",
@@ -408,10 +409,11 @@ pub fn create_text_node(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<
 }
 
 /// `Document#create_comment(content)` -> Comment.
-pub fn create_comment(_ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
+pub fn create_comment(ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Value, Error> {
     check_owning_doc(&rb_self)?;
-    let tv = ruby_verified_data(rb_text, "comment content")?;
+    let tv = ruby_verified_data(ruby, rb_text, "comment content")?;
     created(
+        ruby,
         new_node(&rb_self, |d| d.create_comment(tv.as_bytes()))?,
         rb_self,
         "comment",
@@ -426,25 +428,24 @@ pub fn create_pi(
     rb_data: Value,
 ) -> Result<Value, Error> {
     check_owning_doc(&rb_self)?;
-    let tv = ruby_verified_name(rb_target, "processing instruction target")?;
-    let dv = ruby_verified_text(rb_data, "processing instruction data")?;
+    let tv = ruby_verified_name(ruby, rb_target, "processing instruction target")?;
+    let dv = ruby_verified_text(ruby, rb_data, "processing instruction data")?;
     /* DOM createProcessingInstruction: the target must match the XML Name
      * production. Lexbor leaves that check as a TODO, and an unchecked
      * target is written into the output as it is - markup included. */
     check_dom_name(
-        ruby,
         &tv,
         crate::xml::chars::validate_name,
         "processing instruction target",
     )?;
     /* ... and the data must not hold `?>` - the factory's rule. */
     match new_node(&rb_self, |d| d.create_pi(tv.as_bytes(), dv.as_bytes()))? {
-        Ok(n) => created(Some(n), rb_self, "processing instruction"),
+        Ok(n) => created(ruby, Some(n), rb_self, "processing instruction"),
         Err(CreatePiError::ClosingInData) => Err(Error::new(
-            ruby.exception_arg_error(),
+            crate::bridge::rb::Builtin::ArgumentError,
             CreatePiError::MESSAGE,
         )),
-        Err(CreatePiError::Oom) => created(None, rb_self, "processing instruction"),
+        Err(CreatePiError::Oom) => created(ruby, None, rb_self, "processing instruction"),
     }
 }
 
@@ -455,23 +456,24 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
     let (rb_pub, rb_sys_) = (args.optional(0), args.optional(1));
 
     check_owning_doc(&rb_self)?;
-    let nv = ruby_verified_name(rb_name, "doctype name")?;
+    let nv = ruby_verified_name(ruby, rb_name, "doctype name")?;
     if !crate::bridge::html::valid_doctype_name(&nv) {
         /* The caller's error, not Lexbor's, so the exception class is picked
          * here - the check itself is the DOM layer's. */
         return Err(Error::new(
-            ruby.exception_arg_error(),
+            crate::bridge::rb::Builtin::ArgumentError,
             "invalid doctype name",
         ));
     }
 
     let verified = |v: Option<Value>, what: &'static str| match v {
-        Some(v) => ruby_verified_text_opt(v, what),
+        Some(v) => ruby_verified_text_opt(ruby, v, what),
         None => Ok(None),
     };
     let pv = verified(rb_pub, "doctype public id")?;
     let sv = verified(rb_sys_, "doctype system id")?;
     created(
+        ruby,
         new_node(&rb_self, |d| {
             d.create_doctype(
                 nv.as_bytes(),
@@ -485,9 +487,10 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
 }
 
 /// `Document#create_document_fragment` -> an EMPTY DocumentFragment.
-pub fn create_document_fragment(_ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
+pub fn create_document_fragment(ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
     check_owning_doc(&rb_self)?;
     created(
+        ruby,
         new_node(&rb_self, |d| d.create_fragment())?,
         rb_self,
         "document fragment",

@@ -17,7 +17,79 @@
 use core::ffi::c_int;
 use core::fmt;
 
+use super::ruby::Ruby;
 use super::value::{ExceptionClass, ReprValue, Value};
+use crate::nupur::helpers::RbConst;
+
+/// The class of an exception not yet made: named, and read only when the
+/// exception is raised (or asked [`Error::is_kind_of`]), by a caller that
+/// holds the GVL. So making an [`Error`] reads no Ruby at all - not even a
+/// C global - and needs no [`Ruby`] token: an edit's closure, which must run
+/// no Ruby, can make one.
+#[derive(Clone, Copy)]
+pub enum ErrorClass {
+    /// One of Ruby's own exception classes.
+    Builtin(Builtin),
+    /// A class `init` defines and registers (`Makiri::Error`, ...);
+    /// `RuntimeError` if it is read before it is set.
+    Registered(&'static RbConst<ExceptionClass>),
+    /// A class value a caller holding the GVL already has.
+    Value(ExceptionClass),
+}
+
+/// Ruby's own exception classes an [`Error`] can name without a token.
+#[derive(Clone, Copy)]
+pub enum Builtin {
+    RuntimeError,
+    ArgumentError,
+    TypeError,
+    RangeError,
+    NotImplementedError,
+    NoMemoryError,
+    EncodingError,
+    LoadError,
+}
+
+impl ErrorClass {
+    /// The class, read with the GVL held.
+    pub fn resolve(self, ruby: &Ruby) -> ExceptionClass {
+        match self {
+            ErrorClass::Builtin(b) => match b {
+                Builtin::RuntimeError => ruby.exception_runtime_error(),
+                Builtin::ArgumentError => ruby.exception_arg_error(),
+                Builtin::TypeError => ruby.exception_type_error(),
+                Builtin::RangeError => ruby.exception_range_error(),
+                Builtin::NotImplementedError => ruby.exception_not_imp_error(),
+                Builtin::NoMemoryError => ruby.exception_no_mem_error(),
+                Builtin::EncodingError => ruby.exception_encoding_error(),
+                Builtin::LoadError => ruby.exception_load_error(),
+            },
+            ErrorClass::Registered(c) => c.exception(ruby),
+            ErrorClass::Value(c) => c,
+        }
+    }
+}
+
+impl From<Builtin> for ErrorClass {
+    #[inline]
+    fn from(b: Builtin) -> ErrorClass {
+        ErrorClass::Builtin(b)
+    }
+}
+
+impl From<&'static RbConst<ExceptionClass>> for ErrorClass {
+    #[inline]
+    fn from(c: &'static RbConst<ExceptionClass>) -> ErrorClass {
+        ErrorClass::Registered(c)
+    }
+}
+
+impl From<ExceptionClass> for ErrorClass {
+    #[inline]
+    fn from(c: ExceptionClass) -> ErrorClass {
+        ErrorClass::Value(c)
+    }
+}
 
 /// What went wrong, as Ruby will see it.
 pub struct Error(Kind);
@@ -28,10 +100,10 @@ pub struct Error(Kind);
 )]
 enum Kind {
     /// An exception of `class` with a fixed message, made when it is raised.
-    New(ExceptionClass, &'static str),
+    New(ErrorClass, &'static str),
     /// An exception of `class` with a formatted message, made when it is
     /// raised.
-    Formatted(ExceptionClass, crate::nupur::msg::Msg),
+    Formatted(ErrorClass, crate::nupur::msg::Msg),
     /// An exception object - one a protected C call caught.
     Exception(Value),
     /// A non-local exit a protected call caught that is not an exception -
@@ -42,25 +114,25 @@ enum Kind {
 
 /// A message an [`Error`] can carry: a `&'static str`, or `format_args!`.
 pub trait Message {
-    fn into_error(self, class: ExceptionClass) -> Error;
+    fn into_error(self, class: ErrorClass) -> Error;
 }
 
 impl Message for &'static str {
     #[inline]
-    fn into_error(self, class: ExceptionClass) -> Error {
+    fn into_error(self, class: ErrorClass) -> Error {
         Error(Kind::New(class, self))
     }
 }
 
 impl Message for crate::nupur::msg::Msg {
     #[inline]
-    fn into_error(self, class: ExceptionClass) -> Error {
+    fn into_error(self, class: ErrorClass) -> Error {
         Error(Kind::Formatted(class, self))
     }
 }
 
 impl Message for fmt::Arguments<'_> {
-    fn into_error(self, class: ExceptionClass) -> Error {
+    fn into_error(self, class: ErrorClass) -> Error {
         match self.as_str() {
             Some(s) => Error(Kind::New(class, s)),
             None => Error(Kind::Formatted(class, crate::nupur::msg::Msg::format(self))),
@@ -71,8 +143,8 @@ impl Message for fmt::Arguments<'_> {
 impl Error {
     /// An exception of `class` carrying `msg`.
     #[inline]
-    pub fn new(class: ExceptionClass, msg: impl Message) -> Error {
-        msg.into_error(class)
+    pub fn new(class: impl Into<ErrorClass>, msg: impl Message) -> Error {
+        msg.into_error(class.into())
     }
 
     /// The error a non-zero `rb_protect` state stands for: the exception
@@ -91,10 +163,11 @@ impl Error {
 
     /// An instance of `class`, or one that will be? `false` for an exit that
     /// is not an exception.
-    pub fn is_kind_of(&self, class: ExceptionClass) -> bool {
+    pub fn is_kind_of(&self, ruby: &Ruby, class: impl Into<ErrorClass>) -> bool {
+        let class = class.into().resolve(ruby);
         match &self.0 {
             Kind::New(c, _) | Kind::Formatted(c, _) => {
-                crate::nupur::raw::class_inherits(c.as_value(), class.as_value())
+                crate::nupur::raw::class_inherits(c.resolve(ruby).as_value(), class.as_value())
             }
             Kind::Exception(v) => v.is_kind_of(class),
             Kind::Jump(_) => false,
@@ -104,14 +177,14 @@ impl Error {
     /// The message, for wording another error with it - "error" for an exit
     /// that carries none. Reads an exception's message without calling it,
     /// as it is written out.
-    pub fn wording(&self) -> Wording<'_> {
-        Wording(self)
+    pub fn wording<'a>(&'a self, ruby: &'a Ruby) -> Wording<'a> {
+        Wording(self, ruby)
     }
 
     /// Raise it. Only a method's trampoline calls this, as its last act:
     /// the raise is a `longjmp` over every frame up to Ruby's, which runs no
     /// destructor, so nothing may be owned on the way - and nothing is.
-    pub(in crate::nupur) fn raise(self) -> ! {
+    pub(in crate::nupur) fn raise(self, ruby: &Ruby) -> ! {
         let mut e = self;
         loop {
             let exc = match e.0 {
@@ -121,7 +194,11 @@ impl Error {
                  * allocations, and an exception class's `initialize` is
                  * Ruby's. A failure there is raised in its place. */
                 Kind::New(class, msg) => {
-                    match crate::nupur::raw::exception_new(class, msg.as_bytes()) {
+                    match crate::nupur::raw::exception_new(
+                        ruby,
+                        class.resolve(ruby),
+                        msg.as_bytes(),
+                    ) {
                         Ok(v) => v,
                         Err(again) => {
                             e = again;
@@ -130,7 +207,11 @@ impl Error {
                     }
                 }
                 Kind::Formatted(class, msg) => {
-                    match crate::nupur::raw::exception_new(class, msg.as_bytes()) {
+                    match crate::nupur::raw::exception_new(
+                        ruby,
+                        class.resolve(ruby),
+                        msg.as_bytes(),
+                    ) {
                         Ok(v) => v,
                         Err(again) => {
                             e = again;
@@ -145,14 +226,14 @@ impl Error {
 }
 
 /// An [`Error`]'s message, as [`Error::wording`] writes it.
-pub struct Wording<'a>(&'a Error);
+pub struct Wording<'a>(&'a Error, &'a Ruby);
 
 impl fmt::Display for Wording<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0 .0 {
             Kind::New(_, msg) => f.write_str(msg),
             Kind::Formatted(_, msg) => f.write_str(msg.as_str()),
-            Kind::Exception(v) => crate::nupur::helpers::ExceptionText(*v).fmt(f),
+            Kind::Exception(v) => crate::nupur::helpers::ExceptionText(self.1, *v).fmt(f),
             Kind::Jump(_) => f.write_str("error"),
         }
     }

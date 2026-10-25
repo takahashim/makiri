@@ -21,11 +21,11 @@ use crate::init::{CLASS_NODE, CLASS_XPATH_CONTEXT};
 
 /// `Err(TypeError)` unless `v` is a Makiri node.
 fn expect_node(ruby: &Ruby, v: Value) -> Result<(), Error> {
-    if is_kind_of(v, &CLASS_NODE) {
+    if is_kind_of(ruby, v, &CLASS_NODE) {
         return Ok(());
     }
     Err(Error::new(
-        ruby.exception_type_error(),
+        crate::bridge::rb::Builtin::TypeError,
         "expected a Makiri::Node",
     ))
 }
@@ -40,12 +40,12 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     let kw = Keywords::scan(ruby, Kwargs::from_scan(a.keywords()))?;
     expect_node(ruby, node)?;
 
-    let obj = XPathCtx::create(node, kw.lax)?;
+    let obj = XPathCtx::create(ruby, node, kw.lax)?;
     if let Some(bindings) = kw.bindings {
         /* A registration that fails leaves `obj` to the GC, never a context
          * with half its prefixes. */
-        let ctx: XPathCtxSelf = XPathCtxSelf::try_convert(obj)?;
-        register_bindings(&ctx, bindings)?;
+        let ctx: XPathCtxSelf = XPathCtxSelf::try_convert(ruby, obj)?;
+        register_bindings(ruby, &ctx, bindings)?;
     }
     Ok(obj)
 }
@@ -54,13 +54,13 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
 /// expressions against several nodes of its document.
 fn set_node(ruby: &Ruby, ctx: XPathCtxSelf, node: Value) -> Result<Value, Error> {
     expect_node(ruby, node)?;
-    ctx.set_node(node)?;
+    ctx.set_node(ruby, node)?;
     Ok(node)
 }
 
 /// `#evaluate(expr)`.
-fn evaluate(ctx: XPathCtxSelf, expr: Value) -> Result<Value, Error> {
-    ctx.evaluate(expr)
+fn evaluate(ruby: &Ruby, ctx: XPathCtxSelf, expr: Value) -> Result<Value, Error> {
+    ctx.evaluate(ruby, expr)
 }
 
 /// `#register_namespace(prefix, uri)` -> self.
@@ -71,14 +71,19 @@ fn register_namespace(ctx: XPathCtxSelf, prefix: Value, uri: Value) -> Result<Va
 }
 
 /// `#register_variable(name, value)` -> self.
-fn register_variable(ctx: XPathCtxSelf, name: Value, value: Value) -> Result<Value, Error> {
-    ctx.register_variable(name, value)?;
+fn register_variable(
+    ruby: &Ruby,
+    ctx: XPathCtxSelf,
+    name: Value,
+    value: Value,
+) -> Result<Value, Error> {
+    ctx.register_variable(ruby, name, value)?;
     Ok(ctx.value())
 }
 
 /// From `Init_makiri`, after the classes exist.
-pub fn init_xpath_context() -> Result<(), Error> {
-    let klass = CLASS_XPATH_CONTEXT.defined()?;
+pub fn init_xpath_context(ruby: &Ruby) -> Result<(), Error> {
+    let klass = CLASS_XPATH_CONTEXT.defined(ruby)?;
     klass.define_singleton_method("new", function!(s_new, -1))?;
     klass.define_method("evaluate", method!(evaluate, 1))?;
     klass.define_method("register_namespace", method!(register_namespace, 2))?;

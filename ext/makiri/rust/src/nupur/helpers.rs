@@ -14,7 +14,7 @@ use core::ffi::c_long;
 use std::sync::OnceLock;
 
 use crate::nupur::rb::value::AsRawValue;
-use crate::nupur::rb::{prelude::*, Error, ExceptionClass, Opaque, RString, Ruby, Value};
+use crate::nupur::rb::{prelude::*, Builtin, Error, ExceptionClass, Opaque, RString, Ruby, Value};
 
 /// The raw handle types, re-exported so a higher layer can name a `VALUE` or a
 /// method `ID` without reaching into `rb_sys` itself.
@@ -56,14 +56,14 @@ pub static INTERNAL_ERROR: RbConst<ExceptionClass> = RbConst::new();
 /// `rescue` (StandardError) passes through - the registered class
 /// ([`INTERNAL_ERROR`]), or `RuntimeError` before one is.
 pub fn internal_error(msg: impl crate::nupur::rb::Message) -> Error {
-    Error::new(INTERNAL_ERROR.exception(), msg)
+    Error::new(&INTERNAL_ERROR, msg)
 }
 
 /// Is `v` an instance of the class in `klass`? `false` before `Init_makiri`,
 /// when no class of ours exists for it to be an instance of.
 #[inline]
-pub fn is_kind_of(v: Value, klass: &RbConst<crate::nupur::rb::RClass>) -> bool {
-    klass.get().is_some_and(|c| v.is_kind_of(c))
+pub fn is_kind_of(ruby: &Ruby, v: Value, klass: &RbConst<crate::nupur::rb::RClass>) -> bool {
+    klass.get(ruby).is_some_and(|c| v.is_kind_of(c))
 }
 
 /// `v`, which must be a String (a subclass's instance included).
@@ -86,7 +86,7 @@ pub fn long_arg(v: Value) -> Result<c_long, Error> {
     let n = integer_arg(v)?.to_i64()?;
     c_long::try_from(n).map_err(|_| {
         Error::new(
-            gvl_ruby().exception_range_error(),
+            Builtin::RangeError,
             format_args!("integer {n} too big for a long"),
         )
     })
@@ -223,30 +223,15 @@ pub fn range_beg_len(range: Value, count: c_long) -> Result<Option<(c_long, c_lo
  * and `boolean` are immortal and cannot raise; what allocates is
  * `bridge::build`'s. */
 
-/// The Ruby handle the helpers below build their values with, unchecked.
-///
-/// Every caller of this module's value and error helpers is a Ruby method - or
-/// `Init_makiri` - so it runs on a Ruby thread holding the GVL, which is the
-/// one precondition `Ruby::get_unchecked` has. Stated here once, rather than
-/// at each helper; a caller off a Ruby thread (the GVL-released parse) takes
-/// no Ruby value at all, which `bridge::gvl::without_gvl`'s `Send` bound keeps.
-/// `init::RbConst`'s readers are helpers of the same kind.
-#[inline]
-pub(crate) fn gvl_ruby() -> Ruby {
-    // SAFETY: see above - on a Ruby thread, with the GVL.
-    unsafe { Ruby::get_unchecked() }
-}
-
 /// `nil`, as a `Value`.
 #[inline]
-pub fn nil() -> Value {
-    gvl_ruby().qnil().as_value()
+pub fn nil(ruby: &Ruby) -> Value {
+    ruby.qnil().as_value()
 }
 
 /// `true`/`false`, as a `Value`.
 #[inline]
-pub fn boolean(b: bool) -> Value {
-    let ruby = gvl_ruby();
+pub fn boolean(ruby: &Ruby, b: bool) -> Value {
     if b {
         ruby.qtrue().as_value()
     } else {
@@ -256,12 +241,12 @@ pub fn boolean(b: bool) -> Value {
 
 /// A `TypeError` with `msg`.
 pub fn type_error(msg: impl crate::nupur::rb::Message) -> Error {
-    Error::new(gvl_ruby().exception_type_error(), msg)
+    Error::new(Builtin::TypeError, msg)
 }
 
 /// An `ArgumentError` with `msg`.
 pub fn arg_error(msg: impl crate::nupur::rb::Message) -> Error {
-    Error::new(gvl_ruby().exception_arg_error(), msg)
+    Error::new(Builtin::ArgumentError, msg)
 }
 
 /// VALUE identity, for the several sites that compare two references.
@@ -304,18 +289,18 @@ const EXCEPTION_MESSAGE_MAX: usize = 255;
 /// at most [`EXCEPTION_MESSAGE_MAX`] bytes, invalid UTF-8 replaced. "error"
 /// for a message that is not a String - this runs on error paths, so it must
 /// not raise itself.
-pub struct ExceptionText(pub Value);
+pub struct ExceptionText<'a>(pub &'a Ruby, pub Value);
 
-impl core::fmt::Display for ExceptionText {
+impl core::fmt::Display for ExceptionText<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         /* The message is the exception's `mesg`, read as an attribute: calling
          * `#message` would run its class's Ruby. A message that is not a
          * String is answered as "error". */
-        let Ok(id) = super::raw::intern_cstr(&gvl_ruby(), c"mesg") else {
+        let Ok(id) = super::raw::intern_cstr(self.0, c"mesg") else {
             return f.write_str("error");
         };
         /* An attribute read: it runs no Ruby and raises nothing. */
-        let Some(r) = RString::from_value(super::raw::ivar_get(self.0, id)) else {
+        let Some(r) = RString::from_value(super::raw::ivar_get(self.1, id)) else {
             return f.write_str("error");
         };
         // SAFETY: written out at once; formatting runs no Ruby.
@@ -349,25 +334,22 @@ impl<T: ReprValue> RbConst<T> {
     /// Record `v`, rooted for the rest of the process. `init` is the only
     /// writer, and a second write is refused rather than replacing the first.
     pub fn set(&self, v: T) -> Result<(), Error> {
-        self.0.set(Opaque::register(v)?).map_err(|_| {
-            Error::new(
-                gvl_ruby().exception_runtime_error(),
-                "a constant handle was set twice",
-            )
-        })
+        self.0
+            .set(Opaque::register(v)?)
+            .map_err(|_| Error::new(Builtin::RuntimeError, "a constant handle was set twice"))
     }
 
     /// The object, or `None` before `Init_makiri`.
     #[inline]
-    pub fn get(&self) -> Option<T> {
-        self.0.get().map(|o| gvl_ruby().get_inner(*o))
+    pub fn get(&self, ruby: &Ruby) -> Option<T> {
+        self.0.get().map(|o| ruby.get_inner(*o))
     }
 
     /// The object, for the registration code `init` runs once it is set.
-    pub fn defined(&self) -> Result<T, Error> {
-        self.get().ok_or_else(|| {
+    pub fn defined(&self, ruby: &Ruby) -> Result<T, Error> {
+        self.get(ruby).ok_or_else(|| {
             Error::new(
-                gvl_ruby().exception_runtime_error(),
+                Builtin::RuntimeError,
                 "a constant handle was read before the extension initialised",
             )
         })
@@ -378,8 +360,8 @@ impl RbConst<ExceptionClass> {
     /// The class to raise. Before `Init_makiri` - when nothing that raises one
     /// of these can run - it is `RuntimeError`, so a raise still raises.
     #[inline]
-    pub fn exception(&self) -> ExceptionClass {
-        self.get()
-            .unwrap_or_else(|| gvl_ruby().exception_runtime_error())
+    pub fn exception(&self, ruby: &Ruby) -> ExceptionClass {
+        self.get(ruby)
+            .unwrap_or_else(|| ruby.exception_runtime_error())
     }
 }

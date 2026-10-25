@@ -4,6 +4,7 @@
 #![allow(unsafe_code)]
 
 use crate::bridge::rb::value::AsRawValue;
+use crate::bridge::rb::Ruby;
 
 use crate::bridge::rb::{Error, Value};
 
@@ -257,12 +258,12 @@ pub enum NotInDocument {
 /// `XPathContext`'s context node - made here once, so a token
 /// never names a node of another document. The token's kind is `document`'s
 /// own, not one a caller passes alongside.
-pub fn node_token_in(rb_node: Value, document: Value) -> Result<Token, NotInDocument> {
-    let node_document = keepalive_document(rb_node).map_err(NotInDocument::Unusable)?;
+pub fn node_token_in(ruby: &Ruby, rb_node: Value, document: Value) -> Result<Token, NotInDocument> {
+    let node_document = keepalive_document(ruby, rb_node).map_err(NotInDocument::Unusable)?;
     if node_document.as_raw() != document.as_raw() {
         return Err(NotInDocument::Foreign);
     }
-    let raw = node_raw(rb_node).map_err(NotInDocument::Unusable)?;
+    let raw = node_raw(ruby, rb_node).map_err(NotInDocument::Unusable)?;
     Ok(raw.token(DocKind::of(document)))
 }
 
@@ -277,8 +278,8 @@ pub fn node_token_in(rb_node: Value, document: Value) -> Result<Token, NotInDocu
     dylint_lib = "makiri_lints",
     allow(raw_node_crossing, reason = "a node's word, for identity alone")
 )]
-pub fn node_raw(rb_node: Value) -> Result<NodeWord, Error> {
-    if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_DOCUMENT) {
+pub fn node_raw(ruby: &Ruby, rb_node: Value) -> Result<NodeWord, Error> {
+    if crate::bridge::ruby::is_kind_of(ruby, rb_node, &CLASS_DOCUMENT) {
         DOC_TYPE.get(&rb_node)?; /* TypeError for a non-Document */
         return Ok(match DocKind::of(rb_node) {
             DocKind::Xml => xml_read(&rb_node)?.doc_node().into(),
@@ -305,8 +306,8 @@ pub fn node_repr(v: Value) -> NodeRepr {
 
 /// Node identity as an integer, for `#==`/`#eql?`/`#hash`/`#pointer_id` -
 /// kind-agnostic, and never dereferenced.
-pub fn node_identity(rb_node: Value) -> Result<usize, Error> {
-    Ok(node_raw(rb_node)?.identity())
+pub fn node_identity(ruby: &Ruby, rb_node: Value) -> Result<usize, Error> {
+    Ok(node_raw(ruby, rb_node)?.identity())
 }
 
 /// Node identity for `==`/`eql?`: the Document AND the word. The word alone
@@ -316,17 +317,17 @@ pub fn node_identity(rb_node: Value) -> Result<usize, Error> {
 /// later can share a stamp; and an XML word can equal an HTML one. The
 /// Document is the same object for every node of one document, so comparing
 /// it settles both.
-pub fn node_key(rb_node: Value) -> Result<(usize, usize), Error> {
+pub fn node_key(ruby: &Ruby, rb_node: Value) -> Result<(usize, usize), Error> {
     Ok((
-        keepalive_document(rb_node)?.as_raw() as usize,
-        node_identity(rb_node)?,
+        keepalive_document(ruby, rb_node)?.as_raw() as usize,
+        node_identity(ruby, rb_node)?,
     ))
 }
 
 /// The keepalive Document of any node, or the Document itself.
 /// `Err(TypeError)` for a non-node.
-pub fn keepalive_document(rb_node: Value) -> Result<Value, Error> {
-    if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_DOCUMENT) {
+pub fn keepalive_document(ruby: &Ruby, rb_node: Value) -> Result<Value, Error> {
+    if crate::bridge::ruby::is_kind_of(ruby, rb_node, &CLASS_DOCUMENT) {
         return Ok(rb_node);
     }
     Ok(NODE_DATA_TYPE.read(rb_node)?.document)

@@ -65,8 +65,8 @@ pub trait Module: ReprValue {
     }
 
     /// The constant `name` = `value`.
-    fn const_set(self, name: &str, value: impl ReprValue) -> Result<(), Error> {
-        crate::nupur::raw::const_set(self.as_value(), &c_name(name)?, value.as_value())
+    fn const_set(self, ruby: &Ruby, name: &str, value: impl ReprValue) -> Result<(), Error> {
+        crate::nupur::raw::const_set(ruby, self.as_value(), &c_name(name)?, value.as_value())
     }
 
     /// A public instance method.
@@ -90,8 +90,8 @@ pub trait Module: ReprValue {
     }
 
     /// The constant `name`, which Makiri's own Ruby defines.
-    fn const_get(self, name: &str) -> Result<Value, Error> {
-        crate::nupur::raw::const_get(self.as_value(), &c_name(name)?)
+    fn const_get(self, ruby: &Ruby, name: &str) -> Result<Value, Error> {
+        crate::nupur::raw::const_get(ruby, self.as_value(), &c_name(name)?)
     }
 
     /// `self.name(*args)`: the caller's Ruby - see `bridge::raw::call_method`.
@@ -102,8 +102,8 @@ pub trait Module: ReprValue {
             reason = "XML::Namespace.new's, over bridge::raw::call_method"
         )
     )]
-    fn call_method(self, name: &str, args: &[Value]) -> Result<Value, Error> {
-        crate::nupur::raw::call_method(self.as_value(), &c_name(name)?, args)
+    fn call_method(self, ruby: &Ruby, name: &str, args: &[Value]) -> Result<Value, Error> {
+        crate::nupur::raw::call_method(ruby, self.as_value(), &c_name(name)?, args)
     }
 
     /// Include `module`.

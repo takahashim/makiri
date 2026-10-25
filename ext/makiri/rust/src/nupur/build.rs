@@ -8,14 +8,13 @@
 #![forbid(unsafe_code)]
 
 use crate::nupur::rb::ReprValue;
-use crate::nupur::rb::{Error, RArray, RHash, Value};
+use crate::nupur::rb::{Error, RArray, RHash, Ruby, Value};
 
-use super::helpers::gvl_ruby;
 use super::raw;
 
 /// An empty Array with room for `capa` elements.
-pub fn ary(capa: usize) -> Result<RArray, Error> {
-    raw::ary_new_capa(&gvl_ruby(), capa)
+pub fn ary(ruby: &Ruby, capa: usize) -> Result<RArray, Error> {
+    raw::ary_new_capa(ruby, capa)
 }
 
 /// Append `v` to `a`.
@@ -24,8 +23,8 @@ pub fn push(a: RArray, v: Value) -> Result<(), Error> {
 }
 
 /// An empty Hash.
-pub fn hash() -> Result<RHash, Error> {
-    raw::hash_new(&gvl_ruby())
+pub fn hash(ruby: &Ruby) -> Result<RHash, Error> {
+    raw::hash_new(ruby)
 }
 
 /// `h[k] = v`, for a String or Symbol `k` (any other is a `TypeError`: see
@@ -35,33 +34,33 @@ pub fn aset(h: RHash, k: Value, v: Value) -> Result<(), Error> {
 }
 
 /// An Integer.
-pub fn int(n: i64) -> Result<Value, Error> {
-    raw::int_from_i64(&gvl_ruby(), n).map(|i| i.as_value())
+pub fn int(ruby: &Ruby, n: i64) -> Result<Value, Error> {
+    raw::int_from_i64(ruby, n).map(|i| i.as_value())
 }
 
 /// An Integer from an unsigned value.
-pub fn uint(n: u64) -> Result<Value, Error> {
-    raw::int_from_u64(&gvl_ruby(), n).map(|i| i.as_value())
+pub fn uint(ruby: &Ruby, n: u64) -> Result<Value, Error> {
+    raw::int_from_u64(ruby, n).map(|i| i.as_value())
 }
 
 /// A Float.
-pub fn float(f: f64) -> Result<Value, Error> {
-    raw::float_new(&gvl_ruby(), f).map(|f| f.as_value())
+pub fn float(ruby: &Ruby, f: f64) -> Result<Value, Error> {
+    raw::float_new(ruby, f).map(|f| f.as_value())
 }
 
 /// `obj.enum_for(meth)`: an Enumerator over `obj`'s method `meth`.
-pub fn enumerator(obj: Value, meth: &str) -> Result<Value, Error> {
-    raw::enumeratorize(obj, raw::sym(&gvl_ruby(), meth)?)
+pub fn enumerator(ruby: &Ruby, obj: Value, meth: &str) -> Result<Value, Error> {
+    raw::enumeratorize(obj, raw::sym(ruby, meth)?)
 }
 
 /// The Symbol named by the UTF-8 `name`.
-pub fn symbol(name: &str) -> Result<crate::nupur::rb::Symbol, Error> {
-    crate::nupur::raw::sym(&crate::nupur::helpers::gvl_ruby(), name)
+pub fn symbol(ruby: &Ruby, name: &str) -> Result<crate::nupur::rb::Symbol, Error> {
+    crate::nupur::raw::sym(ruby, name)
 }
 
 /// [`symbol`] as a plain `Value`.
-pub fn sym(name: &str) -> Result<Value, Error> {
-    raw::sym(&gvl_ruby(), name).map(|s| s.as_value())
+pub fn sym(ruby: &Ruby, name: &str) -> Result<Value, Error> {
+    raw::sym(ruby, name).map(|s| s.as_value())
 }
 
 /// A UTF-8 String holding a copy of `bytes`; a failed allocation is `Err`
@@ -71,11 +70,11 @@ pub fn sym(name: &str) -> Result<Value, Error> {
 /// everything a document lends is, by the text-input contract, and so is
 /// every checked view. Bytes that were not would make a wrong String, never
 /// a memory error.
-pub fn utf8_str(bytes: &[u8]) -> Result<Value, Error> {
-    utf8_rstring(bytes).map(|s| s.as_value())
+pub fn utf8_str(ruby: &Ruby, bytes: &[u8]) -> Result<Value, Error> {
+    utf8_rstring(ruby, bytes).map(|s| s.as_value())
 }
 
 /// [`utf8_str`] as an `RString`.
-pub fn utf8_rstring(bytes: &[u8]) -> Result<crate::nupur::rb::RString, Error> {
-    crate::nupur::raw::utf8_str_new(&crate::nupur::helpers::gvl_ruby(), bytes)
+pub fn utf8_rstring(ruby: &Ruby, bytes: &[u8]) -> Result<crate::nupur::rb::RString, Error> {
+    crate::nupur::raw::utf8_str_new(ruby, bytes)
 }

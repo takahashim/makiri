@@ -7,6 +7,7 @@
 
 #![forbid(unsafe_code)]
 
+use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, Value};
 use crate::bridge::ruby::makiri_error;
 
@@ -37,7 +38,7 @@ use crate::html_dom::AdapterOom;
 ///
 /// Made with the read and the slice list held; a failed allocation is `Err`,
 /// and both drop.
-fn subtree_text(read: &HtmlRead<'_>, node: HtmlNode<'_>) -> Result<Value, Error> {
+fn subtree_text(ruby: &Ruby, read: &HtmlRead<'_>, node: HtmlNode<'_>) -> Result<Value, Error> {
     use crate::falloc::VecGrow;
     let texts = || {
         core::iter::successors(node.first_child(), move |c| c.preorder_next(node))
@@ -58,10 +59,10 @@ fn subtree_text(read: &HtmlRead<'_>, node: HtmlNode<'_>) -> Result<Value, Error>
     }
     if collected {
         let total = slices.iter().map(|s| s.len()).sum();
-        crate::bridge::string::utf8_str_from_slices(slices.iter().copied(), total)
+        crate::bridge::string::utf8_str_from_slices(ruby, slices.iter().copied(), total)
     } else {
         let total = texts().map(<[u8]>::len).sum();
-        crate::bridge::string::utf8_str_from_slices(texts(), total)
+        crate::bridge::string::utf8_str_from_slices(ruby, texts(), total)
     }
 }
 
@@ -92,15 +93,16 @@ static HTML_NODE_CLASSES: NodeClasses = NodeClasses {
 /// A DOCUMENT node maps back onto the Ruby Document rather than getting a
 /// second wrapper; a node type with no specific leaf (entity/notation, which
 /// the HTML parser does not produce) falls back to `Makiri::HTML::Node`.
-pub fn wrap_html_node(node: RawNode, document: Value) -> Result<Value, Error> {
+pub fn wrap_html_node(ruby: &Ruby, node: RawNode, document: Value) -> Result<Value, Error> {
     // The caller hands `node` with the Document it belongs to.
     let node_type = html_read(&document)?.node(node).node_type();
-    wrap_html_node_of_type(node, node_type, document)
+    wrap_html_node_of_type(ruby, node, node_type, document)
 }
 
 /// [`wrap_html_node`] for a node that must be one of `document`'s: an
 /// `InternalError` when it is not (another document's, or a stale word).
 pub(in crate::bridge) fn wrap_html_node_checked(
+    ruby: &Ruby,
     node: RawNode,
     document: Value,
 ) -> Result<Value, Error> {
@@ -109,12 +111,13 @@ pub(in crate::bridge) fn wrap_html_node_checked(
         .checked(node)
         .map(|n| n.node_type())
         .ok_or_else(|| crate::bridge::ruby::internal_error("a stored node of another document"))?;
-    wrap_html_node_of_type(node, node_type, document)
+    wrap_html_node_of_type(ruby, node, node_type, document)
 }
 
 /// [`wrap_html_node`] for a caller that read the node's type already, in the
 /// read it found the node in - one read the fewer.
 fn wrap_html_node_of_type(
+    ruby: &Ruby,
     node: RawNode,
     node_type: NodeType,
     document: Value,
@@ -122,8 +125,8 @@ fn wrap_html_node_of_type(
     if node_type == NodeType::Document {
         return Ok(document);
     }
-    let klass = HTML_NODE_CLASSES.class_for(node_type)?;
-    crate::bridge::wrapper::wrap_cached(&HTML_NODE_TYPE, klass, node, document)
+    let klass = HTML_NODE_CLASSES.class_for(ruby, node_type)?;
+    crate::bridge::wrapper::wrap_cached(ruby, &HTML_NODE_TYPE, klass, node, document)
 }
 
 impl crate::bridge::wrapper::NodeHandleSource for RawNode {
@@ -173,9 +176,12 @@ fn uninitialized() -> Error {
     dylint_lib = "makiri_lints",
     allow(raw_node_crossing, reason = "a Document's own node, minted as its key")
 )]
-pub(in crate::bridge) fn html_node_key(rb_node: Value) -> Result<(HtmlNodeKey, Value), Error> {
-    if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_DOCUMENT) {
-        if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_XML_DOCUMENT) {
+pub(in crate::bridge) fn html_node_key(
+    ruby: &Ruby,
+    rb_node: Value,
+) -> Result<(HtmlNodeKey, Value), Error> {
+    if crate::bridge::ruby::is_kind_of(ruby, rb_node, &CLASS_DOCUMENT) {
+        if crate::bridge::ruby::is_kind_of(ruby, rb_node, &CLASS_XML_DOCUMENT) {
             return Err(crate::bridge::ruby::type_error(
                 "expected an HTML node, got a Makiri::XML::Document",
             ));
@@ -208,8 +214,8 @@ pub struct HtmlSelf {
 }
 
 impl crate::bridge::rb::TryConvert for HtmlSelf {
-    fn try_convert(value: Value) -> Result<Self, Error> {
-        let (key, document) = html_node_key(value)?;
+    fn try_convert(ruby: &Ruby, value: Value) -> Result<Self, Error> {
+        let (key, document) = html_node_key(ruby, value)?;
         Ok(HtmlSelf {
             value,
             key,
@@ -277,13 +283,14 @@ impl HtmlView<'_> {
     )]
     pub fn wrap(
         self,
+        ruby: &Ruby,
         f: impl FnOnce(HtmlNode<'_>) -> Option<HtmlNode<'_>>,
     ) -> Result<Option<Value>, Error> {
         let found = f(self.node()).map(|n| (RawNode::from(n), n.node_type()));
         let document = self.document;
         drop(self);
         found
-            .map(|(n, t)| wrap_html_node_of_type(n, t, document))
+            .map(|(n, t)| wrap_html_node_of_type(ruby, n, t, document))
             .transpose()
     }
 
@@ -300,11 +307,12 @@ impl HtmlView<'_> {
     )]
     pub fn set(
         self,
+        ruby: &Ruby,
         elements_only: bool,
         f: impl for<'n> Fn(HtmlNode<'n>, &mut dyn FnMut(HtmlNode<'n>)),
     ) -> Result<Value, Error> {
         let document = self.document;
-        crate::bridge::node_set::node_set_from_read(self, document, |view, out| {
+        crate::bridge::node_set::node_set_from_read(ruby, self, document, |view, out| {
             f(view.node(), &mut |n| {
                 if !elements_only || n.element().is_some() {
                     out(RawNode::from(n).into());
@@ -330,7 +338,7 @@ impl HtmlView<'_> {
             reason = "the node whose text is read, resolved again in the same read"
         )
     )]
-    pub fn text(self) -> Result<Value, Error> {
+    pub fn text(self, ruby: &Ruby) -> Result<Value, Error> {
         let target = {
             let n = self.node();
             match n.node_type() {
@@ -341,7 +349,7 @@ impl HtmlView<'_> {
         };
         let Some(raw) = target else {
             drop(self);
-            return utf8_str(b"");
+            return utf8_str(ruby, b"");
         };
         let node = self.read.node(raw);
         if !matches!(
@@ -351,24 +359,25 @@ impl HtmlView<'_> {
             /* Character data and attributes lend their own bytes; the other
              * kinds (a doctype) have none. */
             let text = crate::bridge::string::str_from_read(
+                ruby,
                 self,
                 crate::bridge::string::StrKind::Utf8,
                 |v| v.read.node(raw).own_text(),
             )?;
             return match text {
                 Some(text) => Ok(text),
-                None => utf8_str(b""),
+                None => utf8_str(ruby, b""),
             };
         }
         let p = self.read.parsed();
         /* A build that failed closed, or one not due yet: walk. */
         let run = p.ensure_text_index().ok().and_then(|()| p.text_slices(raw));
         let Some(run) = run else {
-            return subtree_text(&self.read, node);
+            return subtree_text(ruby, &self.read, node);
         };
         /* The slices are this document's text, valid UTF-8 by the text-input
          * contract, borrowed from its index for the copy. */
-        crate::bridge::string::utf8_str_from_slices(run.iter(), run.total())
+        crate::bridge::string::utf8_str_from_slices(ruby, run.iter(), run.total())
     }
 
     /// The receiver's node. Unchecked: the receiver's key was minted from a
@@ -399,8 +408,12 @@ impl HtmlView<'_> {
 /// borrows the document again): hand a [`RawNode`] out and wrap after.
 ///
 /// `Err(TypeError)` for anything that is not an HTML node or HTML Document.
-pub fn with_arg_node<R>(v: Value, f: impl FnOnce(HtmlNode<'_>) -> R) -> Result<R, Error> {
-    let (key, document) = html_node_key(v)?;
+pub fn with_arg_node<R>(
+    ruby: &Ruby,
+    v: Value,
+    f: impl FnOnce(HtmlNode<'_>) -> R,
+) -> Result<R, Error> {
+    let (key, document) = html_node_key(ruby, v)?;
     with_html_node(document, key, f)
 }
 
@@ -412,8 +425,12 @@ pub fn with_arg_node<R>(v: Value, f: impl FnOnce(HtmlNode<'_>) -> R) -> Result<R
         reason = "a node wrapped: the wrapper keeps its key, and its document alive"
     )
 )]
-pub fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Result<Option<Value>, Error> {
-    node.map(|n| wrap_html_node(RawNode::from(n), document))
+pub fn wrap_node(
+    ruby: &Ruby,
+    node: Option<HtmlNode<'_>>,
+    document: Value,
+) -> Result<Option<Value>, Error> {
+    node.map(|n| wrap_html_node(ruby, RawNode::from(n), document))
         .transpose()
 }
 
@@ -463,10 +480,10 @@ impl ChildListHost for HtmlSelf {
             list,
         }))
     }
-    fn wrap_child(&self, token: Option<usize>) -> Result<Option<Value>, Error> {
+    fn wrap_child(&self, ruby: &Ruby, token: Option<usize>) -> Result<Option<Value>, Error> {
         token
             .and_then(RawNode::from_word)
-            .map(|n| wrap_html_node(n, self.document))
+            .map(|n| wrap_html_node(ruby, n, self.document))
             .transpose()
     }
 }
@@ -479,7 +496,7 @@ impl ChildListHost for HtmlSelf {
 /// bad argument, so `InternalError` rather than `Makiri::Error`.
 fn foreign_node_error() -> Error {
     Error::new(
-        crate::init::EXC_INTERNAL_ERROR.exception(),
+        &crate::init::EXC_INTERNAL_ERROR,
         "an HTML node key belongs to a different document",
     )
 }
@@ -706,10 +723,15 @@ fn release_from_tree(d: &mut HtmlDocMut<'_>, node: RawNode) {
 /// Every rule is checked before anything changes (see
 /// [`Insertion::check`], the shared `crate::dom_rules`); after that only the
 /// adoption copy can fail, and it too runs before a link is touched.
-pub fn insert(this: &mut HtmlSelf, rb_incoming: Value, place: Place) -> Result<Value, Error> {
+pub fn insert(
+    ruby: &Ruby,
+    this: &mut HtmlSelf,
+    rb_incoming: Value,
+    place: Place,
+) -> Result<Value, Error> {
     let document = this.document;
     let edit = edit(this)?;
-    let (key, incoming_doc) = html_node_key(rb_incoming)?;
+    let (key, incoming_doc) = html_node_key(ruby, rb_incoming)?;
     /* The argument is relinked too - `place` changes its parent and siblings, and
      * an adoption removes it from its own document - so a frozen argument is a
      * frozen node being modified. The receiver check alone let it through, which
@@ -780,7 +802,7 @@ pub fn insert(this: &mut HtmlSelf, rb_incoming: Value, place: Place) -> Result<V
     release_from_tree(&mut source.edit(), incoming);
     drop(source);
     crate::bridge::wrapper::account_growth(incoming_doc);
-    wrap_html_node(placed, document)
+    wrap_html_node(ruby, placed, document)
 }
 
 /* ------------------------------------------------------------------ *

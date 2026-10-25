@@ -25,7 +25,7 @@ use crate::xml::css::XmlNode;
 fn css(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result<Value, Error> {
     let args = CssArgs::new(ruby, selector, ns)?;
     let selector = args.selector;
-    let sv = ruby_verified_text(selector, "CSS selector")?;
+    let sv = ruby_verified_text(ruby, selector, "CSS selector")?;
     /* Read once the namespaces are converted (their Hash is Ruby), and
      * held while the set is built (`node_set_from`): the matched nodes
      * borrow it. */
@@ -36,7 +36,11 @@ fn css(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result<Value, 
         })
         .map_err(|e| parse_error(e, selector))?;
         let nodes = matched.map_err(|e| query_error(e, selector))?;
-        node_set_from(this.document, nodes.into_iter().map(|n| n.id().into()))
+        node_set_from(
+            ruby,
+            this.document,
+            nodes.into_iter().map(|n| n.id().into()),
+        )
     })?;
     drop(sv);
     found
@@ -46,7 +50,7 @@ fn css(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result<Value, 
 fn at_css(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result<Option<Value>, Error> {
     let args = CssArgs::new(ruby, selector, ns)?;
     let selector = args.selector;
-    let sv = ruby_verified_text(selector, "CSS selector")?;
+    let sv = ruby_verified_text(ruby, selector, "CSS selector")?;
     let found = args.with_namespaces(|ns| {
         let d = this.read()?;
         let matched = css_cache::with_compiled(sv.as_bytes(), |groups, scratch| {
@@ -60,7 +64,7 @@ fn at_css(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result<Opti
         )
     })??;
     drop(sv);
-    found.map(|n| wrap(n, this.document)).transpose()
+    found.map(|n| wrap(ruby, n, this.document)).transpose()
 }
 
 /// `#matches?`: does THIS node match? Its ancestors and siblings take part,
@@ -68,7 +72,7 @@ fn at_css(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result<Opti
 fn css_matches(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result<bool, Error> {
     let args = CssArgs::new(ruby, selector, ns)?;
     let selector = args.selector;
-    let sv = ruby_verified_text(selector, "CSS selector")?;
+    let sv = ruby_verified_text(ruby, selector, "CSS selector")?;
     let matched = args.with_namespaces(|ns| {
         let d = this.read()?;
         let matched = css_cache::with_compiled(sv.as_bytes(), |groups, scratch| {
@@ -82,8 +86,8 @@ fn css_matches(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result
 }
 
 /// The private primitives, on the XML node-method module. From `Init_makiri`.
-pub fn init_xml_css() -> Result<(), Error> {
-    let m = MOD_XML_NODE_METHODS.defined()?;
+pub fn init_xml_css(ruby: &Ruby) -> Result<(), Error> {
+    let m = MOD_XML_NODE_METHODS.defined(ruby)?;
     m.define_private_method("_css", method!(css, 2))?;
     m.define_private_method("_at_css", method!(at_css, 2))?;
     m.define_private_method("_css_matches", method!(css_matches, 2))?;

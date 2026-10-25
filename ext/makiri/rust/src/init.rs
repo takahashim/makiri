@@ -90,19 +90,18 @@ fn alloc_inject_p() -> bool {
 }
 
 /// `Makiri.__alloc_inject(n)` - arm "the nth core allocation fails once".
-fn alloc_inject(ruby: &Ruby, nth: Value) -> Result<(), Error> {
+fn alloc_inject(nth: Value) -> Result<(), Error> {
     let nth = crate::bridge::ruby::integer_arg(nth)?.to_i64()?;
     #[cfg(feature = "alloc-inject")]
     {
         crate::falloc::alloc_inject_arm(nth);
-        let _ = ruby;
         Ok(())
     }
     #[cfg(not(feature = "alloc-inject"))]
     {
         let _ = nth;
         Err(Error::new(
-            ruby.exception_not_imp_error(),
+            crate::bridge::rb::Builtin::NotImplementedError,
             "rebuild with MAKIRI_ALLOC_INJECT=1 (rake oom does this)",
         ))
     }
@@ -110,16 +109,15 @@ fn alloc_inject(ruby: &Ruby, nth: Value) -> Result<(), Error> {
 
 /// `Makiri.__alloc_inject_calls` - how many core allocations a workload
 /// attempted, armed or not, so the sweep can size itself from a disarmed run.
-fn alloc_inject_calls(ruby: &Ruby) -> Result<u64, Error> {
+fn alloc_inject_calls() -> Result<u64, Error> {
     #[cfg(feature = "alloc-inject")]
     {
-        let _ = ruby;
         Ok(crate::falloc::alloc_inject_call_count())
     }
     #[cfg(not(feature = "alloc-inject"))]
     {
         Err(Error::new(
-            ruby.exception_not_imp_error(),
+            crate::bridge::rb::Builtin::NotImplementedError,
             "rebuild with MAKIRI_ALLOC_INJECT=1 (rake oom does this)",
         ))
     }
@@ -128,19 +126,18 @@ fn alloc_inject_calls(ruby: &Ruby) -> Result<u64, Error> {
 /// `Makiri.__raise_inject(n)` - arm "the nth raising C call raises
 /// `NoMemoryError` in place of its allocation" (`bridge::raw`'s allocating
 /// wrappers; `script/check_raise_injection.rb`).
-fn raise_inject(ruby: &Ruby, nth: Value) -> Result<(), Error> {
+fn raise_inject(nth: Value) -> Result<(), Error> {
     let nth = crate::bridge::ruby::integer_arg(nth)?.to_i64()?;
     #[cfg(feature = "alloc-inject")]
     {
         crate::falloc::raise_inject_arm(nth);
-        let _ = ruby;
         Ok(())
     }
     #[cfg(not(feature = "alloc-inject"))]
     {
         let _ = nth;
         Err(Error::new(
-            ruby.exception_not_imp_error(),
+            crate::bridge::rb::Builtin::NotImplementedError,
             "rebuild with MAKIRI_ALLOC_INJECT=1 (rake oom does this)",
         ))
     }
@@ -148,16 +145,15 @@ fn raise_inject(ruby: &Ruby, nth: Value) -> Result<(), Error> {
 
 /// `Makiri.__raise_inject_calls` - how many raising C calls a workload made,
 /// armed or not, so the sweep can size itself from a disarmed run.
-fn raise_inject_calls(ruby: &Ruby) -> Result<u64, Error> {
+fn raise_inject_calls() -> Result<u64, Error> {
     #[cfg(feature = "alloc-inject")]
     {
-        let _ = ruby;
         Ok(crate::falloc::raise_inject_call_count())
     }
     #[cfg(not(feature = "alloc-inject"))]
     {
         Err(Error::new(
-            ruby.exception_not_imp_error(),
+            crate::bridge::rb::Builtin::NotImplementedError,
             "rebuild with MAKIRI_ALLOC_INJECT=1 (rake oom does this)",
         ))
     }
@@ -222,7 +218,9 @@ fn panic_probe(ruby: &Ruby, kind: Value) -> Result<(), Error> {
             /* With the GVL released, so the panic starts below a C frame - the
              * largest such body in the crate is the parser itself.
              * `bridge::gvl` latches it and re-raises once the GVL is back. */
-            crate::bridge::gvl::without_gvl(|| panic!("Makiri.__panic(4): panic below the GVL"))?;
+            crate::bridge::gvl::without_gvl(ruby, || {
+                panic!("Makiri.__panic(4): panic below the GVL")
+            })?;
         }
         5 => {
             /* In a method's body, as any method's: its trampoline
@@ -239,7 +237,7 @@ fn panic_probe(ruby: &Ruby, kind: Value) -> Result<(), Error> {
         }
         _ => {
             return Err(Error::new(
-                ruby.exception_arg_error(),
+                crate::bridge::rb::Builtin::ArgumentError,
                 "__panic: kind must be 0..6",
             ))
         }
@@ -249,10 +247,10 @@ fn panic_probe(ruby: &Ruby, kind: Value) -> Result<(), Error> {
 
 /// `Makiri::XML.__decode(str)` - the strict input decode in isolation, without
 /// the tokenizer or the tree builder (`spec/xml_decode_spec.rb`).
-fn xml_decode(_ruby: &Ruby, str: Value) -> Result<Value, Error> {
+fn xml_decode(ruby: &Ruby, str: Value) -> Result<Value, Error> {
     let s = crate::bridge::ruby::string_arg(str)?;
     /* decode-only: no arena, no budget */
-    crate::bridge::xml_decode::xml_decode_input_value(s, None).map(|d| d.as_value())
+    crate::bridge::xml_decode::xml_decode_input_value(ruby, s, None).map(|d| d.as_value())
 }
 
 /* ------------------------------------------------------------------ *
@@ -306,7 +304,7 @@ pub extern "C" fn Init_makiri() {
 fn init(ruby: &Ruby) -> Result<(), Error> {
     // Before anything touches the interpreter's structs: a binary built for
     // another Ruby misreads them (`check_running_ruby_api`).
-    crate::bridge::ruby::check_running_ruby_api(ruby)?;
+    crate::bridge::ruby::check_running_ruby_api()?;
     #[cfg(makiri_no_unwind)]
     crate::no_unwind::self_test();
     #[cfg(makiri_no_unwind)]
@@ -321,14 +319,16 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     // gem it was loaded by and the Ruby it was loaded into - a stale
     // `lib/makiri/makiri.bundle` in a checkout is read by whichever Ruby, and
     // whichever version of the Ruby code, requires it.
-    let native_version = crate::bridge::string::utf8_str(env!("MAKIRI_GEM_VERSION").as_bytes())?;
+    let native_version =
+        crate::bridge::string::utf8_str(ruby, env!("MAKIRI_GEM_VERSION").as_bytes())?;
     crate::bridge::rb::freeze(native_version);
-    makiri.const_set("NATIVE_VERSION", native_version)?;
+    makiri.const_set(ruby, "NATIVE_VERSION", native_version)?;
     let native_ruby = crate::bridge::string::utf8_str(
+        ruby,
         crate::bridge::ruby::ruby_api_version().as_str().as_bytes(),
     )?;
     crate::bridge::rb::freeze(native_ruby);
-    makiri.const_set("NATIVE_RUBY_API_VERSION", native_ruby)?;
+    makiri.const_set(ruby, "NATIVE_RUBY_API_VERSION", native_ruby)?;
 
     /* The abstract bases. Concrete nodes are the HTML::* / XML::* leaves
      * below; these exist so `is_a?(Makiri::Element)` holds across both. The
@@ -477,13 +477,13 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     /* One registration per feature, each defining its methods onto the
      * classes above. The order is free: every class and module they touch
      * exists by now, and no two define the same name. */
-    crate::glue::html_node::init()?;
-    crate::glue::html_doc::init_html_doc()?;
-    crate::glue::xml_node::init()?;
-    crate::glue::xml_doc::init_xml_doc()?;
-    crate::glue::node_set::init_node_set()?;
-    crate::glue::xpath_context::init_xpath_context()?;
-    crate::glue::query::init_xpath()?;
+    crate::glue::html_node::init(ruby)?;
+    crate::glue::html_doc::init_html_doc(ruby)?;
+    crate::glue::xml_node::init(ruby)?;
+    crate::glue::xml_doc::init_xml_doc(ruby)?;
+    crate::glue::node_set::init_node_set(ruby)?;
+    crate::glue::xpath_context::init_xpath_context(ruby)?;
+    crate::glue::query::init_xpath(ruby)?;
     crate::glue::stylesheet::init_lexbor_css(ruby)?;
 
     /* The recursion checks in css/ and xpath/ consult this without knowing

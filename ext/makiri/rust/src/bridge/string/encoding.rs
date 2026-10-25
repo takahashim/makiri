@@ -3,6 +3,7 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
+use crate::bridge::rb::Ruby;
 use core::ffi::c_int;
 
 use crate::bridge::rb::value::AsRawValue;
@@ -13,8 +14,8 @@ pub use crate::nupur::encoding::Encoding;
 
 /// `v` as an encoding argument: the encoding, and the name to write for it -
 /// the String or Symbol as the caller wrote it, or an `Encoding`'s own name.
-pub fn encoding_arg(v: Value) -> Result<(Encoding, crate::cbuf::OwnedBuf), Error> {
-    let e = to_encoding(v)?;
+pub fn encoding_arg(ruby: &Ruby, v: Value) -> Result<(Encoding, crate::cbuf::OwnedBuf), Error> {
+    let e = to_encoding(ruby, v)?;
     let name = match RString::from_value(v) {
         Some(s) => s,
         None if crate::bridge::rb::Symbol::from_value(v).is_some() => {
@@ -53,13 +54,13 @@ impl Encoding {
 /// for an unknown name. `v` is an `Encoding`, a String or a Symbol, and
 /// anything else is a `TypeError` before the lookup, which would run its
 /// `to_str`.
-pub fn to_encoding(v: Value) -> Result<Encoding, Error> {
-    let v = if v.is_kind_of(crate::bridge::ruby::gvl_ruby().class_encoding()) {
+pub fn to_encoding(ruby: &Ruby, v: Value) -> Result<Encoding, Error> {
+    let v = if v.is_kind_of(ruby.class_encoding()) {
         v
     } else {
         crate::bridge::ruby::name_arg(v)?.as_value()
     };
-    crate::bridge::raw::to_encoding(v)
+    crate::bridge::raw::to_encoding(ruby, v)
 }
 
 /// [`Encoding::reads_as_utf8_bytes`] for `s`'s encoding, by index and with

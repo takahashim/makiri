@@ -25,15 +25,15 @@ use crate::init::MOD_HTML_NODE_METHODS;
 
 /// The selector after the strict text check. The engine reads its bytes and
 /// runs no Ruby, so the view stays valid for the query.
-fn selector_text(selector: Value) -> Result<RubyText, Error> {
-    ruby_verified_text(selector, "CSS selector")
+fn selector_text(ruby: &Ruby, selector: Value) -> Result<RubyText, Error> {
+    ruby_verified_text(ruby, selector, "CSS selector")
 }
 
 /// `Node#css`: every matching descendant, in document order.
 fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
     let args = CssArgs::scan(ruby, args)?;
     let selector = args.selector;
-    let sv = selector_text(selector)?;
+    let sv = selector_text(ruby, selector)?;
     /* Read once the namespaces are converted (their Hash is Ruby), and
      * held while the set is built (`node_set_from`): the matched nodes
      * borrow it. */
@@ -45,6 +45,7 @@ fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
         .map_err(|e| parse_error(e, selector))?;
         let nodes = matched.map_err(|e| query_error(e, selector))?;
         node_set_from(
+            ruby,
             this.document,
             nodes.into_iter().map(|n| RawNode::from(n).into()),
         )
@@ -60,7 +61,7 @@ fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
 fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, Error> {
     let args = CssArgs::scan(ruby, args)?;
     let selector = args.selector;
-    let sv = selector_text(selector)?;
+    let sv = selector_text(ruby, selector)?;
     let found = args.with_namespaces(|ns| {
         let view = this.read()?;
         let matched = css_cache::with_compiled(sv.as_bytes(), |groups, scratch| {
@@ -74,7 +75,9 @@ fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, 
         )
     })??;
     drop(sv);
-    found.map(|n| wrap_html_node(n, this.document)).transpose()
+    found
+        .map(|n| wrap_html_node(ruby, n, this.document))
+        .transpose()
 }
 
 /// `Node#matches?`: does THIS node match? Tested against the node itself, not
@@ -86,7 +89,7 @@ fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, 
 fn matches(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<bool, Error> {
     let args = CssArgs::scan(ruby, args)?;
     let selector = args.selector;
-    let sv = selector_text(selector)?;
+    let sv = selector_text(ruby, selector)?;
     let matched = args.with_namespaces(|ns| {
         let view = this.read()?;
         let matched = css_cache::with_compiled(sv.as_bytes(), |groups, scratch| {
@@ -100,8 +103,8 @@ fn matches(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<bool, Error> {
 }
 
 /// From `Init_makiri`.
-pub fn init_css() -> Result<(), Error> {
-    let m = MOD_HTML_NODE_METHODS.defined()?;
+pub fn init_css(ruby: &Ruby) -> Result<(), Error> {
+    let m = MOD_HTML_NODE_METHODS.defined(ruby)?;
     m.define_method("css", method!(css, -1))?;
     m.define_method("at_css", method!(at_css, -1))?;
     m.define_method("matches?", method!(matches, -1))?;

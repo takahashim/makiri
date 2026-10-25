@@ -48,11 +48,11 @@ impl CssArgs {
         if !ns.is_nil() {
             let Some(h) = RHash::from_value(ns) else {
                 return Err(Error::new(
-                    ruby.exception_type_error(),
+                    crate::bridge::rb::Builtin::TypeError,
                     "namespaces must be a Hash of prefix => uri",
                 ));
             };
-            bindings = crate::glue::query::namespace_bindings(h)?;
+            bindings = crate::glue::query::namespace_bindings(ruby, h)?;
         }
         Ok(CssArgs { selector, bindings })
     }
@@ -82,7 +82,7 @@ impl CssArgs {
 pub fn syntax_error(selector: Value, reason: Option<&str>) -> Error {
     let reason = reason.unwrap_or("invalid CSS selector");
     Error::new(
-        EXC_CSS_SYNTAX_ERROR.exception(),
+        &EXC_CSS_SYNTAX_ERROR,
         format_args!("{reason}: {}", crate::bridge::ruby::Display(selector)),
     )
 }

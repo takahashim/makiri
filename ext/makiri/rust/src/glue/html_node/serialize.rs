@@ -32,16 +32,16 @@ fn layout_opt(ruby: &Ruby, args: &[Value]) -> Result<Layout, Error> {
 /// An Attr serializes to the empty string, as DOM Parsing's algorithm and
 /// Firefox have it (Chromium and WebKit write the escaped value) and as an
 /// XML Attr does; the serializer itself has no markup for one, and refused.
-fn render(node: HtmlNode<'_>, scope: Scope, layout: Layout) -> Result<RString, Error> {
+fn render(ruby: &Ruby, node: HtmlNode<'_>, scope: Scope, layout: Layout) -> Result<RString, Error> {
     if node.node_type() == NodeType::Attribute {
-        return crate::bridge::string::utf8_rstring(b"");
+        return crate::bridge::string::utf8_rstring(ruby, b"");
     }
     let buf =
         serialize(node, scope, layout).ok_or_else(|| makiri_error("HTML serialization failed"))?;
     /* The serializer emits UTF-8, so the String is tagged UTF-8 rather than
      * built as binary and re-tagged; protected, so a failed allocation drops
      * `buf` rather than leaking it. */
-    crate::bridge::string::utf8_rstring(buf.as_slice())
+    crate::bridge::string::utf8_rstring(ruby, buf.as_slice())
 }
 
 /// Outer HTML: the node itself plus its descendants. `pretty: true` indents.
@@ -58,7 +58,7 @@ fn to_html(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<RString, Error
         Scope::Outer
     };
     /* A failed allocation of the String is `Err`, so the read may stay. */
-    render(node, scope, layout)
+    render(ruby, node, scope, layout)
 }
 
 /// Inner HTML: the node's children, without the node's own tag.
@@ -72,12 +72,12 @@ fn inner_html(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<RString, Er
     let view = this.read()?;
     let node = view.node();
     let target = node.template_content().unwrap_or(node);
-    render(target, Scope::Inner, layout)
+    render(ruby, target, Scope::Inner, layout)
 }
 
 /// From `Init_makiri`.
-pub fn init_serialize() -> Result<(), Error> {
-    let m = MOD_HTML_NODE_METHODS.defined()?;
+pub fn init_serialize(ruby: &Ruby) -> Result<(), Error> {
+    let m = MOD_HTML_NODE_METHODS.defined(ruby)?;
     for name in ["to_html", "to_s", "outer_html"] {
         m.define_method(name, method!(to_html, -1))?;
     }

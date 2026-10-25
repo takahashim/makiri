@@ -10,6 +10,7 @@
 
 #![forbid(unsafe_code)]
 
+use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, Value};
 
 use crate::bridge::html::{html_node_key, with_html_node};
@@ -47,13 +48,13 @@ pub use context_object::{XPathCtx, XPathCtxSelf};
 /// message) when it raises.
 pub fn xpath_error(err: &XPathError) -> Error {
     let class = match err.status {
-        ErrorKind::Syntax => EXC_XPATH_SYNTAX_ERROR.exception(),
-        ErrorKind::Limit => EXC_XPATH_LIMIT_EXCEEDED.exception(),
+        ErrorKind::Syntax => &EXC_XPATH_SYNTAX_ERROR,
+        ErrorKind::Limit => &EXC_XPATH_LIMIT_EXCEEDED,
         ErrorKind::NotImplemented
         | ErrorKind::Type
         | ErrorKind::Runtime
         | ErrorKind::Internal
-        | ErrorKind::Oom => EXC_ERROR.exception(),
+        | ErrorKind::Oom => &EXC_ERROR,
     };
     Error::new(
         class,
@@ -141,18 +142,18 @@ impl core::ops::DerefMut for Cx {
 /// The context keeps nothing of the document: the caller holds `document`
 /// for as long as the context lives, and each evaluate borrows it
 /// ([`Cx::run`]).
-pub fn context_for(rb_node: Value, document: Value) -> Result<Cx, Error> {
+pub fn context_for(ruby: &Ruby, rb_node: Value, document: Value) -> Result<Cx, Error> {
     DOC_TYPE.get(&document)?; /* TypeError for a non-Document */
     if DocKind::of(document) == DocKind::Xml {
         /* The context NODE: `xml_node_unwrap` resolves a Document receiver to
          * its arena's document node, and any other node to itself. */
-        let node = xml_node_unwrap(rb_node)?;
+        let node = xml_node_unwrap(ruby, rb_node)?;
         return Ok(Cx {
             session: Session::new(Some(Token::xml(node.to_token()))),
         });
     }
 
-    let (key, _) = html_node_key(rb_node)?;
+    let (key, _) = html_node_key(ruby, rb_node)?;
     /* Resolved against `document` - checked, not assumed, to own the node -
      * and kept as the context's token, which `document` keeps alive for as
      * long as the context lives. */
@@ -176,8 +177,8 @@ fn parse_with_limits(
 
 /// Parse `expr` for one query under `cx`'s caps; a failure is the parse's
 /// error as the exception.
-pub fn parse_query(cx: &Cx, expr: Value) -> Result<Box<Ast>, Error> {
-    let ev = ruby_verified_text(expr, "XPath expression")?;
+pub fn parse_query(ruby: &Ruby, cx: &Cx, expr: Value) -> Result<Box<Ast>, Error> {
+    let ev = ruby_verified_text(ruby, expr, "XPath expression")?;
     /* `ev` owns a copy of the String's bytes; the parse reads that copy. */
     let parsed = parse_with_limits(cx.limits(), ev.text());
     /* The copy is freed before the error is built, as `rake unsafe:boundaries`
@@ -221,26 +222,26 @@ impl QueryAst<'_> {
 /// The one conversion for a whole value. `at_xpath` is the exception by design: its
 /// [`query_result`] fast path wraps only a node-set's first node, through the
 /// same wrap a set's read-back uses, and never builds the set.
-fn val_to_ruby(v: ValRef<'_>, document: Value) -> Result<Value, Error> {
+fn val_to_ruby(ruby: &Ruby, v: ValRef<'_>, document: Value) -> Result<Value, Error> {
     Ok(match v {
         ValRef::NodeSet(set) => {
-            let (rb, fill) = node_set_with_fill(document)?;
+            let (rb, fill) = node_set_with_fill(ruby, document)?;
             fill.extend(set.as_slice().iter().map(|&n| NodeWord::of_token(n)))?;
             rb
         }
         /* The bytes are the value's own, and valid UTF-8 - the engine builds
          * a Text only from input the text contract has passed. */
-        ValRef::String(t) => crate::bridge::string::utf8_str(t.as_slice())?,
-        ValRef::Number(d) => crate::bridge::build::float(d)?,
-        ValRef::Boolean(b) => crate::bridge::ruby::boolean(b),
+        ValRef::String(t) => crate::bridge::string::utf8_str(ruby, t.as_slice())?,
+        ValRef::Number(d) => crate::bridge::build::float(ruby, d)?,
+        ValRef::Boolean(b) => crate::bridge::ruby::boolean(ruby, b),
     })
 }
 
 /// An evaluation result as a Ruby object. Converting consumes the value, which
 /// frees its node-set array or string; `document` is the keepalive for a
 /// node-set.
-fn value_to_ruby(v: XPathValue, document: Value) -> Result<Value, Error> {
-    val_to_ruby(v.get(), document)
+fn value_to_ruby(ruby: &Ruby, v: XPathValue, document: Value) -> Result<Value, Error> {
+    val_to_ruby(ruby, v.get(), document)
 }
 
 /* ------------------------------------------------------------------ */
@@ -283,6 +284,7 @@ pub fn evaluate_query(
 /// allocates Ruby objects and so may raise or collect: the value owns its data
 /// and references neither, so nothing is held that a raise would leak.
 pub fn evaluate_to_ruby<C: core::borrow::Borrow<Cx>>(
+    ruby: &Ruby,
     ctx: C,
     ast: QueryAst,
     document: Value,
@@ -291,14 +293,19 @@ pub fn evaluate_to_ruby<C: core::borrow::Borrow<Cx>>(
     let value = evaluate_query(ctx.borrow(), ast.get(), document, answer);
     drop(ast);
     drop(ctx);
-    query_result(value?, document, answer)
+    query_result(ruby, value?, document, answer)
 }
 
 /// A query's value as Ruby, and for `at_xpath` the first node of a node-set.
 ///
 /// Callers free the AST and any context they own BEFORE this: the value owns
 /// its data and references neither.
-pub fn query_result(value: XPathValue, document: Value, answer: Answer) -> Result<Value, Error> {
+pub fn query_result(
+    ruby: &Ruby,
+    value: XPathValue,
+    document: Value,
+    answer: Answer,
+) -> Result<Value, Error> {
     if answer == Answer::First {
         if let ValRef::NodeSet(set) = value.get() {
             /* Only the first node is wrapped - no NodeSet, no `#first` call.
@@ -307,10 +314,10 @@ pub fn query_result(value: XPathValue, document: Value, answer: Answer) -> Resul
             let first = set.as_slice().first().map(|&n| NodeWord::of_token(n));
             drop(value);
             return match first {
-                Some(n) => wrap_doc_node(DocKind::of(document), n, document),
-                None => Ok(crate::bridge::ruby::nil()),
+                Some(n) => wrap_doc_node(ruby, DocKind::of(document), n, document),
+                None => Ok(crate::bridge::ruby::nil(ruby)),
             };
         }
     }
-    value_to_ruby(value, document)
+    value_to_ruby(ruby, value, document)
 }
