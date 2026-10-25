@@ -62,14 +62,15 @@ impl RString {
 /// String's allocation raises `NoMemoryError`; `fill`'s `Err` is returned in
 /// its place, as is a `fill` that wrote fewer than `len` bytes - an internal
 /// error, since the bytes left would be whatever the allocation held - and
-/// the String is emptied and left to the GC, which `ObjectSpace` may still
-/// show to Ruby code, but holding nothing it was not given.
+/// the String is emptied and left to the GC, hidden.
 ///
 /// `fill` writes through an [`Unwritten`], front to back, so every byte the
 /// String holds was written and none past its end can be. The String is
-/// reachable from nowhere but this frame, which keeps it alive and in place
-/// while `fill` runs (the GC's stack scan pins it), so no Ruby code can see
-/// or change it.
+/// HIDDEN (`rb_obj_hide`) from its allocation until it is whole, so no Ruby
+/// code `fill` runs can find it through `ObjectSpace` - to read the bytes not
+/// yet written, or to grow it and move the buffer `fill` writes into - and
+/// this frame keeps it alive and in place meanwhile (the GC's stack scan pins
+/// it). Shown, as a String, only once it is whole.
 ///
 /// The bytes are tagged UTF-8 without a check; bytes that were not would make
 /// a wrong String, never a memory error.
@@ -98,6 +99,10 @@ pub fn utf8_str_filled(
     /* Armed before `fill` runs, so whatever ends it early - an `Err`, or a
      * panic unwinding through this frame to the trampoline - empties the
      * String on the way out; disarmed only once the String is whole. */
+    let s = str.as_raw();
+    // SAFETY: the String just made, referenced only from this frame; hiding
+    // writes only its class field, which the reveal below restores.
+    unsafe { rb_sys::rb_obj_hide(s) };
     let unfilled = EmptyUnlessFilled(str);
     let mut w = Unwritten { buf, at: 0 };
     let filled = fill(&mut w).and_then(|()| {
@@ -111,6 +116,8 @@ pub fn utf8_str_filled(
     });
     filled?;
     core::mem::forget(unfilled);
+    // SAFETY: the String `rb_obj_hide` hid, whole now, shown as a String.
+    unsafe { rb_sys::rb_obj_reveal(s, rb_sys::rb_cString) };
     Ok(str)
 }
 

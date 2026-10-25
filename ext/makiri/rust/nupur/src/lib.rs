@@ -27,7 +27,8 @@
 //!   or a Ruby value, which exists only where one did.
 //! - **A wrapped object's values are its slots** ([`typed`]), marked by the
 //!   layer; a payload holds none. Memory reported to the GC is given back by
-//!   the free callback.
+//!   the free callback. One is made only of a [`rb::DataClass`], a class
+//!   defined without an allocator, so Ruby cannot make one with no payload.
 //! - **A String is read by copying** ([`string`]): no slice of one is handed
 //!   out.
 //!

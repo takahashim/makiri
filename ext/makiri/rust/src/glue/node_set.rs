@@ -144,8 +144,8 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
 pub fn init_node_set(ruby: &Ruby) -> Result<(), Error> {
     let klass = CLASS_NODE_SET.defined(ruby)?;
 
-    /* Sets are made by queries and by `.new` below, never allocated bare. */
-    klass.undef_default_alloc_func();
+    /* Sets are made by queries and by `.new` below, never allocated bare:
+     * `define_data_class` took the allocator away. */
     klass.define_singleton_method("new", function!(s_new, -1))?;
 
     for (name, f) in [

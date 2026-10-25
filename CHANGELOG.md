@@ -31,6 +31,9 @@
 * A keywords-only call of `#xpath` / `#at_xpath` (`doc.xpath(s: uri)`, no
   expression) raises Ruby's arity error, `ArgumentError`, rather than a
   `TypeError` about the Hash, as a call with no arguments does.
+* A namespace Hash's keys must be Symbols or plain Strings: a key of a
+  String subclass raises `TypeError`, since hashing it would run the
+  subclass's `#hash`.
 
 ## [0.17.0.rc2] - 2026-10-24
 

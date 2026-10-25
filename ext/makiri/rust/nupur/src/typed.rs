@@ -324,7 +324,7 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
     pub fn wrap(
         &'static self,
         _: &crate::rb::Ruby,
-        klass: crate::rb::RClass,
+        klass: crate::rb::DataClass,
         data: T,
         roots: [Value; N],
     ) -> Result<Value, Error> {
@@ -412,7 +412,7 @@ impl<T: Payload + 'static, const N: usize> TypedType<T, N> {
     pub fn wrap_hidden(
         &'static self,
         ruby: &crate::rb::Ruby,
-        klass: crate::rb::RClass,
+        klass: crate::rb::DataClass,
         data: T,
         roots: [Value; N],
         ivars: &[(crate::rb::Id, Value)],
@@ -442,7 +442,7 @@ impl<T: Payload + 'static, const N: usize> TypedType<T, N> {
 /// was made with.
 pub struct Hidden<T: Payload + 'static, const N: usize> {
     obj: Value,
-    klass: crate::rb::RClass,
+    klass: crate::rb::DataClass,
     ty: &'static TypedType<T, N>,
 }
 
@@ -525,7 +525,7 @@ impl<T: Payload + Copy, const N: usize> EmbeddedType<T, N> {
     pub fn wrap(
         &'static self,
         ruby: &crate::rb::Ruby,
-        klass: crate::rb::RClass,
+        klass: crate::rb::DataClass,
         data: T,
         roots: [Value; N],
     ) -> Result<Value, Error> {
