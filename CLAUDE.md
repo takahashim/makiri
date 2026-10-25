@@ -377,6 +377,11 @@ bundle exec rake oom               # OOM-injection sweep: rebuilds with
 bundle exec rake miri              # the Ruby-free unsafe modules' tests (raw_vec, falloc,
                                    # cbuf) under Miri, strict provenance (nightly + miri;
                                    # CI: verify.yml)
+bundle exec rake verus             # Verus proofs (ext/makiri/rust/verus/): falloc's
+                                   # grow_capacity, copied and checked against the source
+                                   # (`verus:sync`), and a model of RawVec - unbounded.
+                                   # VERUS=path/to/verus (Rakefile's VERUS_VERSION); CI:
+                                   # verify.yml. Heavy tools stay in CI, like Miri and Kani
 bundle exec rake kani              # Kani proofs over the Ruby-free core (needs cargo-kani).
                                    # The successor to the C-era CBMC harnesses: the
                                    # allocator, cbuf, UTF-8 validate/decode.
@@ -708,6 +713,12 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            (`stylesheet.rs`) and the CSSOM selector writer
                            (`text.rs`); Ruby- and Lexbor-free,
                            `#![forbid(unsafe_code)]` at its root
+  verus/                   Verus proofs: `raw_vec.rs` holds falloc's `grow_capacity`
+                           (copied; lines only Verus needs end in `// [verus]`, and
+                           `rake verus:sync` holds the rest to the source) and a
+                           model of `RawVec` over a ghost memory - the write at `len`
+                           in bounds, the first `len` slots written, the contents
+                           what was pushed - with the allocator as its one axiom
   fuzz/                    cargo-fuzz harnesses (xml/html, xpath/xml_xpath/
                            html_xpath, css = the XML matcher held to the lowering, html_css = the
                            HTML matcher over an arbitrary document, asserting

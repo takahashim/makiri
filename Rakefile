@@ -74,6 +74,53 @@ namespace :unsafe do
   end
 end
 
+# Verus over what Kani proves bounded (ext/makiri/rust/verus/): the growth
+# arithmetic, copied from falloc, and a model of RawVec. The copy is checked
+# against the source first - every line only Verus needs ends in `// [verus]`,
+# and the rest of the body must be the source's, token for token - so a
+# change to `grow_capacity` fails here until the proof is redone. VERUS names
+# the binary (else `verus` on PATH); CI: verify.yml, at VERUS_VERSION.
+VERUS_VERSION = "0.2026.10.04.426d8b0"
+VERUS_COPIES = [
+  ["ext/makiri/rust/src/falloc/mod.rs", "ext/makiri/rust/verus/raw_vec.rs", "grow_capacity"]
+].freeze
+
+# The body of `fn name` in `src`, as tokens: lines marked `// [verus]` and
+# comments dropped, from the brace that opens the body to the one closing it.
+def verus_body_tokens(src, name)
+  text = src.lines.reject { |l| l.rstrip.end_with?("// [verus]") }
+            .map { |l| l.sub(%r{//.*$}, "") }.join
+  at = text.index(/\bfn\s+#{Regexp.escape(name)}\b/) or return nil
+  open = text.index("{", at) or return nil
+  depth = 0
+  close = (open...text.length).find do |i|
+    depth += 1 if text[i] == "{"
+    depth -= 1 if text[i] == "}"
+    depth.zero?
+  end
+  close && text[open..close].scan(/\w+|[^\s\w]/)
+end
+
+namespace :verus do
+  desc "Check that the Verus copies match the source they were copied from"
+  task :sync do
+    VERUS_COPIES.each do |source, copy, name|
+      want = verus_body_tokens(File.read(source), name) or abort "verus: no fn #{name} in #{source}"
+      got = verus_body_tokens(File.read(copy), name) or abort "verus: no fn #{name} in #{copy}"
+      next if want == got
+
+      abort "verus: #{copy}'s #{name} is not #{source}'s - redo the copy and its proof"
+    end
+    puts "verus: the copies match their sources"
+  end
+end
+
+desc "Verify the Verus proofs (ext/makiri/rust/verus/; needs Verus #{VERUS_VERSION})"
+task verus: "verus:sync" do
+  verus = ENV.fetch("VERUS", "verus")
+  Dir.chdir("ext/makiri/rust/verus") { sh verus, "raw_vec.rs" }
+end
+
 # Miri over the Ruby-free modules that hold `unsafe`, and the buffer built on
 # them: their tests on Miri's interpreter, which reports undefined behaviour a
 # run on hardware passes over (CI: verify.yml). Needs the nightly toolchain
