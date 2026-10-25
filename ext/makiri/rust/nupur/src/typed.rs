@@ -132,6 +132,13 @@ unsafe extern "C" fn mark_cb<T: Payload, const N: usize>(ptr: *mut c_void) {
 
 /// Give back what the payload reported, once it is dropped.
 #[inline]
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        ffi_without_gvl_proof,
+        reason = "private: called only from the free callbacks, which Ruby runs with the GVL"
+    )
+)]
 fn give_back(reported: usize) {
     if reported != 0 {
         let n = isize::try_from(reported).unwrap_or(isize::MAX);
@@ -338,8 +345,9 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
 /// for the check once.
 ///
 /// Sound with no further check because an object's type never changes after
-/// it is made, and a non-embedded type's data, which is all this reads, is
-/// its own allocation, which compaction does not move. The `Value` is the
+/// it is made, its data was found allocated by the check (and is never
+/// freed before the object), and a non-embedded type's data, which is all
+/// this reads, is its own allocation, which compaction does not move. The `Value` is the
 /// caller's, on its stack, which keeps the object alive while the handle is
 /// used (`rake dylint`'s `ruby_value_on_heap` sees it as a Ruby value).
 pub struct Typed<T: Payload + 'static, const N: usize> {
@@ -382,15 +390,22 @@ impl<T: Payload + 'static, const N: usize> Typed<T, N> {
 }
 
 impl<T: Payload + 'static, const N: usize> TypedType<T, N> {
-    /// [`wrap`](Self::wrap), the object HIDDEN (`rb_obj_hide`: no class, so
-    /// `ObjectSpace` does not list it and no Ruby code can find it) until
-    /// [`Hidden::reveal`]: for an object whose data is not complete when it
-    /// is made - a Document before its content. `ivars` are its hidden ivars
-    /// (names without `@`), written first, while it still has its class:
-    /// generic ivar storage may read an object's class, so nothing is set on
-    /// one that has none. Ruby code runs between none of these steps. A
-    /// failed ivar write hides the object and returns the error, and one
-    /// never revealed stays hidden for the GC to free.
+    /// [`wrap`](Self::wrap), and then the object HIDDEN (`rb_obj_hide`: no
+    /// class, so `ObjectSpace` does not list it and no Ruby code can find it)
+    /// until [`Hidden::reveal`]: for an object whose data is not complete
+    /// when it is made - a Document before its content.
+    ///
+    /// It is not hidden from birth. `ivars`, its hidden ivars (names without
+    /// `@`), are written first, while it still has its class - generic ivar
+    /// storage may read an object's class, so nothing is set on one that has
+    /// none - and then it is hidden. What keeps Ruby code from finding it in
+    /// between is that none runs there: the ivar writes may allocate, and so
+    /// collect, but a collection runs no Ruby code. A step added between the
+    /// wrap and the hide that can run Ruby code breaks that. A failed ivar
+    /// write hides the object and returns the error; a failed allocation of
+    /// a non-embedded type's data leaves an object of the class with no data,
+    /// visible, which every reader refuses (`typed_data`); one never revealed
+    /// stays hidden for the GC to free.
     pub fn wrap_hidden(
         &'static self,
         ruby: &crate::rb::Ruby,
@@ -572,13 +587,26 @@ impl DataType {
 /// path - makes no protected call: its data pointer is read directly. Only a
 /// mismatch runs `rb_check_typeddata` (protected), which is what keeps the
 /// error message Ruby's own, word for word, on every supported Ruby.
+///
+/// The pointer is never null: an object whose data was never allocated is a
+/// `TypeError` too. `rb_data_typed_object_zalloc` makes a non-embedded type's
+/// object before its data, so an allocation that failed leaves an object of
+/// the class with none, which `ObjectSpace` can still hand to Ruby code until
+/// it is collected; every reader of a payload comes through here or
+/// [`typed_data_known`].
 fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void, Error> {
     let (v, ty) = (v.as_raw(), ty.as_ptr());
     // SAFETY: `v` is a live value and `ty` a registered data type; the data
     // pointer is read only once the type is known to match.
     unsafe {
         if rb_sys::rb_typeddata_is_kind_of(v, ty) != 0 {
-            return Ok(data_pointer(v));
+            let p = data_pointer(v);
+            if p.is_null() {
+                return Err(crate::helpers::type_error(
+                    "an object whose data was never allocated",
+                ));
+            }
+            return Ok(p);
         }
         match super::raw::check_typeddata(v, ty) {
             Err(e) => Err(e),
@@ -615,7 +643,11 @@ fn typed_data_known(v: Value, ty: &'static DataType) -> *mut c_void {
             rb_sys::rb_typeddata_is_kind_of(v, ty) != 0,
             "a VALUE of an established type had a different one"
         );
-        data_pointer(v)
+        let p = data_pointer(v);
+        /* An established object was checked (`typed_data`) or made whole
+         * (`wrap_built`), so its data is there. */
+        assert!(!p.is_null(), "an established object without its data");
+        p
     }
 }
 

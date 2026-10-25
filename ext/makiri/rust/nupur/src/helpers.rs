@@ -263,13 +263,26 @@ pub fn identity_word(v: impl ReprValue) -> usize {
     v.as_raw() as usize
 }
 
-/// Is the current thread's (or Fiber's) Ruby-managed machine stack close to
-/// exhausted (`ruby_stack_check`)?
+/// The check "is the current thread's (or Fiber's) Ruby-managed machine stack
+/// close to exhausted?" (`ruby_stack_check`), as a plain function pointer for
+/// an engine that knows nothing of Ruby to ask from its recursion counters.
 ///
-/// It takes no token, because the engine's recursion checks ask it through a
-/// plain function pointer, knowing nothing of Ruby; every such check runs in
-/// a registered method, with the GVL held.
-pub fn stack_low() -> bool {
+/// Handed out only for a token: the function reads the current Ruby thread's
+/// bookkeeping, so it is for code that runs where the token came from - a
+/// registered method, with the GVL held - which the extension's engine calls
+/// it from (its XPath and CSS recursion checks; none in a GVL-released body).
+pub fn stack_probe(_: &Ruby) -> fn() -> bool {
+    stack_low
+}
+
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        ffi_without_gvl_proof,
+        reason = "private: handed out only by `stack_probe`, for a token"
+    )
+)]
+fn stack_low() -> bool {
     // SAFETY: `ruby_stack_check` takes no argument, raises nothing, and reads
     // only Ruby's own per-thread stack-bounds bookkeeping, which is valid
     // whenever Ruby is running at all.

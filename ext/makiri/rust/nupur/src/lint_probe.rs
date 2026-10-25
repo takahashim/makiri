@@ -15,3 +15,25 @@ fn raising() {
 /// A raw `VALUE` outside the files that are the typed values
 /// (`raw_ruby_outside_bridge`).
 fn raw_type(_: rb_sys::VALUE) {} //~
+
+/// Ruby's C API from a function holding no proof of the GVL
+/// (`ffi_without_gvl_proof`) - and the same with one, which passes.
+#[allow(unsafe_code)]
+#[rustfmt::skip] // keeps each marker on the line reported
+mod gvl_proof {
+    fn without_proof() -> bool {
+        unsafe { rb_sys::ruby_stack_check() != 0 } //~
+    }
+
+    fn with_a_token(_: &crate::rb::Ruby) -> bool {
+        unsafe { rb_sys::ruby_stack_check() != 0 }
+    }
+
+    fn with_a_value(_: crate::rb::Value) -> bool {
+        unsafe { rb_sys::ruby_stack_check() != 0 }
+    }
+
+    fn in_a_closure() -> bool {
+        (|| unsafe { rb_sys::ruby_stack_check() != 0 })() //~
+    }
+}

@@ -32,10 +32,8 @@ pub fn utf8_str_from_slices<'a>(
                 return Err(makiri_error("text slice length inconsistency"));
             }
         }
-        if out.written() != total {
-            /* A short sum would leave the String's tail unwritten. */
-            return Err(makiri_error("text slice length inconsistency"));
-        }
+        /* A short sum is `utf8_str_filled`'s to refuse: it holds the String
+         * to its length. */
         Ok(())
     })?;
     Ok(str.as_value())
@@ -54,7 +52,8 @@ pub fn utf8_str_from_slices<'a>(
 /// that were not UTF-8 would make a wrong String, never a memory error. Every
 /// caller passes a document's name, which is UTF-8 by the text-input contract.
 pub fn dom_name_str(ruby: &Ruby, bytes: &[u8]) -> Result<Value, Error> {
-    crate::bridge::raw::enc_interned_str(ruby, bytes, super::Encoding::utf8()).map(|s| s.as_value())
+    crate::bridge::raw::enc_interned_str(ruby, bytes, super::Encoding::utf8(ruby))
+        .map(|s| s.as_value())
 }
 
 /* ---- a String of bytes a document read lends ---- */

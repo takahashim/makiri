@@ -191,9 +191,13 @@ pub use crate::cutf8::TextVerdict;
 ///
 /// `coderange_str` is consulted only for its CACHED coderange, which never
 /// scans and never allocates.
-pub fn text_check(coderange_str: RString, bytes: &[u8]) -> TextVerdict {
+pub fn text_check(
+    ruby: &crate::bridge::rb::Ruby,
+    coderange_str: RString,
+    bytes: &[u8],
+) -> TextVerdict {
     /* The cached coderange reads flags; it never scans and never allocates. */
-    crate::cutf8::text_verdict(bytes, ruby_str_known_valid_utf8(coderange_str))
+    crate::cutf8::text_verdict(bytes, ruby_str_known_valid_utf8(ruby, coderange_str))
 }
 
 /// Why a String in another encoding was refused ([`Refusal::Encoding`]).
@@ -311,14 +315,52 @@ pub fn ruby_verified_data(ruby: &Ruby, in_: Value, what: &str) -> Result<RubyDat
 /// checked views no longer read it: a `&str` rests on `Utf8Copy`'s own check
 /// of the copy, since a wrong coderange (another C extension's, or a Ruby bug
 /// an attacker can reach) would otherwise be undefined behaviour here.
-pub(in crate::bridge) fn ruby_str_known_valid_utf8(str: RString) -> bool {
+pub(in crate::bridge) fn ruby_str_known_valid_utf8(
+    ruby: &crate::bridge::rb::Ruby,
+    str: RString,
+) -> bool {
     match str.enc_coderange() {
         /* Every byte < 0x80 in an ASCII-compatible encoding. */
         Coderange::SevenBit => true,
         /* Valid for its own encoding - which has to be UTF-8 for that to mean
          * valid UTF-8. */
-        Coderange::Valid => Encoding::of(str) == Encoding::utf8(),
+        Coderange::Valid => Encoding::of(str) == Encoding::utf8(ruby),
         _ => false,
+    }
+}
+
+/// Why [`ruby_try_verified_text`] gave no view: the String broke the
+/// contract - a static reason, for the caller to word in its own error - or
+/// something else cut the read short (`NoMemoryError`, an interrupt
+/// delivered while Ruby loaded a converter, a `throw`), which is not about
+/// the String and is passed on as it was.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "an Error holds its message inline (`crate::msg::Msg`), so it is never boxed"
+)]
+pub enum TextRefusal {
+    Invalid(&'static str),
+    Raised(Error),
+}
+
+impl TextRefusal {
+    /// The error to return: `word`'s for a reason, the raise itself
+    /// otherwise.
+    pub fn into_error(self, word: impl FnOnce(&'static str) -> Error) -> Error {
+        match self {
+            TextRefusal::Invalid(reason) => word(reason),
+            TextRefusal::Raised(e) => e,
+        }
+    }
+}
+
+/// [`TextRefusal`] for a raise in the transcode: an `EncodingError` is the
+/// String's own fault, anything else is passed on.
+fn transcode_refusal(ruby: &Ruby, e: Error) -> TextRefusal {
+    if e.is_kind_of(ruby, crate::bridge::rb::Builtin::EncodingError) {
+        TextRefusal::Invalid(NOT_UTF8_CONVERTIBLE)
+    } else {
+        TextRefusal::Raised(e)
     }
 }
 
@@ -329,28 +371,28 @@ pub fn ruby_try_verified_text_pair(
     a: RString,
     b: RString,
     max_bytes: usize,
-) -> Result<(RubyText, RubyText), &'static str> {
+) -> Result<(RubyText, RubyText), TextRefusal> {
     let a = ruby_try_verified_text(ruby, a, max_bytes)?;
     let b = ruby_try_verified_text(ruby, b, max_bytes)?;
     Ok((a, b))
 }
 
-/// The non-raising form: the checked view, or a static reason on rejection.
-/// Nothing is coerced: `sv` is a String by type.
+/// The checked view under a length cap, or why there is none
+/// ([`TextRefusal`]). Nothing is coerced: `sv` is a String by type.
 pub fn ruby_try_verified_text(
     ruby: &Ruby,
     sv: RString,
     max_bytes: usize,
-) -> Result<RubyText, &'static str> {
+) -> Result<RubyText, TextRefusal> {
     const TOO_LONG: &str = "string exceeds the maximum length";
     /* The cap is on the UTF-8 the String becomes, so it is measured after the
      * transcode: a UTF-16 String is twice its UTF-8 length. Refused before
      * the copy, so an over-long String is not copied whole only to be
      * refused; the check on the copy below stays authoritative. (`acquire`'s
      * own transcode is then a no-op on a String that is UTF-8 already.) */
-    let sv = utf8_strict(ruby, sv).map_err(|_| NOT_UTF8_CONVERTIBLE)?;
+    let sv = utf8_strict(ruby, sv).map_err(|e| transcode_refusal(ruby, e))?;
     if sv.len() > max_bytes {
-        return Err(TOO_LONG);
+        return Err(TextRefusal::Invalid(TOO_LONG));
     }
     let not_utf8 = TextVerdict::InvalidUtf8.reason().unwrap_or_default();
     RubyText::acquire(ruby, sv, not_utf8, |b| {
@@ -361,8 +403,8 @@ pub fn ruby_try_verified_text(
             .then(|| TextVerdict::HasNul.reason().unwrap_or_default())
     })
     .map_err(|r| match r {
-        Refusal::Check(reason) => reason,
-        Refusal::Oom => "could not be copied (out of memory)",
-        Refusal::Encoding(_) => NOT_UTF8_CONVERTIBLE,
+        Refusal::Check(reason) => TextRefusal::Invalid(reason),
+        Refusal::Oom => TextRefusal::Invalid("could not be copied (out of memory)"),
+        Refusal::Encoding(e) => transcode_refusal(ruby, e),
     })
 }

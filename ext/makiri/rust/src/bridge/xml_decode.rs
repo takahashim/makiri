@@ -106,7 +106,7 @@ fn effective_encoding(ruby: &Ruby, str: RString) -> Result<Encoding, Error> {
     if claimed {
         return Ok(tag);
     }
-    Ok(bom.or(decl).unwrap_or_else(Encoding::utf8))
+    Ok(bom.or(decl).unwrap_or_else(|| Encoding::utf8(ruby)))
 }
 
 /// The encoding an encoding declaration names: Ruby's for an IANA name or
@@ -140,7 +140,7 @@ pub fn xml_decode_input(
     /* Phase 2: decode to UTF-8, strictly. What is read as UTF-8 bytes is
      * validated below; anything else is transcoded in a mode that raises
      * instead of substituting U+FFFD. */
-    let s = if eff.reads_as_utf8_bytes() {
+    let s = if eff.reads_as_utf8_bytes(ruby) {
         str
     } else {
         let mut input = str;
@@ -152,7 +152,7 @@ pub fn xml_decode_input(
          * sequence is an `Encoding::*Error` rather than a U+FFFD - remapped to
          * `Makiri::XML::SyntaxError`. Any other failure (`NoMemoryError`, an
          * interrupt) is passed through as it is. */
-        match super::raw::str_encode(input, Encoding::utf8(), 0) {
+        match super::raw::str_encode(input, Encoding::utf8(ruby), 0) {
             Ok(out) => out,
             Err(e) if is_encoding_error(ruby, &e) => {
                 let msg = e.wording(ruby);
@@ -192,7 +192,7 @@ pub fn xml_decode_input(
      * whole String is consulted for its cached coderange (which covers the
      * stripped prefix too - the BOM is one complete UTF-8 character). */
     let bytes = ruby_string_bytes_from(ruby, s, off)?;
-    if let Some(problem) = text_check(s, bytes.as_slice()).problem() {
+    if let Some(problem) = text_check(ruby, s, bytes.as_slice()).problem() {
         return Err(syntax_error(format_args!("XML input {problem}")));
     }
     Ok(bytes)

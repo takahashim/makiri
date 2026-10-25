@@ -106,6 +106,12 @@ pub(in crate::bridge) fn wrap_html_node_checked(
     node: RawNode,
     document: Value,
 ) -> Result<Value, Error> {
+    /* A wrapper in the table was made for this word, checked then - and a
+     * word names one node of one document for the document's life - so a
+     * hit needs no check, no type and no class. */
+    if let Some(cached) = crate::bridge::wrapper::cached_node(document, node.word())? {
+        return Ok(cached);
+    }
     let node_type = html_read(&document)?
         .doc()
         .checked(node)

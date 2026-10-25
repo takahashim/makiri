@@ -83,6 +83,13 @@ pub fn set_raise_injector(armed: fn() -> bool) {
 /// `rb_hash_foreach` ([`hash_foreach`]), latches its callback's panic inside
 /// the callback, and the callback raises nothing.
 #[inline]
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        ffi_without_gvl_proof,
+        reason = "private to this file: every wrapper that hands it its C call holds the proof"
+    )
+)]
 fn call<T: Copy, F: FnOnce() -> T + Copy>(f: F) -> Result<T, Error> {
     struct Slot<F, T> {
         f: F,
@@ -146,7 +153,14 @@ pub const TAG_RAISE: c_int = 6;
 /// `$!`, taken: the exception a raise left there, with `$!` set back to
 /// `nil` (`rb_errinfo`, `rb_set_errinfo`). Raises nothing.
 #[inline]
-pub fn take_errinfo() -> Value {
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        ffi_without_gvl_proof,
+        reason = "crate-private: read only right after a protected call returned, on the thread that made it"
+    )
+)]
+pub(crate) fn take_errinfo() -> Value {
     // SAFETY: under the GVL (a protected call just returned); both read or
     // write the current thread's error info.
     unsafe {
@@ -159,6 +173,13 @@ pub fn take_errinfo() -> Value {
 /// `rb_jump_tag`: resume the non-local exit `state` stands for. Raises, by
 /// design - only `Error::raise` calls it, with nothing owned.
 #[inline]
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        ffi_without_gvl_proof,
+        reason = "crate-private: only a trampoline raise resumes an exit, with the GVL"
+    )
+)]
 pub(crate) fn jump_tag(state: c_int) -> ! {
     // SAFETY: `state` is one `rb_protect` reported; resuming it is the point.
     unsafe { rb_sys::rb_jump_tag(state) }
@@ -371,7 +392,7 @@ pub fn define_module_under(outer: Value, name: &core::ffi::CStr) -> Result<Value
 }
 
 /// `rb_define_module`: a top-level module; raises as `define_module_under`.
-pub fn define_module(name: &core::ffi::CStr) -> Result<Value, Error> {
+pub fn define_module(_: &Ruby, name: &core::ffi::CStr) -> Result<Value, Error> {
     let name = name.as_ptr();
     let v = call(|| unsafe { rb_sys::rb_define_module(name) })?;
     // SAFETY: as `define_class_under`.
@@ -632,7 +653,8 @@ pub fn utf8_str_new(_: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
 /// String's allocation raises `NoMemoryError`; `fill`'s `Err` is returned in
 /// its place, as is a `fill` that wrote fewer than `len` bytes - an internal
 /// error, since the bytes left would be whatever the allocation held - and
-/// the half-written String is left to the GC, unseen.
+/// the String is emptied and left to the GC, which `ObjectSpace` may still
+/// show to Ruby code, but holding nothing it was not given.
 ///
 /// `fill` writes through an [`Unwritten`], front to back, so every byte the
 /// String holds was written and none past its end can be. The String is
@@ -668,11 +690,24 @@ pub fn utf8_str_filled(
         }
     };
     let mut w = Unwritten { buf, at: 0 };
-    fill(&mut w)?;
-    if w.at != len {
-        return Err(crate::helpers::internal_error(
-            "a String was left part-written",
-        ));
+    let filled = fill(&mut w).and_then(|()| {
+        if w.at == len {
+            Ok(())
+        } else {
+            Err(crate::helpers::internal_error(
+                "a String was left part-written",
+            ))
+        }
+    });
+    if let Err(e) = filled {
+        /* The String is left to the GC, but `ObjectSpace` can still hand it
+         * to Ruby code until then: it must not carry the bytes it was never
+         * given - whatever the allocation held before. Empty, it holds none. */
+        let s = str.as_raw();
+        // SAFETY: the String just made, unfrozen and of ours; shortening it
+        // to nothing raises nothing.
+        unsafe { rb_sys::rb_str_set_len(s, 0) };
+        return Err(e);
     }
     Ok(str)
 }

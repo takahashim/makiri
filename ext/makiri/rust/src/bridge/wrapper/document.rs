@@ -246,9 +246,10 @@ impl From<DocKind> for Kind {
 ///
 /// Until `install` the wrapper is HIDDEN (`TypedType::wrap_hidden`: no class,
 /// so `ObjectSpace` does not list it, and a [`Hidden`] hands out no `Value`
-/// that could reach Ruby code before its class is back): a Document with no
-/// content answers
-/// nothing, and every accessor assumes the content is there. A parse runs
+/// that could reach Ruby code before its class is back) - from the moment
+/// `wrap_hidden` returns, and before that no Ruby code runs to find it (see
+/// there): a Document with no content answers nothing, and every accessor
+/// assumes the content is there. A parse runs
 /// with the GVL released between the two, so another thread could otherwise
 /// find the wrapper and call a method on it; a parse that fails leaves it
 /// hidden for the GC to free.
@@ -517,7 +518,7 @@ fn node_table(document: Value) -> Result<crate::bridge::rb::RHash, Error> {
 }
 
 /// The one wrapper for `token` under `rb_doc`, or None the first time.
-fn cached_node(rb_doc: Value, token: usize) -> Result<Option<Value>, Error> {
+pub(in crate::bridge) fn cached_node(rb_doc: Value, token: usize) -> Result<Option<Value>, Error> {
     crate::bridge::raw::table_get(node_table(rb_doc)?, token)
 }
 

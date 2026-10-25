@@ -78,6 +78,10 @@ pub(in crate::bridge) fn wrap_xml_node_checked(
     id: NodeId,
     document: Value,
 ) -> Result<Value, Error> {
+    /* A hit was checked when it was made, as `wrap_html_node_checked`'s. */
+    if let Some(cached) = crate::bridge::wrapper::cached_node(document, id.to_token())? {
+        return Ok(cached);
+    }
     let ty = xml_read(&document)?.type_(id);
     if ty.is_none() {
         return Err(crate::bridge::ruby::internal_error(

@@ -363,7 +363,10 @@ bundle exec rake dylint            # the crate's own lints (lints/makiri_lints),
                                    # raw_node_crossing, ruby_surface_in_bridge,
                                    # discarded_ruby_error (an Err of bridge::rb::Error
                                    # thrown away by .ok() / .unwrap_or* / .is_ok() /
-                                   # let _ =)
+                                   # let _ =), ffi_without_gvl_proof (in nupur: a
+                                   # safe fn calling rb_sys:: whose signature holds
+                                   # no &Ruby, Ruby value or handle made from one;
+                                   # extern "C" entries and unsafe fns exempt)
                                    # (a sanctioned site is an allow with its reason);
                                    # then their self-test
                                    # (src/lint_probe.rs). Needs the nightly
@@ -952,7 +955,7 @@ caller's buffer) and `append_to` (into a `Vec`'s reserved room, never
 growing it), each a read and a copy with nothing run between. (The views used to hold the
 String under `rb_str_locktmp`, with a copy when it was already locked, a
 frozen fast path and a raise to re-propagate - all to spare a copy of a few
-bytes; `spec/mutation_argument_conversion_spec.rb` pins the copy semantics.)
+bytes.)
 `Makiri::XML`'s data
 takes NUL too (`bridge::xml::verified_data`), as the DOM does, and so does every
 character XML has no `Char` for: the XML mutators hold what the DOM holds, and

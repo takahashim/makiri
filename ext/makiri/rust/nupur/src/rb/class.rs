@@ -147,9 +147,10 @@ impl Class for RClass {}
 impl Ruby {
     /// A top-level module.
     pub fn define_module(&self, name: &str) -> Result<RModule, Error> {
-        Ok(RModule::from_known(crate::raw::define_module(&c_name(
-            name,
-        )?)?))
+        Ok(RModule::from_known(crate::raw::define_module(
+            self,
+            &c_name(name)?,
+        )?))
     }
 
     /// An anonymous module.

@@ -113,3 +113,44 @@ pub fn message(payload: &(dyn Any + Send)) -> &str {
         "a panic"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn payload_of(f: impl FnOnce()) -> Box<dyn Any + Send> {
+        std::panic::catch_unwind(AssertUnwindSafe(f)).err().unwrap()
+    }
+
+    #[test]
+    fn a_message_is_read_from_either_shape_panic_makes() {
+        assert_eq!(message(payload_of(|| panic!("static")).as_ref()), "static");
+        let n = 7;
+        assert_eq!(
+            message(payload_of(|| panic!("formatted {n}")).as_ref()),
+            "formatted 7"
+        );
+        let other = payload_of(|| std::panic::panic_any(42_u8));
+        assert_eq!(message(other.as_ref()), "a panic");
+    }
+
+    #[test]
+    fn a_latch_keeps_the_first_panic_and_resumes_it() {
+        let mut latch = PanicLatch::new();
+        assert_eq!(latch.guard(0, || 1), 1);
+        assert!(!latch.caught());
+        assert_eq!(latch.guard(0, || panic!("first")), 0);
+        assert_eq!(latch.guard(0, || panic!("second")), 0);
+        assert!(latch.caught());
+        let resumed = payload_of(|| latch.resume());
+        assert_eq!(message(resumed.as_ref()), "first");
+        assert!(!latch.caught());
+        latch.resume(); /* nothing latched: a no-op */
+    }
+
+    #[test]
+    fn quietly_answers_its_fallback_for_a_panic() {
+        assert_eq!(quietly(5, || 6), 6);
+        assert_eq!(quietly(5, || panic!("swallowed")), 5);
+    }
+}

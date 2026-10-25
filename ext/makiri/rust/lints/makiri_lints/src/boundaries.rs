@@ -36,10 +36,9 @@ use rustc_span::Span;
 use rustc_span::def_id::LocalDefId;
 
 use crate::{
-    DISCARDED_RUBY_ERROR, INFALLIBLE_ALLOCATION,
-    RAISING_CALL_OUTSIDE_PROTECT, RAW_NODE_CROSSING, RAW_RUBY_OUTSIDE_BRIDGE,
-    RUBY_IN_GVL_RELEASED_BODY, RUBY_LAYER_IN_ENGINE, RUBY_SURFACE_IN_BRIDGE, RUNS_CALLERS_RUBY,
-    UNGUARDED_NO_UNWIND_SITE,
+    DISCARDED_RUBY_ERROR, INFALLIBLE_ALLOCATION, RAISING_CALL_OUTSIDE_PROTECT, RAW_NODE_CROSSING,
+    RAW_RUBY_OUTSIDE_BRIDGE, RUBY_IN_GVL_RELEASED_BODY, RUBY_LAYER_IN_ENGINE,
+    RUBY_SURFACE_IN_BRIDGE, RUNS_CALLERS_RUBY, UNGUARDED_NO_UNWIND_SITE,
 };
 
 /* ---- paths ---- */
@@ -152,7 +151,7 @@ fn ruby_layer(path: &str) -> bool {
 
 /// The function an expression calls, when it can be named: a path call or
 /// a method call.
-fn callee(cx: &LateContext<'_>, expr: &Expr<'_>) -> Option<DefId> {
+pub(crate) fn callee(cx: &LateContext<'_>, expr: &Expr<'_>) -> Option<DefId> {
     match expr.kind {
         ExprKind::Call(f, _) => match f.kind {
             ExprKind::Path(ref qpath) => match cx.qpath_res(qpath, f.hir_id) {

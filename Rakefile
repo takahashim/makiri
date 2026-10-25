@@ -1074,7 +1074,7 @@ namespace :rust do
       sh "cargo test --no-default-features --features html-dom"
       sh "cargo test --no-default-features --features lexbor"
       # The binding layer, a workspace member of its own (its Ruby-free tests:
-      # the message buffer, the panic payload reading).
+      # the message buffer, and `caught`'s panic latch and payload reading).
       sh "cargo test -p nupur"
       # The fuzz crate is a separate one, so `cargo test` above never sees it;
       # without this check an engine API change can silently break the nightly

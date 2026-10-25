@@ -35,7 +35,9 @@ impl Encoding {
         Encoding(unsafe { rb_sys::rb_enc_get(str.as_raw()) })
     }
 
-    pub fn utf8() -> Encoding {
+    /// UTF-8. Takes the token, as every C call of the layer that has no Ruby
+    /// value to show for the GVL does.
+    pub fn utf8(_: &crate::rb::Ruby) -> Encoding {
         // SAFETY: Ruby's immutable global encoding.
         Encoding(unsafe { rb_sys::rb_utf8_encoding() })
     }
@@ -91,14 +93,14 @@ impl Encoding {
 
     /// UTF-8 or US-ASCII: text in it is already UTF-8, character for
     /// character. What a serialized String needs no transcoding into.
-    pub fn is_utf8_compatible(self) -> bool {
-        self == Encoding::utf8() || self.is_usascii()
+    pub fn is_utf8_compatible(self, ruby: &crate::rb::Ruby) -> bool {
+        self == Encoding::utf8(ruby) || self.is_usascii()
     }
 
     /// Whether text that is already UTF-8/US-ASCII needs hex-character-reference
     /// transcoding to this encoding (that is, it is something else).
-    pub fn needs_transcode(self) -> bool {
-        !self.is_utf8_compatible()
+    pub fn needs_transcode(self, ruby: &crate::rb::Ruby) -> bool {
+        !self.is_utf8_compatible(ruby)
     }
 
     /// Whether input in this encoding is read as UTF-8 bytes with no
@@ -106,8 +108,8 @@ impl Encoding {
     /// Anything else is transcoded to UTF-8 first. How the bytes are then
     /// checked is each reader's own: HTML repairs invalid UTF-8 to U+FFFD
     /// (`ruby_to_utf8`), XML refuses it (`xml_decode`).
-    pub fn reads_as_utf8_bytes(self) -> bool {
-        self.is_utf8_compatible() || self.is_ascii8bit()
+    pub fn reads_as_utf8_bytes(self, ruby: &crate::rb::Ruby) -> bool {
+        self.is_utf8_compatible(ruby) || self.is_ascii8bit()
     }
 
     /// [`Encoding::reads_as_utf8_bytes`] for `s`'s encoding, by index and

@@ -36,12 +36,13 @@ pub fn encoding_arg(ruby: &Ruby, v: Value) -> Result<(Encoding, crate::cbuf::Own
 /// with under `LANG=C`, not a claim. Only an encoding of a kind other than
 /// binary, UTF-8 and US-ASCII is asked its name.
 pub(in crate::bridge) fn encoding_kind(
+    ruby: &crate::bridge::rb::Ruby,
     enc: Encoding,
 ) -> crate::html::encoding::StringEncoding<'static> {
     use crate::html::encoding::StringEncoding;
     if enc.is_ascii8bit() || enc.is_usascii() {
         StringEncoding::Binary
-    } else if enc.is_utf8_compatible() {
+    } else if enc.is_utf8_compatible(ruby) {
         StringEncoding::Utf8
     } else {
         StringEncoding::Named(enc.name())
@@ -73,7 +74,7 @@ fn ruby_to_utf8(ruby: &Ruby, s: RString, ecflags: c_int) -> Result<RString, Erro
     if Encoding::string_reads_as_utf8_bytes(ruby, s) {
         return Ok(s);
     }
-    crate::bridge::raw::str_encode(s, Encoding::utf8(), ecflags)
+    crate::bridge::raw::str_encode(s, Encoding::utf8(ruby), ecflags)
 }
 
 /// `s` as UTF-8 for a STRICT reader (`RubyText`, `RubyData`): transcoded with
