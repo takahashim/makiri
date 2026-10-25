@@ -176,11 +176,22 @@ pub struct Display(pub Value);
 
 impl core::fmt::Display for Display {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Ok(s) = name_arg(self.0) {
+        let v = self.0;
+        /* The String or the Symbol's name, read directly: `name_arg` would
+         * build (and format) a whole TypeError for any other value, only for
+         * it to be thrown away here. */
+        let text = match crate::bridge::rb::Symbol::from_value(v) {
+            Some(sym) => super::raw::sym2str(sym),
+            None => match RString::from_value(v) {
+                Some(s) => Ok(s),
+                None => return Describe(v).fmt(f),
+            },
+        };
+        if let Ok(s) = text {
             // SAFETY: written out at once; formatting runs no Ruby.
             return crate::msg::Lossy(unsafe { s.as_slice() }).fmt(f);
         }
-        Describe(self.0).fmt(f)
+        Describe(v).fmt(f)
     }
 }
 

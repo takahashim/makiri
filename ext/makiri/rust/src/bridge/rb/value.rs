@@ -209,8 +209,12 @@ handle!(
 handle!(
     /// A Class deriving from `Exception`, for raising.
     ExceptionClass,
+    /* `rb_eException` read directly, not through `Ruby::exception_exception`:
+     * that is an `ExceptionClass::from_known`, whose debug assertion is this
+     * test, so a debug build would recurse without end. */
     |v| of_type(v, ruby_value_type::RUBY_T_CLASS)
-        && crate::bridge::raw::class_inherits(v, Ruby::get_with(v).exception_exception().as_value())
+        // SAFETY: a C global Ruby sets once at boot, read under the GVL.
+        && crate::bridge::raw::class_inherits(v, unsafe { Value::from_raw(rb_sys::rb_eException) })
 );
 
 impl RString {
@@ -373,17 +377,14 @@ impl Integer {
     /// As a `usize`; a negative value or one out of range is `RangeError`.
     #[inline]
     pub fn to_usize(self) -> Result<usize, Error> {
-        if self.is_negative() {
-            return Err(Error::new(
+        /* Through `to_u64`, so a value past a narrower `usize` is refused
+         * rather than truncated. */
+        usize::try_from(self.to_u64()?).map_err(|_| {
+            Error::new(
                 Ruby::get_with(self).exception_range_error(),
-                "can't convert negative integer to unsigned",
-            ));
-        }
-        let api = get_default();
-        if api.fixnum_p(self.0 .0) {
-            return Ok(api.fix2long(self.0 .0) as usize);
-        }
-        Ok(crate::bridge::raw::big2ull(self)? as usize)
+                "integer too big to convert into a usize",
+            )
+        })
     }
 
     /// As a `usize`, or `None` when it is negative or past one - and only

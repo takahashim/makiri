@@ -97,9 +97,10 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   `unguarded_no_unwind_site` fails on an `extern "C"` fn or a `Drop` in the
   compiled crate (macro-generated ones included) whose body does not run
   under it. What the proof needed: post-catch code free of `fmt`
-  (`Msg::copy`, `&'static str` errors in `raw::typed`/`c_len`), `abort(3)`
-  declared `extern "C"` instead of `std::process::abort`, and
-  `caught::quietly` (catch, leak the payload) around what the compiler cannot
+  (`Msg::copy`, `&'static str` errors in `raw::typed`/`c_len` - a
+  `format_args!` there brought the unwind back), no abort call left at all
+  (an `abort(3)` declared `extern "C"` stood in for `std::process::abort`
+  until nothing needed one), and `caught::quietly` (catch, leak the payload) around what the compiler cannot
   see through - a payload's drop and `downcast`, a type's drop glue in the
   free callback (the XPath AST's recursive glue), and the memsize callback,
   whose answer is advisory (0 on a panic). mark and compact are NOT caught -
@@ -176,7 +177,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   `bridge::string::Encoding`, check what the C function would not (a Hash
   key's kind, a substring's bounds, `to_encoding`'s argument), and one with
   no Ruby value takes `&Ruby` as the GVL's proof. Only those over raw memory
-  stay `unsafe` (`typed_object_wrap` / `_zalloc`, `xrealloc2`,
+  stay `unsafe` (`typed_object_zalloc`, `xrealloc2`,
   `check_typeddata`, `utf8_str_unwritten`). A raw `VALUE` - an integer to
   Rust, which no lint can tell from a `u64` in a `Vec` - is spelled only in
   `raw.rs`, `typed.rs` and the `bridge::rb` files that are the typed values

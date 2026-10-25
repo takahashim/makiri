@@ -355,12 +355,14 @@ impl<T: Hooks + Snapshot> EmbeddedType<T> {
     /// A base type.
     pub const fn base(name: *const c_char) -> EmbeddedType<T> {
         const { assert!(core::mem::size_of::<T>() <= EMBED_MAX) };
+        const { assert!(core::mem::align_of::<T>() <= EMBED_ALIGN) };
         EmbeddedType(TypedType::with_parent(name, core::ptr::null(), true))
     }
 
     /// A type deriving from `parent`, which holds the same `T`.
     pub const fn derived(name: *const c_char, parent: &EmbeddedType<T>) -> EmbeddedType<T> {
         const { assert!(core::mem::size_of::<T>() <= EMBED_MAX) };
+        const { assert!(core::mem::align_of::<T>() <= EMBED_ALIGN) };
         EmbeddedType(TypedType::with_parent(name, parent.0.raw.as_ptr(), true))
     }
 
@@ -554,3 +556,8 @@ unsafe fn wrap_built<T>(
 /// `rb_data_typed_object_zalloc` embeds it. Were it not embedded, the object
 /// would still be right - its data allocated apart, which Ruby frees.
 pub const EMBED_MAX: usize = 40;
+
+/// The strictest alignment an embedded `T` may have: its data starts right
+/// after `RTypedData`'s header, which a slot places at an 8-byte boundary
+/// only - not the 16 `wrap_built` allows for `xcalloc`'s data.
+pub const EMBED_ALIGN: usize = 8;

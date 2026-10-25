@@ -925,19 +925,6 @@ pub unsafe fn check_typeddata(v: VALUE, ty: *const rb_data_type_t) -> Result<*mu
     call(|| unsafe { rb_sys::rb_check_typeddata(v, ty) })
 }
 
-/// `rb_data_typed_object_wrap`: raises `NoMemoryError`.
-#[inline]
-pub unsafe fn typed_object_wrap(
-    klass: VALUE,
-    data: *mut c_void,
-    ty: *const rb_data_type_t,
-) -> Result<VALUE, Error> {
-    call(|| unsafe {
-        injected_raise();
-        rb_sys::rb_data_typed_object_wrap(klass, data, ty)
-    })
-}
-
 /// `ruby_xrealloc2`: raises `NoMemoryError`, and `ArgumentError` when
 /// `n * size` overflows.
 #[inline]

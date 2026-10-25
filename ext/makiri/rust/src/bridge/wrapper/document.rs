@@ -298,8 +298,11 @@ impl DocumentShell {
             },
             |d, store| d.nodes = store.hold(nodes),
         )?;
-        crate::bridge::raw::ivar_set(obj, ivar_errors(), errors)?;
+        /* Hidden whether or not the ivar write succeeds: a failure there must
+         * not leave a content-less Document where `ObjectSpace` lists it. */
+        let errors_set = crate::bridge::raw::ivar_set(obj, ivar_errors(), errors);
         crate::bridge::ruby::hide(obj);
+        errors_set?;
         Ok(DocumentShell { obj, klass })
     }
 
