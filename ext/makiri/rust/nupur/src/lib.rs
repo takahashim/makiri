@@ -1,17 +1,55 @@
-//! `nupur`: the Ruby binding layer Makiri is built on - values, exceptions,
+//! `nupur`: a Ruby binding layer for an extension - values, exceptions,
 //! method trampolines, TypedData, the GVL, and every C call that can raise,
 //! over rb-sys alone.
 //!
-//! It knows nothing of Makiri - it is a crate of its own, which does not
-//! depend on the extension - and what it needs of the extension (the
-//! exception a broken invariant raises, the raise sweep's hook) is
-//! registered at `Init_` ([`helpers::INTERNAL_ERROR`],
-//! `raw::set_raise_injector`). `notes/nupur_crate_plan.ja.md` is its plan.
+//! It knows nothing of the extension it serves - a crate of its own, which
+//! does not depend on the extension - and what it needs of the extension
+//! (the exception a broken invariant raises, the raise sweep's hook) is
+//! registered at `Init_` ([`rb::error::INTERNAL_ERROR`],
+//! `raw::set_raise_injector`). Every `unsafe` the extension needs to talk to
+//! Ruby is here, each with its contract stated. The crate denies
+//! `unsafe_code`, and the files that need it carry an `allow` each.
 //!
-//! Every `unsafe` the extension needs to talk to Ruby is here, each with its
-//! contract stated; what it hands out is safe. The crate denies `unsafe_code`
-//! and the files that need it carry an `allow` each, which `rake
-//! unsafe:boundaries` counts.
+//! # What the layer guarantees
+//!
+//! - **No raise crosses Rust.** Every C call that can raise runs under
+//!   `rb_protect` ([`raw`]) and comes back as `Err`; a method's `Err` is
+//!   raised by its trampoline ([`rb::method::finish`]) once every Rust frame
+//!   of the method has returned.
+//! - **No panic reaches C.** A trampoline catches a panic and raises the
+//!   internal error in its place; a callback C runs latches one
+//!   ([`caught::PanicLatch`]) for its caller to resume. What must not unwind
+//!   (an `extern "C"` function, a `Drop` the GC runs) is a [`no_unwind`]
+//!   site, which a release build with `--cfg nupur_no_unwind` proves.
+//! - **The GVL is a token.** A [`rb::Ruby`] is made only by a trampoline and
+//!   by [`rb::method::run_init`], both `unsafe fn`s only the macros' expansion
+//!   (and the extension's `Init_`) call; everything that calls Ruby takes one,
+//!   or a Ruby value, which exists only where one did.
+//! - **A wrapped object's values are its slots** ([`typed`]), marked by the
+//!   layer; a payload holds none. Memory reported to the GC is given back by
+//!   the free callback.
+//! - **A String is read by copying** ([`string`]): no slice of one is handed
+//!   out.
+//!
+//! # What the extension must uphold
+//!
+//! The types do not carry these; a crate using the layer keeps them, by
+//! review or by lints (Makiri runs `lints/makiri_lints` on itself and on
+//! this crate):
+//!
+//! - **A Ruby value stays where the GC's stack scan sees it.** A [`rb::Value`]
+//!   (and every handle over one, [`typed::Typed`] included) is `Copy` and
+//!   `!Send`: on the stack it is kept alive and in place, but in a `Vec`, a
+//!   `Box`, a `static` or a payload's field it is not, and is freed or moved
+//!   while still held. Keep such values on the stack, in a Ruby Array, in a
+//!   wrapped object's slots, or in an [`rb::Opaque`] / [`rb::RbConst`].
+//! - **A GVL-released body runs no Ruby.** [`gvl::without_gvl`]'s `Send`
+//!   bound keeps a token and a value out of it, but not a call of a layer
+//!   function that needs neither (making an [`rb::Error`], say) - harmless
+//!   today, yet not a guarantee.
+//! - **An `unsafe` call keeps its contract** - [`rb::method::finish`],
+//!   [`rb::method::run_init`], [`rb::Ruby::get_unchecked`] - each stated where
+//!   it is defined.
 
 #![deny(unsafe_code)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
@@ -21,7 +59,7 @@
 #![cfg_attr(dylint_lib = "makiri_lints", allow(unknown_lints))]
 
 /// The lints' self-test for this crate (`rake dylint`).
-#[cfg(makiri_lint_probe)]
+#[cfg(nupur_lint_probe)]
 mod lint_probe;
 
 /// The value and method layer: `Value` and the class-checked handles,
@@ -43,8 +81,23 @@ pub mod build;
 /// A Ruby encoding, as Strings are read and converted by it.
 pub mod encoding;
 
-/// The shared helpers: argument checks, the common exceptions, `RbConst`.
-pub mod helpers;
+/// A Ruby String's bytes, read and written by copying.
+pub mod string;
+
+/// A private table from small integers to values ([`table::IntTable`]).
+pub mod table;
+
+/// Reading a method's arguments: a type check each, no conversion.
+pub mod args;
+
+/// Ruby values written into a message without a call.
+pub mod describe;
+
+/// The Ruby API version, built against and running.
+pub mod abi;
+
+/// The native-stack check, for a token.
+pub mod stack;
 
 /// `Msg`: an exception message written into a fixed buffer on the stack,
 /// so an error path allocates nothing.

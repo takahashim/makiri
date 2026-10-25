@@ -1,7 +1,7 @@
-//! Defining classes, modules and methods - what `Init_makiri` does.
+//! Defining classes, modules and methods - what an extension's `Init_` does.
 //!
 //! Each definition is a C call that can raise (a name already bound to
-//! something else, a frozen target), so each goes through `bridge::raw`'s
+//! something else, a frozen target), so each goes through `raw`'s
 //! protected wrappers and comes back as `Err`.
 
 #![allow(unsafe_code)]
@@ -13,12 +13,12 @@ use super::method::Func;
 use super::ruby::Ruby;
 use super::value::{ExceptionClass, RClass, RModule, ReprValue, Value};
 
-/// The longest name a definition takes, its NUL included. Every name Makiri
+/// The longest name a definition takes, its NUL included. Every name an extension
 /// defines is a short Ruby identifier.
 const NAME_MAX: usize = 64;
 
 /// A name as the C string the definition functions take, on the stack.
-struct CName([u8; NAME_MAX]);
+pub(crate) struct CName([u8; NAME_MAX]);
 
 impl core::ops::Deref for CName {
     type Target = CStr;
@@ -29,14 +29,14 @@ impl core::ops::Deref for CName {
 }
 
 /// `name` as a [`CName`]; a name with a NUL, or one too long, is refused.
-fn c_name(name: &str) -> Result<CName, Error> {
+pub(crate) fn c_name(name: &str) -> Result<CName, Error> {
     let mut buf = [0u8; NAME_MAX];
     match buf.get_mut(..name.len()) {
         Some(dst) if name.len() < NAME_MAX && !name.as_bytes().contains(&0) => {
             dst.copy_from_slice(name.as_bytes());
             Ok(CName(buf))
         }
-        _ => Err(crate::helpers::arg_error(
+        _ => Err(crate::rb::error::arg_error(
             "a name to define that is too long or holds a NUL byte",
         )),
     }
@@ -89,12 +89,12 @@ pub trait Module: ReprValue {
         )
     }
 
-    /// The constant `name`, which Makiri's own Ruby defines.
+    /// The constant `name`, which the extension's own Ruby defines.
     fn const_get(self, ruby: &Ruby, name: &str) -> Result<Value, Error> {
         crate::raw::const_get(ruby, self.as_value(), &c_name(name)?)
     }
 
-    /// `self.name(*args)`: the caller's Ruby - see `bridge::raw::call_method`.
+    /// `self.name(*args)`: the caller's Ruby - see `raw::call_method`.
     #[cfg_attr(
         dylint_lib = "makiri_lints",
         allow(
@@ -144,51 +144,7 @@ impl Object for RClass {}
 impl Object for RModule {}
 impl Class for RClass {}
 
-impl Ruby {
-    /// A top-level module.
-    pub fn define_module(&self, name: &str) -> Result<RModule, Error> {
-        Ok(RModule::from_known(crate::raw::define_module(
-            self,
-            &c_name(name)?,
-        )?))
-    }
-
-    /// An anonymous module.
-    pub fn module_new(&self) -> Result<RModule, Error> {
-        crate::raw::module_new(self)
-    }
-}
-
-/// A value kept for the rest of the process: registered with the GC as a
-/// mark root, so it is never collected or moved, and readable from any
-/// thread that holds the GVL (`Ruby::get_inner`). What the class table in
-/// `init` is made of.
-#[derive(Clone, Copy)]
-pub struct Opaque<T>(T);
-
-// SAFETY: an `Opaque` is read only through `Ruby::get_inner`, which takes the
-// GVL's proof; the value itself is pinned and rooted by `register`.
-unsafe impl<T> Send for Opaque<T> {}
-// SAFETY: as `Send`.
-unsafe impl<T> Sync for Opaque<T> {}
-
-impl<T: ReprValue> Opaque<T> {
-    /// `v`, rooted with the GC for the rest of the process.
-    pub fn register(v: T) -> Result<Opaque<T>, Error> {
-        crate::raw::gc_register_mark_object(v.as_value())?;
-        Ok(Opaque(v))
-    }
-}
-
-impl Ruby {
-    /// The value an [`Opaque`] keeps.
-    #[inline]
-    pub fn get_inner<T: Copy>(&self, o: Opaque<T>) -> T {
-        o.0
-    }
-}
-
 /// Freeze `v` (`rb_obj_freeze`). Raises nothing for a String of ours.
 pub fn freeze(v: Value) {
-    crate::raw::obj_freeze(v);
+    crate::rb::value::obj_freeze(v);
 }

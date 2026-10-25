@@ -90,7 +90,8 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   (`src/no_unwind.rs`, `rake no_unwind`). An unwind out of an `extern "C"`
   function aborts, so does a panic in a `Drop` the GC runs or that runs
   while another panic unwinds. Each such body is a `Site` run through
-  `must_not_unwind`; a release build with `--cfg makiri_no_unwind` gives each
+  `must_not_unwind`; a release build with `--cfg makiri_no_unwind` (and
+  `--cfg nupur_no_unwind` for nupur's own sites, `nupur_unwinds_<site>`) gives each
   site's guard a `Drop` that calls `makiri_unwinds_<site>`, which nobody
   defines and only an unwind reaches, so the optimizer removes the call
   exactly where it proves the body unwind-free, and `nm -u` lists the sites
@@ -150,7 +151,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   then hides it from `ObjectSpace`, as a `Hidden` that hands out no `Value`
   (a hidden object has no class, and Ruby code given one would crash on it)
   until `reveal`; a
-  Document's node table is `raw::hidden_hash_new`'s, never shown. There is
+  Document's node table is a `table::IntTable`, made hidden and never shown. There is
   no bare `hide` / `reveal`.
   The other half - no Ruby value kept where the GC's stack scan cannot
   see it (a `Vec`, a `Box`, a static or `thread_local!`, a `Payload` type's
@@ -668,8 +669,15 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            never had LTO either). `rake no_unwind` builds the
                            same way, since its proof is of the shipped binary
   nupur/                   the Ruby binding layer, a crate of its own over rb-sys
-                           (`rb/`, `raw`, `typed`, `gvl`, `build`, `encoding`,
-                           `helpers`, `msg`, `caught`, its own `no_unwind` sites):
+                           (`rb/` - values, errors, trampolines, classes, the
+                           rooted globals - `raw` (the C calls that can raise),
+                           `typed`, `string` (copying reads, in-place writes),
+                           `table`, `build`, `args`, `describe`, `encoding`,
+                           `gvl`, `stack`, `abi`, `msg`, `caught`, and its own
+                           `no_unwind` sites, under `--cfg nupur_no_unwind`).
+                           Its `lib.rs` states what it guarantees and what an
+                           extension must uphold (a Ruby value kept where the
+                           GC's stack scan sees it, which the lints check):
                            every `unsafe` that talks to Ruby. It cannot name the
                            extension (no dependency), which names it as
                            `crate::nupur` (`extern crate`); what it needs of

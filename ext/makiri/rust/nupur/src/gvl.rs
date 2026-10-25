@@ -19,12 +19,12 @@ use core::ffi::c_void;
 /// `f` must touch no Ruby state and allocate no Ruby object. It must also be
 /// `Send`, which is what keeps a `Ruby` handle - which is not - out of it. Its
 /// argument is
-/// typically a slice copied out of Ruby before the call, as `bridge::doc`'s
-/// parse does.
+/// typically a slice copied out of Ruby before the call, as a parse of a
+/// copied source does.
 ///
 /// A panic inside `f` is CAUGHT and re-raised here, after the GVL is back. It
 /// has to be: `f` runs below the GVL-releasing call, a C frame, and unwinding
-/// into one aborts the process. This is the whole parser, so it is the single
+/// into one aborts the process. A body may be a whole parser, so it can be the single
 /// largest piece of Rust that runs under a callback - see [`crate::caught`].
 ///
 /// # Interrupts
@@ -96,7 +96,7 @@ pub fn without_gvl<F: FnOnce() -> R + Send, R>(
         }
         if slot.f.is_none() {
             /* It ran and neither answered nor panicked - which `run` cannot do. */
-            return Err(crate::helpers::internal_error(
+            return Err(crate::rb::error::internal_error(
                 "the GVL-released body ran without a result",
             ));
         }

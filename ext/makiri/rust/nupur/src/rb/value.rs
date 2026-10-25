@@ -5,7 +5,7 @@
 //! holding the GVL. A handle (`RString`, `RHash`, ...) is made only by its
 //! `from_value`, which reads the value's type from its bits and header and so
 //! runs no Ruby and raises nothing; a method that could do either goes through
-//! `bridge::raw`'s protected calls.
+//! `raw`'s protected calls.
 //!
 //! Like any Ruby value in an extension, one is good while the GC can find it:
 //! on the machine stack (the conservative scan), or in a wrapped object's slot
@@ -73,7 +73,7 @@ pub trait ReprValue: Copy {
     /// ancestry, runs no Ruby (`rb_obj_is_kind_of`).
     #[inline]
     fn is_kind_of(self, class: impl ReprValue) -> bool {
-        crate::raw::obj_is_kind_of(self.as_value(), class.as_value())
+        obj_is_kind_of(self.as_value(), class.as_value())
     }
 
     /// The name of the value's class, for a message, written into `f` -
@@ -101,7 +101,7 @@ impl ReprValue for Value {
     }
 }
 
-/// The raw `VALUE`, for `bridge`'s C calls and nothing else.
+/// The raw `VALUE`, for the layer's C calls and nothing else.
 pub(crate) trait AsRawValue {
     #[allow(clippy::wrong_self_convention, reason = "a Copy value, read by value")]
     fn as_raw(self) -> VALUE;
@@ -216,12 +216,8 @@ handle!(
      * test, so a debug build would recurse without end. */
     |v| of_type(v, ruby_value_type::RUBY_T_CLASS)
         // SAFETY: a C global Ruby sets once at boot, read under the GVL.
-        && crate::raw::class_inherits(v, unsafe { Value::from_raw(rb_sys::rb_eException) })
+        && class_inherits(v, unsafe { Value::from_raw(rb_sys::rb_eException) })
 );
-
-/// [`RString::append_to`]'s refusal: the buffer had too little spare room.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NoRoom;
 
 impl RString {
     /// The length in bytes.
@@ -235,44 +231,6 @@ impl RString {
     #[inline]
     pub fn is_empty(self) -> bool {
         self.len() == 0
-    }
-
-    /// Copy the bytes from `offset` (none past the end) into `dst`, as many
-    /// as both hold, and say how many.
-    ///
-    /// The String's buffer is read and copied out of in one step, with
-    /// nothing run in between, and no slice of it is handed out: a caller
-    /// owns what it reads, so nothing Ruby does afterwards - a GC, the String
-    /// rewritten or grown - can reach it.
-    #[inline]
-    pub fn copy_to(self, _ruby: &Ruby, offset: usize, dst: &mut [u8]) -> usize {
-        // SAFETY: read and copied out at once; nothing runs while it is held.
-        let src = unsafe { self.as_slice() }.get(offset..).unwrap_or(&[]);
-        let n = src.len().min(dst.len());
-        if let (Some(d), Some(s)) = (dst.get_mut(..n), src.get(..n)) {
-            d.copy_from_slice(s);
-        }
-        n
-    }
-
-    /// Append the bytes from `offset` (none past the end) to `v`, whose spare
-    /// capacity must already hold them - the caller reserved it, fallibly -
-    /// and say how many. Nothing is allocated here: when the room is short,
-    /// `v` is left as it was and the answer is [`NoRoom`]. The read is
-    /// [`copy_to`](Self::copy_to)'s, in one step after the room is checked.
-    #[inline]
-    pub fn append_to(self, _ruby: &Ruby, offset: usize, v: &mut Vec<u8>) -> Result<usize, NoRoom> {
-        // SAFETY: as `copy_to` - read and copied out at once.
-        let src = unsafe { self.as_slice() }.get(offset..).unwrap_or(&[]);
-        if v.capacity() - v.len() < src.len() {
-            return Err(NoRoom);
-        }
-        #[allow(
-            clippy::disallowed_methods,
-            reason = "the room was checked above, so it cannot grow"
-        )]
-        v.extend_from_slice(src);
-        Ok(src.len())
     }
 
     /// The bytes, borrowed from the String.
@@ -340,7 +298,7 @@ impl RArray {
     /// `rb_ary_entry`, which raises nothing.
     #[inline]
     pub fn entry(self, i: isize) -> Result<Value, Error> {
-        Ok(crate::raw::ary_entry(self, i as c_long))
+        Ok(ary_entry(self, i as c_long))
     }
 }
 
@@ -377,9 +335,7 @@ impl RArray {
     /// The elements, read one at a time (`rb_ary_entry`), the length read
     /// afresh before each.
     pub fn each(self) -> impl Iterator<Item = Value> {
-        (0..).map_while(move |i: usize| {
-            (i < self.len()).then(|| crate::raw::ary_entry(self, i as c_long))
-        })
+        (0..).map_while(move |i: usize| (i < self.len()).then(|| ary_entry(self, i as c_long)))
     }
 }
 
@@ -464,4 +420,102 @@ impl Float {
         // SAFETY: `self` is a live Float.
         unsafe { get_default().num2dbl(self.0 .0) }
     }
+}
+
+/* ---- immediates and identity ---- */
+
+/// `nil`, as a `Value`.
+#[inline]
+pub fn nil(ruby: &Ruby) -> Value {
+    ruby.qnil().as_value()
+}
+
+/// `true`/`false`, as a `Value`.
+#[inline]
+pub fn boolean(ruby: &Ruby, b: bool) -> Value {
+    if b {
+        ruby.qtrue().as_value()
+    } else {
+        ruby.qfalse().as_value()
+    }
+}
+
+/// VALUE identity, for the several sites that compare two references.
+#[inline]
+pub fn same_value(a: impl ReprValue, b: impl ReprValue) -> bool {
+    a.as_raw() == b.as_raw()
+}
+
+/// VALUE identity as a word: the same for every reference to one object, and
+/// different for two live objects - a key to compare by, never a value to
+/// turn back into one.
+#[inline]
+pub fn identity_word(v: impl ReprValue) -> usize {
+    v.as_raw() as usize
+}
+
+/// An interned name - a method's, an ivar's, a constant's - as `rb_intern`
+/// makes it (`raw::intern`). Only the layer turns one into the raw `ID` it
+/// hands C, so a caller can keep and compare one but never forge one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(transparent)]
+pub struct Id(rb_sys::ID);
+
+impl Id {
+    #[inline]
+    pub(crate) const fn from_raw(id: rb_sys::ID) -> Id {
+        Id(id)
+    }
+
+    #[inline]
+    pub(crate) const fn as_raw(self) -> rb_sys::ID {
+        self.0
+    }
+}
+
+/* ---- the C reads these are made of, which raise nothing (so they are not
+ * `raw`'s, which holds the calls that can) ---- */
+
+/// Whether `v` is a class or a module - what `rb_obj_is_kind_of` and
+/// `rb_class_inherited_p` require, and raise `TypeError` without.
+#[inline]
+fn is_module(v: Value) -> bool {
+    RClass::from_value(v).is_some() || RModule::from_value(v).is_some()
+}
+
+/// `rb_obj_is_kind_of`: an instance of `class` or of one deriving from it?
+/// `false` when `class` is not a class or module, rather than the
+/// `TypeError` the C function raises. Runs no Ruby code.
+#[inline]
+pub(crate) fn obj_is_kind_of(v: Value, class: Value) -> bool {
+    if !is_module(class) {
+        return false;
+    }
+    // SAFETY: both live; `class` is a class or module, so this raises nothing.
+    unsafe { rb_sys::rb_obj_is_kind_of(v.as_raw(), class.as_raw()) == rb_sys::Qtrue as VALUE }
+}
+
+/// `rb_class_inherited_p`: is `sub` `sup` or a descendant of it? `false`
+/// when either is not a class or module. Runs no Ruby code.
+#[inline]
+pub(crate) fn class_inherits(sub: Value, sup: Value) -> bool {
+    if !is_module(sub) || !is_module(sup) {
+        return false;
+    }
+    // SAFETY: both live modules, so this raises nothing.
+    unsafe { rb_sys::rb_class_inherited_p(sub.as_raw(), sup.as_raw()) == rb_sys::Qtrue as VALUE }
+}
+
+/// `rb_ary_entry`: element `i` (negative counts from the end), `nil` past
+/// either end. Raises nothing.
+#[inline]
+pub(crate) fn ary_entry(a: RArray, i: c_long) -> Value {
+    // SAFETY: `a` is a live Array; the read is bounds-checked by Ruby.
+    unsafe { Value::from_raw(rb_sys::rb_ary_entry(a.as_raw(), i)) }
+}
+
+/// `rb_obj_freeze`. Raises nothing.
+pub(crate) fn obj_freeze(v: Value) {
+    // SAFETY: `v` is a live object.
+    unsafe { rb_sys::rb_obj_freeze(v.as_raw()) };
 }

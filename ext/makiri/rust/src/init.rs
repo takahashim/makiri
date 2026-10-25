@@ -67,10 +67,10 @@ exported! { RModule: MOD_XML, MOD_LEXBOR, MOD_HTML_NODE_METHODS, MOD_XML_NODE_ME
 
 /// `Makiri::InternalError`: the class `nupur` raises for a broken invariant,
 /// registered with it here so the layer names no class of Makiri's.
-pub use crate::nupur::helpers::INTERNAL_ERROR as EXC_INTERNAL_ERROR;
+pub use crate::nupur::rb::error::INTERNAL_ERROR as EXC_INTERNAL_ERROR;
 
-/// The rooted handle each of these is (`nupur::helpers::RbConst`).
-pub use crate::nupur::helpers::RbConst;
+/// The rooted handle each of these is (`nupur::rb::RbConst`).
+pub use crate::nupur::rb::RbConst;
 
 exported! { ExceptionClass:
     EXC_ERROR, EXC_XPATH_SYNTAX_ERROR, EXC_XPATH_LIMIT_EXCEEDED,
@@ -237,10 +237,10 @@ fn panic_probe(ruby: &Ruby, kind: Value) -> Result<(), Error> {
         }
         7 => {
             /* Part-way through writing a String in place
-             * (`raw::utf8_str_filled`): the panic unwinds through its frame,
+             * (`nupur::string::utf8_str_filled`): the panic unwinds through its frame,
              * whose guard must empty the 12345-byte String it leaves for the
              * GC, rather than leave its unwritten bytes for `ObjectSpace`. */
-            crate::bridge::raw::utf8_str_filled(ruby, 12345, |out| {
+            crate::nupur::string::utf8_str_filled(ruby, 12345, |out| {
                 let _ = out.push(b"written");
                 panic!("Makiri.__panic(7): panic while a String is filled")
             })?;
@@ -320,7 +320,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     crate::bridge::ruby::check_running_ruby_api()?;
     #[cfg(makiri_no_unwind)]
     crate::no_unwind::self_test();
-    #[cfg(makiri_no_unwind)]
+    #[cfg(nupur_no_unwind)]
     crate::nupur::no_unwind::self_test();
     /* The raise sweep's answer, for `nupur::raw`'s allocating calls. */
     #[cfg(feature = "alloc-inject")]
@@ -338,7 +338,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     makiri.const_set(ruby, "NATIVE_VERSION", native_version)?;
     let native_ruby = crate::bridge::string::utf8_str(
         ruby,
-        crate::bridge::ruby::ruby_api_version().as_str().as_bytes(),
+        crate::nupur::abi::ruby_api_version().as_str().as_bytes(),
     )?;
     crate::bridge::rb::freeze(native_ruby);
     makiri.const_set(ruby, "NATIVE_RUBY_API_VERSION", native_ruby)?;

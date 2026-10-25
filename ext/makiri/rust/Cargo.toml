@@ -38,7 +38,7 @@ members = [".", "nupur"]
 exclude = ["fuzz", "lints"]
 
 [workspace.lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(fuzzing)', 'cfg(makiri_lint_probe)', 'cfg(makiri_no_unwind)', 'cfg(dylint_lib, values(any()))'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(fuzzing)', 'cfg(makiri_lint_probe)', 'cfg(makiri_no_unwind)', 'cfg(nupur_lint_probe)', 'cfg(nupur_no_unwind)', 'cfg(dylint_lib, values(any()))'] }
 
 # The panic gate. A panic now reaches Ruby as an exception (see the profile
 # below), but it is still an INTERNAL error nobody asked for - `rescue => e`

@@ -208,7 +208,7 @@ unsafe extern "C" fn memsize_cb<T: Payload, const N: usize>(ptr: *const c_void) 
 ///
 /// The type parameters are the point. The raw API took a `*const
 /// rb_data_type_t` beside a separate `T`, so wrapping a node's data under a
-/// Document's type - and reading it back as the wrong struct - compiled. Here
+/// type for another struct - and reading it back as the wrong one - compiled. Here
 /// the data type, the struct and the slot count are one value, so the pairing
 /// cannot be wrong.
 ///
@@ -344,7 +344,7 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
 
 /// An object of a [`TypedType<T, N>`], its type checked once
 /// ([`TypedType::check`]): a hot path that reads an object's data and slots
-/// several times - a NodeSet's nodes, kind and Document per element - pays
+/// several times - a collection's elements and its owner, per element - pays
 /// for the check once.
 ///
 /// Sound with no further check because an object's type never changes after
@@ -396,7 +396,7 @@ impl<T: Payload + 'static, const N: usize> TypedType<T, N> {
     /// [`wrap`](Self::wrap), and then the object HIDDEN (`rb_obj_hide`: no
     /// class, so `ObjectSpace` does not list it and no Ruby code can find it)
     /// until [`Hidden::reveal`]: for an object whose data is not complete
-    /// when it is made - a Document before its content.
+    /// when it is made - one whose content arrives after it.
     ///
     /// It is not hidden from birth. `ivars`, its hidden ivars (names without
     /// `@`), are written first, while it still has its class - generic ivar
@@ -415,7 +415,7 @@ impl<T: Payload + 'static, const N: usize> TypedType<T, N> {
         klass: crate::rb::RClass,
         data: T,
         roots: [Value; N],
-        ivars: &[(crate::helpers::ID, Value)],
+        ivars: &[(crate::rb::Id, Value)],
     ) -> Result<Hidden<T, N>, Error> {
         let obj = self.wrap(ruby, klass, data, roots)?;
         let written = ivars
@@ -610,7 +610,7 @@ fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void, Error> {
         if rb_sys::rb_typeddata_is_kind_of(v, ty) != 0 {
             let p = data_pointer(v);
             if p.is_null() {
-                return Err(crate::helpers::type_error(
+                return Err(crate::rb::error::type_error(
                     "an object whose data was never allocated",
                 ));
             }
@@ -619,7 +619,7 @@ fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void, Error> {
         match super::raw::check_typeddata(v, ty) {
             Err(e) => Err(e),
             /* rb_typeddata_is_kind_of said no, so the check should have raised. */
-            Ok(_) => Err(crate::helpers::type_error("wrong argument type")),
+            Ok(_) => Err(crate::rb::error::type_error("wrong argument type")),
         }
     }
 }
@@ -636,12 +636,12 @@ unsafe fn data_pointer(v: VALUE) -> *mut c_void {
 }
 
 /// The data pointer of a TypedData object whose type the caller has already
-/// established - a receiver its `TryConvert` checked, or the Document a
+/// established - a receiver its `TryConvert` checked, or the owner a
 /// checked node holds.
 ///
 /// A mismatch here is a bug in that reasoning, not a user error, so it panics:
 /// the panic unwinds through the Rust frames (running their destructors) and
-/// the method's trampoline makes it `Makiri::InternalError`, where a raise
+/// the method's trampoline makes it the internal error (`rb::error::INTERNAL_ERROR`), where a raise
 /// would longjmp past them.
 fn typed_data_known(v: Value, ty: &'static DataType) -> *mut c_void {
     let (v, ty) = (v.as_raw(), ty.as_ptr());
@@ -669,8 +669,8 @@ fn typed_data_known(v: Value, ty: &'static DataType) -> *mut c_void {
 /// so one protected call per object. A non-embedded type's data is its
 /// `xcalloc`, which also makes it a point where Ruby decides whether malloc
 /// pressure calls for a collection: `rb_gc_adjust_memory_usage`, which a
-/// Document reports its arena with, only adds to that pressure, so a loop of
-/// parses with no Ruby allocation of a Document's data ran no GC at all
+/// payload reports external memory with, only adds to that pressure, so a loop of
+/// wraps with no Ruby allocation of their data ran no GC at all
 /// (`spec/gc_accounting_spec.rb`).
 ///
 /// The order is the point. The data is zeroed until the envelope is written,
@@ -697,7 +697,7 @@ unsafe fn wrap_built<T, const N: usize>(
     let obj = super::raw::typed_object_zalloc(klass, core::mem::size_of::<Envelope<T, N>>(), ty)?;
     let p = data_pointer(obj) as *mut Envelope<T, N>;
     if p.is_null() {
-        return Err(crate::helpers::internal_error(
+        return Err(crate::rb::error::internal_error(
             "a TypedData object was made without its data",
         ));
     }

@@ -1,9 +1,9 @@
 //! What a registered method takes and returns.
 //!
-//! A method takes `Value`s: Makiri converts no argument (`glue`'s
+//! A method takes `Value`s: the layer converts no argument (`args`'
 //! `string_arg` and kin check a type and refuse the rest), so the only
 //! [`TryConvert`]s are `Value` itself, `bool` (truthiness, read from the
-//! bits), and Makiri's own receiver types, which check a TypedData class. None
+//! bits), and an extension's own receiver types, which check a TypedData class. None
 //! calls Ruby. A method's result becomes a `Value` through [`IntoValue`],
 //! which can allocate and so returns `Err` rather than raising.
 
@@ -47,14 +47,14 @@ impl<T: ReprValue> IntoValue for T {
 impl IntoValue for () {
     #[inline]
     fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
-        Ok(crate::helpers::nil(ruby))
+        Ok(crate::rb::value::nil(ruby))
     }
 }
 
 impl IntoValue for bool {
     #[inline]
     fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
-        Ok(crate::helpers::boolean(ruby, self))
+        Ok(crate::rb::value::boolean(ruby, self))
     }
 }
 
@@ -63,7 +63,7 @@ impl<T: IntoValue> IntoValue for Option<T> {
     fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
         match self {
             Some(v) => v.into_value(ruby),
-            None => Ok(crate::helpers::nil(ruby)),
+            None => Ok(crate::rb::value::nil(ruby)),
         }
     }
 }

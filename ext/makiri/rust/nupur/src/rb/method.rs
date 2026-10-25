@@ -3,15 +3,18 @@
 //!
 //! `method!(f, n)` / `function!(f, n)` expand to a trampoline of arity `n`
 //! (-1: Ruby passes `argc`/`argv`) that calls `f` through [`finish`]. `finish`
-//! catches a panic - which becomes `Makiri::InternalError` - and, once `f`
+//! catches a panic - which becomes the internal error (`rb::error::INTERNAL_ERROR`) - and, once `f`
 //! and everything it owned have returned and dropped, raises the `Err` it
 //! answered: the raise is a `longjmp` with nothing left to skip. The
-//! expansion holds no `unsafe`, so it can stand in the `forbid(unsafe_code)`
-//! glue: the trampoline is a safe `extern "C" fn`, and the C argument array
-//! is a [`CArgv`], which only Ruby makes.
+//! expansion's one `unsafe` block is its call of [`finish`] (or
+//! [`finish_cary`]), the token's entry, which an external macro's expansion
+//! may hold where the extension forbids `unsafe_code`; the caller's `f` is
+//! bound outside that block, so an unsafe operation written in it needs an
+//! `unsafe` of the caller's own. The C argument array is a [`CArgv`], which
+//! only Ruby makes.
 //!
 //! `f` takes `&Ruby` first or not, then for a method its receiver, then its
-//! arguments - each read by [`TryConvert`], which for Makiri means a `Value`
+//! arguments - each read by [`TryConvert`], which is a `Value`
 //! as it is or a receiver type checking its class, never a conversion that
 //! runs Ruby - and returns anything [`ReturnValue`].
 
@@ -38,7 +41,7 @@ pub struct Func {
 pub struct CArgv(*const Value);
 
 /// Run a method's body: its `Ok` value is the method's result, its `Err` is
-/// raised, a panic is `Makiri::InternalError`. The raise happens here, after
+/// raised, a panic is the internal error (`rb::error::INTERNAL_ERROR`). The raise happens here, after
 /// `f` has returned - every destructor of the method's frames has run - and
 /// the error's own message has been released ([`Error::raise`]).
 ///
@@ -64,7 +67,7 @@ pub unsafe fn finish(f: impl FnOnce(&Ruby) -> Result<Value, Error>) -> Value {
                     crate::msg::Msg::copy(crate::caught::message(payload.as_ref()))
                 });
                 crate::caught::quietly((), || drop(payload));
-                crate::helpers::internal_error(msg)
+                crate::rb::error::internal_error(msg)
             }
         };
         e.raise(&ruby)
@@ -360,8 +363,8 @@ macro_rules! __trampoline {
     }};
 }
 
-/// What `Init_makiri` runs `init` through: an `Err` is raised once `init`
-/// has returned, and a panic is Ruby's `fatal` - `Makiri::InternalError` may
+/// What the extension's `Init_` runs `init` through: an `Err` is raised once `init`
+/// has returned, and a panic is Ruby's `fatal` - the internal error (`rb::error::INTERNAL_ERROR`) may
 /// not exist yet, and an extension that stopped half-way through defining
 /// itself must not be used, which `fatal` sees to.
 ///

@@ -1,7 +1,7 @@
 //! What the extension's lints (`lints/makiri_lints`) must report in the
 //! binding layer, the cases only code that names rb-sys can write - the
 //! extension cannot, since it does not depend on it. Compiled only under
-//! `--cfg makiri_lint_probe`, by `rake dylint`, which fails unless the lints
+//! `--cfg nupur_lint_probe`, by `rake dylint`, which fails unless the lints
 //! fire on exactly the lines that end in `//~`.
 #![allow(dead_code, clippy::all)]
 
