@@ -1,13 +1,10 @@
 //! Makiri's bytes made into Ruby Strings.
 
-#![allow(unsafe_code)]
-#![allow(clippy::missing_safety_doc)]
+#![forbid(unsafe_code)]
 
-use crate::bridge::rb::value::AsRawValue;
 use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, ReprValue, Value};
 use crate::bridge::ruby::makiri_error;
-use rb_sys::StableApiDefinition;
 
 /* ---- assembling Ruby Strings ---- */
 
@@ -27,36 +24,20 @@ pub fn utf8_str_from_slices<'a>(
     slices: impl Iterator<Item = &'a [u8]>,
     total: usize,
 ) -> Result<Value, Error> {
-    // SAFETY: every one of the `total` bytes is written below before the
-    // String is returned - a short or long sum is refused - and nothing
-    // reads it before.
-    let str = unsafe { crate::bridge::raw::utf8_str_unwritten(ruby, total) }?;
-    /* We just created it and hold the only reference, so writing through the
-     * buffer is sound - this is what RSTRING_PTR gives the C. It has room for
-     * exactly `total` bytes, and nothing else runs while `out` is held. */
-    // SAFETY: as above; `str` is a live String of `total` bytes.
-    let out = unsafe {
-        let dst = rb_sys::stable_api::get_default().rstring_ptr(str.as_raw()) as *mut u8;
-        core::slice::from_raw_parts_mut(dst, total)
-    };
-    let mut off = 0usize;
-    for s in slices {
-        /* A slice past `total` is refused by the bounds check. */
-        let Some(to) = off
-            .checked_add(s.len())
-            .and_then(|end| out.get_mut(off..end))
-        else {
+    let str = crate::bridge::raw::utf8_str_filled(ruby, total, |out| {
+        for s in slices {
+            /* A slice past `total` is refused: `push` writes nothing past
+             * the String's end. */
+            if !out.push(s) {
+                return Err(makiri_error("text slice length inconsistency"));
+            }
+        }
+        if out.written() != total {
+            /* A short sum would leave the String's tail unwritten. */
             return Err(makiri_error("text slice length inconsistency"));
-        };
-        /* Text slices are mostly a few bytes: fixed-size copies, not a
-         * `memcpy` call each (`cbuf::copy_small`). */
-        crate::cbuf::copy_small(to, s);
-        off += s.len();
-    }
-    if off != total {
-        /* A short sum would leave the tail of the uninitialised String unwritten. */
-        return Err(makiri_error("text slice length inconsistency"));
-    }
+        }
+        Ok(())
+    })?;
     Ok(str.as_value())
 }
 

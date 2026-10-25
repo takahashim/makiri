@@ -251,8 +251,16 @@ pub fn arg_error(msg: impl crate::nupur::rb::Message) -> Error {
 
 /// VALUE identity, for the several sites that compare two references.
 #[inline]
-pub fn same_value(a: Value, b: Value) -> bool {
+pub fn same_value(a: impl ReprValue, b: impl ReprValue) -> bool {
     a.as_raw() == b.as_raw()
+}
+
+/// VALUE identity as a word: the same for every reference to one object, and
+/// different for two live objects - a key to compare by, never a value to
+/// turn back into one.
+#[inline]
+pub fn identity_word(v: impl ReprValue) -> usize {
+    v.as_raw() as usize
 }
 
 /// Hide `v` from `ObjectSpace` (`rb_obj_hide`: its class field cleared), as

@@ -16,7 +16,6 @@
 
 #![forbid(unsafe_code)]
 
-use crate::bridge::rb::value::AsRawValue;
 use crate::bridge::rb::Ruby;
 
 use crate::bridge::rb::{prelude::*, Error, Value};
@@ -28,7 +27,7 @@ use crate::bridge::ruby::{check_frozen, is_kind_of};
 use crate::bridge::string::{ruby_verified_text, RubyText};
 use crate::bridge::wrapper::*;
 use crate::bridge::wrapper::{node_repr, DocKind, DocumentShell, NodeRepr};
-use crate::bridge::xml_decode::xml_decode_input_value;
+use crate::bridge::xml_decode::xml_decode_input;
 use crate::child_index::{ChildList, Children, TokenTree};
 use crate::html_dom::cross_import::cross_html_to_xml;
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT, EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
@@ -647,17 +646,14 @@ impl Unit {
 /// Parse XML source, releasing the GVL, and wrap the result as a Document.
 ///
 /// Runs the strict decode under the GVL first (invalid UTF-8, an undecodable
-/// byte or a NUL all raise), then copies into a private buffer BEFORE the
-/// wrapper exists, so no GC point can run between obtaining the decoded String
-/// and copying it.
+/// byte or a NUL all raise), which leaves the document in a buffer of its
+/// own: the parse reads that, and no Ruby String, with the GVL released.
 pub fn parse_xml_document(ruby: &Ruby, source: Value, limits: ParseLimits) -> Result<Value, Error> {
     let source = crate::bridge::ruby::string_arg(source)?;
-    let decoded = xml_decode_input_value(ruby, source, Some(limits.budget()))?;
-    /* The wrapper first, while nothing needs freeing (see DocumentShell): its
-     * allocation can raise, and the copy below is this frame's to free. The
-     * decoded String is a local, so the stack scan keeps it across it. */
+    let src = xml_decode_input(ruby, source, Some(limits.budget()))?;
+    /* The wrapper before the parse: its allocation can fail, and `src`, an
+     * owned copy, is dropped on the way out if it does. */
     let shell = DocumentShell::new(ruby, DocKind::Xml)?;
-    let src = crate::bridge::string::ruby_string_bytes(decoded)?;
 
     /* Ruby-free from here: only the copied bytes and the limits cross. */
     let bytes = src.as_slice();
@@ -714,8 +710,7 @@ pub fn fragment_into(
 ) -> Result<NodeId, Error> {
     let max_bytes = xml_read(&document)?.max_bytes();
     let source = crate::bridge::ruby::string_arg(source)?;
-    let decoded = xml_decode_input_value(ruby, source, Some(max_bytes))?;
-    let src = crate::bridge::string::ruby_string_bytes(decoded)?;
+    let src = xml_decode_input(ruby, source, Some(max_bytes))?;
     let mut xdoc = arena_mut(&document)?;
     tree::parse_fragment(&mut xdoc, src.as_slice(), inherit_doc_ns)
         .map_err(|status| parse_status_error(status, Unit::Fragment))
@@ -887,7 +882,7 @@ fn incoming_node(
     check_frozen(arg)?;
     let src = xml_node_unwrap(ruby, arg)?;
     let src_document = xml_node_document(ruby, arg)?;
-    if src_document.as_raw() == target_doc.as_raw() {
+    if crate::bridge::ruby::same_value(src_document, target_doc) {
         return Ok((src, None)); /* same arena -> move */
     }
     let (mark, copied) = {

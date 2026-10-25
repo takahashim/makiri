@@ -34,25 +34,65 @@ pub enum CopyError {
 /// Bytes that are UTF-8, owned.
 pub struct Utf8Copy(Bytes);
 
+/// Why [`Utf8Copy::filled`] made no copy: [`CopyError`]'s reasons, or the
+/// caller's own refusal of the bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FillError<P> {
+    /// The copy could not be made ([`CopyError`]).
+    Copy(CopyError),
+    /// `refuse` turned the bytes down.
+    Refused(P),
+}
+
 impl Utf8Copy {
     /// A copy of `src`, checked to be UTF-8.
     pub fn new(src: &[u8]) -> Result<Utf8Copy, CopyError> {
-        let bytes = match (src.len(), src) {
-            (n, _) if n <= INLINE => {
-                let mut buf = [0u8; INLINE];
-                if let Some(dst) = buf.get_mut(..n) {
-                    dst.copy_from_slice(src);
+        Utf8Copy::filled(
+            src.len(),
+            |dst| {
+                let n = src.len().min(dst.len());
+                if let (Some(d), Some(s)) = (dst.get_mut(..n), src.get(..n)) {
+                    d.copy_from_slice(s);
                 }
-                Bytes::Inline { len: n as u8, buf }
-            }
-            _ => Bytes::Heap(OwnedBuf::copy_from(src).ok_or(CopyError::Oom)?),
+                n
+            },
+            |_| None::<core::convert::Infallible>,
+        )
+        .map_err(|e| match e {
+            FillError::Copy(e) => e,
+            FillError::Refused(never) => match never {},
+        })
+    }
+
+    /// `len` bytes that `fill` writes - a copy out of something that hands
+    /// no slice of itself out (a Ruby String's `copy_to`) - put to `refuse`
+    /// and then checked to be UTF-8. `fill` reports how many it wrote; fewer
+    /// than `len` is kept as written.
+    ///
+    /// `refuse` sees the copy before the UTF-8 check, so a caller's own rule
+    /// (a NUL, a length) is reported ahead of invalid UTF-8, and both look at
+    /// the same bytes that are read back later.
+    pub fn filled<P>(
+        len: usize,
+        fill: impl FnOnce(&mut [u8]) -> usize,
+        refuse: impl FnOnce(&[u8]) -> Option<P>,
+    ) -> Result<Utf8Copy, FillError<P>> {
+        let bytes = if len <= INLINE {
+            let mut buf = [0u8; INLINE];
+            let n = fill(buf.get_mut(..len).unwrap_or_default()).min(len);
+            Bytes::Inline { len: n as u8, buf }
+        } else {
+            Bytes::Heap(OwnedBuf::fill(len, fill).ok_or(FillError::Copy(CopyError::Oom))?)
         };
         let copy = Utf8Copy(bytes);
-        /* The check is of the copy, not of `src`: what is read back later is
-         * exactly what was checked. */
+        if let Some(p) = refuse(copy.as_bytes()) {
+            return Err(FillError::Refused(p));
+        }
+        /* The check is of the copy, not of its source: what is read back
+         * later is exactly what was checked. */
         match core::str::from_utf8(copy.as_bytes()) {
             Ok(_) => Ok(copy),
-            Err(_) => Err(CopyError::NotUtf8),
+            Err(_) => Err(FillError::Copy(CopyError::NotUtf8)),
         }
     }
 
@@ -66,7 +106,7 @@ impl Utf8Copy {
 
     /// The text.
     pub fn as_str(&self) -> &str {
-        // SAFETY: a `Utf8Copy` is made only by `new`, which returns it only
+        // SAFETY: a `Utf8Copy` is made only by `filled`, which returns it only
         // once `from_utf8` accepted exactly these bytes, and nothing changes
         // them after: the fields are private to this module, and no method
         // here writes them.
@@ -95,5 +135,38 @@ mod tests {
         let mut edge = [b'a'; INLINE];
         edge[INLINE - 1] = 0xc3;
         assert_eq!(Utf8Copy::new(&edge).err(), Some(CopyError::NotUtf8));
+    }
+
+    #[test]
+    fn a_refusal_comes_before_the_utf8_check_and_sees_the_copy() {
+        for n in [3, INLINE * 2] {
+            let mut src = vec![b'a'; n];
+            src[0] = 0;
+            src[n - 1] = 0xff;
+            let got = Utf8Copy::filled(
+                n,
+                |d| {
+                    d.copy_from_slice(&src);
+                    n
+                },
+                |b| b.contains(&0).then_some("nul"),
+            );
+            assert_eq!(got.err(), Some(FillError::Refused("nul")));
+        }
+    }
+
+    #[test]
+    fn a_short_fill_keeps_what_was_written() {
+        for n in [8, INLINE * 2] {
+            let got = Utf8Copy::filled(
+                n,
+                |d| {
+                    d[..2].copy_from_slice(b"ok");
+                    2
+                },
+                |_| None::<()>,
+            );
+            assert_eq!(got.unwrap().as_str(), "ok");
+        }
     }
 }

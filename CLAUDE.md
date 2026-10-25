@@ -178,7 +178,9 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   key's kind, a substring's bounds, `to_encoding`'s argument), and one with
   no Ruby value takes `&Ruby` as the GVL's proof. Only those over raw memory
   stay `unsafe` (`typed_object_zalloc`, `xrealloc2`,
-  `check_typeddata`, `utf8_str_unwritten`). A raw `VALUE` - an integer to
+  `check_typeddata`); a String made in place is `utf8_str_filled`, safe,
+  whose `fill` writes front to back through an `Unwritten` and must reach
+  the end. A raw `VALUE` - an integer to
   Rust, which no lint can tell from a `u64` in a `Vec` - is spelled only in
   `raw.rs`, `typed.rs` and the `bridge::rb` files that are the typed values
   (`rake dylint`'s `raw_ruby_outside_bridge`, which also fails on any
@@ -906,9 +908,12 @@ make the `&str` undefined behaviour. The parse source and the XML input check
 still take the coderange as a hint, where a wrong one stays safe code. Nothing Ruby
 does afterwards - a GC, the caller rewriting or growing the String - reaches
 the copy. The HTML source (`HtmlSource`) is a copy too, the
-one a document parse needs to read it with the GVL released. The only borrow
-of a String's bytes left is `string::with_bytes`, a scoped read for the XML
-encoding sniff, whose closure must run no Ruby. (The views used to hold the
+one a document parse needs to read it with the GVL released, and so is the
+XML input: the decode copies the document once, BOM stripped, and both the
+strict check and the parse read that copy. No String's bytes are borrowed
+outside `nupur` at all: a String is read only by `RString::copy_to` (into a
+caller's buffer) and `append_to` (into a `Vec`'s reserved room, never
+growing it), each a read and a copy with nothing run between. (The views used to hold the
 String under `rb_str_locktmp`, with a copy when it was already locked, a
 frozen fast path and a raise to re-propagate - all to spare a copy of a few
 bytes; `spec/mutation_argument_conversion_spec.rb` pins the copy semantics.)

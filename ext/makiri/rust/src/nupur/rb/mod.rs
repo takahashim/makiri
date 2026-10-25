@@ -23,8 +23,8 @@ pub use convert::{IntoValue, ReturnValue, TryConvert};
 pub use error::{Builtin, Error, ErrorClass, Message};
 pub use ruby::Ruby;
 pub use value::{
-    Coderange, ExceptionClass, Float, HashKey, Integer, RArray, RClass, RHash, RModule, RString,
-    Range, ReprValue, Symbol, Value,
+    Coderange, ExceptionClass, Float, HashKey, Integer, NoRoom, RArray, RClass, RHash, RModule,
+    RString, Range, ReprValue, Symbol, Value,
 };
 
 /// The traits a glue module brings into scope with `use ...::prelude::*`.

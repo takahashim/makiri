@@ -3,7 +3,6 @@
 
 #![allow(unsafe_code)]
 
-use crate::bridge::rb::value::AsRawValue;
 use crate::bridge::rb::Ruby;
 
 use crate::bridge::rb::{Error, Value};
@@ -260,7 +259,7 @@ pub enum NotInDocument {
 /// own, not one a caller passes alongside.
 pub fn node_token_in(ruby: &Ruby, rb_node: Value, document: Value) -> Result<Token, NotInDocument> {
     let node_document = keepalive_document(ruby, rb_node).map_err(NotInDocument::Unusable)?;
-    if node_document.as_raw() != document.as_raw() {
+    if !crate::bridge::ruby::same_value(node_document, document) {
         return Err(NotInDocument::Foreign);
     }
     let raw = node_raw(ruby, rb_node).map_err(NotInDocument::Unusable)?;
@@ -319,7 +318,7 @@ pub fn node_identity(ruby: &Ruby, rb_node: Value) -> Result<usize, Error> {
 /// it settles both.
 pub fn node_key(ruby: &Ruby, rb_node: Value) -> Result<(usize, usize), Error> {
     Ok((
-        keepalive_document(ruby, rb_node)?.as_raw() as usize,
+        crate::bridge::ruby::identity_word(keepalive_document(ruby, rb_node)?),
         node_identity(ruby, rb_node)?,
     ))
 }

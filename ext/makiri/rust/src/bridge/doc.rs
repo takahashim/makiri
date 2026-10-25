@@ -87,7 +87,7 @@ pub fn parse_document(
      * else the String's own (none for binary, which is sniffed). The copy is
      * what the parse reads with the GVL released, so nothing here borrows
      * from the Ruby String. */
-    let src = DocumentSource::from_ruby(s, given)?;
+    let src = DocumentSource::from_ruby(ruby, s, given)?;
 
     /* The body - sniffing, decoding and parsing - runs on this thread with
      * the GVL released, so the parsed handle comes back as it is. */

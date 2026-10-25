@@ -225,7 +225,7 @@ pub fn build_fragment(
     limit: ParseLimits,
 ) -> Result<Value, Error> {
     /* A String only, transcoded to UTF-8 (a Ruby allocation, which may raise). */
-    let src = HtmlSource::from_ruby(string_arg(rb_html)?)?;
+    let src = HtmlSource::from_ruby(ruby, string_arg(rb_html)?)?;
     /* The element is read now, after the conversion, as `inner_html=` reads
      * it inside its edit. */
     let context = match at {

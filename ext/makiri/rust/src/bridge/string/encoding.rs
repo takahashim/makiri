@@ -1,12 +1,10 @@
 //! Ruby encodings: a String's own, and transcoding one to UTF-8.
 
-#![allow(unsafe_code)]
-#![allow(clippy::missing_safety_doc)]
+#![forbid(unsafe_code)]
 
 use crate::bridge::rb::Ruby;
 use core::ffi::c_int;
 
-use crate::bridge::rb::value::AsRawValue;
 use crate::bridge::rb::{prelude::*, Error, RString, Value};
 pub use crate::nupur::encoding::Encoding;
 
@@ -29,7 +27,7 @@ pub fn encoding_arg(ruby: &Ruby, v: Value) -> Result<(Encoding, crate::cbuf::Own
                 });
         }
     };
-    Ok((e, super::ruby_string_bytes(name)?))
+    Ok((e, super::ruby_string_bytes(ruby, name)?))
 }
 
 impl Encoding {
@@ -63,41 +61,6 @@ pub fn to_encoding(ruby: &Ruby, v: Value) -> Result<Encoding, Error> {
     crate::bridge::raw::to_encoding(ruby, v)
 }
 
-/// [`Encoding::reads_as_utf8_bytes`] for `s`'s encoding, by index and with
-/// no call on the common path: the index is read from the String's flags,
-/// where Ruby keeps it inline for every encoding below
-/// `RUBY_ENCODING_INLINE_MAX` (the builtin three are 0-2), and compared with
-/// the builtin indices, looked up once. Every strict read (a selector, an
-/// attribute name or value) asks, and `rb_enc_get` + `rb_utf8_encoding`
-/// cost `Node#[]` ~13%.
-fn reads_as_utf8_bytes(s: RString) -> bool {
-    use rb_sys::ruby_encoding_consts::{
-        RUBY_ENCODING_INLINE_MAX, RUBY_ENCODING_MASK, RUBY_ENCODING_SHIFT,
-    };
-    static BUILTIN: std::sync::OnceLock<[c_int; 3]> = std::sync::OnceLock::new();
-    // SAFETY: `s` is a live String - a heap object, whose flags word is the
-    // first field of its `RBasic` and readable; reading it runs no Ruby.
-    let flags = unsafe { (*(s.as_raw() as *const rb_sys::RBasic)).flags };
-    let inline =
-        ((flags as usize & RUBY_ENCODING_MASK as usize) >> RUBY_ENCODING_SHIFT as u32) as c_int;
-    let index = if inline == RUBY_ENCODING_INLINE_MAX as c_int {
-        // SAFETY: as above; the lookup reads an instance variable and raises
-        // nothing.
-        unsafe { rb_sys::rb_enc_get_index(s.as_raw()) }
-    } else {
-        inline
-    };
-    // SAFETY: Ruby's immutable builtin encoding indices.
-    let builtin = BUILTIN.get_or_init(|| unsafe {
-        [
-            rb_sys::rb_utf8_encindex(),
-            rb_sys::rb_usascii_encindex(),
-            rb_sys::rb_ascii8bit_encindex(),
-        ]
-    });
-    builtin.contains(&index)
-}
-
 /// `s` as a UTF-8 String, transcoded by Ruby with `ecflags` unless its bytes
 /// are read as UTF-8 already ([`Encoding::reads_as_utf8_bytes`] - UTF-8,
 /// US-ASCII, ASCII-8BIT), which costs one encoding comparison: no transcode,
@@ -106,8 +69,8 @@ fn reads_as_utf8_bytes(s: RString) -> bool {
 /// `rb_str_encode` RAISES - when Ruby has no converter at all (UTF-7,
 /// ISO-2022-JP-2 to UTF-8), and with no replacement flag on any byte or
 /// character it cannot convert - and the raise comes back as `Err`.
-fn ruby_to_utf8(s: RString, ecflags: c_int) -> Result<RString, Error> {
-    if reads_as_utf8_bytes(s) {
+fn ruby_to_utf8(ruby: &Ruby, s: RString, ecflags: c_int) -> Result<RString, Error> {
+    if Encoding::string_reads_as_utf8_bytes(ruby, s) {
         return Ok(s);
     }
     crate::bridge::raw::str_encode(s, Encoding::utf8(), ecflags)
@@ -119,8 +82,8 @@ fn ruby_to_utf8(s: RString, ecflags: c_int) -> Result<RString, Error> {
 /// path replaces instead ([`ruby_to_utf8_value`]); a selector or an attribute
 /// value is not repaired. Ruby's own raise (an `Encoding::*Error`, or
 /// whatever else interrupted the transcode) is returned.
-pub(in crate::bridge) fn utf8_strict(s: RString) -> Result<RString, Error> {
-    ruby_to_utf8(s, 0)
+pub(in crate::bridge) fn utf8_strict(ruby: &Ruby, s: RString) -> Result<RString, Error> {
+    ruby_to_utf8(ruby, s, 0)
 }
 
 /// A UTF-8 String for `s`, honouring its declared encoding so the content
@@ -136,8 +99,8 @@ pub(in crate::bridge) fn utf8_strict(s: RString) -> Result<RString, Error> {
 ///
 /// An encoding Ruby cannot convert to UTF-8 comes back as its
 /// `Encoding::ConverterNotFoundError`, returned rather than raised.
-pub fn ruby_to_utf8_value(s: RString) -> Result<RString, Error> {
+pub fn ruby_to_utf8_value(ruby: &Ruby, s: RString) -> Result<RString, Error> {
     const REPLACE: c_int = rb_sys::ruby_econv_flag_type::RUBY_ECONV_INVALID_REPLACE as c_int
         | rb_sys::ruby_econv_flag_type::RUBY_ECONV_UNDEF_REPLACE as c_int;
-    ruby_to_utf8(s, REPLACE)
+    ruby_to_utf8(ruby, s, REPLACE)
 }

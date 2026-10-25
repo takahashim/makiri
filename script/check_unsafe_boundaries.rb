@@ -36,9 +36,6 @@ RUST_FILES = Dir.glob(File.join(RUST, "**", "*.rs")).sort
 UNSAFE_ISLANDS = {
   "bridge/node_set.rs" => 2,
   "bridge/stack.rs" => 1,
-  "bridge/string/build.rs" => 2,
-  "bridge/string/encoding.rs" => 3,
-  "bridge/string/view.rs" => 7,
   "bridge/wrapper/document.rs" => 1,
   "bridge/wrapper/node.rs" => 1,
   "falloc/mod.rs" => 1,
@@ -64,15 +61,15 @@ UNSAFE_ISLANDS = {
   "lexbor/stylesheet_diff.rs" => 5,
   "lexbor/tests.rs" => 3,
   "no_unwind.rs" => 2,
-  "nupur/encoding.rs" => 6,
+  "nupur/encoding.rs" => 9,
   "nupur/gvl.rs" => 3,
   "nupur/helpers.rs" => 8,
   "nupur/no_unwind.rs" => 2,
-  "nupur/raw.rs" => 92,
+  "nupur/raw.rs" => 93,
   "nupur/rb/class.rs" => 2,
   "nupur/rb/method.rs" => 8,
   "nupur/rb/ruby.rs" => 5,
-  "nupur/rb/value.rs" => 16,
+  "nupur/rb/value.rs" => 18,
   "nupur/typed.rs" => 27,
   "utf8_copy.rs" => 1,
 }.freeze
@@ -90,7 +87,8 @@ FORBID_ROOTS = %w[css/mod.rs glue/mod.rs css_match/mod.rs selectors/mod.rs xml/m
 FORBID_FILES = %w[
   bridge/doc.rs bridge/dom.rs bridge/dom_error.rs
   bridge/fragment.rs bridge/html.rs bridge/node_wrap.rs
-  bridge/ruby.rs bridge/string/source.rs bridge/wrapper/accounting.rs
+  bridge/ruby.rs bridge/string/build.rs bridge/string/encoding.rs
+  bridge/string/source.rs bridge/string/view.rs bridge/wrapper/accounting.rs
   bridge/wrapper/edit.rs bridge/xml.rs bridge/xml_decode.rs
   bridge/xpath/context_object.rs bridge/xpath/mod.rs cbuf.rs
   child_index.rs conformance/mod.rs css/build.rs

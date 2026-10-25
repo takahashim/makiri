@@ -102,7 +102,7 @@ impl ReprValue for Value {
 }
 
 /// The raw `VALUE`, for `bridge`'s C calls and nothing else.
-pub(crate) trait AsRawValue {
+pub(in crate::nupur) trait AsRawValue {
     #[allow(clippy::wrong_self_convention, reason = "a Copy value, read by value")]
     fn as_raw(self) -> VALUE;
 }
@@ -219,6 +219,10 @@ handle!(
         && crate::nupur::raw::class_inherits(v, unsafe { Value::from_raw(rb_sys::rb_eException) })
 );
 
+/// [`RString::append_to`]'s refusal: the buffer had too little spare room.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NoRoom;
+
 impl RString {
     /// The length in bytes.
     #[inline]
@@ -233,6 +237,44 @@ impl RString {
         self.len() == 0
     }
 
+    /// Copy the bytes from `offset` (none past the end) into `dst`, as many
+    /// as both hold, and say how many.
+    ///
+    /// The String's buffer is read and copied out of in one step, with
+    /// nothing run in between, and no slice of it is handed out: a caller
+    /// owns what it reads, so nothing Ruby does afterwards - a GC, the String
+    /// rewritten or grown - can reach it.
+    #[inline]
+    pub fn copy_to(self, _ruby: &Ruby, offset: usize, dst: &mut [u8]) -> usize {
+        // SAFETY: read and copied out at once; nothing runs while it is held.
+        let src = unsafe { self.as_slice() }.get(offset..).unwrap_or(&[]);
+        let n = src.len().min(dst.len());
+        if let (Some(d), Some(s)) = (dst.get_mut(..n), src.get(..n)) {
+            d.copy_from_slice(s);
+        }
+        n
+    }
+
+    /// Append the bytes from `offset` (none past the end) to `v`, whose spare
+    /// capacity must already hold them - the caller reserved it, fallibly -
+    /// and say how many. Nothing is allocated here: when the room is short,
+    /// `v` is left as it was and the answer is [`NoRoom`]. The read is
+    /// [`copy_to`](Self::copy_to)'s, in one step after the room is checked.
+    #[inline]
+    pub fn append_to(self, _ruby: &Ruby, offset: usize, v: &mut Vec<u8>) -> Result<usize, NoRoom> {
+        // SAFETY: as `copy_to` - read and copied out at once.
+        let src = unsafe { self.as_slice() }.get(offset..).unwrap_or(&[]);
+        if v.capacity() - v.len() < src.len() {
+            return Err(NoRoom);
+        }
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "the room was checked above, so it cannot grow"
+        )]
+        v.extend_from_slice(src);
+        Ok(src.len())
+    }
+
     /// The bytes, borrowed from the String.
     ///
     /// # Safety
@@ -240,7 +282,7 @@ impl RString {
     /// the String's buffer: no Ruby code and no allocation may run while it
     /// is held.
     #[inline]
-    pub unsafe fn as_slice(&self) -> &[u8] {
+    pub(in crate::nupur) unsafe fn as_slice(&self) -> &[u8] {
         let api = get_default();
         // SAFETY: `self` is a live String; the caller's contract.
         unsafe {

@@ -72,6 +72,17 @@ impl OwnedBuf {
         Some(OwnedBuf(v))
     }
 
+    /// Room for exactly `cap` bytes, reserved and EMPTY, that `fill` appends
+    /// to without growing it (a Ruby String's `append_to`, which refuses
+    /// rather than grows). None on OOM, or when `fill` reports it could not.
+    /// Unlike [`OwnedBuf::fill`], nothing is zeroed first: a document's
+    /// source is copied once, not written twice.
+    pub fn reserved(cap: usize, fill: impl FnOnce(&mut Vec<u8>) -> bool) -> Option<OwnedBuf> {
+        let mut v = Vec::new();
+        v.falloc_reserve_exact(cap).ok()?;
+        fill(&mut v).then_some(OwnedBuf(v))
+    }
+
     /// Room for `cap` bytes, zeroed, that `fill` writes and reports how many it
     /// used. None on OOM. The allocation is owned before `fill` runs, so a
     /// panic in it - or the length check after - releases it.

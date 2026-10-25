@@ -630,20 +630,115 @@ pub fn utf8_str_new(_: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
     typed(v, RString::from_value, "a C call made no String")
 }
 
-/// A UTF-8 String of `len` bytes NOT YET WRITTEN, for a caller that fills it
-/// at once (`string::ruby_str_from_slices`): raises `NoMemoryError`.
+/// A UTF-8 String of exactly `len` bytes, written by `fill` straight into
+/// the new String's buffer - one allocation, no intermediate copy. The
+/// String's allocation raises `NoMemoryError`; `fill`'s `Err` is returned in
+/// its place, as is a `fill` that wrote fewer than `len` bytes - an internal
+/// error, since the bytes left would be whatever the allocation held - and
+/// the half-written String is left to the GC, unseen.
 ///
-/// # Safety
-/// Every one of the `len` bytes is written before the String is read or
-/// handed to Ruby.
-#[inline]
-pub unsafe fn utf8_str_unwritten(_: &Ruby, len: usize) -> Result<RString, Error> {
+/// `fill` writes through an [`Unwritten`], front to back, so every byte the
+/// String holds was written and none past its end can be. The String is
+/// reachable from nowhere but this frame, which keeps it alive and in place
+/// while `fill` runs (the GC's stack scan pins it), so no Ruby code can see
+/// or change it.
+///
+/// The bytes are tagged UTF-8 without a check; bytes that were not would make
+/// a wrong String, never a memory error.
+pub fn utf8_str_filled(
+    _: &Ruby,
+    len: usize,
+    fill: impl FnOnce(&mut Unwritten<'_>) -> Result<(), Error>,
+) -> Result<RString, Error> {
     let n = c_len(len)?;
     let v = call(|| unsafe {
         injected_raise();
         rb_sys::rb_utf8_str_new(core::ptr::null(), n)
     })?;
-    typed(v, RString::from_value, "a C call made no String")
+    let str = typed(v, RString::from_value, "a C call made no String")?;
+    // SAFETY: `str` is the String just made, of `len` bytes (`rstring_ptr`
+    // is its buffer, the room `rb_str_new` allocated), referenced only from
+    // this frame. Seen as `MaybeUninit`, so nothing reads it unwritten.
+    let buf: &mut [core::mem::MaybeUninit<u8>] = unsafe {
+        let dst = rb_sys::StableApiDefinition::rstring_ptr(
+            rb_sys::stable_api::get_default(),
+            str.as_raw(),
+        ) as *mut core::mem::MaybeUninit<u8>;
+        if len == 0 || dst.is_null() {
+            &mut []
+        } else {
+            core::slice::from_raw_parts_mut(dst, len)
+        }
+    };
+    let mut w = Unwritten { buf, at: 0 };
+    fill(&mut w)?;
+    if w.at != len {
+        return Err(crate::nupur::helpers::internal_error(
+            "a String was left part-written",
+        ));
+    }
+    Ok(str)
+}
+
+/// The buffer of a String [`utf8_str_filled`] is making, written front to
+/// back: the bytes before `at` are written, the rest are not and cannot be
+/// read.
+pub struct Unwritten<'a> {
+    buf: &'a mut [core::mem::MaybeUninit<u8>],
+    at: usize,
+}
+
+impl Unwritten<'_> {
+    /// Append `src`; `false`, with nothing written, when it does not fit.
+    #[inline]
+    pub fn push(&mut self, src: &[u8]) -> bool {
+        let Some(dst) = self
+            .at
+            .checked_add(src.len())
+            .and_then(|end| self.buf.get_mut(self.at..end))
+        else {
+            return false;
+        };
+        // SAFETY: `u8` and `MaybeUninit<u8>` have one layout, and every `u8`
+        // is a valid `MaybeUninit<u8>`; the view is only read.
+        let src: &[core::mem::MaybeUninit<u8>] =
+            unsafe { &*(src as *const [u8] as *const [core::mem::MaybeUninit<u8>]) };
+        copy_small(dst, src);
+        self.at += src.len();
+        true
+    }
+
+    /// How many bytes are written.
+    #[inline]
+    pub fn written(&self) -> usize {
+        self.at
+    }
+}
+
+/// `dst.copy_from_slice(src)` for slices of one length, with no `memcpy`
+/// call for 16 bytes or fewer: two fixed-size copies that overlap. Text
+/// slices are mostly a few bytes. (Makiri's `cbuf::copy_small` is the same
+/// copy over `u8`, the one Verus proves.)
+#[inline(always)]
+#[allow(
+    clippy::indexing_slicing,
+    reason = "dst and src are one length, at least K"
+)]
+fn copy_small<T: Copy>(dst: &mut [T], src: &[T]) {
+    #[inline(always)]
+    fn two<const K: usize, T: Copy>(dst: &mut [T], src: &[T]) {
+        let n = src.len();
+        dst[..K].copy_from_slice(&src[..K]);
+        dst[n - K..n].copy_from_slice(&src[n - K..]);
+    }
+    match src.len() {
+        0 => {}
+        1 => dst[0] = src[0],
+        2..=3 => two::<2, T>(dst, src),
+        4..=7 => two::<4, T>(dst, src),
+        8..=16 => two::<8, T>(dst, src),
+        _ => dst.copy_from_slice(src),
+    }
 }
 
 /// `rb_enc_interned_str` of `bytes` in `enc`: raises `NoMemoryError`.

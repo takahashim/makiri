@@ -236,14 +236,14 @@ pub fn delete(ruby: &Ruby, mut this: HtmlSelf, rb_name: Value) -> Result<Value, 
 ///
 /// All or nothing: the new content is parsed and imported into a detached
 /// fragment first, and only then are the old children swapped for it.
-pub fn set_inner_html(_ruby: &Ruby, mut this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
+pub fn set_inner_html(ruby: &Ruby, mut this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
     let edit = edit(&mut this)?;
     if edit.node_type()? != NodeType::Element {
         return Err(makiri_error("inner_html= requires an element"));
     }
     /* A String only, transcoded before the edit - nothing inside it may
      * run Ruby. */
-    let src = HtmlSource::from_ruby(string_arg(rb_html)?)?;
+    let src = HtmlSource::from_ruby(ruby, string_arg(rb_html)?)?;
     edit.with_tree(|d, node| {
         /* WHATWG: a `<template>`'s inner HTML is its contents fragment, not
          * the element's (empty) children - the same node
@@ -270,11 +270,11 @@ pub fn set_inner_html(_ruby: &Ruby, mut this: HtmlSelf, rb_html: Value) -> Resul
 /// under it. (When an argument's `#to_s` ran first, one that removed the
 /// receiver left a parent read earlier stale, and the new content went
 /// nowhere.)
-pub fn set_outer_html(_ruby: &Ruby, mut this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
+pub fn set_outer_html(ruby: &Ruby, mut this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
     let edit = edit(&mut this)?;
     /* A String only, transcoded before the edit - nothing inside it may
      * run Ruby. */
-    let src = HtmlSource::from_ruby(string_arg(rb_html)?)?;
+    let src = HtmlSource::from_ruby(ruby, string_arg(rb_html)?)?;
     edit.with_tree(|d, node| {
         /* An attribute's `parent()` is its owner element, but it is no child
          * of it: the replace below would drop the new content and report

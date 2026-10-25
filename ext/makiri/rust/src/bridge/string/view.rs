@@ -1,23 +1,20 @@
 //! A Ruby String read into Makiri: the one copy every String crosses as,
 //! the checked views ([`RubyText`], [`RubyData`]) and the contract checks.
 
-#![allow(unsafe_code)]
-#![allow(clippy::missing_safety_doc)]
+#![forbid(unsafe_code)]
 
 use crate::bridge::rb::Ruby;
 use core::ops::Deref;
 
 use crate::bridge::rb::Coderange;
 
-use crate::bridge::rb::value::AsRawValue;
 use crate::bridge::rb::ReprValue;
 use crate::bridge::rb::{Error, RString, Value};
 use crate::bridge::ruby::makiri_error;
-use rb_sys::StableApiDefinition;
 
 /// The shared owned buffer.
 use crate::cbuf::OwnedBuf;
-use crate::utf8_copy::{CopyError, Utf8Copy};
+use crate::utf8_copy::{CopyError, FillError, Utf8Copy};
 
 use super::*;
 use crate::bridge::ruby::{name_arg, string_arg};
@@ -93,6 +90,7 @@ impl<C: Checked> RubyStr<C> {
     /// copied and the copy checked to be UTF-8 - `not_utf8` when it is not.
     /// The order is the error's: a NUL is reported before invalid UTF-8.
     fn acquire<P>(
+        ruby: &Ruby,
         s: RString,
         not_utf8: P,
         check: impl FnOnce(&[u8]) -> Option<P>,
@@ -100,18 +98,16 @@ impl<C: Checked> RubyStr<C> {
         /* Read in its own encoding: a String in another one is transcoded
          * first, and the copy and the check are of the UTF-8 it became. The
          * transcode is a fresh String on this frame, so the GC keeps it. */
-        let s = utf8_strict(s).map_err(Refusal::Encoding)?;
-        // SAFETY: the bytes are read, checked and copied in this call, which
-        // runs no Ruby: `Utf8Copy::new` allocates through libc at most.
-        let bytes = unsafe {
-            with_bytes(s, |b| match check(b) {
-                Some(problem) => Err(Refusal::Check(problem)),
-                None => Utf8Copy::new(b).map_err(|e| match e {
-                    CopyError::NotUtf8 => Refusal::Check(not_utf8),
-                    CopyError::Oom => Refusal::Oom,
-                }),
-            })
-        }?;
+        let s = utf8_strict(ruby, s).map_err(Refusal::Encoding)?;
+        /* Copied first, then checked: `check` and the UTF-8 check both read
+         * the copy, which is what the view holds. */
+        let bytes = Utf8Copy::filled(s.len(), |dst| s.copy_to(ruby, 0, dst), check).map_err(
+            |e| match e {
+                FillError::Refused(problem) => Refusal::Check(problem),
+                FillError::Copy(CopyError::NotUtf8) => Refusal::Check(not_utf8),
+                FillError::Copy(CopyError::Oom) => Refusal::Oom,
+            },
+        )?;
         Ok(RubyStr {
             bytes,
             contract: core::marker::PhantomData,
@@ -137,70 +133,28 @@ impl RubyText {
 
 /* ---- reading a String's bytes ---- */
 
-/// The `(ptr, len)` of a String's bytes, as the stable API reads them.
-///
-/// A String by type, so the bytes are read as one without a check. What is
-/// left to the caller is the part no type can say:
-///
-/// # Safety
-/// The returned slice is valid only until Ruby runs - a GC, a mutation or a
-/// reallocation of the String can move or free the bytes - so it must not be
-/// held across anything that can run Ruby.
-#[inline]
-unsafe fn borrow<'a>(s: RString) -> &'a [u8] {
-    let (s, api) = (s.as_raw(), rb_sys::stable_api::get_default());
-    let (ptr, len) = (api.rstring_ptr(s) as *const u8, api.rstring_len(s) as usize);
-    if ptr.is_null() || len == 0 {
-        return &[];
-    }
-    core::slice::from_raw_parts(ptr, len)
-}
-
-/// Run `f` over the bytes of the live String `s`, borrowed for the call.
-///
-/// The one scoped borrow this module offers, for a read that needs no copy
-/// (the XML encoding sniff). The closure's result must not borrow from the
-/// slice, which the signature enforces.
-///
-/// # Safety
-/// `f` must run no Ruby: no allocation of a Ruby object, no method call,
-/// nothing that can trigger a GC or let another thread run.
-unsafe fn with_bytes<R>(s: RString, f: impl FnOnce(&[u8]) -> R) -> R {
-    // SAFETY: the caller's contract - nothing runs Ruby while the slice lives.
-    f(unsafe { borrow(s) })
-}
-
 /// The first `N` bytes of `s` (all of them when it is shorter), copied, with
 /// how many there are: what a sniff of a document's start reads, owned.
-pub(in crate::bridge) fn prefix<const N: usize>(s: RString) -> ([u8; N], usize) {
+pub(in crate::bridge) fn prefix<const N: usize>(ruby: &Ruby, s: RString) -> ([u8; N], usize) {
     let mut out = [0u8; N];
-    // SAFETY: a copy into a stack array, which runs no Ruby.
-    let n = unsafe {
-        with_bytes(s, |bytes| {
-            let n = bytes.len().min(N);
-            if let (Some(dst), Some(src)) = (out.get_mut(..n), bytes.get(..n)) {
-                dst.copy_from_slice(src);
-            }
-            n
-        })
-    };
+    let n = s.copy_to(ruby, 0, &mut out);
     (out, n)
 }
 
-/// [`text_check`] over `s`'s bytes from `off` (none past its end), read in
-/// place: the strict text contract over a whole document, which a copy would
-/// double.
-pub(in crate::bridge) fn text_check_from(s: RString, off: usize) -> TextVerdict {
-    // SAFETY: `text_check` reads the bytes and the cached coderange, and runs
-    // no Ruby.
-    unsafe { with_bytes(s, |bytes| text_check(s, bytes.get(off..).unwrap_or(&[]))) }
+/// A live Ruby String's bytes from `off` (none past its end), copied into an
+/// owned buffer reserved for exactly them.
+pub fn ruby_string_bytes_from(ruby: &Ruby, s: RString, off: usize) -> Result<OwnedBuf, Error> {
+    let n = s.len().saturating_sub(off);
+    /* Nothing runs between the reservation and the copy that could change
+     * the String; `append_to` checks the room again, and refuses rather than
+     * grows. */
+    OwnedBuf::reserved(n, |v| s.append_to(ruby, off, v).is_ok())
+        .ok_or_else(|| makiri_error("out of memory reading a Ruby string"))
 }
 
 /// A live Ruby String's raw bytes, copied into an owned buffer.
-pub fn ruby_string_bytes(s: RString) -> Result<OwnedBuf, Error> {
-    // SAFETY: as `copy_bytes` - the copy runs no Ruby.
-    unsafe { with_bytes(s, OwnedBuf::copy_from) }
-        .ok_or_else(|| makiri_error("out of memory reading a Ruby string"))
+pub fn ruby_string_bytes(ruby: &Ruby, s: RString) -> Result<OwnedBuf, Error> {
+    ruby_string_bytes_from(ruby, s, 0)
 }
 
 /* ---- the strict text contract ---- */
@@ -300,7 +254,7 @@ fn verified_text_raising(
 ) -> Result<RubyText, Error> {
     use crate::cutf8::TextVerdict;
     let s = name_arg(in_)?;
-    RubyText::acquire(s, TextVerdict::InvalidUtf8, |b| {
+    RubyText::acquire(ruby, s, TextVerdict::InvalidUtf8, |b| {
         b.contains(&0).then_some(TextVerdict::HasNul)
     })
     .map_err(|r| match r {
@@ -322,7 +276,7 @@ fn verified_text_raising(
 pub fn ruby_verified_data(ruby: &Ruby, in_: Value, what: &str) -> Result<RubyData, Error> {
     let s = string_arg(in_)?;
     let not_utf8 = TextVerdict::InvalidUtf8.data_problem().unwrap_or_default();
-    RubyData::acquire(s, not_utf8, |_| None).map_err(|r| match r {
+    RubyData::acquire(ruby, s, not_utf8, |_| None).map_err(|r| match r {
         Refusal::Check(problem) => text_error(what, problem),
         Refusal::Oom => oom_reading(),
         Refusal::Encoding(e) => encoding_refusal(ruby, what, e),
@@ -355,30 +309,35 @@ pub(in crate::bridge) fn ruby_str_known_valid_utf8(str: RString) -> bool {
 /// [`ruby_try_verified_text`] for two Strings at once (a `{prefix => uri}`
 /// pair): both are live Strings.
 pub fn ruby_try_verified_text_pair(
+    ruby: &Ruby,
     a: RString,
     b: RString,
     max_bytes: usize,
 ) -> Result<(RubyText, RubyText), &'static str> {
-    let a = ruby_try_verified_text(a, max_bytes)?;
-    let b = ruby_try_verified_text(b, max_bytes)?;
+    let a = ruby_try_verified_text(ruby, a, max_bytes)?;
+    let b = ruby_try_verified_text(ruby, b, max_bytes)?;
     Ok((a, b))
 }
 
 /// The non-raising form: the checked view, or a static reason on rejection.
 /// Nothing is coerced: `sv` is a String by type.
-pub fn ruby_try_verified_text(sv: RString, max_bytes: usize) -> Result<RubyText, &'static str> {
+pub fn ruby_try_verified_text(
+    ruby: &Ruby,
+    sv: RString,
+    max_bytes: usize,
+) -> Result<RubyText, &'static str> {
     const TOO_LONG: &str = "string exceeds the maximum length";
     /* The cap is on the UTF-8 the String becomes, so it is measured after the
      * transcode: a UTF-16 String is twice its UTF-8 length. Refused before
      * the copy, so an over-long String is not copied whole only to be
      * refused; the check on the copy below stays authoritative. (`acquire`'s
      * own transcode is then a no-op on a String that is UTF-8 already.) */
-    let sv = utf8_strict(sv).map_err(|_| NOT_UTF8_CONVERTIBLE)?;
+    let sv = utf8_strict(ruby, sv).map_err(|_| NOT_UTF8_CONVERTIBLE)?;
     if sv.len() > max_bytes {
         return Err(TOO_LONG);
     }
     let not_utf8 = TextVerdict::InvalidUtf8.reason().unwrap_or_default();
-    RubyText::acquire(sv, not_utf8, |b| {
+    RubyText::acquire(ruby, sv, not_utf8, |b| {
         if b.len() > max_bytes {
             return Some(TOO_LONG);
         }
