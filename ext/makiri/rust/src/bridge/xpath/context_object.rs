@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use crate::bridge::rb::{Error, Value};
 use crate::bridge::ruby::makiri_error;
-use crate::bridge::typed::{Hooks, Tracer, TypedType};
+use crate::bridge::typed::{Payload, TypedType};
 
 use crate::bridge::string::ruby_try_verified_text;
 use crate::bridge::string::{ruby_verified_text, RubyText};
@@ -71,13 +71,18 @@ pub struct XPathCtx {
     ctx: Cx,
 }
 
-impl Hooks for XPathCtx {
-    /// Nothing: the Document and the context node are hidden ivars of the
-    /// context object, which the GC marks and moves itself.
-    fn trace(&self, _: &Tracer) {}
-
+/// No slots: the Document and the context node are hidden ivars of the
+/// context object, which the GC marks and moves itself.
+impl Payload for XPathCtx {
     fn memsize(&self) -> usize {
         core::mem::size_of::<Self>().saturating_add(self.cache_bytes.get())
+    }
+
+    /// The cache's report, which the free callback takes back - or the GC
+    /// keeps counting freed ASTs as live, the same balance `DocData` keeps
+    /// for its arena.
+    fn reported_external(&self) -> usize {
+        self.cache_bytes.get()
     }
 }
 
@@ -143,28 +148,15 @@ impl XPathCtxSelf {
     }
 }
 
-impl Drop for XPathCtx {
-    /// Take the cache's report back, or the GC keeps counting freed ASTs as
-    /// live - the same balance `DocData` keeps for its arena.
-    fn drop(&mut self) {
-        crate::no_unwind::must_not_unwind::<crate::no_unwind::DropXPathCtx, _>(|| {
-            /* Saturating: a negation that overflowed would panic in a free
-             * callback. */
-            let bytes = isize::try_from(self.cache_bytes.get()).unwrap_or(isize::MAX);
-            crate::bridge::ruby::report_external_bytes(0isize.saturating_sub(bytes));
-        })
-    }
-}
-
 impl XPathCtx {
     /// Count `added` more cached bytes, to `size` and to the GC: a context
     /// holding up to `AST_CACHE_MAX` parsed expressions is more than the few
     /// dozen bytes of its struct, and without the report the GC never sees it.
-    fn account_cache(&self, added: usize) {
+    fn account_cache(&self, ruby: &Ruby, added: usize) {
         if added != 0 {
             self.cache_bytes
                 .set(self.cache_bytes.get().saturating_add(added));
-            crate::bridge::ruby::report_external_bytes(added as isize);
+            crate::bridge::typed::report_external(ruby, added as isize);
         }
     }
 
@@ -204,12 +196,12 @@ impl XPathCtx {
         let obj = XPATH_CTX_TYPE.wrap(
             ruby,
             CLASS_XPATH_CONTEXT.defined(ruby)?,
-            || XPathCtx {
+            XPathCtx {
                 cache: RefCell::new(AstCache(HashMap::new())),
                 cache_bytes: Cell::new(0),
                 ctx,
             },
-            |_, _| {},
+            [],
         )?;
         /* The Document and the context node, as hidden ivars: ordinary Ruby
          * references. A write that raises leaves a context without them, so
@@ -234,7 +226,7 @@ impl XPathCtx {
         let mut cache = self.cache()?;
         let (ast, added) =
             cached_ast(&mut cache, self.ctx.limits(), ev).map_err(|error| xpath_error(&error))?;
-        self.account_cache(added);
+        self.account_cache(ruby, added);
         evaluate_to_ruby(ruby, &self.ctx, ast, document, Answer::All)
     }
 

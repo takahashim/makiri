@@ -159,7 +159,7 @@ pub fn xml_node_unwrap(ruby: &Ruby, rb_self: Value) -> Result<NodeId, Error> {
         XML_DOC_TYPE.get(&rb_self)?; /* TypeError for any other Document */
         return Ok(xml_read(&rb_self)?.doc_node());
     }
-    let nd = XML_NODE_TYPE.read(rb_self)?;
+    let nd = crate::bridge::wrapper::read_node(&XML_NODE_TYPE, rb_self)?;
     /* A wrapper's word is a real node; a null one is a broken invariant,
      * answered as `InternalError` directly rather than by a panic (which the
      * trampoline would also make one) - `XmlSelf::try_convert` reads it. */
@@ -182,7 +182,7 @@ pub fn xml_node_document(ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
     if crate::bridge::ruby::is_kind_of(ruby, rb_self, &CLASS_XML_DOCUMENT) {
         return Ok(rb_self);
     }
-    Ok(XML_NODE_TYPE.read(rb_self)?.document)
+    Ok(crate::bridge::wrapper::read_node(&XML_NODE_TYPE, rb_self)?.document)
 }
 
 /* ------------------------------------------------------------------ *
@@ -515,11 +515,11 @@ fn check_attr_owner_frozen(document: Value, id: NodeId) -> Result<(), Error> {
 
 /// The receiver cleared for an edit - not frozen, its document not under
 /// evaluation. The name index is dropped later, by [`Editing::with_arena`].
-pub fn begin_edit(this: &mut XmlSelf) -> Result<Editing<'_>, Error> {
+pub fn begin_edit<'a>(ruby: &Ruby, this: &'a mut XmlSelf) -> Result<Editing<'a>, Error> {
     check_frozen(this.value)?;
     check_attr_owner_frozen(this.document, this.id)?;
     /* Before any argument is converted: see `account_growth`. */
-    crate::bridge::wrapper::account_growth(this.document);
+    crate::bridge::wrapper::account_growth(ruby, this.document);
     Ok(Editing {
         receiver: this.value,
         document: this.document,
@@ -664,7 +664,7 @@ pub fn parse_xml_document(ruby: &Ruby, source: Value, limits: ParseLimits) -> Re
     let arena = result.map_err(|status| parse_status_error(status, Unit::Document))?;
     /* `src` is gone, so the collection `install`'s GC report may trigger
      * disturbs nothing. */
-    Ok(shell.install_xml(arena))
+    Ok(shell.install_xml(ruby, arena))
 }
 
 /// `Document#root` for an XML document: the root element, or nil.
@@ -686,7 +686,7 @@ pub fn copy_xml_document(ruby: &Ruby, document: Value) -> Result<Value, Error> {
      * copy then reads `document` and runs no Ruby. */
     let shell = DocumentShell::new(ruby, DocKind::Xml)?;
     let arena = crate::xml::mutate::copy_document(&*xml_read(&document)?).map_err(xml_mut_error)?;
-    Ok(shell.install_xml(arena))
+    Ok(shell.install_xml(ruby, arena))
 }
 
 /// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.
@@ -694,7 +694,7 @@ pub fn new_empty_xml_document(ruby: &Ruby) -> Result<Value, Error> {
     let shell = DocumentShell::new(ruby, DocKind::Xml)?;
     let arena =
         XmlDoc::create(None).map_err(|_| makiri_error("out of memory allocating XML document"))?;
-    Ok(shell.install_xml(arena))
+    Ok(shell.install_xml(ruby, arena))
 }
 
 /// Strict-decode `source` and parse it as a fragment into `document`'s arena,
@@ -829,7 +829,7 @@ pub fn insert(
     arg: Value,
     at: crate::xml::mutate::Place,
 ) -> Result<Value, Error> {
-    let edit = begin_edit(&mut this)?;
+    let edit = begin_edit(ruby, &mut this)?;
     let (node, adoption) = incoming_node(ruby, edit.document(), arg)?;
     /* An adoption writes the source too, so it is taken for the edit before
      * the copy is placed: a refusal then comes first, rather than after the

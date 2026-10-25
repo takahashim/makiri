@@ -14,7 +14,7 @@ use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, Value};
 
 use crate::bridge::html::{html_node_key, with_html_node};
-use crate::bridge::node_set::node_set_with_fill;
+use crate::bridge::node_set::FreshSet;
 use crate::bridge::node_wrap::wrap_doc_node;
 use crate::bridge::string::ruby_verified_text;
 use crate::bridge::wrapper::{html_read, xml_read, DocKind, NodeWord, DOC_TYPE};
@@ -225,9 +225,10 @@ impl QueryAst<'_> {
 fn val_to_ruby(ruby: &Ruby, v: ValRef<'_>, document: Value) -> Result<Value, Error> {
     Ok(match v {
         ValRef::NodeSet(set) => {
-            let (rb, fill) = node_set_with_fill(ruby, document)?;
-            fill.extend(set.as_slice().iter().map(|&n| NodeWord::of_token(n)))?;
-            rb
+            let rb = FreshSet::new(ruby, document)?;
+            rb.fill(ruby)
+                .extend(set.as_slice().iter().map(|&n| NodeWord::of_token(n)))?;
+            rb.value()
         }
         /* The bytes are the value's own, and valid UTF-8 - the engine builds
          * a Text only from input the text contract has passed. */
@@ -263,6 +264,7 @@ pub enum Answer {
 /// Evaluate `ast` under `ctx`. [`Answer::First`] takes the `at_xpath` fast
 /// path.
 pub fn evaluate_query(
+    ruby: &crate::bridge::rb::Ruby,
     ctx: &Cx,
     ast: &Ast,
     document: Value,
@@ -271,7 +273,7 @@ pub fn evaluate_query(
     let had_order = crate::bridge::wrapper::has_kept_order(document);
     let result = ctx.run(document, ast, answer);
     /* A document-order index the evaluate built is the document's now. */
-    crate::bridge::wrapper::account_kept_order(document, had_order);
+    crate::bridge::wrapper::account_kept_order(ruby, document, had_order);
     result?.map_err(|error| xpath_error(&error))
 }
 
@@ -290,7 +292,7 @@ pub fn evaluate_to_ruby<C: core::borrow::Borrow<Cx>>(
     document: Value,
     answer: Answer,
 ) -> Result<Value, Error> {
-    let value = evaluate_query(ctx.borrow(), ast.get(), document, answer);
+    let value = evaluate_query(ruby, ctx.borrow(), ast.get(), document, answer);
     drop(ast);
     drop(ctx);
     query_result(ruby, value?, document, answer)

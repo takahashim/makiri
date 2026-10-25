@@ -278,13 +278,17 @@ pub fn reveal(v: Value, klass: crate::nupur::rb::RClass) {
     unsafe { rb_sys::rb_obj_reveal(v.as_raw(), klass.as_raw()) };
 }
 
-/// Tell the GC about `delta` bytes held outside its heap (negative: given
-/// back). Memory Ruby does not allocate is otherwise invisible to it, and never
-/// triggers a collection.
-pub fn report_external_bytes(delta: isize) {
-    // SAFETY: a plain counter adjustment, with the GVL held - from a method
-    // or from Ruby's free hook, where it only subtracts.
-    unsafe { rb_sys::rb_gc_adjust_memory_usage(delta as rb_sys::ssize_t) };
+/// Is the current thread's (or Fiber's) Ruby-managed machine stack close to
+/// exhausted (`ruby_stack_check`)?
+///
+/// It takes no token, because the engine's recursion checks ask it through a
+/// plain function pointer, knowing nothing of Ruby; every such check runs in
+/// a registered method, with the GVL held.
+pub fn stack_low() -> bool {
+    // SAFETY: `ruby_stack_check` takes no argument, raises nothing, and reads
+    // only Ruby's own per-thread stack-bounds bookkeeping, which is valid
+    // whenever Ruby is running at all.
+    unsafe { rb_sys::ruby_stack_check() != 0 }
 }
 
 /* ---- exception messages ---- */
@@ -334,8 +338,14 @@ impl core::fmt::Display for ExceptionText<'_> {
 /// fallback of the reader below) rather than panicking.
 pub struct RbConst<T>(OnceLock<Opaque<T>>);
 
+impl<T: ReprValue> Default for RbConst<T> {
+    fn default() -> RbConst<T> {
+        RbConst::new()
+    }
+}
+
 impl<T: ReprValue> RbConst<T> {
-    pub(crate) const fn new() -> RbConst<T> {
+    pub const fn new() -> RbConst<T> {
         RbConst(OnceLock::new())
     }
 

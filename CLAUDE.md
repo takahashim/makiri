@@ -107,37 +107,43 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   a value left unmarked is freed while referenced - so they are proven
   unwind-free as they are. CI runs it in one cell.
 
-  **A VALUE inside a wrapped object is a `bridge::typed::Held`**, and a
-  `Held` that holds anything can only be made with a `Store`, which exists
-  only where the owner is already a Ruby object (`TypedType::wrap`'s store
-  step). So "store a VALUE into a struct only after its wrapper exists" -
-  the `DocData.errors` crash - is a type rule, not a convention: a struct is
-  built holding `Held::empty()`, and its `Hooks::trace` hands each `Held` it
-  keeps to the `Tracer`, which marks it PINNED. The type enforces that ORDER
-  only: that a `Held` stays where its owner's trace finds it is beyond the
-  type system, so reading one back (`Held::get`) is `unsafe` with that as
-  its contract, and both types are visible to `bridge/` alone.
-  **Only three `Held`s exist, each one field written once in the store
-  step**: a node wrapper's Document, a Document's node table, a NodeSet's
-  Document - the reads too hot for an ivar. Nothing re-points one and none
-  is movable, so there is no compaction callback and no relocation to get
-  wrong. Every other value a wrapper keeps alive is a hidden ivar of its
-  object (`raw::ivar_set` / `ivar_get`, names without `@`, so Ruby code
-  cannot see them): an XPathContext's Document and node (`#node=` is an
-  ivar write), a Document's errors. The node table - one wrapper per node,
-  so a node navigated to twice is the SAME object - is a Ruby Hash from the
-  node's token (a Fixnum) to its wrapper, which the GC marks and moves
-  itself, in place of the Rust map of movable values it replaced; its
-  entries are written only once the wrapper exists, and a wrapper is handed
-  out only once it is in the table. Measured against the Rust map
-  (`notes/magnus_replacement_plan.ja.md`): the light readers unchanged,
-  a cached traverse +4-8%, wrapping fresh nodes about +12%; moving the
-  node's and the NodeSet's Document to ivars too cost +15-65% and was not
-  taken. A `DocData`'s changing fields are cells, so the GC callbacks and
-  every method read a wrapper's data through `&T`: no `&mut` of it is made
-  at all.
+  **A VALUE a wrapped object keeps alive is one of its SLOTS, which `nupur`
+  owns** (`bridge::typed`, i.e. `nupur::typed`). An object's data is an
+  envelope: the payload `T` (a `Payload`, which holds no Ruby value at all)
+  and `N` slots (`TypedType<T, N>`, `EmbeddedType<T, N>`), written by
+  `wrap(ruby, klass, data, roots)` in the same step, right after the
+  object's allocation and with nothing run between - the roots were on the
+  caller's stack through it, where the stack scan pins them - and never
+  written again. The mark callback marks every slot PINNED in a fixed loop,
+  so there is no per-type trace to forget, and "store a VALUE into a struct
+  only after its wrapper exists" - the `DocData.errors` crash - has no step
+  to happen in. A slot is read back by `root_known::<I>()` (`I < N` checked
+  when it compiles; no runtime check, since the hot path reads a node's
+  Document) or with an embedded payload by `read`. Nothing re-points a slot
+  and none is movable, so there is no compaction callback.
+  **Three objects have a slot, each one**: a node wrapper (its Document,
+  `NodeWrapperType`), a Document (its node table, `DocType`), a NodeSet (its
+  Document, `NodeSetType`) - the reads too hot for an ivar. Every other value
+  a wrapper keeps alive is a hidden ivar of its object (`raw::ivar_set` /
+  `ivar_get`, names without `@`, so Ruby code cannot see them): an
+  XPathContext's Document and node (`#node=` is an ivar write), a Document's
+  errors. The node table - one wrapper per node, so a node navigated to
+  twice is the SAME object - is a Ruby Hash from the node's token (a Fixnum)
+  to its wrapper, which the GC marks and moves itself, in place of the Rust
+  map of movable values it replaced; its entries are written only once the
+  wrapper exists, and a wrapper is handed out only once it is in the table.
+  Measured against the Rust map (`notes/magnus_replacement_plan.ja.md`): the
+  light readers unchanged, a cached traverse +4-8%, wrapping fresh nodes
+  about +12%; moving the node's and the NodeSet's Document to ivars too cost
+  +15-65% and was not taken. A `DocData`'s changing fields are cells, so the
+  GC callbacks and every method read a wrapper's data through `&T`: no
+  `&mut` of it is made at all. **Memory reported to the GC** (an arena, a
+  NodeSet's heap, an XPathContext's AST cache) is reported with a token
+  (`typed::report_external`) and given back by `nupur`'s free callback,
+  which reads `Payload::reported_external` before the drop: no `Drop` of
+  Makiri's calls Ruby.
   The other half - no Ruby value kept where the GC's stack scan cannot
-  see it (a `Vec`, a `Box`, a static or `thread_local!`, a `Hooks` type's
+  see it (a `Vec`, a `Box`, a static or `thread_local!`, a `Payload` type's
   own field) - is `rake dylint`'s `ruby_value_on_heap`,
   which reads the types; it is why raw `VALUE`s stay in `bridge/raw.rs` and
   `bridge/typed.rs`, since a lint sees a `VALUE` only as an integer. What it
@@ -148,11 +154,12 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   freeing memory. Compaction moves that data with the object, so a
   `&NodeData` held across anything that can allocate would point at where
   it was - and `EmbeddedType` has no `get` to hand one out: a reader takes
-  `read`'s copy (`NodeRef`, the handle and the Document, from `NodeData`'s
-  `Snapshot`), and only the GC callbacks and that snapshot see the data in
+  `read`'s copy (the payload is `Copy`; `read_node` makes it a `NodeRef`,
+  the handle and the Document), and only the GC callbacks see the data in
   place. A new embedded type goes through `EmbeddedType` too. (The NodeSet
   was not embedded for this reason: its fill holds `&NodeSet` across its own
-  growth.)
+  growth - borrowed from the `FreshSet` that owns the new set, never with a
+  lifetime of its own.)
 
   **Every C call that can raise is a wrapper in `bridge/raw.rs`, and every
   wrapper runs it under `rb_protect` and returns `Result`.** A raise is a
@@ -186,10 +193,9 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   (`rake dylint`'s `raw_ruby_outside_bridge`, which also fails on any
   `rb_sys::` outside `bridge/`), so
   everything else holds typed values; `TypedType::wrap` is safe for that
-  reason (`&Ruby`, and a `T` can keep a Ruby value only in a `Held`). A
-  `Held` is a private field beside the `trace` that marks it, read through
-  that module's accessor (`NodeData`'s snapshot, `node_table`,
-  `NodeSet::document`).
+  reason (`&Ruby`, and a payload keeps no Ruby value - its roots are slots).
+  `bridge/` itself is `#![forbid(unsafe_code)]` from its root down: every
+  `unsafe` that reads Ruby's memory or calls its C is `nupur`'s.
 
   **A Document's content is reached only through a guard** (`bridge::dom`,
   over `crate::doc_cell`, which is Ruby-free so its `compile_fail` doctests
@@ -1618,7 +1624,7 @@ Key decisions that got there, worth not regressing:
   each expression once and re-runs the cached AST (bounded by `AST_CACHE_MAX`).
   `Node#xpath` uses a throwaway context and does not cache.
 - **Every Document reports its arena to the GC** (`account_document`, which
-  `DocumentShell::install` calls; `impl Drop for DocData` takes the report back). Neither
+  `DocumentShell::install` calls; the free callback takes the report back, through `Payload::reported_external`). Neither
   arena, HTML or XML, is an `xmalloc`, so without the report Ruby
   sees a parsed Document as ~56 bytes and NO collection is triggered by memory
   pressure: `500.times { Makiri::HTML(html) }` ran with zero GCs, 2.2 GB RSS,

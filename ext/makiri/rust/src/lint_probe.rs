@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use crate::bridge::rb::Opaque;
 use crate::bridge::rb::{RString, Value};
 
-use crate::bridge::typed::{Hooks, Tracer};
+use crate::bridge::typed::Payload;
 
 struct Kept {
     values: Vec<(Value, u32)>, //~
@@ -23,9 +23,7 @@ struct Data {
     value: Value, //~
 }
 
-impl Hooks for Data {
-    fn trace(&self, _: &Tracer) {}
-}
+impl Payload for Data {}
 
 type Strings = Vec<RString>;
 

@@ -65,7 +65,7 @@ declare_lint! {
     /// a heap container (`Box`, `Vec`, `VecDeque`, `HashMap`, `HashSet`,
     /// `BTreeMap`, `BTreeSet`, `Rc`, `Arc`, ...), in a `static` or
     /// `thread_local!`, or directly in the data of a wrapped Ruby object (a
-    /// Makiri `Hooks` type).
+    /// Makiri `Payload` type).
     ///
     /// ### Why is this bad?
     /// Ruby's GC finds values by scanning the machine stack. A value kept on
@@ -77,7 +77,7 @@ declare_lint! {
     /// let kept: Vec<RString> = strings.collect();
     /// ```
     /// Use instead: keep the values on the stack, in a Ruby Array, or - in a
-    /// wrapped object's data - in a field its mark traces (`Held`, `Opaque`).
+    /// wrapped object - in one of its slots (`TypedType`'s `roots`).
     pub RUBY_VALUE_ON_HEAP,
     Deny,
     "a Ruby value kept where Ruby's GC cannot see it"
@@ -248,7 +248,7 @@ thread_local! {
 }
 
 /// `bridge::rb::ReprValue`, and the wrapped-object data trait,
-/// `bridge::typed::Hooks`.
+/// `bridge::typed::Payload`.
 fn traits<'tcx>(cx: &LateContext<'tcx>) -> (Option<DefId>, Vec<DefId>) {
     TRAITS.with(|cell| {
         let t = cell.get_or_init(|| {
@@ -259,7 +259,7 @@ fn traits<'tcx>(cx: &LateContext<'tcx>) -> (Option<DefId>, Vec<DefId>) {
                 }
                 match cx.tcx.item_name(did).as_str() {
                     "ReprValue" => t.repr_value = Some(did),
-                    "Hooks" => t.wrapped.push(did),
+                    "Payload" => t.wrapped.push(did),
                     _ => {}
                 }
             }

@@ -102,11 +102,11 @@ pub fn replace(ruby: &Ruby, mut this: HtmlSelf, rb_other: Value) -> Result<Value
 }
 
 /// `node.remove` / `node.unlink` -> node.
-pub fn remove(_ruby: &Ruby, mut this: HtmlSelf) -> Result<Value, Error> {
+pub fn remove(ruby: &Ruby, mut this: HtmlSelf) -> Result<Value, Error> {
     if !dom_rules::removable(this.read()?.node().node_type()) {
         return Err(makiri_error(DOCUMENT_NOT_REMOVABLE));
     }
-    let edit = edit(&mut this)?;
+    let edit = edit(ruby, &mut this)?;
     /* An Attr leaves its element's attribute list: an attribute edit,
      * which changes no child list - as the XML side's `remove` is. */
     if edit.node_type()? == NodeType::Attribute {
@@ -133,7 +133,7 @@ pub fn aset(
     rb_value: Value,
 ) -> Result<Value, Error> {
     const REFUSAL: &str = "cannot set an attribute on a non-element node";
-    let edit = edit(&mut this)?;
+    let edit = edit(ruby, &mut this)?;
     if edit.node_type()? != NodeType::Element {
         return Err(makiri_error(REFUSAL));
     }
@@ -156,7 +156,7 @@ pub fn set_attribute_ns(
     rb_value: Value,
 ) -> Result<Value, Error> {
     const REFUSAL: &str = "cannot set an attribute on a non-element node";
-    let edit = edit(&mut this)?;
+    let edit = edit(ruby, &mut this)?;
     if edit.node_type()? != NodeType::Element {
         return Err(makiri_error(REFUSAL));
     }
@@ -187,7 +187,7 @@ pub fn remove_attribute_ns(
     rb_ns: Value,
     rb_local: Value,
 ) -> Result<Value, Error> {
-    let edit = edit(&mut this)?;
+    let edit = edit(ruby, &mut this)?;
     if edit.node_type()? != NodeType::Element {
         return Ok(ruby.qnil().as_value());
     }
@@ -202,7 +202,7 @@ pub fn remove_attribute_ns(
 
 /// `node.content = text` -> text.
 pub fn set_content(ruby: &Ruby, mut this: HtmlSelf, rb_text: Value) -> Result<Value, Error> {
-    let edit = edit(&mut this)?;
+    let edit = edit(ruby, &mut this)?;
     let tv = ruby_verified_data(ruby, rb_text, "node content")?;
     /* An Attr's content is its value, an attribute edit; a Text, Comment,
      * CDATA or PI node's is its data. Neither changes a child list. A
@@ -221,7 +221,7 @@ pub fn set_content(ruby: &Ruby, mut this: HtmlSelf, rb_text: Value) -> Result<Va
 /// `element.delete(name)` -> self.
 pub fn delete(ruby: &Ruby, mut this: HtmlSelf, rb_name: Value) -> Result<Value, Error> {
     let rb_self = this.value;
-    let edit = edit(&mut this)?;
+    let edit = edit(ruby, &mut this)?;
     if edit.node_type()? != NodeType::Element {
         return Ok(rb_self);
     }
@@ -237,7 +237,7 @@ pub fn delete(ruby: &Ruby, mut this: HtmlSelf, rb_name: Value) -> Result<Value, 
 /// All or nothing: the new content is parsed and imported into a detached
 /// fragment first, and only then are the old children swapped for it.
 pub fn set_inner_html(ruby: &Ruby, mut this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
-    let edit = edit(&mut this)?;
+    let edit = edit(ruby, &mut this)?;
     if edit.node_type()? != NodeType::Element {
         return Err(makiri_error("inner_html= requires an element"));
     }
@@ -271,7 +271,7 @@ pub fn set_inner_html(ruby: &Ruby, mut this: HtmlSelf, rb_html: Value) -> Result
 /// receiver left a parent read earlier stale, and the new content went
 /// nowhere.)
 pub fn set_outer_html(ruby: &Ruby, mut this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
-    let edit = edit(&mut this)?;
+    let edit = edit(ruby, &mut this)?;
     /* A String only, transcoded before the edit - nothing inside it may
      * run Ruby. */
     let src = HtmlSource::from_ruby(ruby, string_arg(rb_html)?)?;
@@ -319,7 +319,7 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Val
     check_dom_name(&nv, dom_name::valid_element_local_name, "element")?;
     created(
         ruby,
-        new_node(&rb_self, |d| d.create_element(nv.as_bytes()))?,
+        new_node(ruby, &rb_self, |d| d.create_element(nv.as_bytes()))?,
         rb_self,
         "element",
     )
@@ -350,7 +350,7 @@ pub fn create_element_ns(
     )?;
     created(
         ruby,
-        new_node(&rb_self, |d| d.create_element_ns(local, ns, prefix))?,
+        new_node(ruby, &rb_self, |d| d.create_element_ns(local, ns, prefix))?,
         rb_self,
         "element",
     )
@@ -388,7 +388,7 @@ pub fn create_loose_dom_element(
     let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
     created(
         ruby,
-        new_node(&rb_self, |d| {
+        new_node(ruby, &rb_self, |d| {
             d.create_element_ns(lv.as_bytes(), ns, prefix.unwrap_or_default())
         })?,
         rb_self,
@@ -402,7 +402,7 @@ pub fn create_text_node(ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<V
     let tv = ruby_verified_data(ruby, rb_text, "text content")?;
     created(
         ruby,
-        new_node(&rb_self, |d| d.create_text(tv.as_bytes()))?,
+        new_node(ruby, &rb_self, |d| d.create_text(tv.as_bytes()))?,
         rb_self,
         "text node",
     )
@@ -414,7 +414,7 @@ pub fn create_comment(ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Val
     let tv = ruby_verified_data(ruby, rb_text, "comment content")?;
     created(
         ruby,
-        new_node(&rb_self, |d| d.create_comment(tv.as_bytes()))?,
+        new_node(ruby, &rb_self, |d| d.create_comment(tv.as_bytes()))?,
         rb_self,
         "comment",
     )
@@ -439,7 +439,9 @@ pub fn create_pi(
         "processing instruction target",
     )?;
     /* ... and the data must not hold `?>` - the factory's rule. */
-    match new_node(&rb_self, |d| d.create_pi(tv.as_bytes(), dv.as_bytes()))? {
+    match new_node(ruby, &rb_self, |d| {
+        d.create_pi(tv.as_bytes(), dv.as_bytes())
+    })? {
         Ok(n) => created(ruby, Some(n), rb_self, "processing instruction"),
         Err(CreatePiError::ClosingInData) => Err(Error::new(
             crate::bridge::rb::Builtin::ArgumentError,
@@ -474,7 +476,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
     let sv = verified(rb_sys_, "doctype system id")?;
     created(
         ruby,
-        new_node(&rb_self, |d| {
+        new_node(ruby, &rb_self, |d| {
             d.create_doctype(
                 nv.as_bytes(),
                 pv.as_ref().map(|v| v.as_bytes()),
@@ -491,7 +493,7 @@ pub fn create_document_fragment(ruby: &Ruby, rb_self: Value) -> Result<Value, Er
     check_owning_doc(&rb_self)?;
     created(
         ruby,
-        new_node(&rb_self, |d| d.create_fragment())?,
+        new_node(ruby, &rb_self, |d| d.create_fragment())?,
         rb_self,
         "document fragment",
     )

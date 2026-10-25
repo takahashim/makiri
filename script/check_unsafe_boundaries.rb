@@ -34,10 +34,6 @@ RUST_FILES = Dir.glob(File.join(RUST, "**", "*.rs")).sort
 # (the unsafe did not disappear, it moved); what ratchets is the total, and the
 # summary prints the `glue/` + `xpath/` subtotal that must reach 0.
 UNSAFE_ISLANDS = {
-  "bridge/node_set.rs" => 2,
-  "bridge/stack.rs" => 1,
-  "bridge/wrapper/document.rs" => 1,
-  "bridge/wrapper/node.rs" => 1,
   "falloc/mod.rs" => 1,
   "lexbor/abi.rs" => 4,
   "lexbor/adapter/arena_bytes.rs" => 14,
@@ -70,7 +66,7 @@ UNSAFE_ISLANDS = {
   "nupur/rb/method.rs" => 8,
   "nupur/rb/ruby.rs" => 5,
   "nupur/rb/value.rs" => 18,
-  "nupur/typed.rs" => 27,
+  "nupur/typed.rs" => 28,
   "utf8_copy.rs" => 1,
 }.freeze
 
@@ -82,53 +78,55 @@ UNSAFE_ISLANDS = {
 # The subtree roots in FORBID_ROOTS make whole directories compiler-forbidden:
 # `forbid` is inherited, so a new file under `glue/` or `xpath/` cannot slip in
 # with an `allow`, however few its `unsafe`s.
-FORBID_ROOTS = %w[css/mod.rs glue/mod.rs css_match/mod.rs selectors/mod.rs xml/mod.rs xpath/mod.rs].freeze
+FORBID_ROOTS = %w[bridge/mod.rs css/mod.rs glue/mod.rs css_match/mod.rs selectors/mod.rs xml/mod.rs
+                  xpath/mod.rs].freeze
 
 FORBID_FILES = %w[
   bridge/doc.rs bridge/dom.rs bridge/dom_error.rs
-  bridge/fragment.rs bridge/html.rs bridge/node_wrap.rs
-  bridge/ruby.rs bridge/string/build.rs bridge/string/encoding.rs
+  bridge/fragment.rs bridge/html.rs bridge/mod.rs
+  bridge/node_set.rs bridge/node_wrap.rs bridge/ruby.rs
+  bridge/stack.rs bridge/string/build.rs bridge/string/encoding.rs
   bridge/string/source.rs bridge/string/view.rs bridge/wrapper/accounting.rs
-  bridge/wrapper/edit.rs bridge/xml.rs bridge/xml_decode.rs
-  bridge/xpath/context_object.rs bridge/xpath/mod.rs cbuf.rs
-  child_index.rs conformance/mod.rs css/build.rs
-  css/lower.rs css/mod.rs css_cache.rs
-  css_match/mod.rs cutf8.rs cutf8/verify.rs
-  doc_cell.rs dom_rules.rs engine_error.rs
-  falloc/verify.rs glue/css.rs glue/html_doc.rs
-  glue/html_node/css.rs glue/html_node/mutate.rs glue/html_node/read.rs
-  glue/html_node/serialize.rs glue/mod.rs glue/node.rs
-  glue/node_set.rs glue/query.rs glue/xml_doc.rs
-  glue/xml_node/css.rs glue/xml_node/mod.rs glue/xml_node/mutate.rs
-  glue/xml_node/ns.rs glue/xml_node/read.rs glue/xml_node/serialize.rs
-  glue/xpath_context.rs gvl.rs html/dom/mod.rs
-  html/encoding/mod.rs html/mod.rs html/tokenizer/mod.rs
-  html/tree/mod.rs html_dom.rs lexbor/contains_guard.rs
-  limits.rs node_type.rs nupur/build.rs
-  nupur/msg.rs nupur/rb/convert.rs nupur/rb/error.rs
-  ptr_table.rs rust_tests.rs selectors/mod.rs
-  selectors/stylesheet.rs selectors/text.rs source_lines.rs
-  stack.rs text.rs token.rs
-  utf8_input.rs xml/arena.rs xml/attr_key.rs
-  xml/chars/expand.rs xml/chars/mod.rs xml/css.rs
-  xml/css_tests.rs xml/dom_name.rs xml/encoding_names.rs
-  xml/encoding_sniff.rs xml/index.rs xml/mod.rs
-  xml/model.rs xml/mutate/attr.rs xml/mutate/copy.rs
-  xml/mutate/edit.rs xml/mutate/factory.rs xml/mutate/insert.rs
-  xml/mutate/mod.rs xml/mutate/ns.rs xml/ns_scope.rs
-  xml/qname.rs xml/selftest.rs xml/serialize/bindings.rs
-  xml/serialize/c14n.rs xml/serialize/mod.rs xml/serialize/out.rs
-  xml/serialize/xml.rs xml/tree/cursor.rs xml/tree/decl.rs
-  xml/tree/dtd.rs xml/tree/mod.rs xml/tree/scope.rs
-  xml/verify.rs xml/xpath.rs xpath/abi.rs
-  xpath/ast.rs xpath/ast_ops.rs xpath/attr_pred.rs
-  xpath/axis.rs xpath/ctx.rs xpath/dom.rs
-  xpath/eval.rs xpath/funcs/css_hooks.rs xpath/funcs/ext.rs
-  xpath/funcs/mod.rs xpath/lex.rs xpath/limits.rs
-  xpath/mod.rs xpath/nodetest.rs xpath/number.rs
-  xpath/order.rs xpath/parse.rs xpath/step_index.rs
-  xpath/str_cache.rs xpath/tests.rs xpath/value.rs
-  xpath/verify.rs
+  bridge/wrapper/document.rs bridge/wrapper/edit.rs bridge/wrapper/node.rs
+  bridge/xml.rs bridge/xml_decode.rs bridge/xpath/context_object.rs
+  bridge/xpath/mod.rs cbuf.rs child_index.rs
+  conformance/mod.rs css/build.rs css/lower.rs
+  css/mod.rs css_cache.rs css_match/mod.rs
+  cutf8.rs cutf8/verify.rs doc_cell.rs
+  dom_rules.rs engine_error.rs falloc/verify.rs
+  glue/css.rs glue/html_doc.rs glue/html_node/css.rs
+  glue/html_node/mutate.rs glue/html_node/read.rs glue/html_node/serialize.rs
+  glue/mod.rs glue/node.rs glue/node_set.rs
+  glue/query.rs glue/xml_doc.rs glue/xml_node/css.rs
+  glue/xml_node/mod.rs glue/xml_node/mutate.rs glue/xml_node/ns.rs
+  glue/xml_node/read.rs glue/xml_node/serialize.rs glue/xpath_context.rs
+  gvl.rs html/dom/mod.rs html/encoding/mod.rs
+  html/mod.rs html/tokenizer/mod.rs html/tree/mod.rs
+  html_dom.rs lexbor/contains_guard.rs limits.rs
+  node_type.rs nupur/build.rs nupur/msg.rs
+  nupur/rb/convert.rs nupur/rb/error.rs ptr_table.rs
+  rust_tests.rs selectors/mod.rs selectors/stylesheet.rs
+  selectors/text.rs source_lines.rs stack.rs
+  text.rs token.rs utf8_input.rs
+  xml/arena.rs xml/attr_key.rs xml/chars/expand.rs
+  xml/chars/mod.rs xml/css.rs xml/css_tests.rs
+  xml/dom_name.rs xml/encoding_names.rs xml/encoding_sniff.rs
+  xml/index.rs xml/mod.rs xml/model.rs
+  xml/mutate/attr.rs xml/mutate/copy.rs xml/mutate/edit.rs
+  xml/mutate/factory.rs xml/mutate/insert.rs xml/mutate/mod.rs
+  xml/mutate/ns.rs xml/ns_scope.rs xml/qname.rs
+  xml/selftest.rs xml/serialize/bindings.rs xml/serialize/c14n.rs
+  xml/serialize/mod.rs xml/serialize/out.rs xml/serialize/xml.rs
+  xml/tree/cursor.rs xml/tree/decl.rs xml/tree/dtd.rs
+  xml/tree/mod.rs xml/tree/scope.rs xml/verify.rs
+  xml/xpath.rs xpath/abi.rs xpath/ast.rs
+  xpath/ast_ops.rs xpath/attr_pred.rs xpath/axis.rs
+  xpath/ctx.rs xpath/dom.rs xpath/eval.rs
+  xpath/funcs/css_hooks.rs xpath/funcs/ext.rs xpath/funcs/mod.rs
+  xpath/lex.rs xpath/limits.rs xpath/mod.rs
+  xpath/nodetest.rs xpath/number.rs xpath/order.rs
+  xpath/parse.rs xpath/step_index.rs xpath/str_cache.rs
+  xpath/tests.rs xpath/value.rs xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/

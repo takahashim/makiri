@@ -3,7 +3,7 @@
 //!
 //! Ruby's GC finds a value by scanning the machine stack. One in a `Vec`, a
 //! `Box`, a `HashMap` or any other heap allocation, in a `static`, or in the
-//! data of a wrapped object (a `Hooks` type, which lives in Ruby's heap) is
+//! data of a wrapped object (a `Payload` type, which lives in Ruby's heap) is
 //! invisible to that scan: the object can be collected, or moved by
 //! compaction, while the Rust side still holds it. It is the rule every Ruby
 //! extension lives by ("Ruby objects must be kept on the stack", as magnus put
@@ -11,8 +11,9 @@
 //!
 //! What is not reported: a value behind a reference or a raw pointer (the
 //! value itself is elsewhere), and one inside `bridge::rb::Opaque`, which is
-//! registered as a mark root. Makiri's `Held` holds a raw `VALUE`, not a
-//! `ReprValue` type, and is traced by its owner.
+//! registered as a mark root. The values a wrapped object keeps alive are its
+//! slots, which `nupur::typed` owns and marks - outside the payload, so a
+//! payload holds none at all.
 
 use crate::{RUBY_VALUE_ON_HEAP, traits};
 use clippy_utils::diagnostics::span_lint_and_help;
@@ -143,8 +144,8 @@ fn check_ty<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>, span: Span, what: &str) 
             span,
             format!("{what} keeps a Ruby value in `{container}`, where the GC does not see it"),
             None,
-            "keep Ruby values on the stack or in a Ruby Array; in a wrapped object's data, \
-             use a field its mark traces (`Held`, `Opaque`)",
+            "keep Ruby values on the stack or in a Ruby Array; for a wrapped object, \
+             in one of its slots (`TypedType`'s `roots`)",
         );
     }
 }
@@ -223,10 +224,10 @@ pub(crate) fn check_item<'tcx>(cx: &LateContext<'tcx>, item: &'tcx Item<'tcx>) {
                         cx,
                         RUBY_VALUE_ON_HEAP,
                         span,
-                        "a wrapped object's data holds a Ruby value its mark does not trace"
+                        "a wrapped object's data holds a Ruby value, which no mark traces"
                             .to_owned(),
                         None,
-                        "hold it in a `Held` (traced by the owner's `Hooks::trace`) or an `Opaque`",
+                        "keep it in one of the object's slots (`TypedType`'s `roots`), or an `Opaque`",
                     );
                 } else {
                     check_ty(cx, fty, span, "this field");

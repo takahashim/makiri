@@ -1,14 +1,14 @@
 //! The node wrapper: the word a wrapper stores, its TypedData types, and
 //! the accessors that read a node out of any wrapper.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
 use crate::bridge::rb::Ruby;
 
 use crate::bridge::rb::{Error, Value};
 
 use super::*;
-use crate::bridge::typed::{EmbeddedType, Held, Hooks, Snapshot, Store, Tracer};
+use crate::bridge::typed::EmbeddedType;
 use crate::html_dom::html::{HtmlNodeKey, RawNode};
 use crate::init::CLASS_DOCUMENT;
 use crate::token::Token;
@@ -143,39 +143,22 @@ impl NodeHandle {
     }
 }
 
-/// A node wrapper's data: the node plus the keepalive Document.
+/// A node wrapper's data: the node. The keepalive Document is the object's
+/// one slot (slot 0 of [`NodeType`]).
 ///
 /// The node is owned by the document's arena (HTML or XML), so the wrapper
-/// never frees it; the Document reference is what keeps it alive, and marking
-/// it is the wrapper's whole GC job.
+/// never frees it; the Document in the slot is what keeps it alive, and the
+/// slot's mark is the wrapper's whole GC job, which `nupur` does.
+#[derive(Clone, Copy)]
 pub struct NodeData {
     /// Representation-opaque; read it only through a kind-checked accessor.
     pub node: NodeHandle,
-    /// Private to this module, beside the `trace` that marks it: the one
-    /// reader is [`NodeData::document`].
-    document: Held,
 }
 
-impl NodeData {
-    /// A node's data, its Document stored once it is wrapped
-    /// ([`NodeData::hold_document`]).
-    pub(in crate::bridge) fn new(node: NodeHandle) -> NodeData {
-        NodeData {
-            node,
-            document: Held::empty(),
-        }
-    }
+impl crate::bridge::typed::Payload for NodeData {}
 
-    /// Store the Document the node keeps alive - in the wrap's store step,
-    /// the only place a [`Store`] exists for a fresh wrapper.
-    pub(in crate::bridge) fn hold_document(&mut self, store: &Store, document: Value) {
-        self.document = store.hold(document);
-    }
-}
-
-/// What a node wrapper's data holds, copied out: the only way it is read
-/// (`EmbeddedType::read`), since the data is embedded and moves with its
-/// object.
+/// What a node wrapper holds, copied out: the only way it is read
+/// ([`read_node`]), since the data is embedded and moves with its object.
 #[derive(Clone, Copy)]
 pub struct NodeRef {
     pub node: NodeHandle,
@@ -183,43 +166,36 @@ pub struct NodeRef {
     pub document: Value,
 }
 
-impl Snapshot for NodeData {
-    type Copy = NodeRef;
+/// A node wrapper's type: [`NodeData`], and the Document in slot 0.
+pub type NodeWrapperType = EmbeddedType<NodeData, 1>;
 
-    /// Safe: `document` is a private field that this module's `trace` marks
-    /// (pinned), and the snapshot is taken through the wrapper, which the
-    /// caller holds - and so the field's mark is alive. (One built but not
-    /// yet wrapped holds `false`.)
-    fn snapshot(&self) -> NodeRef {
-        NodeRef {
-            node: self.node,
-            // SAFETY: see above.
-            document: unsafe { self.document.get() },
-        }
-    }
+/// `v`'s node and Document, or Ruby's own `TypeError` when `v` is not of
+/// `ty` (or a type deriving from it).
+#[inline]
+pub fn read_node(ty: &'static NodeWrapperType, v: Value) -> Result<NodeRef, Error> {
+    let (data, [document]) = ty.read(v)?;
+    Ok(NodeRef {
+        node: data.node,
+        document,
+    })
 }
 
 /* Measured: `NodeHandle` fits two words (the `NonNull`/`NonZero` niches carry
- * the discriminant), so `NodeData` is three words - one more than the two-word
- * `NodeWord` + `VALUE` it replaced. Pinned as a growth ratchet: a field that
- * pushes wrapper data past three words fails the build. */
+ * the discriminant), so a node wrapper's data - the handle and its one slot -
+ * is three words, one more than the two-word `NodeWord` + `VALUE` it
+ * replaced. Pinned as a growth ratchet: a field that pushes wrapper data past
+ * three words fails the build. */
 const _: () = assert!(
-    core::mem::size_of::<NodeData>() <= 24,
-    "NodeData grew past three words; re-measure the wrapper cost before raising this"
+    core::mem::size_of::<NodeData>() + core::mem::size_of::<Value>() <= 24,
+    "a node wrapper's data grew past three words; re-measure the wrapper cost before raising this"
 );
 
-impl Hooks for NodeData {
-    fn trace(&self, tracer: &Tracer) {
-        tracer.pinned(&self.document);
-    }
-}
+pub static NODE_DATA_TYPE: NodeWrapperType = EmbeddedType::base(c"Makiri::Node".as_ptr());
 
-pub static NODE_DATA_TYPE: EmbeddedType<NodeData> = EmbeddedType::base(c"Makiri::Node".as_ptr());
-
-pub static HTML_NODE_TYPE: EmbeddedType<NodeData> =
+pub static HTML_NODE_TYPE: NodeWrapperType =
     EmbeddedType::derived(c"Makiri::HTML::Node".as_ptr(), &NODE_DATA_TYPE);
 
-pub static XML_NODE_TYPE: EmbeddedType<NodeData> =
+pub static XML_NODE_TYPE: NodeWrapperType =
     EmbeddedType::derived(c"Makiri::XML::Node".as_ptr(), &NODE_DATA_TYPE);
 
 /// Which representation a wrapped Ruby node is, decided by its TypedData type
@@ -286,7 +262,7 @@ pub fn node_raw(ruby: &Ruby, rb_node: Value) -> Result<NodeWord, Error> {
         });
     }
     /* TypeError for a non-node, as TypedData_Get_Struct raised. */
-    Ok(match NODE_DATA_TYPE.read(rb_node)?.node {
+    Ok(match read_node(&NODE_DATA_TYPE, rb_node)?.node {
         NodeHandle::Html(key) => NodeWord::from(key.raw_node()),
         NodeHandle::Xml(id) => NodeWord::from(id),
     })
@@ -329,5 +305,5 @@ pub fn keepalive_document(ruby: &Ruby, rb_node: Value) -> Result<Value, Error> {
     if crate::bridge::ruby::is_kind_of(ruby, rb_node, &CLASS_DOCUMENT) {
         return Ok(rb_node);
     }
-    Ok(NODE_DATA_TYPE.read(rb_node)?.document)
+    Ok(read_node(&NODE_DATA_TYPE, rb_node)?.document)
 }

@@ -2,7 +2,7 @@
 //! node table, [`DocumentShell`], and the accessors that reach a Document's
 //! content.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
 use crate::bridge::rb::Ruby;
 use core::cell::{Cell, OnceCell, RefCell};
@@ -12,7 +12,7 @@ use crate::bridge::ruby::{internal_error, makiri_error};
 
 use super::*;
 use crate::bridge::dom::{Body, Conflict, HtmlRead, HtmlWrite, XmlRead, XmlWrite};
-use crate::bridge::typed::{Held, Hooks, Tracer, TypedType};
+use crate::bridge::typed::{Payload, TypedType};
 use crate::child_index::ChildPositionMemo;
 use crate::html_dom::post_parse::HtmlParsed;
 use crate::init::RbConst;
@@ -49,7 +49,8 @@ impl EditState {
 }
 
 /// What the GC was last told about a Document's content, which lives outside
-/// Ruby's allocator ([`account_document`]): `Drop` takes back exactly `bytes`,
+/// Ruby's allocator ([`account_document`]): the free callback takes back exactly
+/// `bytes` (`Payload::reported_external`),
 /// and [`account_growth`] compares against it.
 #[derive(Clone, Copy, Default)]
 pub(super) struct ExternalReport {
@@ -78,11 +79,6 @@ impl ExternalReport {
         self.bytes = now;
         Some(diff)
     }
-
-    /// What to report when the content is freed: everything reported, back.
-    fn release(&self) -> Option<isize> {
-        isize::try_from(self.bytes).ok().map(isize::wrapping_neg)
-    }
 }
 
 /// A Document wrapper's data: the parsed content (owned - GC frees it), the
@@ -98,6 +94,8 @@ pub struct DocData {
     /// guards of `bridge::dom` ([`html_read`], [`html_write`], [`xml_read`],
     /// [`xml_write`]).
     content: OnceCell<Body>,
+    /* The node table is not here: it is the object's slot 0 ([`DocType`],
+     * read by `node_table`). */
     /// The mutation gate and the edit versions ([`EditState`]).
     pub(super) edits: Cell<EditState>,
     /// The node table: one Ruby wrapper per node, so navigating to the same
@@ -105,13 +103,6 @@ pub struct DocData {
     /// fresh wrapper, and everything that lives on a Ruby object was lost:
     /// `equal?`, an instance variable, a singleton method, `freeze`.
     ///
-    /// A Ruby Hash from the node's TOKEN (a `NodeId` for XML, an arena node
-    /// word for HTML, stable for the document's life: neither arena reuses a
-    /// node) to its wrapper. A Ruby Hash rather than a Rust map, so the GC
-    /// marks the wrappers and moves them itself, and a Rust struct holds no
-    /// table of values to mark and relocate; this one pinned field is all.
-    /// The cost is Nokogiri's: a wrapper lives as long as its document.
-    nodes: Held,
     /// What the GC has been told about the content ([`ExternalReport`]).
     pub(super) report: Cell<ExternalReport>,
     /// Where `child_count` / `child_at` last were ([`ChildPositionMemo`]).
@@ -163,11 +154,7 @@ impl DocData {
     }
 }
 
-impl Hooks for DocData {
-    fn trace(&self, tracer: &Tracer) {
-        tracer.pinned(&self.nodes);
-    }
-
+impl Payload for DocData {
     fn memsize(&self) -> usize {
         /* A size only, so a cell found borrowed counts as empty. */
         let memo = self.child_memo.try_borrow().map_or(0, |m| m.memsize());
@@ -181,40 +168,40 @@ impl Hooks for DocData {
             .saturating_add(content)
             .saturating_add(memo)
     }
-}
 
-/// Run by the free callback, in Ruby's collector - so it must not panic (the
-/// callback aborts rather than unwind into C) and must touch no Ruby object.
-/// A `DocData` exists only in the memory `TypedType::wrap` gave it, so this
-/// is the one place a Document's content is freed - by drop glue, after this
-/// body.
-impl Drop for DocData {
-    fn drop(&mut self) {
-        crate::no_unwind::must_not_unwind::<crate::no_unwind::DropDocData, _>(|| {
-            /* Balance the report, or the GC keeps counting freed arenas as
-             * live and collects ever more eagerly. A plain C call, as this
-             * hook has to be: it only subtracts, and Ruby's own `xfree` does
-             * the same from here. */
-            if let Some(diff) = self.report.get().release() {
-                crate::bridge::ruby::report_external_bytes(diff);
-            }
-        })
+    /// Everything reported for the content, which the free callback gives
+    /// back once the content is dropped - or the GC keeps counting freed
+    /// arenas as live and collects ever more eagerly.
+    fn reported_external(&self) -> usize {
+        self.report.get().bytes
     }
 }
 
+/// A Document wrapper's type: [`DocData`], and in slot 0 the node table.
+///
+/// The node table: one Ruby wrapper per node, so navigating to the same node
+/// twice gives the SAME object. Without it every navigation made a fresh
+/// wrapper, and everything that lives on a Ruby object was lost: `equal?`,
+/// an instance variable, a singleton method, `freeze`. A Ruby Hash from the
+/// node's TOKEN (a `NodeId` for XML, an arena node word for HTML, stable for
+/// the document's life: neither arena reuses a node) to its wrapper - a Ruby
+/// Hash rather than a Rust map, so the GC marks the wrappers and moves them
+/// itself, and the one slot is all the Document marks. The cost is
+/// Nokogiri's: a wrapper lives as long as its document.
+pub type DocType = TypedType<DocData, 1>;
+
 /// The base type: the kind-agnostic accessors (`doc_content`, `#errors`) accept
 /// either representation.
-pub static DOC_TYPE: TypedType<DocData> = TypedType::base(c"Makiri::Document".as_ptr());
+pub static DOC_TYPE: DocType = TypedType::base(c"Makiri::Document".as_ptr());
 
 /// HTML and XML Documents share the layout and the GC functions but are wrapped
 /// under DISTINCT types deriving from the base, so `html_doc_unwrap` - which
 /// reinterprets the handle as an HTML document - raises TypeError on an XML
 /// Document through Ruby's own type machinery rather than relying on an assert
 /// that NDEBUG erases.
-pub static HTML_DOC_TYPE: TypedType<DocData> =
+pub static HTML_DOC_TYPE: DocType =
     TypedType::derived(c"Makiri::HTML::Document".as_ptr(), &DOC_TYPE);
-pub static XML_DOC_TYPE: TypedType<DocData> =
-    TypedType::derived(c"Makiri::XML::Document".as_ptr(), &DOC_TYPE);
+pub static XML_DOC_TYPE: DocType = TypedType::derived(c"Makiri::XML::Document".as_ptr(), &DOC_TYPE);
 
 /// Which leaf class a Document wrapper is.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -281,10 +268,9 @@ impl DocumentShell {
                 &XML_DOC_TYPE,
             ),
         };
-        /* The errors array is built before the wrap and kept in a local, so the
-         * conservative stack scan pins it across the wrap's allocation and the
-         * store closure does not allocate (an allocation there could raise
-         * NoMemoryError while the caller holds a live resource). */
+        /* The errors array and the node table are built before the wrap and
+         * kept in locals, so the conservative stack scan pins them across the
+         * wrap's allocation; the table goes into the slot with the data. */
         let errors = crate::bridge::rb::ReprValue::as_value(crate::bridge::build::ary(ruby, 0)?);
         let nodes = crate::bridge::rb::ReprValue::as_value(crate::bridge::raw::hash_new(ruby)?);
         /* Hidden, so no Ruby code reaches the table through `ObjectSpace` to
@@ -294,14 +280,13 @@ impl DocumentShell {
         let obj = ty.wrap(
             ruby,
             klass,
-            || DocData {
+            DocData {
                 content: OnceCell::new(),
                 edits: Cell::new(EditState::default()),
-                nodes: Held::empty(),
                 report: Cell::new(ExternalReport::default()),
                 child_memo: RefCell::new(ChildPositionMemo::default()),
             },
-            |d, store| d.nodes = store.hold(nodes),
+            [nodes],
         )?;
         /* Hidden whether or not the ivar write succeeds: a failure there must
          * not leave a content-less Document where `ObjectSpace` lists it. */
@@ -313,26 +298,26 @@ impl DocumentShell {
 
     /// Give the HTML Document its parsed document - the GC owns it from here -
     /// and report the arena's size.
-    pub fn install_html(self, parsed: Box<HtmlParsed>) -> Value {
-        self.install(Body::Html(crate::doc_cell::DocCell::new(parsed)))
+    pub fn install_html(self, ruby: &crate::bridge::rb::Ruby, parsed: Box<HtmlParsed>) -> Value {
+        self.install(ruby, Body::Html(crate::doc_cell::DocCell::new(parsed)))
     }
 
     /// Give the XML Document its arena, as [`install_html`](Self::install_html).
-    pub fn install_xml(self, arena: Box<XmlDoc>) -> Value {
-        self.install(Body::Xml(crate::doc_cell::DocCell::new(arena)))
+    pub fn install_xml(self, ruby: &crate::bridge::rb::Ruby, arena: Box<XmlDoc>) -> Value {
+        self.install(ruby, Body::Xml(crate::doc_cell::DocCell::new(arena)))
     }
 
     #[allow(
         clippy::panic,
         reason = "`new` makes the wrapper without content, and only `install` - which takes the shell - gives it some"
     )]
-    fn install(self, content: Body) -> Value {
+    fn install(self, ruby: &crate::bridge::rb::Ruby, content: Body) -> Value {
         /* `self.obj` is a Document wrapper with no content yet, so nothing is
          * overwritten. */
         if DOC_TYPE.get_known(&self.obj).content.set(content).is_err() {
             panic!("a Document installed twice");
         }
-        account_document(self.obj);
+        account_document(ruby, self.obj);
         /* Content in place: the Document can be seen now. */
         crate::bridge::ruby::reveal(self.obj, self.klass);
         self.obj
@@ -508,7 +493,7 @@ impl NodeClasses {
 /// `wrap_*_node` functions call this, each for its own kind.
 pub(in crate::bridge) fn wrap_cached(
     ruby: &Ruby,
-    ty: &'static crate::bridge::typed::EmbeddedType<NodeData>,
+    ty: &'static NodeWrapperType,
     klass: crate::bridge::rb::RClass,
     source: impl NodeHandleSource,
     document: Value,
@@ -519,12 +504,7 @@ pub(in crate::bridge) fn wrap_cached(
         return Ok(cached);
     }
     let node = source.into_handle(document);
-    let fresh = ty.wrap(
-        ruby,
-        klass,
-        || NodeData::new(node),
-        |nd, store| nd.hold_document(store, document),
-    )?;
+    let fresh = ty.wrap(ruby, klass, NodeData { node }, [document])?;
     /* The table entry: a Ruby reference, which the GC marks and moves
      * itself. A failure leaves `fresh` unseen and unreferenced. */
     crate::bridge::raw::table_set(table, token, fresh)?;
@@ -533,9 +513,7 @@ pub(in crate::bridge) fn wrap_cached(
 
 /// The Document's node table (see `DocumentShell::new`).
 fn node_table(document: Value) -> Result<crate::bridge::rb::RHash, Error> {
-    // SAFETY: a field of the Document's data, which its mark marks; the
-    // caller holds the Document.
-    crate::bridge::rb::RHash::from_value(unsafe { doc_data_known(&document).nodes.get() })
+    crate::bridge::rb::RHash::from_value(DOC_TYPE.root_known::<0>(&document))
         .ok_or_else(|| internal_error("a Document without its node table"))
 }
 
