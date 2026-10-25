@@ -248,6 +248,12 @@ XPath の独自関数（Nokogiri の handler）は受け付けない。
   捨て、同じ順序で解放する。
 * Ruby wrapper は自分が属する document を GC mark し、wrapper が
   生きている限り arena を keepalive する (HTML/XML 共通)。
+* ラップしたオブジェクトが生かしておく Ruby の値は、Ruby との境界の層が
+  持つスロットにだけ置く。payload (Rust の構造体) は Ruby の値を持たない。
+  スロットはオブジェクトの確保の直後に payload と一緒に一度だけ書き、
+  mark はスロットを全部 pinned で mark する。型ごとの trace を書かないので、
+  mark の書き忘れも、オブジェクトになる前に値を入れる誤りも起きない。
+  中身が揃う前のオブジェクトは、作った直後から隠しておき、揃ってから見せる。
 * wrapper は node ごとに 1 つとし、document がその対応表を持つ。同じ
   node を 2 度辿れば同じ Ruby object を返すので、object に載せたもの
   (`equal?`、instance variable、singleton method、`freeze`) が失われない。
@@ -257,8 +263,13 @@ XPath の独自関数（Nokogiri の handler）は受け付けない。
   ではなく例外にする (§5)。一方 Ruby 側の記憶域 (wrapper、NodeSet の
   配列) は Ruby のアロケータで確保し、OOM は Ruby 自身の
   `NoMemoryError` に委ねる。その raise は大域脱出なので、raise しうる C の
-  呼び出しはすべて `bridge/raw.rs` の中で `rb_protect` の下に置き、`Err`
-  として戻す（Rust のフレームを飛び越えさせない）。
+  呼び出しはすべて Ruby との境界の層 (`nupur` の `raw`) の中で
+  `rb_protect` の下に置き、`Err` として戻す（Rust のフレームを飛び越え
+  させない）。
+* Ruby の外に持つメモリ (arena、NodeSet の配列、XPathContext の AST の
+  cache) は GC に報告する。報告は GVL を持つ場所で行い、返却は境界の層の
+  free の callback が、payload の申告した量をもとに行う。Makiri の `Drop`
+  は Ruby の関数を呼ばない。
 * 索引や cache は「document に属し、mutation で捨てる」ようにする。
   破棄の hook は極力集約する。
   また索引は評価のたびに document から取り直す。
@@ -317,6 +328,18 @@ CSS/serialize/読み取りアクセサも GVL を保持する。`spec/threading_
   探索木、tree builder のタグの分類と調整表) は、Lexbor のヘッダとソース
   と WHATWG の `entities.json` から生成し、手で転記しない。生成物は
   Lexbor の表と要素ごとに一致することをテストで確かめる。
+* 拡張は二つのクレートの workspace とする。Ruby との境界の層 (`nupur`、
+  rb-sys の上) は、Ruby と話すための `unsafe` をすべて持ち、safe な型だけを
+  外に出す。拡張 (`makiri_rs`) はそれに依存し、境界の層は拡張に依存しない
+  ので、層が拡張の都合を知ることはない。拡張が層に渡す必要のあるもの
+  (内部エラーの例外クラス、raise の注入の hook) は、初期化のときに登録する。
+  拡張の Ruby 側 (`bridge`、`glue`) は `unsafe` を書かない。
+* GVL を持っている証拠のトークンは、Ruby が呼ぶ入口 (メソッドの trampoline
+  と初期化関数) だけが作る。その補助関数は `unsafe` で、`unsafe` を書けない
+  拡張のコードからは、マクロの展開を通してしか呼べない。
+* 拡張は `cdylib` だけとしてビルドする。fuzz のクレートが使う `rlib` を
+  同時に作ると rustc は LTO を行わず、境界の層への呼び出しがクレートを
+  またぐ不透明な呼び出しになる。
 * crate のフィーチャは七つ。`ruby` (Ruby との境界、既定)、`html-dom`
   (index アリーナの HTML DOM とその上の CSS の照合、XPath の HTML 実装。
   `ruby` と `lexbor` が含む)、`lexbor` (vendored Lexbor を読む参照の層)、

@@ -20,8 +20,9 @@
 //! only through `bridge::raw`, whose every wrapper catches the raise and hands
 //! it back the same way - Ruby's allocator's `NoMemoryError` included, so
 //! the glue builds its Arrays, Hashes and Strings through `bridge::build` and
-//! `bridge::string`. `rake unsafe:boundaries` holds the raising C calls to
-//! `bridge/raw.rs`, each inside its protected `call`.
+//! `bridge::string`. `rake dylint`'s `raising_call_outside_protect` holds the
+//! raising C calls to `nupur::raw` (`bridge::raw`), each inside its protected
+//! `call` - and the extension cannot name one at all, not depending on rb-sys.
 //!
 //! **Nothing Ruby crosses into a GVL-released closure.** Not a `Value`, not a
 //! `Ruby` handle: `bridge::gvl::without_gvl` takes only a `Send` body, and a

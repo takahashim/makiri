@@ -8,8 +8,8 @@
 //! `bridge::raw`'s protected calls.
 //!
 //! Like any Ruby value in an extension, one is good while the GC can find it:
-//! on the machine stack (the conservative scan), or in a field a mark traces
-//! (`bridge::typed::Held`). `rake dylint`'s `ruby_value_on_heap` reports one
+//! on the machine stack (the conservative scan), or in a wrapped object's slot
+//! (`typed::TypedType`'s `roots`). `rake dylint`'s `ruby_value_on_heap` reports one
 //! kept anywhere else, by the [`ReprValue`] these implement.
 
 #![allow(unsafe_code)]

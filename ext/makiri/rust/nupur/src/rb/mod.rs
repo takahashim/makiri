@@ -9,7 +9,7 @@
 //! makes that can raise is a `bridge::raw` wrapper under `rb_protect`, and
 //! nothing raises until a method's trampoline has returned from the method
 //! (`method::finish`). So the C functions Makiri trusts are the ones
-//! `bridge/raw.rs` names, and no other code stands between them and the glue.
+//! `raw.rs` names, and no other code stands between them and the glue.
 
 pub mod class;
 pub mod convert;

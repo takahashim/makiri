@@ -78,7 +78,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   Lexbor callbacks carry it too (`lexbor::selectors`' traversal,
   `lexbor::chunks::chunk_cb`, `tree_guard::hook_token_cb`).
   Two `extern "C"` functions have no latch ON PURPOSE. The GC callbacks in
-  `bridge/typed.rs` run where nothing can be raised and a half-freed object is
+  `nupur/src/typed.rs` run where nothing can be raised and a half-freed object is
   worse than a stop, so they keep aborting - keep their bodies trivial. The
   `rb_protect` thunk of `bridge::raw::call` holds one C call and the `Copy`
   values it reads (`F: Copy`, `T: Copy`), so there is no Rust there to panic
@@ -153,8 +153,8 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   The other half - no Ruby value kept where the GC's stack scan cannot
   see it (a `Vec`, a `Box`, a static or `thread_local!`, a `Payload` type's
   own field) - is `rake dylint`'s `ruby_value_on_heap`,
-  which reads the types; it is why raw `VALUE`s stay in `bridge/raw.rs` and
-  `bridge/typed.rs`, since a lint sees a `VALUE` only as an integer. What it
+  which reads the types; it is why raw `VALUE`s stay in `nupur/src/raw.rs` and
+  `nupur/src/typed.rs`, since a lint sees a `VALUE` only as an integer. What it
   cannot see is a temporary handed straight to a call (`f(vec![v])`).
   A node wrapper's `NodeData` is EMBEDDED in its object's slot
   (`bridge::typed::EmbeddedType`, `RUBY_TYPED_EMBEDDABLE`, Ruby 3.3+): one
@@ -169,7 +169,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   growth - borrowed from the `FreshSet` that owns the new set, never with a
   lifetime of its own.)
 
-  **Every C call that can raise is a wrapper in `bridge/raw.rs`, and every
+  **Every C call that can raise is a wrapper in `nupur/src/raw.rs` (`bridge::raw`), and every
   wrapper runs it under `rb_protect` and returns `Result`.** A raise is a
   `longjmp` over every Rust frame up to the nearest `rb_protect`, and crossing
   a frame with a `Drop` or a `catch_unwind` is undefined behaviour; so each
@@ -407,7 +407,7 @@ bundle exec rake oom               # OOM-injection sweep: rebuilds with
                                    # (clean raise or baseline-identical result), then
                                    # reuses the same document/context after GC.compact.
                                    # Then the raise sweep (script/check_raise_injection.rb):
-                                   # each allocating C call of bridge/raw.rs raises
+                                   # each allocating C call of nupur's raw.rs raises
                                    # NoMemoryError in turn, and no document may be left
                                    # borrowed (`Makiri.__borrowed?`) or unusable - the
                                    # runtime check of the guards-across-raises rule.
@@ -706,7 +706,7 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            `function!` trampolines, class definitions), which
                            replaced magnus under its names; `raw.rs` is every
                            raising C call Makiri makes. It is also where
-                           the C calls that can raise (`bridge/raw.rs`) and the
+                           the C calls that can raise (`nupur/src/raw.rs`) and the
                            wrap-then-store constructor live; a raise becomes `Err`
                            there. `rake unsafe:boundaries` pins that boundary:
                            the crate denies `unsafe_code` (`lib.rs`), so every
@@ -718,7 +718,7 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            (their module roots carry
                            `#![forbid(unsafe_code)]`, which the gate pins);
                            `rake dylint` holds `rb_sys::` to `bridge/` and the
-                           C calls that can raise to `bridge/raw.rs`, and
+                           C calls that can raise to `nupur`'s `raw.rs`, and
                            `Value::from_raw` is `pub(in crate::bridge)`. A
                            borrowed HTML handle made a lifetime-free `RawNode`
                            in `bridge/` is `raw_node_crossing`, each crossing
