@@ -47,6 +47,27 @@ RSpec.describe "GC accounting of document arenas" do
     expect(ObjectSpace.memsize_of(ctx)).to eq(grown)
   end
 
+  # A NodeSet's node array is a Vec of the extension's, outside Ruby's heap,
+  # reported as it grows and taken back when the set is freed.
+  describe "a NodeSet's node array" do
+    let(:big) { Makiri::HTML("<ul>#{"<li></li>" * 100_000}</ul>") }
+
+    it "is the set's memsize" do
+      set = big.css("li")
+      expect(ObjectSpace.memsize_of(set)).to be >= 100_000 * 8
+    end
+
+    it "lets memory pressure from dropped sets trigger a collection" do
+      doc = big
+      GC.start
+      before = GC.count
+      # ~800 KB a set, past malloc_limit_max (32 MB) in all, with the
+      # Document kept alive: only the sets' reports can account for it.
+      64.times { doc.css("li") }
+      expect(GC.count).to be > before
+    end
+  end
+
   it "lets memory pressure from dropped HTML documents trigger a collection" do
     GC.start
     before = GC.count

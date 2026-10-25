@@ -88,7 +88,6 @@ const ENGINE: &[&str] = &[
     "text",
     "token",
     "utf8_input",
-    "raw_vec",
     "utf8_copy",
     "msg",
     "css_match",

@@ -25,9 +25,10 @@
 //! quietly go around the sweep.
 //!
 //! The `bridge`'s Ruby-side storage is the deliberate exception: a TypedData
-//! wrapper's data (`rb_data_typed_object_zalloc`) and a NodeSet's node array
-//! (`bridge::alloc::RubyVec`) are Ruby's memory, freed by Ruby; they never
-//! reach this counter, and `rake oom`'s raise sweep fails them instead.
+//! wrapper's data (`rb_data_typed_object_zalloc`) is Ruby's memory, freed by
+//! Ruby; it never reaches this counter, and `rake oom`'s raise sweep fails it
+//! instead. A NodeSet's node array is this crate's (a `Vec` grown here),
+//! reported to Ruby's GC as it grows.
 //!
 //! # The counter
 //!

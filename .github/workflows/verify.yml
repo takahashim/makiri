@@ -110,8 +110,8 @@ jobs:
           KANI_JOBS: "4"
         run: bundle exec rake kani
 
-  # Miri over the Ruby-free modules that hold `unsafe` (`raw_vec`,
-  # `utf8_copy`, `falloc`)
+  # Miri over the Ruby-free modules that hold `unsafe` (`utf8_copy`,
+  # `falloc`)
   # and the buffer built on them (`cbuf`): their tests run on Miri's
   # interpreter, which reports undefined behaviour - an out-of-bounds or
   # dangling access, a misaligned or provenance-less pointer - that a test on
@@ -135,10 +135,10 @@ jobs:
         env:
           MIRIFLAGS: "-Zmiri-strict-provenance"
         # Quoted: an unquoted `name:: ` would be read as a YAML mapping.
-        run: "cargo +nightly miri test --no-default-features --lib -- raw_vec:: utf8_copy:: falloc:: cbuf:: ptr_table::"
+        run: "cargo +nightly miri test --no-default-features --lib -- utf8_copy:: falloc:: cbuf:: ptr_table::"
 
-  # Verus over ext/makiri/rust/verus/: `falloc::grow_capacity`, `RawVec`,
-  # `ptr_table` and `cbuf::Buf` (copied, and checked against the source by
+  # Verus over ext/makiri/rust/verus/: `falloc::grow_capacity`,
+  # `ptr_table`, `cbuf::Buf` and `limits::admit` (copied, and checked against the source by
   # `rake verus:sync`), unbounded where Kani is bounded, each with canaries
   # that must fail. Verus is a pinned release
   # (Rakefile's VERUS_VERSION) and brings the Rust toolchain it names.

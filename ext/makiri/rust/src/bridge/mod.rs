@@ -18,8 +18,6 @@
 //! holds the few places a raising C function is still called, and turns each
 //! raise into an `Err` there.
 
-pub mod alloc;
-
 /// The Arrays, Hashes, numbers and Symbols the glue builds, allocation
 /// failures as `Err`.
 pub mod build;
