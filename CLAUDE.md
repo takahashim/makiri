@@ -128,7 +128,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   `NodeWrapperType`), a Document (its node table, `DocType`), a NodeSet (its
   Document, `NodeSetType`) - the reads too hot for an ivar. Every other value
   a wrapper keeps alive is a hidden ivar of its object (`raw::ivar_set` /
-  `ivar_get`, names without `@`, so Ruby code cannot see them): an
+  `rb::value::ivar_get`, names without `@`, so Ruby code cannot see them): an
   XPathContext's Document and node (`#node=` is an ivar write), a Document's
   errors. The node table - one wrapper per node, so a node navigated to
   twice is the SAME object - is a Ruby Hash from the node's index in its
@@ -143,10 +143,12 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   +15-65% and was not taken. A `DocData`'s changing fields are cells, so the
   GC callbacks and every method read a wrapper's data through `&T`: no
   `&mut` of it is made at all. **Memory reported to the GC** (an arena, a
-  NodeSet's heap, an XPathContext's AST cache) is reported with a token
-  (`typed::report_external`) and given back by `nupur`'s free callback,
-  which reads `Payload::reported_external` before the drop: no `Drop` of
-  Makiri's calls Ruby. An object whose data is not complete when it is
+  NodeSet's heap, an XPathContext's AST cache) is reported through a
+  `typed::External` the payload keeps - the only way a report is made, the
+  change since the last one going to the GC - and given back by `nupur`'s
+  free callback, which reads `Payload::reported_external` (the
+  `External`'s `reported()`) before the drop: no `Drop` of Makiri's calls
+  Ruby. An object whose data is not complete when it is
   made - a Document before its content (`DocumentShell`), an XPathContext
   before its ivars - is made by `wrap_hidden`, which writes its hidden
   ivars while it still has its class (generic ivar storage may read it) and
@@ -158,7 +160,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   The other half - no Ruby value kept where the GC's stack scan cannot
   see it (a `Vec`, a `Box`, a static or `thread_local!`, a `Payload` type's
   own field) - is `rake dylint`'s `ruby_value_on_heap`,
-  which reads the types; it is why raw `VALUE`s stay in `nupur/src/raw.rs` and
+  which reads the types; it is why raw `VALUE`s stay in `nupur/src/raw/` and
   `nupur/src/typed.rs`, since a lint sees a `VALUE` only as an integer. What it
   cannot see is a temporary handed straight to a call (`f(vec![v])`).
   A node wrapper's `NodeData` is EMBEDDED in its object's slot
@@ -174,17 +176,29 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   growth - borrowed from the `FreshSet` that owns the new set, never with a
   lifetime of its own.)
 
-  **Every C call that can raise is a wrapper in `nupur/src/raw.rs` (`bridge::raw`), and every
+  **Every C call that can raise is a wrapper in `nupur/src/raw/` (`bridge::raw`), and every
   wrapper runs it under `rb_protect` and returns `Result`.** A raise is a
   `longjmp` over every Rust frame up to the nearest `rb_protect`, and crossing
   a frame with a `Drop` or a `catch_unwind` is undefined behaviour; so each
   wrapper hands its one C call to `raw::call`, whose `extern "C"` thunk is the
   only frame a raise crosses, and the raise comes back as `Err`. A caller may
   then own copies, hold document guards and build Ruby objects in any order.
-  `rake dylint`'s `raising_call_outside_protect` fails on one called outside
-  the closure handed to `bridge::raw::call`, by resolved path - and `call` is
-  private to `raw.rs`, so that is also where they all are; a new raising call
-  is a new wrapper with its raise stated. The glue builds Arrays, Hashes, numbers
+  Which C functions can raise is ONE table, in `lints/makiri_lints`
+  (`raising.rs`'s `NON_RAISING`: the functions that cannot, each with its
+  reason); every other rb-sys function is taken to raise, so an unclassified
+  one is refused until someone classifies it - the list of RAISING functions
+  it replaced let `rb_undef_alloc_func` and `rb_obj_freeze` through.
+  `raising_call_outside_protect` fails on such a call outside the closure
+  handed to `raw::call` (a function that raises only for what its caller
+  rules out, `rb_obj_is_kind_of` with a non-class, is an `allow` at its
+  site saying so), and `unraising_call_in_raw` holds `raw` to what it is: a
+  call of Ruby's C in `raw` outside `call` (a read that raises nothing is
+  `rb::value`'s, or `rb::method`'s for the current frame), or a `call` that
+  protects nothing, is the table and the code disagreeing. `call` is
+  `raw::protect`'s, with the rest of the protection - `$!` taken and kept,
+  a `break` / `throw` pending until the trampoline resumes it - and the
+  calls that raise on purpose, the one part of `raw` outside the rule; a new
+  raising call is a new wrapper with its raise stated. The glue builds Arrays, Hashes, numbers
   and Symbols through `bridge::build`, Strings through
   `bridge::string::utf8_str`, and every wrapped object - a NodeSet included -
   through `typed::TypedType::wrap`, each over those wrappers. Each
@@ -203,7 +217,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   whose `fill` writes front to back through an `Unwritten` and must reach
   the end. A raw `VALUE` - an integer to
   Rust, which no lint can tell from a `u64` in a `Vec` - is spelled only in
-  `raw.rs`, `typed.rs` and the `bridge::rb` files that are the typed values
+  `raw/`, `int.rs`, `typed.rs` and the `bridge::rb` files that are the typed values
   (`rake dylint`'s `raw_ruby_outside_bridge`, which also fails on any
   `rb_sys::` outside `bridge/`), so
   everything else holds typed values; `TypedType::wrap` is safe for that
@@ -375,7 +389,9 @@ bundle exec rake dylint            # the crate's own lints (lints/makiri_lints),
                                    # (a Ruby value in a heap container, a static or a
                                    # wrapped object's data), ruby_layer_in_engine,
                                    # unguarded_no_unwind_site, ruby_in_gvl_released_body,
-                                   # infallible_allocation, raising_call_outside_protect,
+                                   # infallible_allocation, raising_call_outside_protect
+                                   # (any rb-sys fn not in NON_RAISING, outside
+                                   # raw::call), unraising_call_in_raw,
                                    # raw_ruby_outside_bridge, runs_callers_ruby,
                                    # raw_node_crossing, ruby_surface_in_bridge,
                                    # discarded_ruby_error (an Err of bridge::rb::Error
@@ -433,7 +449,7 @@ bundle exec rake oom               # OOM-injection sweep: rebuilds with
                                    # (clean raise or baseline-identical result), then
                                    # reuses the same document/context after GC.compact.
                                    # Then the raise sweep (script/check_raise_injection.rb):
-                                   # each allocating C call of nupur's raw.rs raises
+                                   # each allocating C call of nupur's raw/ raises
                                    # NoMemoryError in turn, and no document may be left
                                    # borrowed (`Makiri.__borrowed?`) or unusable - the
                                    # runtime check of the guards-across-raises rule.
@@ -738,9 +754,9 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            its value and method layer over rb-sys (`Value` and the
                            class-checked handles, `Error`, the `method!` /
                            `function!` trampolines, class definitions), which
-                           replaced magnus under its names; `raw.rs` is every
+                           replaced magnus under its names; `raw` is every
                            raising C call Makiri makes. It is also where
-                           the C calls that can raise (`nupur/src/raw.rs`) and the
+                           the C calls that can raise (`nupur/src/raw/`) and the
                            wrap-then-store constructor live; a raise becomes `Err`
                            there. `rake unsafe:boundaries` pins that boundary:
                            the crate denies `unsafe_code` (`lib.rs`), so every
@@ -752,7 +768,7 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            (their module roots carry
                            `#![forbid(unsafe_code)]`, which the gate pins);
                            `rake dylint` holds `rb_sys::` to `bridge/` and the
-                           C calls that can raise to `nupur`'s `raw.rs`, and
+                           C calls that can raise to `nupur`'s `raw/`, and
                            `Value::from_raw` is `pub(in crate::bridge)`. A
                            borrowed HTML handle made a lifetime-free `RawNode`
                            in `bridge/` is `raw_node_crossing`, each crossing

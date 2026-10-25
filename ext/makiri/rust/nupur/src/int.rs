@@ -74,6 +74,27 @@ pub(crate) fn posfixable(n: u64) -> Option<c_long> {
     posfixable_in::<c_long>(n)
 }
 
+/// The Fixnum `n` is, as Ruby's `LONG2FIX` makes it - `(n << 1) | 1`, the
+/// `long` sign-extended to a `VALUE` - or `None` past a Fixnum's range
+/// (past 2^30 - 1 on Windows). Built from its bits here, where the tests
+/// hold it to rb-sys's `long2fix`, so a caller needs no proof of the GVL for
+/// what is arithmetic.
+#[inline]
+pub(crate) fn fixnum(n: i64) -> Option<rb_sys::VALUE> {
+    fixable(n).map(fixnum_bits)
+}
+
+/// [`fixnum`] for an unsigned value.
+#[inline]
+pub(crate) fn posfixnum(n: u64) -> Option<rb_sys::VALUE> {
+    posfixable(n).map(fixnum_bits)
+}
+
+#[inline]
+fn fixnum_bits(l: c_long) -> rb_sys::VALUE {
+    ((l as rb_sys::VALUE) << 1) | rb_sys::FIXNUM_FLAG as rb_sys::VALUE
+}
+
 /// A non-negative `long` the C API answered as a length (`RSTRING_LEN`,
 /// `RARRAY_LEN`): a `usize`, and 0 for a negative one, which no length is.
 #[inline]
@@ -98,26 +119,16 @@ fn as_ulong(n: u64) -> Option<core::ffi::c_ulong> {
 /// A word Ruby hands out (a `VALUE`) as a `usize`: the two are the same
 /// width on every target, a `VALUE` being C's `uintptr_t`.
 #[inline]
-pub fn word(v: rb_sys::VALUE) -> usize {
+pub(crate) fn word(v: rb_sys::VALUE) -> usize {
     const _: () = assert!(size_of::<rb_sys::VALUE>() == size_of::<usize>());
     v as usize
 }
 
 /// A `usize` as a `u64`, which holds every one on every target Rust has.
 #[inline]
-pub fn wide(n: usize) -> u64 {
+pub(crate) fn wide(n: usize) -> u64 {
     const _: () = assert!(usize::BITS <= u64::BITS);
     n as u64
-}
-
-/// `to - from`, as the signed change a memory report takes, saturating.
-#[inline]
-pub fn change(from: usize, to: usize) -> isize {
-    if to >= from {
-        isize::try_from(to - from).unwrap_or(isize::MAX)
-    } else {
-        isize::try_from(from - to).map_or(isize::MIN, |d| -d)
-    }
 }
 
 #[cfg(test)]
@@ -166,11 +177,22 @@ mod tests {
         }
     }
 
+    /// A Fixnum built from its bits is the one `long2fix` makes, and reads
+    /// back as the number it was made from.
     #[test]
-    fn a_change_saturates() {
-        assert_eq!(change(3, 10), 7);
-        assert_eq!(change(10, 3), -7);
-        assert_eq!(change(0, usize::MAX), isize::MAX);
-        assert_eq!(change(usize::MAX, 0), isize::MIN);
+    fn a_fixnum_is_long2fix() {
+        let api = get_default();
+        let max = i64::from(rb_sys::special_consts::FIXNUM_MAX);
+        let min = i64::from(rb_sys::special_consts::FIXNUM_MIN);
+        for n in [0, 1, -1, 42, -42, max, min] {
+            let l = fixable(n).unwrap();
+            let v = fixnum(n).unwrap();
+            assert_eq!(v, api.long2fix(l), "{n}");
+            assert_eq!(i64::from(api.fix2long(v)), n, "{n}");
+        }
+        assert_eq!(posfixnum(max as u64), fixnum(max));
+        assert_eq!(posfixnum(max as u64 + 1), None);
+        assert_eq!(fixnum(max + 1), None);
+        assert_eq!(fixnum(min - 1), None);
     }
 }

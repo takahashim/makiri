@@ -94,8 +94,9 @@ pub mod rb;
 /// Every Ruby C call that can raise, each under `rb_protect`.
 pub mod raw;
 
-/// Every conversion between Rust's integer widths and C's `long`.
-pub mod int;
+/// Every conversion between Rust's integer widths and C's `long` - the
+/// layer's own: what it hands an extension is in Rust's widths.
+pub(crate) mod int;
 
 /// TypedData: wrapping a Rust value as a Ruby object, and its GC hooks.
 pub mod typed;

@@ -77,7 +77,7 @@ struct NodeVec {
     heap: Vec<NodeWord>,
     /// The heap's bytes as last reported to the GC, given back when the set
     /// is freed.
-    reported: usize,
+    reported: crate::bridge::typed::External,
 }
 
 /// Why a push was refused.
@@ -117,7 +117,7 @@ impl NodeVec {
             inline: [NodeWord::NULL; INLINE_NODES],
             inline_len: 0,
             heap: Vec::new(),
-            reported: 0,
+            reported: crate::bridge::typed::External::new(),
         }
     }
 
@@ -130,11 +130,7 @@ impl NodeVec {
             .heap
             .capacity()
             .saturating_mul(core::mem::size_of::<NodeWord>());
-        if bytes != self.reported {
-            let delta = crate::nupur::int::change(self.reported, bytes);
-            crate::bridge::typed::report_external(ruby, delta);
-            self.reported = bytes;
-        }
+        self.reported.report(ruby, bytes);
     }
 
     /// Room for `want` nodes in all on the heap.
@@ -300,7 +296,7 @@ impl Payload for NodeSet {
     /// as a Document's arena report is. Read without a borrow: the set is
     /// being freed, so nothing holds one.
     fn reported_external(&self) -> usize {
-        self.nodes.try_borrow().map_or(0, |n| n.reported)
+        self.nodes.try_borrow().map_or(0, |n| n.reported.reported())
     }
 }
 

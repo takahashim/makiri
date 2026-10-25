@@ -61,7 +61,7 @@ pub unsafe fn finish(f: impl FnOnce(&Ruby) -> Result<Value, Error>) -> Value {
         let ruby = unsafe { Ruby::get_unchecked() };
         /* A method starts with no exit pending: one a method before it made
          * and did not pass on is not this one's. */
-        crate::raw::clear_pending_jump();
+        crate::raw::reset_pending_exit();
         let e = match std::panic::catch_unwind(AssertUnwindSafe(|| f(&ruby))) {
             Ok(Ok(v)) => return v,
             Ok(Err(e)) => e,
@@ -364,6 +364,26 @@ macro_rules! __trampoline {
         }
         $crate::rb::method::Func::$new(anon)
     }};
+}
+
+/// `rb_block_given_p`: whether the method running now was given a block.
+/// Raises nothing and runs no Ruby code; like [`keyword_given`], it reads
+/// the current frame.
+#[inline]
+pub fn block_given(_: &Ruby) -> bool {
+    // SAFETY: under the GVL (`&Ruby`); a read of the current control frame.
+    unsafe { rb_sys::rb_block_given_p() != 0 }
+}
+
+/// `rb_keyword_given_p`: whether the method running now was called with
+/// keywords - the one thing `rb_scan_args` asks Ruby when it separates them.
+/// Raises nothing and runs no Ruby code. It reads the current frame, so it
+/// answers for a method only from that method's own body, before the method
+/// calls into Ruby (a method's argument scan is called first thing).
+#[inline]
+pub fn keyword_given(_: &Ruby) -> bool {
+    // SAFETY: under the GVL (`&Ruby`); a read of the current control frame.
+    unsafe { rb_sys::rb_keyword_given_p() != 0 }
 }
 
 /// What the extension's `Init_` runs its two phases through.

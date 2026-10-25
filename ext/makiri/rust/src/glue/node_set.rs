@@ -76,7 +76,7 @@ fn aref(ruby: &Ruby, s: NodeSetSelf, args: &[Value]) -> Result<Option<Value>, Er
 )]
 fn each(ruby: &Ruby, s: NodeSetSelf) -> Result<Value, Error> {
     let this = s.value();
-    if !crate::bridge::raw::block_given(ruby) {
+    if !crate::bridge::rb::method::block_given(ruby) {
         return crate::bridge::build::enumerator(ruby, this, "each");
     }
     /* By index, not over a copy: a set is never changed once filled, and

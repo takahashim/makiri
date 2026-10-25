@@ -48,39 +48,6 @@ impl EditState {
     }
 }
 
-/// What the GC was last told about a Document's content, which lives outside
-/// Ruby's allocator ([`account_document`]): the free callback takes back exactly
-/// `bytes` (`Payload::reported_external`),
-/// and [`account_growth`] compares against it.
-#[derive(Clone, Copy, Default)]
-pub(super) struct ExternalReport {
-    /// The external bytes reported.
-    bytes: usize,
-    /// An HTML document's pool chunk count when `bytes` was measured: what
-    /// [`account_growth`] compares against, since the byte count itself costs
-    /// a walk of every chunk.
-    chunks: usize,
-}
-
-impl ExternalReport {
-    /// Record a measurement of `now` bytes in `chunks` chunks, and answer the
-    /// difference from the last one for the GC - `None` when there is none to
-    /// report, or a size Ruby could not address (a truncated difference would
-    /// unbalance the release).
-    pub(super) fn update(&mut self, now: usize, chunks: usize) -> Option<isize> {
-        let (Ok(now_i), Ok(then_i)) = (isize::try_from(now), isize::try_from(self.bytes)) else {
-            return None;
-        };
-        self.chunks = chunks;
-        let diff = now_i.wrapping_sub(then_i);
-        if diff == 0 {
-            return None;
-        }
-        self.bytes = now;
-        Some(diff)
-    }
-}
-
 /// A Document wrapper's data: the parsed content (owned - GC frees it), the
 /// mutation gate's count, and the node table. The parse-warning Array is a
 /// hidden ivar of the object (`Document#errors` is read rarely).
@@ -103,8 +70,14 @@ pub struct DocData {
     /// fresh wrapper, and everything that lives on a Ruby object was lost:
     /// `equal?`, an instance variable, a singleton method, `freeze`.
     ///
-    /// What the GC has been told about the content ([`ExternalReport`]).
-    pub(super) report: Cell<ExternalReport>,
+    /// What the GC has been told about the content, which lives outside
+    /// Ruby's allocator ([`account_document`]): the free callback takes back
+    /// exactly that, and [`account_growth`] compares against it.
+    pub(super) external: crate::bridge::typed::External,
+    /// An HTML document's pool chunk count when the content was last
+    /// measured: what [`account_growth`] compares against, since the byte
+    /// count itself costs a walk of every chunk.
+    pub(super) chunks: Cell<usize>,
     /// Where `child_count` / `child_at` last were ([`ChildPositionMemo`]).
     /// Allocates nothing until the first of them records.
     pub(super) child_memo: RefCell<ChildPositionMemo>,
@@ -132,13 +105,13 @@ impl DocData {
         match self.content.get() {
             None => false,
             Some(body @ Body::Html(_)) => {
-                let then = self.report.get().chunks;
+                let then = self.chunks.get();
                 body.arena_chunks().is_some_and(|now| {
                     now >= then.saturating_add((then / 8).max(GROWTH_MIN_CHUNKS))
                 })
             }
             Some(body @ Body::Xml(_)) => {
-                let then = self.report.get().bytes;
+                let then = self.external.reported();
                 body.external_bytes()
                     .is_some_and(|now| now >= then.saturating_add((then / 8).max(GROWTH_MIN_BYTES)))
             }
@@ -167,7 +140,7 @@ impl Payload for DocData {
          * what was last reported for it. */
         let content = self
             .external_bytes()
-            .unwrap_or_else(|| self.report.get().bytes);
+            .unwrap_or_else(|| self.external.reported());
         core::mem::size_of::<DocData>()
             .saturating_add(content)
             .saturating_add(memo)
@@ -177,7 +150,7 @@ impl Payload for DocData {
     /// back once the content is dropped - or the GC keeps counting freed
     /// arenas as live and collects ever more eagerly.
     fn reported_external(&self) -> usize {
-        self.report.get().bytes
+        self.external.reported()
     }
 }
 
@@ -287,7 +260,8 @@ impl DocumentShell {
             DocData {
                 content: OnceCell::new(),
                 edits: Cell::new(EditState::default()),
-                report: Cell::new(ExternalReport::default()),
+                external: crate::bridge::typed::External::new(),
+                chunks: Cell::new(0),
                 child_memo: RefCell::new(ChildPositionMemo::default()),
                 stamp: Cell::new(0),
             },

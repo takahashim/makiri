@@ -4,7 +4,7 @@
 //! A raise is `longjmp`, which crosses Rust frames without running their
 //! destructors, and crossing a frame that has one (or a `catch_unwind`) is
 //! undefined behaviour. So no raising call is made anywhere but here, and here
-//! every one runs inside [`call`]: a bare `rb_protect` whose `extern "C"`
+//! every one runs inside [`call`] ([`protect`]): a bare `rb_protect` whose `extern "C"`
 //! thunk holds nothing but that one C call and the `Copy` values it reads. The
 //! only frame a raise crosses is the thunk's own, which owns nothing. A
 //! caller gets a `Result` and owns whatever it likes across the call.
@@ -24,11 +24,13 @@
 //! typed data and Ruby's allocator, and a String of unwritten bytes - stay
 //! `unsafe`, with their contracts stated.
 //!
-//! What is NOT here: calls that cannot raise and touch no other value
-//! (`rb_gc_mark`, the encoding singletons, `rb_typeddata_is_kind_of`,
-//! `rb_attr_get`, `ruby_xfree`), the stable API's inline reads
-//! (`rb::value`), and the GC callbacks (`typed`). Together
-//! with those, this file is every C function of Ruby's that can raise.
+//! What is here is checked, not kept by hand: which C functions raise is
+//! one table in the lints (`makiri_lints`' `NON_RAISING`, every function
+//! not in it taken to raise), and `rake dylint` fails on a call of Ruby's C
+//! in this module outside [`call`] - a read that raises nothing belongs with
+//! the values (`rb::value`, `rb::method` for the current frame) - and on a
+//! `call` that protects nothing. The protection itself, `$!` and the calls
+//! that raise on purpose are [`protect`]'s, the one part held to neither.
 
 #![allow(unsafe_code)]
 /* Every wrapper's contract is the module's, stated once above. */
@@ -45,166 +47,11 @@ use rb_sys::{rb_data_type_t, VALUE};
 
 use crate::encoding::Encoding;
 
-/// The raise sweep's hook (`script/check_raise_injection.rb`): in an
-/// `alloc-inject` build the armed allocating call below raises `NoMemoryError`
-/// in place of its allocation, as a real failure would - so the sweep can make
-/// every one of them raise in turn. Nothing in any other build. Called inside
-/// the thunk, so the raise is protected like the call's. Whether a call is
-/// armed is the extension's to answer ([`set_raise_injector`]).
-#[inline(always)]
-unsafe fn injected_raise() {
-    #[cfg(feature = "alloc-inject")]
-    if RAISE_INJECTOR.get().is_some_and(|armed| armed()) {
-        /* Raises without allocating: Ruby keeps the exception preallocated. */
-        unsafe { rb_sys::rb_memerror() }
-    }
-}
-
-/// The function that answers whether the next allocating call raises.
+mod protect;
 #[cfg(feature = "alloc-inject")]
-static RAISE_INJECTOR: std::sync::OnceLock<fn() -> bool> = std::sync::OnceLock::new();
-
-/// Register the raise sweep's answer, once, before any method runs (the
-/// extension's `Init_`); a second registration is ignored.
-#[cfg(feature = "alloc-inject")]
-pub fn set_raise_injector(armed: fn() -> bool) {
-    let _ = RAISE_INJECTOR.set(armed);
-}
-
-/// A non-local exit that is not an exception (a `break` or `throw` out of a
-/// block, a thread kill) a protected call came back with, not yet resumed by
-/// the trampoline: its `rb_protect` state, 0 for none.
-///
-/// Ruby resumes such an exit (`rb_jump_tag`) from what it left in the
-/// thread's error info - the throw data - and every raise overwrites that.
-/// So once one is pending, no protected call runs C at all: each answers
-/// the same exit, until the trampoline resumes it ([`Error::raise`]) or the
-/// next method starts. A global, not a thread's: nothing between the exit
-/// and its resumption can release the GVL (only a C call can, and none
-/// runs), so no other Ruby thread reads it meanwhile.
-static PENDING_JUMP: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
-
-/// Forget a pending exit: it is being resumed, or a new method starts.
-#[inline]
-pub(crate) fn clear_pending_jump() {
-    PENDING_JUMP.store(0, core::sync::atomic::Ordering::Relaxed);
-}
-
-/// Run `f` - one C call, and the `Copy` values it reads - under a bare
-/// `rb_protect`; a raise comes back as `Err`, and `$!` is cleared (an error
-/// the caller handles rather than raises is run under [`keeping_errinfo`]).
-///
-/// `F: Copy` and `T: Copy` are what keep the thunk's frame free of anything a
-/// skipped destructor would leak: a closure is `Copy` only when everything it
-/// captures is, so it owns nothing, and neither does its result. There is no
-/// `catch_unwind` here (a raise crossing one is undefined behaviour); a panic
-/// in the thunk would abort at its `extern "C"` boundary, and the closures
-/// below hold no Rust that panics. The one C call that calls back into Rust,
-/// `rb_hash_foreach` ([`hash_foreach`]), latches its callback's panic inside
-/// the callback, and the callback raises nothing.
-#[inline]
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        ffi_without_gvl_proof,
-        reason = "private to this file: every wrapper that hands it its C call holds the proof"
-    )
-)]
-fn call<T: Copy, F: FnOnce() -> T + Copy>(f: F) -> Result<T, Error> {
-    struct Slot<F, T> {
-        f: F,
-        out: Option<T>,
-    }
-    unsafe extern "C" fn thunk<T: Copy, F: FnOnce() -> T + Copy>(arg: VALUE) -> VALUE {
-        crate::no_unwind::must_not_unwind::<crate::no_unwind::ProtectThunk, _>(|| {
-            // SAFETY: `arg` is the `Slot` `call` passed, live for the call.
-            let slot = unsafe { &mut *(arg as *mut Slot<F, T>) };
-            slot.out = Some((slot.f)());
-            rb_sys::Qnil as VALUE
-        })
-    }
-    let pending = PENDING_JUMP.load(core::sync::atomic::Ordering::Relaxed);
-    if pending != 0 {
-        return Err(Error::jump(pending));
-    }
-    let mut slot = Slot { f, out: None };
-    let mut state: c_int = 0;
-    // SAFETY: the thunk reads only `slot`, which outlives the call.
-    unsafe {
-        rb_sys::rb_protect(
-            Some(thunk::<T, F>),
-            &mut slot as *mut Slot<F, T> as VALUE,
-            &mut state,
-        );
-    }
-    match (state, slot.out) {
-        (0, Some(out)) => Ok(out),
-        (0, None) => Err(crate::rb::error::internal_error(
-            "a protected call did not run",
-        )),
-        (state, _) => {
-            let e = Error::from_state(state);
-            if let Some(state) = e.jump_state() {
-                PENDING_JUMP.store(state, core::sync::atomic::Ordering::Relaxed);
-            }
-            Err(e)
-        }
-    }
-}
-
-/// Run `f`, protected calls whose error the caller handles rather than
-/// raises - a lookup that may fail, a name that may not be made - with `$!`
-/// put back as it was after, as Ruby's own C does around one
-/// (`load_encoding` saves `rb_errinfo()` and restores it): a caught raise
-/// clears it ([`take_errinfo`]), and a handled one must not clear the
-/// caller's. Not every call does this: the read costs a call into libruby,
-/// and an error that is raised replaces `$!` anyway.
-#[inline]
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        ffi_without_gvl_proof,
-        reason = "crate-private: called only from functions holding a proof, around their protected calls"
-    )
-)]
-pub(crate) fn keeping_errinfo<T>(f: impl FnOnce() -> T) -> T {
-    // SAFETY: under the GVL, as every caller's proof says; a read.
-    let before = unsafe { rb_sys::rb_errinfo() };
-    let out = f();
-    restore_errinfo(before);
-    out
-}
-
-/// Put `$!` back to `before`. Only nil or an exception goes back, which is
-/// all `rb_set_errinfo` takes without raising.
-#[inline]
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        ffi_without_gvl_proof,
-        reason = "private: `keeping_errinfo`'s, under its caller's proof"
-    )
-)]
-fn restore_errinfo(before: VALUE) {
-    use rb_sys::stable_api::{get_default, StableApiDefinition};
-    if before == rb_sys::Qnil as VALUE {
-        // SAFETY: nil, which it always takes.
-        unsafe { rb_sys::rb_set_errinfo(before) };
-        return;
-    }
-    // SAFETY: `before` was the thread's error info a moment ago, kept on
-    // this frame's stack since: a live value; `rb_type` reads its header.
-    let is_object =
-        unsafe { get_default().rb_type(before) } == rb_sys::ruby_value_type::RUBY_T_OBJECT;
-    // SAFETY: a live object, and `rb_eException` a C global Ruby set at boot.
-    if is_object
-        && unsafe { rb_sys::rb_obj_is_kind_of(before, rb_sys::rb_eException) }
-            == rb_sys::Qtrue as VALUE
-    {
-        // SAFETY: an exception, which `rb_set_errinfo` takes without raising.
-        unsafe { rb_sys::rb_set_errinfo(before) };
-    }
-}
+pub use protect::set_raise_injector;
+use protect::{call, injected_raise};
+pub(crate) use protect::{exc_fatal, exc_raise, keeping_errinfo, reset_pending_exit, resume};
 
 /* ---- what the value-level wrappers share ---- */
 
@@ -225,57 +72,6 @@ fn typed<T>(v: VALUE, of: fn(Value) -> Option<T>, what: &'static str) -> Result<
 #[inline]
 fn c_len<L: TryFrom<usize>>(n: usize) -> Result<L, Error> {
     L::try_from(n).map_err(|_| crate::rb::error::arg_error("string too large"))
-}
-
-/* ---- what rb's values and errors are made of ---- */
-
-/// The `rb_protect` state of a raise (`TAG_RAISE` in CRuby's `vm_core.h`).
-/// Not part of the documented API - the state is called opaque - but it is
-/// how a raise is told from a `throw` or a `break`, whose state must be
-/// resumed untouched; magnus reads the same value. Unchanged since 1.9.
-pub const TAG_RAISE: c_int = 6;
-
-/// `$!`, taken: the exception a raise left there, with `$!` set back to
-/// `nil` (`rb_errinfo`, `rb_set_errinfo`). Raises nothing.
-#[inline]
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        ffi_without_gvl_proof,
-        reason = "crate-private: read only right after a protected call returned, on the thread that made it"
-    )
-)]
-pub(crate) fn take_errinfo() -> Value {
-    // SAFETY: under the GVL (a protected call just returned); both read or
-    // write the current thread's error info.
-    unsafe {
-        let exc = rb_sys::rb_errinfo();
-        rb_sys::rb_set_errinfo(rb_sys::Qnil as VALUE);
-        Value::from_raw(exc)
-    }
-}
-
-/// `rb_jump_tag`: resume the non-local exit `state` stands for. Raises, by
-/// design - only `Error::raise` calls it, with nothing owned.
-#[inline]
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        ffi_without_gvl_proof,
-        reason = "crate-private: only a trampoline raise resumes an exit, with the GVL"
-    )
-)]
-pub(crate) fn jump_tag(state: c_int) -> ! {
-    // SAFETY: `state` is one `rb_protect` reported; resuming it is the point.
-    unsafe { rb_sys::rb_jump_tag(state) }
-}
-
-/// `rb_exc_raise`: raise `exc`. Raises, by design - only `Error::raise` calls
-/// it, with nothing owned.
-#[inline]
-pub(crate) fn exc_raise(exc: Value) -> ! {
-    // SAFETY: `exc` is a live exception object.
-    unsafe { rb_sys::rb_exc_raise(exc.as_raw()) }
 }
 
 /// An exception of `class` with the UTF-8 message `msg`: `rb_exc_new_str`,
@@ -425,16 +221,6 @@ pub(crate) fn big2ull(n: Integer) -> Result<u64, Error> {
     Ok(u64::from(call(|| unsafe { rb_sys::rb_big2ull(n) })?))
 }
 
-/// Whether the Bignum `n`'s magnitude fits a `u64`: `rb_absint_size`,
-/// which reads its digits and raises nothing - so "too large" is answered
-/// without making the `RangeError` [`big2ull`] would raise.
-#[inline]
-pub(crate) fn big_fits_u64(n: Integer) -> bool {
-    // SAFETY: `n` is a live Integer (a Bignum here); the C reads its digits.
-    let bytes = unsafe { rb_sys::rb_absint_size(n.as_raw(), core::ptr::null_mut()) };
-    u64::try_from(bytes).is_ok_and(|b| b <= 8)
-}
-
 /* ---- definitions, at `Init_` ---- */
 
 /// `rb_define_class_under`: raises `TypeError` when `name` is bound to
@@ -535,25 +321,7 @@ pub fn gc_register_mark_object(v: Value) -> Result<(), Error> {
     })
 }
 
-/// `rb_exc_fatal`: raise `exc` as Ruby's `fatal` - for a panic in
-/// the extension's `Init_`, where a half-defined extension must not be used. Raises,
-/// by design.
-#[inline]
-pub(crate) fn exc_fatal(exc: Value) -> ! {
-    // SAFETY: `exc` is a live exception object.
-    unsafe { rb_sys::rb_exc_fatal(exc.as_raw()) }
-}
-
 /* ---- blocks and Hash walks ---- */
-
-/// `rb_block_given_p`: whether the method running now was given a block.
-/// Raises nothing and runs no Ruby code; like [`keyword_given`], it reads
-/// the current frame.
-#[inline]
-pub fn block_given(_: &Ruby) -> bool {
-    // SAFETY: under the GVL (`&Ruby`); a read of the current control frame.
-    unsafe { rb_sys::rb_block_given_p() != 0 }
-}
 
 /// `rb_yield`: runs the caller's block - Ruby code, which can raise, `break`,
 /// `throw` or `return`. Every one of those comes back as `Err` (the
@@ -617,17 +385,6 @@ pub fn hash_foreach(h: RHash, visit: &mut dyn FnMut(Value, Value) -> bool) -> Re
 }
 
 /* ---- conversions and checks ---- */
-
-/// `rb_keyword_given_p`: whether the method running now was called with
-/// keywords - the one thing `rb_scan_args` asks Ruby when it separates them.
-/// Raises nothing and runs no Ruby code. It reads the current frame, so it
-/// answers for a method only from that method's own body, before the method
-/// calls into Ruby (a method's argument scan is called first thing).
-#[inline]
-pub fn keyword_given(_: &Ruby) -> bool {
-    // SAFETY: under the GVL (`&Ruby`); a read of the current control frame.
-    unsafe { rb_sys::rb_keyword_given_p() != 0 }
-}
 
 /// `rb_sym2str`: raises `NoMemoryError` when a static Symbol's name String is
 /// made for the first time. Runs no Ruby code.
@@ -900,36 +657,14 @@ pub fn ivar_set(obj: Value, id: Id, v: Value) -> Result<(), Error> {
     .map(|_| ())
 }
 
-/// `rb_attr_get`: a hidden ivar's value, or nil. Raises nothing and runs no
-/// Ruby code (an attribute read, not a method call).
-#[inline]
-pub fn ivar_get(obj: Value, id: Id) -> Value {
-    // SAFETY: a live object; the read raises nothing.
-    unsafe { Value::from_raw(rb_sys::rb_attr_get(obj.as_raw(), id.as_raw())) }
-}
-
-/// The Fixnum `n` is, for a table key: `None` past one - past 2^30 - 1 on
-/// Windows, whose `long` is 32 bits ([`crate::int`]).
-#[inline]
-fn fixnum_key(_: RHash, n: u32) -> Option<VALUE> {
-    use rb_sys::stable_api::{get_default, StableApiDefinition};
-    let l = crate::int::fixable(i64::from(n))?;
-    let api = get_default();
-    let key = api.long2fix(l);
-    /* The round trip a Fixnum past its range would fail - what the key
-     * built from its bits did on Windows, unseen, since a Hash compares a
-     * Fixnum key by its bits. */
-    debug_assert_eq!(api.fix2long(key), l);
-    Some(key)
-}
-
 /// `rb_hash_lookup2` at the Fixnum `n`: a Fixnum hashes and compares by
 /// value in C, so no Ruby code runs; protected all the same, and a raise
 /// passed on, as [`hash_lookup`]'s is.
 #[inline]
 pub(crate) fn table_get(h: RHash, n: u32) -> Result<Option<Value>, Error> {
     const UNDEF: VALUE = rb_sys::Qundef as VALUE;
-    let Some(key) = fixnum_key(h, n) else {
+    /* No entry has a key past a Fixnum - past 2^30 - 1 on Windows. */
+    let Some(key) = crate::int::fixnum(i64::from(n)) else {
         return Ok(None);
     };
     let h = h.as_raw();
@@ -942,7 +677,7 @@ pub(crate) fn table_get(h: RHash, n: u32) -> Result<Option<Value>, Error> {
 #[inline]
 pub(crate) fn table_set(h: RHash, n: u32, v: Value) -> Result<(), Error> {
     /* No entry for a key past a Fixnum: refused, never wrapped round. */
-    let key = fixnum_key(h, n).ok_or_else(|| {
+    let key = crate::int::fixnum(i64::from(n)).ok_or_else(|| {
         Error::new(
             crate::rb::Builtin::RangeError,
             "a table key past a Fixnum (more than 2^30 nodes on Windows)",
@@ -984,9 +719,8 @@ pub(crate) fn hash_new(_: &Ruby) -> Result<RHash, Error> {
 /// `NoMemoryError`. Hand it to no Ruby code: a hidden object has no class.
 pub(crate) fn hidden_hash_new(ruby: &Ruby) -> Result<RHash, Error> {
     let h = hash_new(ruby)?;
-    // SAFETY: the Hash just made, referenced only from this frame; hiding
-    // writes only its class field.
-    unsafe { rb_sys::rb_obj_hide(h.as_raw()) };
+    // SAFETY: the Hash just made, referenced only from this frame.
+    unsafe { crate::rb::value::obj_hide(crate::rb::ReprValue::as_value(h)) };
     Ok(h)
 }
 
@@ -1009,14 +743,11 @@ pub(crate) fn hash_aset(h: RHash, k: Value, v: Value) -> Result<(), Error> {
 /// `rb_ll2inum`: raises `NoMemoryError` for a value past a Fixnum (a Bignum).
 #[inline]
 pub(crate) fn int_from_i64(_: &Ruby, n: i64) -> Result<Integer, Error> {
-    use rb_sys::stable_api::{get_default, StableApiDefinition};
     /* A Fixnum is the value's own bits: no allocation, nothing to raise, no
      * protected call - the common case (a length, an index, a count). */
-    if let Some(l) = crate::int::fixable(n) {
+    if let Some(v) = crate::int::fixnum(n) {
         // SAFETY: an immediate.
-        return Ok(Integer::from_known(unsafe {
-            Value::from_raw(get_default().long2fix(l))
-        }));
+        return Ok(Integer::from_known(unsafe { Value::from_raw(v) }));
     }
     let v = call(|| unsafe {
         injected_raise();
@@ -1028,13 +759,10 @@ pub(crate) fn int_from_i64(_: &Ruby, n: i64) -> Result<Integer, Error> {
 /// `rb_ull2inum`: as [`int_from_i64`].
 #[inline]
 pub(crate) fn int_from_u64(_: &Ruby, n: u64) -> Result<Integer, Error> {
-    use rb_sys::stable_api::{get_default, StableApiDefinition};
     /* As `int_from_i64`. */
-    if let Some(l) = crate::int::posfixable(n) {
+    if let Some(v) = crate::int::posfixnum(n) {
         // SAFETY: an immediate.
-        return Ok(Integer::from_known(unsafe {
-            Value::from_raw(get_default().long2fix(l))
-        }));
+        return Ok(Integer::from_known(unsafe { Value::from_raw(v) }));
     }
     let v = call(|| unsafe {
         injected_raise();

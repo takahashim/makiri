@@ -148,18 +148,9 @@ impl Error {
         msg.into_error(class.into())
     }
 
-    /// The error a non-zero `rb_protect` state stands for: the exception
-    /// Ruby left in `$!` for a raise (taken, so `$!` is clear again), the
-    /// state itself for any other exit.
+    /// The exception a protected call caught (`raw::protect`).
     #[inline]
-    pub(crate) fn from_state(state: c_int) -> Error {
-        if state != crate::raw::TAG_RAISE {
-            return Error(Kind::Jump(state));
-        }
-        let exc = crate::raw::take_errinfo();
-        if exc.is_nil() {
-            return Error(Kind::Jump(state));
-        }
+    pub(crate) fn exception(exc: Value) -> Error {
         Error(Kind::Exception(exc))
     }
 
@@ -167,15 +158,6 @@ impl Error {
     #[inline]
     pub(crate) fn jump(state: c_int) -> Error {
         Error(Kind::Jump(state))
-    }
-
-    /// The `rb_protect` state of a non-local exit that is not an exception.
-    #[inline]
-    pub(crate) fn jump_state(&self) -> Option<c_int> {
-        match self.0 {
-            Kind::Jump(state) => Some(state),
-            _ => None,
-        }
     }
 
     /// An instance of `class`, or one that will be? `false` for an exit that
@@ -206,10 +188,7 @@ impl Error {
         let mut e = self;
         loop {
             let exc = match e.0 {
-                Kind::Jump(state) => {
-                    crate::raw::clear_pending_jump();
-                    crate::raw::jump_tag(state)
-                }
+                Kind::Jump(state) => crate::raw::resume(state),
                 Kind::Exception(v) => v,
                 /* Made under `rb_protect`: the String and the object are
                  * allocations, and an exception class's `initialize` is
