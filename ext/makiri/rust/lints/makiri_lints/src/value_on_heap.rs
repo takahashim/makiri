@@ -29,7 +29,7 @@ use std::collections::HashSet;
 /// A type that keeps a value where the GC sees it by other means: the
 /// crate's `Opaque`, a value registered as a mark root.
 fn shields(cx: &LateContext<'_>, did: DefId) -> bool {
-    did.is_local() && cx.tcx.item_name(did).as_str() == "Opaque"
+    crate::ours(cx, did) && cx.tcx.item_name(did).as_str() == "Opaque"
 }
 
 /// A std type whose contents live in a heap allocation.

@@ -33,6 +33,7 @@ impl Msg {
     };
 
     /// `args`, written out.
+    #[inline]
     pub fn format(args: fmt::Arguments<'_>) -> Msg {
         let mut m = Msg::EMPTY;
         /* A `Display` that fails leaves what it wrote; the message is still
@@ -44,6 +45,7 @@ impl Msg {
     /// `s`, copied - with no formatting machinery, so where nothing may
     /// unwind (a trampoline that has caught a panic, `crate::no_unwind`) it
     /// is provably panic-free.
+    #[inline]
     pub fn copy(s: &str) -> Msg {
         let mut m = Msg::EMPTY;
         m.push(s);
@@ -51,6 +53,7 @@ impl Msg {
     }
 
     /// Mark a cut message as such.
+    #[inline]
     fn finish(mut self) -> Msg {
         if self.cut {
             let len = floor_char_boundary(self.bytes(), MSG_MAX - ELLIPSIS.len());
@@ -64,6 +67,7 @@ impl Msg {
     /// Append what fits of `s`, cut at a character boundary. No operation
     /// here can panic: every index is a checked `get`, and the arithmetic is
     /// on values below [`MSG_MAX`].
+    #[inline]
     fn push(&mut self, s: &str) {
         let len = usize::from(self.len).min(MSG_MAX);
         let room = MSG_MAX.saturating_sub(len);
@@ -84,15 +88,18 @@ impl Msg {
 
     /// The bytes: UTF-8, as only whole `&str`s and their prefixes at a char
     /// boundary are ever copied in.
+    #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         self.buf.get(..usize::from(self.len)).unwrap_or(&[])
     }
 
+    #[inline]
     fn bytes(&self) -> &[u8] {
         self.as_bytes()
     }
 
     /// The text.
+    #[inline]
     pub fn as_str(&self) -> &str {
         /* UTF-8 by construction (`as_bytes`); the fallback is unreachable. */
         core::str::from_utf8(self.bytes()).unwrap_or("error")
@@ -100,6 +107,7 @@ impl Msg {
 }
 
 /// The largest index `<= max` of `s` that starts a character (or ends `s`).
+#[inline]
 fn floor_char_boundary(s: &[u8], max: usize) -> usize {
     let mut i = max.min(s.len());
     while i > 0 && s.get(i).is_some_and(|&b| (b & 0xC0) == 0x80) {
@@ -109,6 +117,7 @@ fn floor_char_boundary(s: &[u8], max: usize) -> usize {
 }
 
 impl Write for Msg {
+    #[inline]
     fn write_str(&mut self, s: &str) -> fmt::Result {
         if !self.cut {
             self.push(s);
@@ -122,6 +131,7 @@ impl Write for Msg {
 pub struct Lossy<'a>(pub &'a [u8]);
 
 impl fmt::Display for Lossy<'_> {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for chunk in self.0.utf8_chunks() {
             f.write_str(chunk.valid())?;
@@ -138,6 +148,7 @@ impl fmt::Display for Lossy<'_> {
 pub struct Quoted<'a>(pub &'a [u8]);
 
 impl fmt::Display for Quoted<'_> {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_char('"')?;
         for chunk in self.0.utf8_chunks() {

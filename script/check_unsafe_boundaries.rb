@@ -19,8 +19,19 @@ RUST = File.join(ROOT, "ext/makiri/rust/src")
 # Every source file the gates read. `lint_probe.rs` is left out: it is
 # compiled only under `--cfg makiri_lint_probe`, by `rake dylint`, and holds
 # on purpose the very uses the lints there must report.
-RUST_FILES = Dir.glob(File.join(RUST, "**", "*.rs")).sort
+# The binding layer is a crate of its own (`ext/makiri/rust/nupur`), read as
+# if it were still `src/nupur/`: its files are keyed `nupur/<path>` below.
+NUPUR = File.join(ROOT, "ext/makiri/rust/nupur/src")
+RUST_FILES = (Dir.glob(File.join(RUST, "**", "*.rs")) + Dir.glob(File.join(NUPUR, "**", "*.rs"))).sort
                 .reject { |p| p.end_with?("/lint_probe.rs") }.freeze
+
+# A file's key in the tables: its path under `src/`, or `nupur/<path>` for
+# the binding layer's.
+def rust_rel(path)
+  return "nupur/#{path.delete_prefix("#{NUPUR}/")}" if path.start_with?("#{NUPUR}/")
+
+  path.delete_prefix("#{RUST}/")
+end
 
 # Every file's unsafe count, exact. A new file with unsafe fails here even when
 # a parent module's `allow` kept the compiler quiet; a file that loses its last
@@ -35,6 +46,7 @@ RUST_FILES = Dir.glob(File.join(RUST, "**", "*.rs")).sort
 # summary prints the `glue/` + `xpath/` subtotal that must reach 0.
 UNSAFE_ISLANDS = {
   "falloc/mod.rs" => 1,
+  "init.rs" => 1,
   "lexbor/abi.rs" => 4,
   "lexbor/adapter/arena_bytes.rs" => 14,
   "lexbor/adapter/html/attrs.rs" => 19,
@@ -63,7 +75,7 @@ UNSAFE_ISLANDS = {
   "nupur/no_unwind.rs" => 2,
   "nupur/raw.rs" => 94,
   "nupur/rb/class.rs" => 2,
-  "nupur/rb/method.rs" => 8,
+  "nupur/rb/method.rs" => 15,
   "nupur/rb/ruby.rs" => 5,
   "nupur/rb/value.rs" => 18,
   "nupur/typed.rs" => 30,
@@ -262,7 +274,7 @@ RAW_POINTER_EXEMPT = {
 }.freeze
 ADAPTER_PRIVATE = /\A(?:pub\(super\)|pub\(in crate::lexbor::adapter(?:::\w+)*\))?\z/
 Dir.glob(File.join(RUST, "lexbor/adapter/**/*.rs")).sort.each do |path|
-  rel = path.delete_prefix("#{RUST}/")
+  rel = rust_rel(path)
   File.binread(path).scan(/^[ \t]*((pub(?:\([^)]*\))?)?\s*(?:const\s+)?(?:unsafe\s+)?(?:extern\s+"C"\s+)?fn\s+(\w+)[^{;]*?)(?:\{|;|\bwhere\b)/m) do |sig, vis, name|
     next unless sig.match?(/\*(?:mut|const)\s+Lxb\w*|NonNull\s*<\s*Lxb\w*/) ||
                 ADAPTER_ONLY_BY_NAME.include?(name)
@@ -276,7 +288,7 @@ end
 unsafe_actual = Hash.new(0)
 forbidding = []
 RUST_FILES.each do |path|
-  relative = path.delete_prefix("#{RUST}/")
+  relative = rust_rel(path)
   source = File.binread(path)
   forbidding << relative if source.include?("#![forbid(unsafe_code)]")
   count = rust_code(path).scan(UNSAFE_USE).length
@@ -335,7 +347,7 @@ RUST_FILES.each do |path|
   count = File.binread(path).scan(/^\s*(?:pub\s+)?static\s+mut\b/).length
   next if count.zero?
 
-  actual[path.delete_prefix("#{RUST}/")] = count
+  actual[rust_rel(path)] = count
 end
 
 if actual != STATIC_MUT_COUNTS
@@ -344,7 +356,7 @@ end
 
 lexbor_abi = Hash.new(0)
 RUST_FILES.each do |path|
-  relative = path.delete_prefix("#{RUST}/")
+  relative = rust_rel(path)
   next if relative.start_with?("lexbor/")
 
   count = comments_removed(File.binread(path)).scan(LEXBOR_ABI).length
@@ -362,7 +374,7 @@ end
 LEXBOR_DECL = /\bfn\s+(?:lxb|lexbor)_[A-Za-z0-9_]*\s*\([^)]*\)[^;{]*;/m
 lexbor_decls = Hash.new(0)
 RUST_FILES.each do |path|
-  relative = path.delete_prefix("#{RUST}/")
+  relative = rust_rel(path)
   next if relative == "lexbor/abi.rs"
 
   count = comments_removed(File.binread(path)).scan(LEXBOR_DECL).length
@@ -384,7 +396,7 @@ GUARDED_PARSES = {
 }.freeze
 guarded_calls = Hash.new { |h, k| h[k] = Hash.new(0) }
 RUST_FILES.each do |path|
-  relative = path.delete_prefix("#{RUST}/")
+  relative = rust_rel(path)
   code = comments_removed(File.binread(path))
   GUARDED_PARSES.each_key do |name|
     count = code.scan(/\b#{name}\s*\(/).length
@@ -412,7 +424,7 @@ end
 
 ruby_layer = Hash.new(0)
 RUST_FILES.each do |path|
-  relative = path.delete_prefix("#{RUST}/")
+  relative = rust_rel(path)
   next unless relative.start_with?(*TEXT_CHECKED)
 
   count = comments_removed(File.binread(path)).scan(RUBY_LAYER).length
@@ -424,7 +436,7 @@ end
 
 infallible = Hash.new(0)
 RUST_FILES.each do |path|
-  relative = path.delete_prefix("#{RUST}/")
+  relative = rust_rel(path)
   next unless relative.start_with?(*TEXT_CHECKED)
   next if relative.end_with?("selftest.rs", "verify.rs", "tests.rs")
   # Built only for the tests and the `html_diff` / `html_xpath_diff` /

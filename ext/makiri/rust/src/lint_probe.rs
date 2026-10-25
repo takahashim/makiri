@@ -94,13 +94,6 @@ fn allocations() {
     let _ = core::format_args!("{}", 1);
 }
 
-#[allow(unsafe_code)]
-fn raising() {
-    let _ = unsafe { rb_sys::rb_ary_new_capa(0) }; //~
-}
-
-fn raw_type(_: rb_sys::VALUE) {} //~
-
 fn callers_ruby(ruby: &crate::bridge::rb::Ruby, m: crate::bridge::rb::RModule) {
     let _ = crate::bridge::rb::Module::call_method(m, ruby, "new", &[]); //~
 }
@@ -110,8 +103,6 @@ fn callers_ruby(ruby: &crate::bridge::rb::Ruby, m: crate::bridge::rb::RModule) {
 #[rustfmt::skip] // keeps each marker on the line reported
 mod bridge {
     use crate::html_dom::html::{HtmlNode, RawNode};
-
-    fn value(_: rb_sys::VALUE) {} //~
 
     fn crossing(n: HtmlNode<'_>) -> RawNode {
         RawNode::from(n) //~
@@ -145,17 +136,4 @@ fn passes_ruby_errors_on() -> Result<u32, crate::bridge::rb::Error> {
     let n = fallible()?;
     let _ = fallible().map(|_| ())?;
     Ok(n)
-}
-
-/// Stands in for the binding layer: `nupur_names_its_host` treats
-/// `lint_probe::nupur` as `nupur`.
-#[rustfmt::skip] // keeps each marker on the line reported
-mod nupur {
-    fn names_the_host(ruby: &crate::nupur::rb::Ruby) -> crate::bridge::rb::ExceptionClass {
-        crate::init::EXC_ERROR.exception(ruby) //~
-    }
-
-    fn names_only_itself(v: crate::nupur::rb::Value) -> bool {
-        crate::nupur::helpers::same_value(v, v)
-    }
 }

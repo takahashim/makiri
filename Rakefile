@@ -51,7 +51,7 @@ end
 Rake::ExtensionTask.new("makiri", GEMSPEC) do |ext|
   ext.lib_dir        = "lib/makiri"
   ext.ext_dir        = "ext/makiri/rust"
-  ext.source_pattern = "src/**/*.{rs,toml}"
+  ext.source_pattern = "{src,nupur}/**/*.{rs,toml}"
 end
 
 RSpec::Core::RakeTask.new(:spec)
@@ -277,11 +277,14 @@ task :no_unwind do
   link = macos ? %w[-C link-arg=-undefined -C link-arg=dynamic_lookup] : []
   env = { "RUSTFLAGS" => [ENV.fetch("RUSTFLAGS", nil), "--cfg makiri_no_unwind"].compact.join(" ") }
   Dir.chdir(dir) do
-    sh env, "cargo", "rustc", "--release", "--lib", "--target-dir", target, "--", *link
+    # `cdylib` alone, as the extension is built (extconf.rb): with the `rlib`
+    # type in, rustc runs no LTO, and the proof would be of another binary.
+    sh env, "cargo", "rustc", "--release", "--lib", "--crate-type", "cdylib", "--target-dir", target,
+       "--", *link
   end
   lib = Dir[File.join(target, "release", "libmakiri.{dylib,so}")].first or abort "no_unwind: no library built"
   # Two mechanisms, one per layer: Makiri's (`src/no_unwind.rs`, its types'
-  # and the engine's `Drop`s) and nupur's (`src/nupur/no_unwind.rs`, the GC
+  # and the engine's `Drop`s) and nupur's (`nupur/src/no_unwind.rs`, the GC
   # callbacks, the protect thunk, the trampolines), each with its control.
   left = `nm -u #{lib.shellescape}`.lines.map(&:strip)
                                        .filter_map { |l| l[/(?:\A|\s)_?((?:makiri|nupur)_unwinds_\w+)\z/, 1] }.uniq.sort
@@ -289,7 +292,7 @@ task :no_unwind do
   dead = controls - left
   abort "no_unwind: a control site was optimized away - the check is not live: #{dead.join(", ")}" unless dead.empty?
   sites = left - controls
-  abort "no_unwind: these sites can unwind (see src/no_unwind.rs, src/nupur/no_unwind.rs): #{sites.join(", ")}" unless sites.empty?
+  abort "no_unwind: these sites can unwind (see src/no_unwind.rs, nupur/src/no_unwind.rs): #{sites.join(", ")}" unless sites.empty?
   puts "no_unwind: every site is unwind-free; both controls are live"
 end
 
@@ -314,6 +317,9 @@ desc "Clippy and rustfmt exactly as CI runs them (--all-features, warnings are e
 task lint: :lexbor do
   Dir.chdir("ext/makiri/rust") do
     sh "cargo", "clippy", "--all-features", "--tests", "--", "-D", "warnings"
+    # The binding layer is a workspace member of its own, which a command run
+    # in the root does not reach.
+    sh "cargo", "clippy", "-p", "nupur", "--all-features", "--tests", "--", "-D", "warnings"
     # The build that ships has no Lexbor: code only the reference layers use
     # is dead there, which `--all-features` cannot see - and so are test
     # helpers only a Lexbor test calls, which the html-dom test build sees.
@@ -341,6 +347,9 @@ end
 # has stopped seeing a case cannot pass by reporting nothing.
 DYLINT = %w[cargo dylint --path lints/makiri_lints --no-deps --
             --no-default-features --features ruby].freeze
+# The binding layer, a workspace member of its own: the same lints, which
+# read its items as `makiri::nupur::...` (`boundaries::path_of`).
+DYLINT_NUPUR = %w[cargo dylint --path lints/makiri_lints --no-deps -- -p nupur].freeze
 
 desc "Run the crate's own lint (makiri_lints; needs cargo-dylint and its nightly)"
 task :dylint do
@@ -350,18 +359,24 @@ task :dylint do
     # and dylint then answers from it - the old lints' verdict. A touch makes
     # every run check afresh.
     FileUtils.touch("src/lib.rs")
+    FileUtils.touch("nupur/src/lib.rs")
     sh(*DYLINT)
-    probe = "src/lint_probe.rs"
-    expected = File.readlines(probe).each_with_index
-                   .select { |line, _| line.match?(%r{//~\s*\z}) }.map { |_, i| i + 1 }
-    out, = Open3.capture2e({ "RUSTFLAGS" => "--cfg makiri_lint_probe" }, *DYLINT)
-    reported = out.scan(%r{--> #{Regexp.escape(probe)}:(\d+):}).flatten.map(&:to_i).uniq.sort
-    unless reported == expected
-      puts out
-      abort "makiri_lints' self-test: expected reports on lines #{expected.inspect} " \
-            "of #{probe}, got #{reported.inspect}"
+    sh(*DYLINT_NUPUR)
+    # The self-test, once per crate: the extension's probe, and the binding
+    # layer's, which holds the cases only code naming rb-sys can write.
+    total = [[DYLINT, "src/lint_probe.rs"], [DYLINT_NUPUR, "nupur/src/lint_probe.rs"]].sum do |cmd, probe|
+      expected = File.readlines(probe).each_with_index
+                     .select { |line, _| line.match?(%r{//~\s*\z}) }.map { |_, i| i + 1 }
+      out, = Open3.capture2e({ "RUSTFLAGS" => "--cfg makiri_lint_probe" }, *cmd)
+      reported = out.scan(%r{--> #{Regexp.escape(probe)}:(\d+):}).flatten.map(&:to_i).uniq.sort
+      unless reported == expected
+        puts out
+        abort "makiri_lints' self-test: expected reports on lines #{expected.inspect} " \
+              "of #{probe}, got #{reported.inspect}"
+      end
+      expected.size
     end
-    puts "makiri_lints: self-test reported all #{expected.size} cases"
+    puts "makiri_lints: self-test reported all #{total} cases"
   end
 end
 
@@ -1052,6 +1067,9 @@ namespace :rust do
       sh "cargo test --no-default-features"
       sh "cargo test --no-default-features --features html-dom"
       sh "cargo test --no-default-features --features lexbor"
+      # The binding layer, a workspace member of its own (its Ruby-free tests:
+      # the message buffer, the panic payload reading).
+      sh "cargo test -p nupur"
       # The fuzz crate is a separate one, so `cargo test` above never sees it;
       # without this check an engine API change can silently break the nightly
       # harnesses (they are not built by `rake compile` or `rake spec`).

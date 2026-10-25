@@ -299,7 +299,9 @@ fn seal_leaves(methods: RModule, leaves: &[RClass]) -> Result<(), Error> {
 #[allow(non_snake_case, unsafe_code)]
 #[no_mangle]
 pub extern "C" fn Init_makiri() {
-    crate::bridge::rb::method::run_init(init);
+    // SAFETY: this is the `Init_` function Ruby calls, on its thread with the
+    // GVL held.
+    unsafe { crate::bridge::rb::method::run_init(init) };
 }
 
 fn init(ruby: &Ruby) -> Result<(), Error> {

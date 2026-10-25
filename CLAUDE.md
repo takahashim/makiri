@@ -21,8 +21,10 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   (`docs/parser_differences.ja.md`, `compat`), never an edit to Lexbor.
 - **No libxml2 / libxslt** anywhere - not linked, vendored, or derived. The
   XPath engine is original. See `NOTICE`.
-- **One language.** The extension is a single Rust crate
-  (`ext/makiri/rust`), and no C ships at all: the vendored Lexbor is built
+- **One language.** The extension is Rust - a cargo workspace at
+  `ext/makiri/rust` of two crates, the extension (`makiri_rs`) and the Ruby
+  binding layer it is built on (`nupur/`, which does not depend on the
+  extension) - and no C ships at all: the vendored Lexbor is built
   only for the tests (`rake lexbor`) and keeps its `lxb_*` names. No SYMBOL of ours carries a C-style prefix any more: the crate
   exports only `Init_makiri` and `ruby_abi_version`, so every other item is
   named as Rust. (The `mkr_` prefix was the C ABI's symbol convention and went
@@ -646,10 +648,35 @@ by the check that concluded "every undefined symbol is legitimate".
 
 ```
 lib/makiri/                Ruby API (Document, Node, Element, NodeSet, XPathContext, ...)
-ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `makiri`
+ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and the
+                           root of a workspace with `nupur/` (`fuzz/` and
+                           `lints/` are crates of their own, each `[workspace]`)
   extconf.rb               hands the crate to cargo via create_rust_makefile; owns
                            the link arguments and the export trim (it builds no
-                           Lexbor: `rake lexbor` does, for the tests)
+                           Lexbor: `rake lexbor` does, for the tests). It builds
+                           `--crate-type cdylib` alone: with the crate's `rlib`
+                           (the fuzz crate's) in, rustc runs NO LTO, and every
+                           call into `nupur` is an opaque cross-crate call (the
+                           light readers measured 9-25% slower; with LTO they
+                           are 12-14% faster than the one-crate build, which
+                           never had LTO either). `rake no_unwind` builds the
+                           same way, since its proof is of the shipped binary
+  nupur/                   the Ruby binding layer, a crate of its own over rb-sys
+                           (`rb/`, `raw`, `typed`, `gvl`, `build`, `encoding`,
+                           `helpers`, `msg`, `caught`, its own `no_unwind` sites):
+                           every `unsafe` that talks to Ruby. It cannot name the
+                           extension (no dependency), which names it as
+                           `crate::nupur` (`extern crate`); what it needs of
+                           Makiri is registered at Init_ (`INTERNAL_ERROR`,
+                           `set_raise_injector`). `bridge` re-exports its
+                           modules, so `bridge::raw` etc. still resolve. The
+                           macros' helpers (`finish`, `finish_cary`,
+                           `run_init`) are `unsafe fn`: only the macros'
+                           expansion can call them, so nothing else makes a
+                           `Ruby` token. A function on a no_unwind site's path
+                           is `#[inline]`, or the proof cannot see into it
+                           across the crate. `notes/nupur_crate_plan.ja.md` is
+                           its plan
   build.rs                 bindgen over Lexbor's own headers -> the layout and
                            constants the crate reads (never transcribed by hand)
   src/
@@ -672,13 +699,6 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
     cutf8.rs               the one UTF-8 validator + strict 1-codepoint decoder
     utf8_input.rs          HTML input sanitiser: invalid UTF-8 -> U+FFFD, per
                            WHATWG; `cbuf`+`cutf8` only, so Ruby/Lexbor-free
-    nupur/                 the magnus-replacement layer (`rb/`, `raw`, `typed`, `gvl`,
-                           `build`, `encoding`, `msg`, `caught`, its own `no_unwind`
-                           sites), names nothing of Makiri's (`rake dylint`'s
-                           `nupur_names_its_host`); Makiri's needs are registered
-                           in (`INTERNAL_ERROR`, `set_raise_injector`). `bridge`
-                           re-exports it, so `bridge::raw` etc. still resolve.
-                           `notes/nupur_crate_plan.ja.md` is its plan
     bridge/                the Ruby boundary - the ONLY layer allowed raw Ruby String
                            access (RSTRING) and verified-string minting. `rb/` is
                            its value and method layer over rb-sys (`Value` and the
@@ -816,8 +836,9 @@ docs/design_doc.ja.md      authoritative design (read this)
 ```
 
 Seven features, and the default is the extension: **`ruby`** (the
-Ruby boundary over rb-sys - `bridge`, whose `bridge::rb` is the value and
-method layer - + `glue` + `init`), **`html-dom`** (the parser port's
+Ruby boundary over `nupur` - `bridge`, whose `bridge::rb` is nupur's value
+and method layer - + `glue` + `init`; with it off, neither `nupur` nor
+rb-sys is in the dependency graph), **`html-dom`** (the parser port's
 index-arena DOM, `html::dom`, behind the `html_dom` facade and parsed by the
 ported tree builder `html::tree`, with what sits over it - the HTML CSS
 matcher, XPath's HTML instance, the bridge's HTML half; `ruby` and `lexbor`

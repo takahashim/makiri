@@ -28,8 +28,8 @@
 use core::ffi::{c_char, c_void};
 use core::marker::PhantomData;
 
-use crate::nupur::rb::value::AsRawValue;
-use crate::nupur::rb::{Error, Value};
+use crate::rb::value::AsRawValue;
+use crate::rb::{Error, Value};
 use rb_sys::{rb_data_type_t, VALUE};
 
 /// A `Value` from a raw handle this module holds - a slot, or what a wrap
@@ -74,7 +74,7 @@ pub trait Payload: Sized {
 /// borrowed from a Ruby object may be held across the call. What an object
 /// reports it says in its [`Payload::reported_external`], and the free
 /// callback gives it back.
-pub fn report_external(_: &crate::nupur::rb::Ruby, delta: isize) {
+pub fn report_external(_: &crate::rb::Ruby, delta: isize) {
     // SAFETY: a plain counter adjustment, with the GVL held.
     unsafe { rb_sys::rb_gc_adjust_memory_usage(delta as rb_sys::ssize_t) };
 }
@@ -106,7 +106,7 @@ struct Envelope<T, const N: usize> {
  * contract, and one branch here means nothing rests on it. */
 
 unsafe extern "C" fn mark_cb<T: Payload, const N: usize>(ptr: *mut c_void) {
-    crate::nupur::no_unwind::must_not_unwind::<crate::nupur::no_unwind::GcMark, _>(|| {
+    crate::no_unwind::must_not_unwind::<crate::no_unwind::GcMark, _>(|| {
         if ptr.is_null() {
             return;
         }
@@ -124,6 +124,7 @@ unsafe extern "C" fn mark_cb<T: Payload, const N: usize>(ptr: *mut c_void) {
 }
 
 /// Give back what the payload reported, once it is dropped.
+#[inline]
 fn give_back(reported: usize) {
     if reported != 0 {
         let n = isize::try_from(reported).unwrap_or(isize::MAX);
@@ -134,7 +135,7 @@ fn give_back(reported: usize) {
 }
 
 unsafe extern "C" fn free_cb<T: Payload, const N: usize>(ptr: *mut c_void) {
-    crate::nupur::no_unwind::must_not_unwind::<crate::nupur::no_unwind::GcFree, _>(|| {
+    crate::no_unwind::must_not_unwind::<crate::no_unwind::GcFree, _>(|| {
         if ptr.is_null() {
             return;
         }
@@ -148,8 +149,8 @@ unsafe extern "C" fn free_cb<T: Payload, const N: usize>(ptr: *mut c_void) {
          * than unwound into the collector. */
         unsafe {
             let data = core::ptr::addr_of!((*(ptr as *const Envelope<T, N>)).data).read();
-            let reported = crate::nupur::caught::quietly(0, || data.reported_external());
-            crate::nupur::caught::quietly((), || drop(data));
+            let reported = crate::caught::quietly(0, || data.reported_external());
+            crate::caught::quietly((), || drop(data));
             give_back(reported);
             rb_sys::ruby_xfree(ptr);
         }
@@ -157,7 +158,7 @@ unsafe extern "C" fn free_cb<T: Payload, const N: usize>(ptr: *mut c_void) {
 }
 
 unsafe extern "C" fn free_embedded_cb<T: Payload, const N: usize>(ptr: *mut c_void) {
-    crate::nupur::no_unwind::must_not_unwind::<crate::nupur::no_unwind::GcFreeEmbedded, _>(|| {
+    crate::no_unwind::must_not_unwind::<crate::no_unwind::GcFreeEmbedded, _>(|| {
         if ptr.is_null() {
             return;
         }
@@ -165,14 +166,14 @@ unsafe extern "C" fn free_embedded_cb<T: Payload, const N: usize>(ptr: *mut c_vo
         // and the memory is left to Ruby - the object's own slot when it was
         // embedded, and data Ruby frees after this callback when it was not.
         let data = unsafe { core::ptr::addr_of!((*(ptr as *const Envelope<T, N>)).data).read() };
-        let reported = crate::nupur::caught::quietly(0, || data.reported_external());
-        crate::nupur::caught::quietly((), || drop(data));
+        let reported = crate::caught::quietly(0, || data.reported_external());
+        crate::caught::quietly((), || drop(data));
         give_back(reported);
     })
 }
 
 unsafe extern "C" fn memsize_cb<T: Payload, const N: usize>(ptr: *const c_void) -> rb_sys::size_t {
-    crate::nupur::no_unwind::must_not_unwind::<crate::nupur::no_unwind::GcMemsize, _>(|| {
+    crate::no_unwind::must_not_unwind::<crate::no_unwind::GcMemsize, _>(|| {
         if ptr.is_null() {
             return 0;
         }
@@ -183,7 +184,7 @@ unsafe extern "C" fn memsize_cb<T: Payload, const N: usize>(ptr: *const c_void) 
         // SAFETY: as `mark_cb`.
         let data = unsafe { &(*(ptr as *const Envelope<T, N>)).data };
         let slots = core::mem::size_of::<[VALUE; N]>();
-        crate::nupur::caught::quietly(0, || data.memsize().saturating_add(slots)) as rb_sys::size_t
+        crate::caught::quietly(0, || data.memsize().saturating_add(slots)) as rb_sys::size_t
     })
 }
 
@@ -291,8 +292,8 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
     /// the object right after it, with nothing run between ([`wrap_built`]).
     pub fn wrap(
         &'static self,
-        _: &crate::nupur::rb::Ruby,
-        klass: crate::nupur::rb::RClass,
+        _: &crate::rb::Ruby,
+        klass: crate::rb::RClass,
         data: T,
         roots: [Value; N],
     ) -> Result<Value, Error> {
@@ -326,16 +327,16 @@ impl<T: Payload + 'static, const N: usize> TypedType<T, N> {
     /// stays hidden for the GC to free.
     pub fn wrap_hidden(
         &'static self,
-        ruby: &crate::nupur::rb::Ruby,
-        klass: crate::nupur::rb::RClass,
+        ruby: &crate::rb::Ruby,
+        klass: crate::rb::RClass,
         data: T,
         roots: [Value; N],
-        ivars: &[(crate::nupur::helpers::ID, Value)],
+        ivars: &[(crate::helpers::ID, Value)],
     ) -> Result<Hidden<T, N>, Error> {
         let obj = self.wrap(ruby, klass, data, roots)?;
         let written = ivars
             .iter()
-            .try_for_each(|&(id, v)| crate::nupur::raw::ivar_set(obj, id, v));
+            .try_for_each(|&(id, v)| crate::raw::ivar_set(obj, id, v));
         // SAFETY: the object just made, of ours; hiding writes only its class
         // field, which `reveal` restores.
         unsafe { rb_sys::rb_obj_hide(obj.as_raw()) };
@@ -357,7 +358,7 @@ impl<T: Payload + 'static, const N: usize> TypedType<T, N> {
 /// was made with.
 pub struct Hidden<T: Payload + 'static, const N: usize> {
     obj: Value,
-    klass: crate::nupur::rb::RClass,
+    klass: crate::rb::RClass,
     ty: &'static TypedType<T, N>,
 }
 
@@ -426,8 +427,8 @@ impl<T: Payload + Copy, const N: usize> EmbeddedType<T, N> {
     /// [`TypedType::wrap`].
     pub fn wrap(
         &'static self,
-        ruby: &crate::nupur::rb::Ruby,
-        klass: crate::nupur::rb::RClass,
+        ruby: &crate::rb::Ruby,
+        klass: crate::rb::RClass,
         data: T,
         roots: [Value; N],
     ) -> Result<Value, Error> {
@@ -508,7 +509,7 @@ fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void, Error> {
         match super::raw::check_typeddata(v, ty) {
             Err(e) => Err(e),
             /* rb_typeddata_is_kind_of said no, so the check should have raised. */
-            Ok(_) => Err(crate::nupur::helpers::type_error("wrong argument type")),
+            Ok(_) => Err(crate::helpers::type_error("wrong argument type")),
         }
     }
 }
@@ -582,7 +583,7 @@ unsafe fn wrap_built<T, const N: usize>(
     let obj = super::raw::typed_object_zalloc(klass, core::mem::size_of::<Envelope<T, N>>(), ty)?;
     let p = data_pointer(obj) as *mut Envelope<T, N>;
     if p.is_null() {
-        return Err(crate::nupur::helpers::internal_error(
+        return Err(crate::helpers::internal_error(
             "a TypedData object was made without its data",
         ));
     }

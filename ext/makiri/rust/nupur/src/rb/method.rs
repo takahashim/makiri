@@ -28,8 +28,8 @@ use super::value::Value;
 /// A trampoline and its arity, for `define_method` and its kin.
 #[derive(Clone, Copy)]
 pub struct Func {
-    pub(in crate::nupur) ptr: unsafe extern "C" fn() -> rb_sys::VALUE,
-    pub(in crate::nupur) arity: c_int,
+    pub(crate) ptr: unsafe extern "C" fn() -> rb_sys::VALUE,
+    pub(crate) arity: c_int,
 }
 
 /// Ruby's argument array for an arity -1 method: made only by Ruby, as the
@@ -41,10 +41,18 @@ pub struct CArgv(*const Value);
 /// raised, a panic is `Makiri::InternalError`. The raise happens here, after
 /// `f` has returned - every destructor of the method's frames has run - and
 /// the error's own message has been released ([`Error::raise`]).
+///
+/// # Safety
+/// Called only from a trampoline Ruby itself calls - the expansion of
+/// `method!` / `function!` - so on a Ruby thread holding the GVL: this makes
+/// the method's `Ruby` token, and a call from anywhere else (a thread
+/// without the GVL) would make one that proves nothing. `unsafe` so that
+/// nothing but the macros, whose expansion carries the `unsafe` block, can
+/// call it: the extension's own code is `forbid(unsafe_code)`.
 #[doc(hidden)]
 #[inline]
-pub fn finish(f: impl FnOnce(&Ruby) -> Result<Value, Error>) -> Value {
-    crate::nupur::no_unwind::must_not_unwind::<crate::nupur::no_unwind::Method, _>(|| {
+pub unsafe fn finish(f: impl FnOnce(&Ruby) -> Result<Value, Error>) -> Value {
+    crate::no_unwind::must_not_unwind::<crate::no_unwind::Method, _>(|| {
         // SAFETY: only a trampoline Ruby calls runs this: its thread, the GVL
         // held. The one token a method's body sees is this one.
         let ruby = unsafe { Ruby::get_unchecked() };
@@ -52,14 +60,11 @@ pub fn finish(f: impl FnOnce(&Ruby) -> Result<Value, Error>) -> Value {
             Ok(Ok(v)) => return v,
             Ok(Err(e)) => e,
             Err(payload) => {
-                let msg =
-                    crate::nupur::caught::quietly(crate::nupur::msg::Msg::copy("a panic"), || {
-                        crate::nupur::msg::Msg::copy(crate::nupur::caught::message(
-                            payload.as_ref(),
-                        ))
-                    });
-                crate::nupur::caught::quietly((), || drop(payload));
-                crate::nupur::helpers::internal_error(msg)
+                let msg = crate::caught::quietly(crate::msg::Msg::copy("a panic"), || {
+                    crate::msg::Msg::copy(crate::caught::message(payload.as_ref()))
+                });
+                crate::caught::quietly((), || drop(payload));
+                crate::helpers::internal_error(msg)
             }
         };
         e.raise(&ruby)
@@ -68,9 +73,12 @@ pub fn finish(f: impl FnOnce(&Ruby) -> Result<Value, Error>) -> Value {
 
 /// [`finish`] for an arity -1 method: `f` is handed the arguments as a slice
 /// of Ruby's array.
+///
+/// # Safety
+/// As [`finish`]; and `argc` / `argv` are the arguments Ruby passed.
 #[doc(hidden)]
 #[inline]
-pub fn finish_cary(
+pub unsafe fn finish_cary(
     argc: c_int,
     argv: CArgv,
     f: impl FnOnce(&Ruby, &[Value]) -> Result<Value, Error>,
@@ -83,7 +91,8 @@ pub fn finish_cary(
         // `CArgv` exists only as the parameter Ruby filled.
         unsafe { core::slice::from_raw_parts(argv.0, argc as usize) }
     };
-    finish(|ruby| f(ruby, args))
+    // SAFETY: the caller's contract, which is `finish`'s.
+    unsafe { finish(|ruby| f(ruby, args)) }
 }
 
 impl Func {
@@ -275,14 +284,18 @@ macro_rules! method {
     ($f:expr, -1) => {{
         extern "C" fn anon(
             argc: ::core::ffi::c_int,
-            argv: $crate::nupur::rb::method::CArgv,
-            rb_self: $crate::nupur::rb::Value,
-        ) -> $crate::nupur::rb::Value {
+            argv: $crate::rb::method::CArgv,
+            rb_self: $crate::rb::Value,
+        ) -> $crate::rb::Value {
             #[allow(unused_imports)]
-            use $crate::nupur::rb::method::{MethodCAry as _, RubyMethodCAry as _};
-            $crate::nupur::rb::method::finish_cary(argc, argv, |ruby, args| $f.invoke(ruby, rb_self, args))
+            use $crate::rb::method::{MethodCAry as _, RubyMethodCAry as _};
+            // SAFETY: Ruby is calling this trampoline, with the arguments it
+            // passed.
+            unsafe {
+                $crate::rb::method::finish_cary(argc, argv, |ruby, args| $f.invoke(ruby, rb_self, args))
+            }
         }
-        $crate::nupur::rb::method::Func::cary(anon)
+        $crate::rb::method::Func::cary(anon)
     }};
     ($f:expr, 0) => { $crate::__trampoline!(method $f, new0, Method0, RubyMethod0;) };
     ($f:expr, 1) => { $crate::__trampoline!(method $f, new1, Method1, RubyMethod1; a0) };
@@ -298,14 +311,18 @@ macro_rules! function {
     ($f:expr, -1) => {{
         extern "C" fn anon(
             argc: ::core::ffi::c_int,
-            argv: $crate::nupur::rb::method::CArgv,
-            rb_self: $crate::nupur::rb::Value,
-        ) -> $crate::nupur::rb::Value {
+            argv: $crate::rb::method::CArgv,
+            rb_self: $crate::rb::Value,
+        ) -> $crate::rb::Value {
             #[allow(unused_imports)]
-            use $crate::nupur::rb::method::{FunctionCAry as _, RubyFunctionCAry as _};
-            $crate::nupur::rb::method::finish_cary(argc, argv, |ruby, args| $f.invoke(ruby, rb_self, args))
+            use $crate::rb::method::{FunctionCAry as _, RubyFunctionCAry as _};
+            // SAFETY: Ruby is calling this trampoline, with the arguments it
+            // passed.
+            unsafe {
+                $crate::rb::method::finish_cary(argc, argv, |ruby, args| $f.invoke(ruby, rb_self, args))
+            }
         }
-        $crate::nupur::rb::method::Func::cary(anon)
+        $crate::rb::method::Func::cary(anon)
     }};
     ($f:expr, 0) => { $crate::__trampoline!(function $f, new0, Function0, RubyFunction0;) };
     ($f:expr, 1) => { $crate::__trampoline!(function $f, new1, Function1, RubyFunction1; a0) };
@@ -319,14 +336,15 @@ macro_rules! function {
 macro_rules! __trampoline {
     ($kind:ident $f:expr, $new:ident, $plain:ident, $ruby:ident; $($a:ident),*) => {{
         extern "C" fn anon(
-            rb_self: $crate::nupur::rb::Value
-            $(, $a: $crate::nupur::rb::Value)*
-        ) -> $crate::nupur::rb::Value {
+            rb_self: $crate::rb::Value
+            $(, $a: $crate::rb::Value)*
+        ) -> $crate::rb::Value {
             #[allow(unused_imports)]
-            use $crate::nupur::rb::method::{$plain as _, $ruby as _};
-            $crate::nupur::rb::method::finish(|ruby| $f.invoke(ruby, rb_self $(, $a)*))
+            use $crate::rb::method::{$plain as _, $ruby as _};
+            // SAFETY: Ruby is calling this trampoline.
+            unsafe { $crate::rb::method::finish(|ruby| $f.invoke(ruby, rb_self $(, $a)*)) }
         }
-        $crate::nupur::rb::method::Func::$new(anon)
+        $crate::rb::method::Func::$new(anon)
     }};
 }
 
@@ -334,28 +352,29 @@ macro_rules! __trampoline {
 /// has returned, and a panic is Ruby's `fatal` - `Makiri::InternalError` may
 /// not exist yet, and an extension that stopped half-way through defining
 /// itself must not be used, which `fatal` sees to.
+///
+/// # Safety
+/// Called only from the extension's `Init_` function, which Ruby calls on its
+/// thread with the GVL held: as [`finish`], this makes the token.
 #[doc(hidden)]
-pub fn run_init(init: fn(&Ruby) -> Result<(), Error>) {
-    crate::nupur::no_unwind::must_not_unwind::<crate::nupur::no_unwind::Init, _>(|| {
+pub unsafe fn run_init(init: fn(&Ruby) -> Result<(), Error>) {
+    crate::no_unwind::must_not_unwind::<crate::no_unwind::Init, _>(|| {
         // SAFETY: Ruby calls an extension's `Init_` on its thread, with the GVL.
         let ruby = unsafe { Ruby::get_unchecked() };
         let e = match std::panic::catch_unwind(AssertUnwindSafe(|| init(&ruby))) {
             Ok(Ok(())) => return,
             Ok(Err(e)) => e,
             Err(payload) => {
-                let msg =
-                    crate::nupur::caught::quietly(crate::nupur::msg::Msg::copy("a panic"), || {
-                        crate::nupur::msg::Msg::copy(crate::nupur::caught::message(
-                            payload.as_ref(),
-                        ))
-                    });
-                crate::nupur::caught::quietly((), || drop(payload));
-                match crate::nupur::raw::exception_new(
+                let msg = crate::caught::quietly(crate::msg::Msg::copy("a panic"), || {
+                    crate::msg::Msg::copy(crate::caught::message(payload.as_ref()))
+                });
+                crate::caught::quietly((), || drop(payload));
+                match crate::raw::exception_new(
                     &ruby,
                     ruby.exception_runtime_error(),
                     msg.as_bytes(),
                 ) {
-                    Ok(exc) => crate::nupur::raw::exc_fatal(exc),
+                    Ok(exc) => crate::raw::exc_fatal(exc),
                     Err(e) => e,
                 }
             }

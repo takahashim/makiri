@@ -7,8 +7,8 @@
 
 #![forbid(unsafe_code)]
 
-use crate::nupur::rb::ReprValue;
-use crate::nupur::rb::{Error, RArray, RHash, Ruby, Value};
+use crate::rb::ReprValue;
+use crate::rb::{Error, RArray, RHash, Ruby, Value};
 
 use super::raw;
 
@@ -54,8 +54,8 @@ pub fn enumerator(ruby: &Ruby, obj: Value, meth: &str) -> Result<Value, Error> {
 }
 
 /// The Symbol named by the UTF-8 `name`.
-pub fn symbol(ruby: &Ruby, name: &str) -> Result<crate::nupur::rb::Symbol, Error> {
-    crate::nupur::raw::sym(ruby, name)
+pub fn symbol(ruby: &Ruby, name: &str) -> Result<crate::rb::Symbol, Error> {
+    crate::raw::sym(ruby, name)
 }
 
 /// [`symbol`] as a plain `Value`.
@@ -75,6 +75,6 @@ pub fn utf8_str(ruby: &Ruby, bytes: &[u8]) -> Result<Value, Error> {
 }
 
 /// [`utf8_str`] as an `RString`.
-pub fn utf8_rstring(ruby: &Ruby, bytes: &[u8]) -> Result<crate::nupur::rb::RString, Error> {
-    crate::nupur::raw::utf8_str_new(ruby, bytes)
+pub fn utf8_rstring(ruby: &Ruby, bytes: &[u8]) -> Result<crate::rb::RString, Error> {
+    crate::raw::utf8_str_new(ruby, bytes)
 }

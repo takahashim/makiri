@@ -5,8 +5,8 @@
 
 use core::ffi::c_int;
 
-use crate::nupur::rb::value::AsRawValue;
-use crate::nupur::rb::{Error, RString};
+use crate::rb::value::AsRawValue;
+use crate::rb::{Error, RString};
 
 /// A Ruby encoding - of a String, or resolved from a name or an `Encoding`.
 ///
@@ -15,6 +15,11 @@ use crate::nupur::rb::{Error, RString};
 /// process-lifetime objects, so a value of this type stays valid.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Encoding(*mut rb_sys::rb_encoding);
+
+/// `rb_str_encode`'s flags to replace, with U+FFFD (or `?`), an invalid byte
+/// sequence or a character the target has no form for, rather than raise.
+pub const ECONV_REPLACE: c_int = rb_sys::ruby_econv_flag_type::RUBY_ECONV_INVALID_REPLACE as c_int
+    | rb_sys::ruby_econv_flag_type::RUBY_ECONV_UNDEF_REPLACE as c_int;
 
 impl Encoding {
     /// The encoding's name, as Ruby spells it.
@@ -51,26 +56,26 @@ impl Encoding {
             reason = "a lookup that fails is an unknown name, which the caller refuses"
         )
     )]
-    pub fn find(ruby: &crate::nupur::rb::Ruby, name: &[u8]) -> Option<Encoding> {
+    pub fn find(ruby: &crate::rb::Ruby, name: &[u8]) -> Option<Encoding> {
         let mut buf = [0u8; 64];
         if name.is_empty() || name.len() >= buf.len() || name.contains(&0) {
             return None;
         }
         buf[..name.len()].copy_from_slice(name);
         let c = core::ffi::CStr::from_bytes_with_nul(&buf[..name.len() + 1]).ok()?;
-        crate::nupur::raw::enc_find(ruby, c).ok().flatten()
+        crate::raw::enc_find(ruby, c).ok().flatten()
     }
 
     /// An encoding from Ruby's pointer to it.
     ///
     /// # Safety
     /// `p` is one of Ruby's encodings (which live for the process).
-    pub(in crate::nupur) unsafe fn from_raw(p: *mut rb_sys::rb_encoding) -> Encoding {
+    pub(crate) unsafe fn from_raw(p: *mut rb_sys::rb_encoding) -> Encoding {
         Encoding(p)
     }
 
     /// The raw encoding, for a C call in the bridge that takes one.
-    pub(in crate::nupur) fn as_raw(self) -> *mut rb_sys::rb_encoding {
+    pub(crate) fn as_raw(self) -> *mut rb_sys::rb_encoding {
         self.0
     }
 
@@ -112,7 +117,7 @@ impl Encoding {
     /// with the builtin indices, looked up once. Every strict read (a
     /// selector, an attribute name or value) asks, and `rb_enc_get` +
     /// `rb_utf8_encoding` cost `Node#[]` ~13%.
-    pub fn string_reads_as_utf8_bytes(_: &crate::nupur::rb::Ruby, s: RString) -> bool {
+    pub fn string_reads_as_utf8_bytes(_: &crate::rb::Ruby, s: RString) -> bool {
         use rb_sys::ruby_encoding_consts::{
             RUBY_ENCODING_INLINE_MAX, RUBY_ENCODING_MASK, RUBY_ENCODING_SHIFT,
         };
@@ -145,8 +150,8 @@ impl Encoding {
     /// (`NoMemoryError`, or `ArgumentError` from the tag) is returned.
     pub fn relabel(self, str: RString) -> Result<RString, Error> {
         /* The copy is on this frame, where the conservative scan sees it. */
-        let copy = crate::nupur::raw::str_dup(str)?;
-        crate::nupur::raw::enc_associate(copy, self)
+        let copy = crate::raw::str_dup(str)?;
+        crate::raw::enc_associate(copy, self)
     }
 
     /// `str` transcoded to this encoding, a character it cannot represent
@@ -155,6 +160,6 @@ impl Encoding {
     pub fn encode_charref(self, str: RString) -> Result<RString, Error> {
         const UNDEF_HEX_CHARREF: c_int =
             rb_sys::ruby_econv_flag_type::RUBY_ECONV_UNDEF_HEX_CHARREF as c_int;
-        crate::nupur::raw::str_encode(str, self, UNDEF_HEX_CHARREF)
+        crate::raw::str_encode(str, self, UNDEF_HEX_CHARREF)
     }
 }

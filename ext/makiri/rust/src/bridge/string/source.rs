@@ -104,7 +104,7 @@ impl DocumentSource {
             Some(GivenEncoding::Ruby(e)) => e,
             None => own,
         };
-        match transport_for(enc.kind()) {
+        match transport_for(super::encoding_kind(enc)) {
             Transport::Unlabelled => {
                 /* The bytes are read as `enc`'s, whatever the String says. */
                 let s = if enc == own { s } else { enc.relabel(s)? };

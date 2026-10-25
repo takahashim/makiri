@@ -27,7 +27,17 @@ path = "src/lib.rs"
 # `kani` is set by cargo-kani, not by cargo, so declare it or every build warns
 # about an unexpected cfg name (and CI's `clippy -D warnings` turns that into an
 # error). The proof modules are compiled only under it.
-[lints.rust]
+[lints]
+workspace = true
+
+[workspace]
+# The extension and the binding layer it is built on. `fuzz/` (cargo-fuzz's
+# own nightly crate) and `lints/makiri_lints` (dylint's, on its own pinned
+# nightly) are crates of their own, run from their directories.
+members = [".", "nupur"]
+exclude = ["fuzz", "lints"]
+
+[workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(fuzzing)', 'cfg(makiri_lint_probe)', 'cfg(makiri_no_unwind)', 'cfg(dylint_lib, values(any()))'] }
 
 # The panic gate. A panic now reaches Ruby as an exception (see the profile
@@ -43,7 +53,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(fuzzing)', 'c
 # engine's own bounds-checked walks): gating those needs a different argument
 # than "a panic aborts", since release builds keep `overflow-checks` on
 # precisely so a wrapped size stops the process instead of answering wrong.
-[lints.clippy]
+[workspace.lints.clippy]
 unwrap_used = "warn"
 expect_used = "warn"
 panic = "warn"
@@ -64,7 +74,7 @@ default = ["ruby"]
 # and `init.rs`. Off, the crate is the engine alone - which is what Kani and
 # cargo-fuzz build, since neither can link a live Ruby. It needs no Lexbor:
 # its HTML DOM is the arena's (`html-dom`).
-ruby = ["dep:rb-sys", "html-dom"]
+ruby = ["dep:nupur", "html-dom"]
 
 # The vendored Lexbor: build.rs runs bindgen over its headers, so this also
 # decides whether a build needs `vendor/lexbor/dist` to exist at all. `rake
@@ -76,7 +86,7 @@ lexbor = ["html-dom"]
 
 # Allocation-failure injection, the Rust half of `rake oom`. Off,
 # `falloc::should_fail` is a const false and the branch disappears.
-alloc-inject = []
+alloc-inject = ["nupur?/alloc-inject"]
 
 # The OLD `lxb_selectors` engine (`lexbor::selectors`) outside `cfg(test)`, as
 # the reference the `html_css_diff` fuzz harness holds `css_match` to. Never
@@ -111,19 +121,11 @@ html-dom = ["dep:encoding_rs", "dep:chardetng"]
 chardetng = { version = "=1.0.0", optional = true }
 encoding_rs = { version = "=0.8.35", optional = true }
 # Only the `ruby` feature needs it; the engine builds without it, which is
-# what lets Kani and cargo-fuzz compile it. `rb-sys` is the generated binding
-# to Ruby's C API that `bridge::raw` and `bridge::rb` are written over - the
-# one layer between the glue and Ruby (magnus stood here until 2026-10) - and
-# deliberately WITHOUT `link-ruby`: the extension is dlopen'd into a Ruby that
-# already provides the rb_* symbols.
-# The features are the ones magnus asked of it, so the bindings are the ones
-# the crate was written against: the `rbimpl_*` flag enums, the struct
-# layouts (`RBasic`, for a String's coderange flags) and the stable API.
-rb-sys = { version = "0.9", optional = true, features = [
-    "bindgen-rbimpls",
-    "bindgen-deprecated-types",
-    "stable-api",
-] }
+# what lets Kani and cargo-fuzz compile it. `nupur` is the binding layer
+# (`nupur/`): rb-sys, and every `unsafe` that talks to Ruby, behind safe
+# types - the one layer between the glue and Ruby (magnus stood here until
+# 2026-10). rb-sys comes with it; nothing here names it directly.
+nupur = { path = "nupur", version = "0.0.1", optional = true }
 
 # `unwind`, so a panic reaches Ruby as an exception instead of killing the host
 # process. Every method's trampoline (`bridge::rb::method::finish`) catches a

@@ -14,3 +14,7 @@ dylint_linting = "6.0"
 
 [package.metadata.rust-analyzer]
 rustc_private = true
+
+# A crate of its own, not a member of the extension's workspace (its own
+# toolchain, run from its own directory).
+[workspace]

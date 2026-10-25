@@ -30,21 +30,21 @@ pub fn encoding_arg(ruby: &Ruby, v: Value) -> Result<(Encoding, crate::cbuf::Own
     Ok((e, super::ruby_string_bytes(ruby, name)?))
 }
 
-impl Encoding {
-    /// How a document parse reads this encoding
-    /// (`html::encoding::transport_for`). US-ASCII is read as binary, as
-    /// XML's decode reads it (`xml_decode::claims_no_encoding`): it is what
-    /// `File.read` tags any bytes with under `LANG=C`, not a claim. Only an encoding of a kind other
-    /// than binary, UTF-8 and US-ASCII is asked its name.
-    pub(in crate::bridge) fn kind(self) -> crate::html::encoding::StringEncoding<'static> {
-        use crate::html::encoding::StringEncoding;
-        if self.is_ascii8bit() || self.is_usascii() {
-            StringEncoding::Binary
-        } else if self.is_utf8_compatible() {
-            StringEncoding::Utf8
-        } else {
-            StringEncoding::Named(self.name())
-        }
+/// How a document parse reads `enc` (`html::encoding::transport_for`).
+/// US-ASCII is read as binary, as XML's decode reads it
+/// (`xml_decode::claims_no_encoding`): it is what `File.read` tags any bytes
+/// with under `LANG=C`, not a claim. Only an encoding of a kind other than
+/// binary, UTF-8 and US-ASCII is asked its name.
+pub(in crate::bridge) fn encoding_kind(
+    enc: Encoding,
+) -> crate::html::encoding::StringEncoding<'static> {
+    use crate::html::encoding::StringEncoding;
+    if enc.is_ascii8bit() || enc.is_usascii() {
+        StringEncoding::Binary
+    } else if enc.is_utf8_compatible() {
+        StringEncoding::Utf8
+    } else {
+        StringEncoding::Named(enc.name())
     }
 }
 
@@ -100,7 +100,5 @@ pub(in crate::bridge) fn utf8_strict(ruby: &Ruby, s: RString) -> Result<RString,
 /// An encoding Ruby cannot convert to UTF-8 comes back as its
 /// `Encoding::ConverterNotFoundError`, returned rather than raised.
 pub fn ruby_to_utf8_value(ruby: &Ruby, s: RString) -> Result<RString, Error> {
-    const REPLACE: c_int = rb_sys::ruby_econv_flag_type::RUBY_ECONV_INVALID_REPLACE as c_int
-        | rb_sys::ruby_econv_flag_type::RUBY_ECONV_UNDEF_REPLACE as c_int;
-    ruby_to_utf8(ruby, s, REPLACE)
+    ruby_to_utf8(ruby, s, crate::nupur::encoding::ECONV_REPLACE)
 }
