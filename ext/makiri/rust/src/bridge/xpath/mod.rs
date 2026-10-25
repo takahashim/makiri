@@ -8,7 +8,7 @@
 //! turns a Ruby node into the right context with the raw-pointer work the
 //! backend's lifetime contract needs.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
 use crate::bridge::rb::{Error, Value};
 
@@ -28,7 +28,6 @@ use crate::xpath::ctx::{Session, XPathValue};
 use crate::xpath::dom::Dom;
 use crate::xpath::limits::Budget;
 use crate::xpath::value::ValRef;
-use core::ptr::NonNull;
 
 mod context_object;
 
@@ -188,35 +187,25 @@ pub fn parse_query(cx: &Cx, expr: Value) -> Result<Box<Ast>, Error> {
 }
 
 /// The compiled expression one evaluation runs: the query's own, or one an
-/// `XPathContext`'s cache keeps - which frees nothing before the context goes,
-/// so it outlives an evaluation on that context.
-pub struct QueryAst(QueryAstRepr);
-
-enum QueryAstRepr {
+/// `XPathContext`'s cache keeps, borrowed for the evaluation - with the
+/// cache's borrow held, so nothing can drop or change it meanwhile.
+pub enum QueryAst<'a> {
+    /// An AST the query owns, freed when this is.
     Owned(Box<Ast>),
-    Cached(NonNull<Ast>),
+    /// An AST the cache owns.
+    Cached(&'a Ast),
 }
 
-impl QueryAst {
+impl QueryAst<'_> {
     /// An AST the query owns, freed when this is.
     pub fn owned(ast: Box<Ast>) -> Self {
-        QueryAst(QueryAstRepr::Owned(ast))
-    }
-
-    /// An AST someone else owns.
-    ///
-    /// # Safety
-    /// `ast` stays alive and unchanged until this value is dropped - as an
-    /// `XPathContext`'s cached AST does for an evaluation on that context.
-    unsafe fn cached(ast: &Ast) -> Self {
-        QueryAst(QueryAstRepr::Cached(NonNull::from(ast)))
+        QueryAst::Owned(ast)
     }
 
     fn get(&self) -> &Ast {
-        match &self.0 {
-            QueryAstRepr::Owned(ast) => ast,
-            // SAFETY: alive and unchanged for this value's life, per `cached`.
-            QueryAstRepr::Cached(ast) => unsafe { ast.as_ref() },
+        match self {
+            QueryAst::Owned(ast) => ast,
+            QueryAst::Cached(ast) => ast,
         }
     }
 }
@@ -318,8 +307,7 @@ pub fn query_result(value: XPathValue, document: Value, answer: Answer) -> Resul
             let first = set.as_slice().first().map(|&n| NodeWord::of_token(n));
             drop(value);
             return match first {
-                // SAFETY: a node the query found in `document`.
-                Some(n) => unsafe { wrap_doc_node(DocKind::of(document), n, document) },
+                Some(n) => wrap_doc_node(DocKind::of(document), n, document),
                 None => Ok(crate::bridge::ruby::nil()),
             };
         }

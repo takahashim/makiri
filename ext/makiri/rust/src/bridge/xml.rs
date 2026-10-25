@@ -71,6 +71,21 @@ pub fn wrap_xml_node(id: NodeId, document: Value) -> Result<Value, Error> {
     wrap_xml_node_of_type(id, ty, document)
 }
 
+/// [`wrap_xml_node`] for a node that must be one of `document`'s: an
+/// `InternalError` when the arena has no node by that id.
+pub(in crate::bridge) fn wrap_xml_node_checked(
+    id: NodeId,
+    document: Value,
+) -> Result<Value, Error> {
+    let ty = xml_read(&document)?.type_(id);
+    if ty.is_none() {
+        return Err(crate::bridge::ruby::internal_error(
+            "a stored node of another document",
+        ));
+    }
+    wrap_xml_node_of_type(id, ty, document)
+}
+
 /// [`wrap_xml_node`] for a caller that read the node's type already, in the
 /// read it found the node in - one read the fewer.
 fn wrap_xml_node_of_type(

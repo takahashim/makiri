@@ -101,6 +101,16 @@ const BOMS: &[(&[u8], Bom, Geometry)] = &[
 
 const NO_BOM: Geometry = geo(0, 1, 0);
 
+/// The ASCII column's length: how many characters of the document the
+/// declaration scan reads.
+const COLUMN: usize = 256;
+
+/// The most bytes [`sniff`] reads from the start of its input: the longest
+/// mark, then the column's characters at the widest stride from the largest
+/// offset. A caller may hand it just this prefix and get the same answer -
+/// a copy of a document's first bytes rather than a borrow of the whole.
+pub const SNIFF_WINDOW: usize = 4 + 3 + COLUMN * 4;
+
 /// What `p`'s first bytes announce: the byte-order mark, and the encoding its
 /// XML declaration names.
 ///
@@ -137,7 +147,7 @@ fn is_ws(c: u8) -> bool {
 /// reading index `i - 1` at `i == 0` rested on two unrelated functions happening
 /// to agree.
 struct Column {
-    buf: [u8; 256],
+    buf: [u8; COLUMN],
     len: usize,
     i: usize,
 }
@@ -147,7 +157,7 @@ impl Column {
     /// arithmetic.
     fn extract(p: &[u8], geo: Geometry) -> Column {
         let mut c = Column {
-            buf: [0u8; 256],
+            buf: [0u8; COLUMN],
             len: 0,
             i: 0,
         };
@@ -242,4 +252,50 @@ fn sniff_decl(p: &[u8], geo: Geometry) -> Option<DeclName> {
     };
     c.advance(1);
     DeclName::new(c.take_until(q)?)
+}
+
+#[cfg(test)]
+mod window_tests {
+    #![allow(clippy::disallowed_methods)] /* test inputs */
+    use super::*;
+
+    /// A document's first [`SNIFF_WINDOW`] bytes answer as the whole does,
+    /// for every mark, a declaration that runs to the column's end and past
+    /// it, and bytes after the window that would change a longer read.
+    #[test]
+    fn the_window_answers_as_the_whole_input() {
+        let widen = |ascii: &[u8], stride: usize, off: usize| -> Vec<u8> {
+            let mut v = Vec::new();
+            for &c in ascii {
+                let mut unit = vec![0u8; stride];
+                unit[off] = c;
+                v.extend_from_slice(&unit);
+            }
+            v
+        };
+        let marks: [(&[u8], usize, usize); 6] = [
+            (b"", 1, 0),
+            (b"\x00\x00\xFE\xFF", 4, 3),
+            (b"\xFF\xFE\x00\x00", 4, 0),
+            (b"\xFE\xFF", 2, 1),
+            (b"\xFF\xFE", 2, 0),
+            (b"\xEF\xBB\xBF", 1, 0),
+        ];
+        for pad in [0usize, 100, 200, 230, 240, 250, 255, 300] {
+            let mut decl = b"<?xml version='1.0'".to_vec();
+            decl.extend(std::iter::repeat_n(b' ', pad));
+            decl.extend_from_slice(b"encoding='UTF-16'?><r/>");
+            decl.extend(std::iter::repeat_n(b'x', 2000));
+            for (mark, stride, off) in marks {
+                let mut doc = mark.to_vec();
+                doc.extend(widen(&decl, stride, off));
+                let window = &doc[..doc.len().min(SNIFF_WINDOW)];
+                let read = |p: &[u8]| {
+                    let (bom, decl) = sniff(p);
+                    (bom, decl.map(|d| d.as_bytes().to_vec()))
+                };
+                assert_eq!(read(window), read(&doc), "pad {pad}, stride {stride}");
+            }
+        }
+    }
 }

@@ -2,7 +2,7 @@
 //! compiled ASTs it has parsed, and the operations on it. The Ruby methods - argument
 //! reading, registration - are `glue::xpath_context`'s.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
 use core::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -42,10 +42,11 @@ const AST_CACHE_MAX: usize = 1024;
 /// [`AST_CACHE_MAX`] nothing more is cached and the caller frees the AST it was
 /// handed.
 ///
-/// Each AST is boxed, so a pointer to one survives the map growing, and
-/// nothing is removed before the context itself is freed: an evaluate reads
-/// its AST through a pointer (`QueryAst::cached`) after the cache's borrow is
-/// released.
+/// Nothing is removed before the context itself is freed. An evaluate borrows
+/// its AST from the cache and holds the cache's borrow until the evaluation
+/// is over: no Ruby runs during it (Makiri runs no custom-function handler),
+/// so nothing can reach the cache meanwhile, and a re-entry would find it
+/// busy rather than change it.
 struct AstCache(HashMap<Box<[u8]>, Box<Ast>>);
 
 /// `Makiri::XPathContext`.
@@ -227,18 +228,12 @@ impl XPathCtx {
 
     /// Evaluate `expr` in `document`, parsed once and cached.
     fn evaluate_in(&self, expr: Value, document: Value) -> Result<Value, Error> {
-        /* The cache borrow is taken for the lookup only, and released before the
-         * evaluation. */
-        let ast = {
-            let ev = ruby_verified_text(expr, "XPath expression")?;
-            let mut cache = self.cache()?;
-            let parsed = cached_ast(&mut cache, self.ctx.limits(), ev);
-            /* Release the borrow before building the exception. */
-            drop(cache);
-            let (ast, added) = parsed.map_err(|error| xpath_error(&error))?;
-            self.account_cache(added);
-            ast
-        };
+        let ev = ruby_verified_text(expr, "XPath expression")?;
+        /* Held until the evaluation is over: the AST is borrowed from it. */
+        let mut cache = self.cache()?;
+        let (ast, added) =
+            cached_ast(&mut cache, self.ctx.limits(), ev).map_err(|error| xpath_error(&error))?;
+        self.account_cache(added);
         evaluate_to_ruby(&self.ctx, ast, document, Answer::All)
     }
 
@@ -276,20 +271,20 @@ impl XPathCtx {
 /// bytes it newly added to the cache (0 for a hit, or an AST not cached - one
 /// the query then owns).
 ///
-/// A cached AST is handed out borrowed: the cache frees nothing before the
-/// context goes ([`AstCache`]), so it outlives the evaluation it is for, which
-/// runs on this live context.
+/// A cached AST is handed out borrowed from the cache, for as long as the
+/// caller holds the cache's borrow ([`AstCache`]).
 #[allow(clippy::result_large_err)]
-fn cached_ast(
-    cache: &mut AstCache,
+fn cached_ast<'c>(
+    cache: &'c mut AstCache,
     limits: crate::xpath::limits::Limits,
     expr: RubyText,
-) -> Result<(QueryAst, usize), crate::engine_error::Error> {
+) -> Result<(QueryAst<'c>, usize), crate::engine_error::Error> {
     /* `expr` owns a copy of the String's bytes, so the key cannot change. */
     let key = expr.as_bytes();
-    if let Some(ast) = cache.0.get(key) {
-        // SAFETY: cached, so alive and unchanged while the context is.
-        return Ok((unsafe { QueryAst::cached(ast) }, 0));
+    /* Looked up twice on a hit: returning the first lookup's borrow and
+     * inserting on a miss is a pattern today's borrow checker refuses. */
+    if cache.0.contains_key(key) {
+        return Ok((QueryAst::Cached(&cache.0[key]), 0));
     }
 
     let ast = parse_with_limits(limits, expr.text())?;
@@ -307,6 +302,5 @@ fn cached_ast(
      * (the same Stacked Borrows hazard `wrapper::Content` avoids). */
     #[allow(clippy::disallowed_methods, reason = "the slot was reserved above")]
     let ast = cache.0.entry(owned_key).or_insert(ast);
-    // SAFETY: just cached, so alive and unchanged while the context is.
-    Ok((unsafe { QueryAst::cached(ast) }, added))
+    Ok((QueryAst::Cached(ast), added))
 }

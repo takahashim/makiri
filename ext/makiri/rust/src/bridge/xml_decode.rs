@@ -10,17 +10,18 @@
 //!
 //! `rb_enc_find` can AUTOLOAD an encoding, which is a Ruby allocation and so a
 //! GC point, and a borrow of the String's bytes must not be held across one.
-//! So each scan runs inside one scoped borrow (`string::with_bytes`), whose
-//! closure runs no Ruby, and the lookups run only after it has ended.
+//! So nothing here borrows the bytes: the sniff reads a copy of the
+//! document's first bytes (`string::prefix`, `SNIFF_WINDOW` of them, all a
+//! sniff reads), and the whole-document check is the string module's own
+//! scoped read (`string::text_check_from`).
 
-#![allow(unsafe_code)]
-#![allow(clippy::missing_safety_doc)]
+#![forbid(unsafe_code)]
 
 use crate::bridge::rb::{Error, RString};
 
-use super::string::{text_check, with_bytes, Encoding};
+use super::string::{prefix, text_check_from, Encoding};
 use crate::init::{EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
-use crate::xml::encoding_sniff::sniff;
+use crate::xml::encoding_sniff::{sniff, SNIFF_WINDOW};
 
 /// Whether `e` is an `EncodingError` (an undefined conversion, an invalid
 /// byte sequence, no converter).
@@ -58,11 +59,10 @@ fn claims_no_encoding(tag: Encoding) -> bool {
 /// self-consistent answer.
 fn effective_encoding(str: RString) -> Result<Encoding, Error> {
     let tag = Encoding::of(str);
-    /* Read everything first, while the bytes are borrowed and nothing can run
-     * a GC; the name lookups - which can - come after the borrow ends. */
-    // SAFETY: `sniff` reads the bytes and runs no Ruby; the lookups below,
-    // which can allocate, run after the borrow has ended.
-    let (bom, decl) = unsafe { with_bytes(str, sniff) };
+    /* The sniff reads a copy of the first bytes; the name lookups - which can
+     * allocate - come after. */
+    let (head, n) = prefix::<SNIFF_WINDOW>(str);
+    let (bom, decl) = sniff(head.get(..n).unwrap_or(&[]));
     let bom = bom.and_then(|b| Encoding::find(b.name().as_bytes()));
     /* XML 1.0 §4.3.3: the name is an IANA charset name or alias, Ruby's or
      * one `encoding_names` maps to Ruby's; an entity in an encoding the
@@ -160,19 +160,14 @@ fn xml_decode_input(str: RString, max_bytes: Option<usize>) -> Result<RString, E
 
     /* §4.3.3: a leading BOM is the encoding signature, not document content.
      * The transcode above turns any UTF-16/32 BOM into a U+FEFF, so one rule
-     * covers every input. Each read of the bytes is a scoped borrow that ends
-     * before anything can allocate - the module's one ordering rule. */
-    // SAFETY: a read of the bytes that runs no Ruby.
-    let (off, len) = unsafe {
-        with_bytes(s, |bytes| {
-            let off = if bytes.starts_with(b"\xEF\xBB\xBF") {
-                3
-            } else {
-                0
-            };
-            (off, bytes.len() - off)
-        })
+     * covers every input. */
+    let (head, n) = prefix::<3>(s);
+    let off = if n == 3 && head == *b"\xEF\xBB\xBF" {
+        3
+    } else {
+        0
     };
+    let len = s.len() - off;
 
     /* Fail closed on an over-budget input BEFORE the validation scan and the
      * caller's GVL-release copy: an input whose UTF-8 length already exceeds the
@@ -189,9 +184,7 @@ fn xml_decode_input(str: RString, max_bytes: Option<usize>) -> Result<RString, E
      * the HTML sanitize path. The whole String is consulted for its cached
      * coderange (which covers the stripped suffix too - the BOM is one complete
      * UTF-8 character) while the bytes validated are the suffix. */
-    // SAFETY: `text_check` reads the bytes and the cached coderange, and runs
-    // no Ruby.
-    let problem = unsafe { with_bytes(s, |bytes| text_check(s, &bytes[off..]).problem()) };
+    let problem = text_check_from(s, off).problem();
     if let Some(problem) = problem {
         return Err(syntax_error(format_args!("XML input {problem}")));
     }

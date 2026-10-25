@@ -522,12 +522,8 @@ impl NodeSet {
     /// before the wrap, which allocates and so can run arbitrary Ruby.
     pub fn at(&self, i: usize) -> Result<Option<Value>, Error> {
         let node = self.read()?.as_slice().get(i).copied();
-        node.map(|n| {
-            // SAFETY: a node this set stored, under its own `kind`, and its
-            // document is rooted by the set.
-            unsafe { wrap_doc_node(self.kind, n, self.document()) }
-        })
-        .transpose()
+        node.map(|n| wrap_doc_node(self.kind, n, self.document()))
+            .transpose()
     }
 
     /// A new set of `len` nodes from `beg`, clamped to the end; `None` when

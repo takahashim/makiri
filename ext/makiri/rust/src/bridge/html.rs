@@ -98,6 +98,20 @@ pub fn wrap_html_node(node: RawNode, document: Value) -> Result<Value, Error> {
     wrap_html_node_of_type(node, node_type, document)
 }
 
+/// [`wrap_html_node`] for a node that must be one of `document`'s: an
+/// `InternalError` when it is not (another document's, or a stale word).
+pub(in crate::bridge) fn wrap_html_node_checked(
+    node: RawNode,
+    document: Value,
+) -> Result<Value, Error> {
+    let node_type = html_read(&document)?
+        .doc()
+        .checked(node)
+        .map(|n| n.node_type())
+        .ok_or_else(|| crate::bridge::ruby::internal_error("a stored node of another document"))?;
+    wrap_html_node_of_type(node, node_type, document)
+}
+
 /// [`wrap_html_node`] for a caller that read the node's type already, in the
 /// read it found the node in - one read the fewer.
 fn wrap_html_node_of_type(
