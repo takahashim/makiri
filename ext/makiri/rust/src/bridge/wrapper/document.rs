@@ -438,15 +438,15 @@ pub(in crate::bridge) fn with_html_parsed_if<R>(
 /// `wrap_*_node` functions make, written once. The two tables differ only in
 /// which classes they name, so neither can grow a kind the other lacks.
 pub(in crate::bridge) struct NodeClasses {
-    pub node: &'static RbConst<crate::bridge::rb::RClass>,
-    pub element: &'static RbConst<crate::bridge::rb::RClass>,
-    pub attr: &'static RbConst<crate::bridge::rb::RClass>,
-    pub text: &'static RbConst<crate::bridge::rb::RClass>,
-    pub comment: &'static RbConst<crate::bridge::rb::RClass>,
-    pub cdata: &'static RbConst<crate::bridge::rb::RClass>,
-    pub pi: &'static RbConst<crate::bridge::rb::RClass>,
-    pub doctype: &'static RbConst<crate::bridge::rb::RClass>,
-    pub fragment: &'static RbConst<crate::bridge::rb::RClass>,
+    pub node: &'static RbConst<crate::bridge::rb::DataClass>,
+    pub element: &'static RbConst<crate::bridge::rb::DataClass>,
+    pub attr: &'static RbConst<crate::bridge::rb::DataClass>,
+    pub text: &'static RbConst<crate::bridge::rb::DataClass>,
+    pub comment: &'static RbConst<crate::bridge::rb::DataClass>,
+    pub cdata: &'static RbConst<crate::bridge::rb::DataClass>,
+    pub pi: &'static RbConst<crate::bridge::rb::DataClass>,
+    pub doctype: &'static RbConst<crate::bridge::rb::DataClass>,
+    pub fragment: &'static RbConst<crate::bridge::rb::DataClass>,
 }
 
 impl NodeClasses {
@@ -455,7 +455,11 @@ impl NodeClasses {
     /// an unknown number). A DOCUMENT is the caller's to map back onto the
     /// Ruby Document before asking.
     #[inline]
-    pub fn class_for(&self, ruby: &Ruby, t: NodeType) -> Result<crate::bridge::rb::RClass, Error> {
+    pub fn class_for(
+        &self,
+        ruby: &Ruby,
+        t: NodeType,
+    ) -> Result<crate::bridge::rb::DataClass, Error> {
         match t {
             NodeType::Element => self.element,
             NodeType::Attribute => self.attr,
@@ -493,7 +497,7 @@ impl NodeClasses {
 pub(in crate::bridge) fn wrap_cached(
     ruby: &Ruby,
     ty: &'static NodeWrapperType,
-    klass: crate::bridge::rb::RClass,
+    klass: crate::bridge::rb::DataClass,
     source: impl NodeHandleSource,
     document: Value,
 ) -> Result<Value, Error> {

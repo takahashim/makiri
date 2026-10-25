@@ -65,9 +65,16 @@ impl<T: ReprValue> RbConst<T> {
     /// Record `v`, rooted for the rest of the process. `Init_` is the only
     /// writer, and a second write is refused rather than replacing the first.
     pub fn set(&self, v: T) -> Result<(), Error> {
+        const TWICE: &str = "a constant handle was set twice";
+        /* Refused before the value is rooted: a root is never released, so
+         * rooting one the cell then turns away would keep it for good. (The
+         * GVL serialises the two steps.) */
+        if self.0.get().is_some() {
+            return Err(Error::new(Builtin::RuntimeError, TWICE));
+        }
         self.0
             .set(Opaque::register(v)?)
-            .map_err(|_| Error::new(Builtin::RuntimeError, "a constant handle was set twice"))
+            .map_err(|_| Error::new(Builtin::RuntimeError, TWICE))
     }
 
     /// The object, or `None` before the extension's `Init_`.
@@ -100,6 +107,6 @@ impl RbConst<ExceptionClass> {
 /// Is `v` an instance of the class in `klass`? `false` before the extension's `Init_`,
 /// when no class of ours exists for it to be an instance of.
 #[inline]
-pub fn is_kind_of(ruby: &Ruby, v: Value, klass: &RbConst<crate::rb::RClass>) -> bool {
+pub fn is_kind_of<C: ReprValue>(ruby: &Ruby, v: Value, klass: &RbConst<C>) -> bool {
     klass.get(ruby).is_some_and(|c| v.is_kind_of(c))
 }

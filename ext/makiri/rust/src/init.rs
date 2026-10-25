@@ -30,12 +30,11 @@
 //! from ever inheriting a reader that dereferences a Lexbor node: the two
 //! representations share a base class but never a method.
 //!
-//! Every leaf also loses its allocator. These objects are created only from
-//! Rust, wrapping a live node; `.new` would hand back one wrapping nothing.
+//! Every class here also loses its allocator (`define_data_class`). These
+//! objects are created only from Rust, wrapping a live node; `.new` would hand
+//! back one wrapping nothing.
 
-use crate::bridge::rb::{
-    Class, Error, ExceptionClass, Module, Object, RClass, RModule, Ruby, Value,
-};
+use crate::bridge::rb::{DataClass, Error, ExceptionClass, Module, Object, RModule, Ruby, Value};
 use crate::function;
 
 /* ------------------------------------------------------------------ *
@@ -53,7 +52,7 @@ macro_rules! exported {
     };
 }
 
-exported! { RClass:
+exported! { DataClass:
     CLASS_NODE, CLASS_DOCUMENT, CLASS_DOCUMENT_FRAGMENT, CLASS_NODE_SET, CLASS_XPATH_CONTEXT,
     CLASS_HTML_NODE, CLASS_HTML_DOCUMENT, CLASS_HTML_ELEMENT,
     CLASS_HTML_ATTR, CLASS_HTML_TEXT, CLASS_HTML_COMMENT, CLASS_HTML_CDATA_SECTION,
@@ -277,23 +276,19 @@ fn xml_decode(ruby: &Ruby, str: Value) -> Result<Value, Error> {
 fn define_into(
     under: RModule,
     name: &str,
-    super_: RClass,
-    slot: &RbConst<RClass>,
-) -> Result<RClass, Error> {
-    let class = under.define_class(name, super_)?;
+    super_: Option<DataClass>,
+    slot: &RbConst<DataClass>,
+) -> Result<DataClass, Error> {
+    let class = under.define_data_class(name, super_)?;
     slot.set(class)?;
     Ok(class)
 }
 
-/// Give every leaf the representation's reader module and take away its
-/// allocator.
-///
-/// The two go together: a leaf carries the readers because it wraps a live
-/// node, and loses `.new` for the same reason.
-fn seal_leaves(methods: RModule, leaves: &[RClass]) -> Result<(), Error> {
+/// Give every leaf the representation's reader module: a leaf carries the
+/// readers because it wraps a live node.
+fn seal_leaves(methods: RModule, leaves: &[DataClass]) -> Result<(), Error> {
     for &leaf in leaves {
         leaf.include_module(methods)?;
-        leaf.undef_default_alloc_func();
     }
     Ok(())
 }
@@ -334,35 +329,35 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     // whichever version of the Ruby code, requires it.
     let native_version =
         crate::bridge::string::utf8_str(ruby, env!("MAKIRI_GEM_VERSION").as_bytes())?;
-    crate::bridge::rb::freeze(native_version);
+    crate::bridge::rb::freeze(native_version)?;
     makiri.const_set(ruby, "NATIVE_VERSION", native_version)?;
     let native_ruby = crate::bridge::string::utf8_str(
         ruby,
         crate::nupur::abi::ruby_api_version().as_str().as_bytes(),
     )?;
-    crate::bridge::rb::freeze(native_ruby);
+    crate::bridge::rb::freeze(native_ruby)?;
     makiri.const_set(ruby, "NATIVE_RUBY_API_VERSION", native_ruby)?;
 
     /* The abstract bases. Concrete nodes are the HTML::* / XML::* leaves
      * below; these exist so `is_a?(Makiri::Element)` holds across both. The
      * exported ones register as they are defined; the rest are local. */
-    let node = define_into(makiri, "Node", ruby.class_object(), &CLASS_NODE)?;
-    let document = define_into(makiri, "Document", node, &CLASS_DOCUMENT)?;
-    let element = makiri.define_class("Element", node)?;
-    let attr = makiri.define_class("Attr", node)?;
-    let text = makiri.define_class("Text", node)?;
-    let comment = makiri.define_class("Comment", node)?;
-    let cdata = makiri.define_class("CDATASection", node)?;
-    let pi = makiri.define_class("ProcessingInstruction", node)?;
-    let doctype = makiri.define_class("DocumentType", node)?;
-    let fragment = define_into(makiri, "DocumentFragment", node, &CLASS_DOCUMENT_FRAGMENT)?;
-    let node_set = define_into(makiri, "NodeSet", ruby.class_object(), &CLASS_NODE_SET)?;
-    let xpath_context = define_into(
+    let node = define_into(makiri, "Node", None, &CLASS_NODE)?;
+    let document = define_into(makiri, "Document", Some(node), &CLASS_DOCUMENT)?;
+    let element = makiri.define_data_class("Element", Some(node))?;
+    let attr = makiri.define_data_class("Attr", Some(node))?;
+    let text = makiri.define_data_class("Text", Some(node))?;
+    let comment = makiri.define_data_class("Comment", Some(node))?;
+    let cdata = makiri.define_data_class("CDATASection", Some(node))?;
+    let pi = makiri.define_data_class("ProcessingInstruction", Some(node))?;
+    let doctype = makiri.define_data_class("DocumentType", Some(node))?;
+    let fragment = define_into(
         makiri,
-        "XPathContext",
-        ruby.class_object(),
-        &CLASS_XPATH_CONTEXT,
+        "DocumentFragment",
+        Some(node),
+        &CLASS_DOCUMENT_FRAGMENT,
     )?;
+    define_into(makiri, "NodeSet", None, &CLASS_NODE_SET)?;
+    define_into(makiri, "XPathContext", None, &CLASS_XPATH_CONTEXT)?;
 
     let m_xpath = makiri.define_module("XPath")?;
     let m_css = makiri.define_module("CSS")?;
@@ -376,24 +371,34 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     let html_methods = m_html.define_module("NodeMethods")?;
     MOD_HTML_NODE_METHODS.set(html_methods)?;
     let html_leaves = [
-        define_into(m_html, "Node", node, &CLASS_HTML_NODE)?,
-        define_into(m_html, "Document", document, &CLASS_HTML_DOCUMENT)?,
-        define_into(m_html, "Element", element, &CLASS_HTML_ELEMENT)?,
-        define_into(m_html, "Attr", attr, &CLASS_HTML_ATTR)?,
-        define_into(m_html, "Text", text, &CLASS_HTML_TEXT)?,
-        define_into(m_html, "Comment", comment, &CLASS_HTML_COMMENT)?,
-        define_into(m_html, "CDATASection", cdata, &CLASS_HTML_CDATA_SECTION)?,
+        define_into(m_html, "Node", Some(node), &CLASS_HTML_NODE)?,
+        define_into(m_html, "Document", Some(document), &CLASS_HTML_DOCUMENT)?,
+        define_into(m_html, "Element", Some(element), &CLASS_HTML_ELEMENT)?,
+        define_into(m_html, "Attr", Some(attr), &CLASS_HTML_ATTR)?,
+        define_into(m_html, "Text", Some(text), &CLASS_HTML_TEXT)?,
+        define_into(m_html, "Comment", Some(comment), &CLASS_HTML_COMMENT)?,
+        define_into(
+            m_html,
+            "CDATASection",
+            Some(cdata),
+            &CLASS_HTML_CDATA_SECTION,
+        )?,
         define_into(
             m_html,
             "ProcessingInstruction",
-            pi,
+            Some(pi),
             &CLASS_HTML_PROCESSING_INSTRUCTION,
         )?,
-        define_into(m_html, "DocumentType", doctype, &CLASS_HTML_DOCUMENT_TYPE)?,
+        define_into(
+            m_html,
+            "DocumentType",
+            Some(doctype),
+            &CLASS_HTML_DOCUMENT_TYPE,
+        )?,
         define_into(
             m_html,
             "DocumentFragment",
-            fragment,
+            Some(fragment),
             &CLASS_HTML_DOCUMENT_FRAGMENT,
         )?,
     ];
@@ -407,24 +412,29 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     let xml_methods = m_xml.define_module("NodeMethods")?;
     MOD_XML_NODE_METHODS.set(xml_methods)?;
     let xml_leaves = [
-        define_into(m_xml, "Node", node, &CLASS_XML_NODE)?,
-        define_into(m_xml, "Document", document, &CLASS_XML_DOCUMENT)?,
-        define_into(m_xml, "Element", element, &CLASS_XML_ELEMENT)?,
-        define_into(m_xml, "Attr", attr, &CLASS_XML_ATTR)?,
-        define_into(m_xml, "Text", text, &CLASS_XML_TEXT)?,
-        define_into(m_xml, "Comment", comment, &CLASS_XML_COMMENT)?,
-        define_into(m_xml, "CDATASection", cdata, &CLASS_XML_CDATA_SECTION)?,
+        define_into(m_xml, "Node", Some(node), &CLASS_XML_NODE)?,
+        define_into(m_xml, "Document", Some(document), &CLASS_XML_DOCUMENT)?,
+        define_into(m_xml, "Element", Some(element), &CLASS_XML_ELEMENT)?,
+        define_into(m_xml, "Attr", Some(attr), &CLASS_XML_ATTR)?,
+        define_into(m_xml, "Text", Some(text), &CLASS_XML_TEXT)?,
+        define_into(m_xml, "Comment", Some(comment), &CLASS_XML_COMMENT)?,
+        define_into(m_xml, "CDATASection", Some(cdata), &CLASS_XML_CDATA_SECTION)?,
         define_into(
             m_xml,
             "ProcessingInstruction",
-            pi,
+            Some(pi),
             &CLASS_XML_PROCESSING_INSTRUCTION,
         )?,
-        define_into(m_xml, "DocumentType", doctype, &CLASS_XML_DOCUMENT_TYPE)?,
+        define_into(
+            m_xml,
+            "DocumentType",
+            Some(doctype),
+            &CLASS_XML_DOCUMENT_TYPE,
+        )?,
         define_into(
             m_xml,
             "DocumentFragment",
-            fragment,
+            Some(fragment),
             &CLASS_XML_DOCUMENT_FRAGMENT,
         )?,
     ];
@@ -465,27 +475,6 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
 
     seal_leaves(html_methods, &html_leaves)?;
     seal_leaves(xml_methods, &xml_leaves)?;
-
-    /* The abstract bases are never constructed directly either: an instance
-     * always wraps a live node, and `.new` would hand back one wrapping
-     * nothing. XPathContext.new exists, but it is defined by
-     * init_xpath and wraps a native context. */
-    for base in [
-        node,
-        document,
-        element,
-        attr,
-        text,
-        comment,
-        cdata,
-        pi,
-        doctype,
-        fragment,
-        node_set,
-        xpath_context,
-    ] {
-        base.undef_default_alloc_func();
-    }
 
     /* One registration per feature, each defining its methods onto the
      * classes above. The order is free: every class and module they touch

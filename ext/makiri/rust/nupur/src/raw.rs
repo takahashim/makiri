@@ -207,11 +207,13 @@ pub fn exception_new(ruby: &Ruby, class: ExceptionClass, msg: &[u8]) -> Result<V
     Ok(unsafe { Value::from_raw(exc) })
 }
 
+/// The longest class name [`with_classname`] hands on; a longer one is cut.
+const CLASSNAME_MAX: usize = 128;
+
 /// `rb_obj_classname`: the name of `v`'s class, handed to `f` as bytes. Raises
 /// `NoMemoryError`: an anonymous class's name (`#<Class:0x...>`) is a String
-/// made on each call. That String is referenced by nothing once the call
-/// returns, so `f` reads it before anything can allocate - it must run no
-/// Ruby.
+/// made on each call, referenced by nothing once the call returns - so `f`
+/// is handed a copy, up to [`CLASSNAME_MAX`] bytes, and may do anything.
 pub fn with_classname<R>(v: Value, f: impl FnOnce(&[u8]) -> R) -> Result<R, Error> {
     let v = v.as_raw();
     let p = call(|| unsafe {
@@ -221,10 +223,18 @@ pub fn with_classname<R>(v: Value, f: impl FnOnce(&[u8]) -> R) -> Result<R, Erro
     if p.is_null() {
         return Ok(f(b"Object"));
     }
-    // SAFETY: a NUL-terminated C string owned by the class, or by the
-    // temporary name String, which no collection can free before `f` is done
-    // (`f` allocates nothing).
-    Ok(f(unsafe { core::ffi::CStr::from_ptr(p) }.to_bytes()))
+    /* Copied out at once, before `f` runs: the name may be a temporary
+     * String nothing references, which a collection `f` set off could free.
+     * A name past the buffer is cut - it is written into a message. */
+    let mut buf = [0u8; CLASSNAME_MAX];
+    // SAFETY: a NUL-terminated C string owned by the class or by that
+    // temporary String, read and copied here with nothing run between.
+    let name = unsafe { core::ffi::CStr::from_ptr(p) }.to_bytes();
+    let n = name.len().min(CLASSNAME_MAX);
+    if let (Some(d), Some(s)) = (buf.get_mut(..n), name.get(..n)) {
+        d.copy_from_slice(s);
+    }
+    Ok(f(buf.get(..n).unwrap_or_default()))
 }
 
 /// `rb_hash_lookup2` at `key`, `Ok(None)` for no entry. The key is a Symbol
@@ -309,22 +319,27 @@ pub fn module_new(_: &Ruby) -> Result<RModule, Error> {
     typed(v, RModule::from_value, "a C call made no Module")
 }
 
-/// `rb_big2ll`: raises `RangeError` past an `i64`.
+/// `rb_big2ll`: raises `RangeError` past an `i64`. For a Bignum only - the C
+/// reads a Bignum's header unchecked - so crate-private: the one caller is
+/// `Integer::to_i64`, which answers a Fixnum itself.
 #[allow(
     clippy::unnecessary_cast,
     reason = "c_longlong is i64 here, not everywhere"
 )]
-pub fn big2ll(n: Integer) -> Result<i64, Error> {
+pub(crate) fn big2ll(n: Integer) -> Result<i64, Error> {
     let n = n.as_raw();
     Ok(call(|| unsafe { rb_sys::rb_big2ll(n) })? as i64)
 }
 
-/// `rb_big2ull`: raises `RangeError` past a `u64`.
+/// `rb_big2ull`: raises `RangeError` past a `u64`. For a non-negative Bignum
+/// only (a negative one would wrap), so crate-private: the one caller is
+/// `Integer::to_u64`, which refuses a negative value and answers a Fixnum
+/// itself.
 #[allow(
     clippy::unnecessary_cast,
     reason = "c_ulonglong is u64 here, not everywhere"
 )]
-pub fn big2ull(n: Integer) -> Result<u64, Error> {
+pub(crate) fn big2ull(n: Integer) -> Result<u64, Error> {
     let n = n.as_raw();
     Ok(call(|| unsafe { rb_sys::rb_big2ull(n) })? as u64)
 }
@@ -375,10 +390,22 @@ pub fn include_module(klass: Value, module: Value) -> Result<(), Error> {
     call(|| unsafe { rb_sys::rb_include_module(klass, module) })
 }
 
-/// `rb_undef_alloc_func`. Raises nothing.
-pub fn undef_alloc_func(klass: RClass) {
-    // SAFETY: `klass` is a live class.
-    unsafe { rb_sys::rb_undef_alloc_func(klass.as_raw()) }
+/// `rb_undef_alloc_func`: raises `TypeError` for a singleton class, which
+/// may not have an allocator of its own taken.
+pub fn undef_alloc_func(klass: RClass) -> Result<(), Error> {
+    let k = klass.as_raw();
+    call(|| unsafe { rb_sys::rb_undef_alloc_func(k) })
+}
+
+/// `rb_obj_freeze`: raises `NoMemoryError` - freezing moves an object with
+/// instance variables to a frozen shape, which may allocate.
+pub fn obj_freeze(v: Value) -> Result<(), Error> {
+    let v = v.as_raw();
+    call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_obj_freeze(v)
+    })
+    .map(|_| ())
 }
 
 /// `rb_define_method` / `_private_method` / `_singleton_method`: raise
@@ -539,13 +566,23 @@ pub fn check_frozen(v: Value) -> Result<(), Error> {
 
 /// `rb_range_beg_len` with `err = 0` over a collection of `count` elements:
 /// `None` for a start outside it, `RangeError` for a bound too large for a
-/// `long`. `range` must be a Range whose ends are Integers or nil (the
-/// caller's check - `ruby::integer_range_arg`): an end of any other
-/// kind would be converted with its `to_int`.
+/// `long`. A Range whose ends are not Integers or nil is a `TypeError`,
+/// checked here: the C would convert such an end with its `to_int`.
 #[inline]
 pub fn range_beg_len(range: Value, count: c_long) -> Result<Option<(c_long, c_long)>, Error> {
-    if crate::rb::Range::from_value(range).is_none() {
+    let Some(r) = crate::rb::Range::from_value(range) else {
         return Err(crate::rb::error::type_error("a Range was expected"));
+    };
+    /* Checked here, not left to the caller: an end of any other kind would
+     * have its `to_int` run by the C, the caller's Ruby. */
+    let (beg, end, _) = range_values(r)?;
+    if [beg, end]
+        .iter()
+        .any(|&e| !crate::rb::ReprValue::is_nil(e) && Integer::from_value(e).is_none())
+    {
+        return Err(crate::rb::error::type_error(
+            "a Range whose ends are Integers (or nil) was expected",
+        ));
     }
     let (mut beg, mut len): (c_long, c_long) = (0, 0);
     let (b, l) = (&mut beg as *mut c_long, &mut len as *mut c_long);
@@ -829,15 +866,16 @@ pub(crate) fn hidden_hash_new(ruby: &Ruby) -> Result<RHash, Error> {
     Ok(h)
 }
 
-/// `rb_hash_aset` for a String or Symbol key, whose hash Ruby computes itself:
-/// any other key would have its `#hash` and `#eql?` called, so it is a
-/// `TypeError` here. Raises `NoMemoryError`, and `FrozenError` for a frozen
-/// Hash.
+/// `rb_hash_aset` for a Symbol or String key, whose hash Ruby computes
+/// itself ([`crate::rb::value::plain_key`]): any other key - an instance of a
+/// String subclass included - would have its `#hash` and `#eql?` called, so
+/// it is a `TypeError` here. Raises `NoMemoryError`, and `FrozenError` for a
+/// frozen Hash.
 #[inline]
 pub(crate) fn hash_aset(h: RHash, k: Value, v: Value) -> Result<(), Error> {
-    if RString::from_value(k).is_none() && Symbol::from_value(k).is_none() {
+    if !crate::rb::value::plain_key(k) {
         return Err(crate::rb::error::type_error(
-            "a Hash key must be a String or a Symbol",
+            "a Hash key must be a Symbol or a String (not a subclass's)",
         ));
     }
     let (h, k, v) = (h.as_raw(), k.as_raw(), v.as_raw());

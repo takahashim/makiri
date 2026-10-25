@@ -298,7 +298,13 @@ impl RArray {
     /// `rb_ary_entry`, which raises nothing.
     #[inline]
     pub fn entry(self, i: isize) -> Result<Value, Error> {
-        Ok(ary_entry(self, i as c_long))
+        /* Converted, not cut: a `long` is 32 bits on Windows, where an index
+         * past one would wrap to an element that is there. No Array has one. */
+        Ok(match c_long::try_from(i) {
+            Ok(i) => ary_entry(self, i),
+            // SAFETY: `nil`, an immediate.
+            Err(_) => unsafe { Value::from_raw(rb_sys::Qnil as VALUE) },
+        })
     }
 }
 
@@ -322,20 +328,46 @@ impl RHash {
     /// which can raise - `Err`, passed on (`raw::hash_lookup`).
     #[inline]
     pub fn get(self, key: impl HashKey) -> Result<Option<Value>, Error> {
-        crate::raw::hash_lookup(self, key.as_value())
+        let key = key.as_value();
+        if !plain_key(key) {
+            return Err(crate::rb::error::type_error(
+                "a Hash key must be a Symbol or a String (not a subclass's)",
+            ));
+        }
+        crate::raw::hash_lookup(self, key)
     }
 }
 
-/// A Hash key whose lookup runs no Ruby: hashed and compared in C.
+/// A Hash key whose lookup runs no Ruby: hashed and compared in C. A String
+/// is one only when its class is String itself ([`plain_key`]): Ruby takes
+/// the C path for two Strings only then, and calls `eql?` - the caller's
+/// Ruby - for a subclass's instance, so the lookup refuses one.
 pub trait HashKey: ReprValue {}
 impl HashKey for Symbol {}
 impl HashKey for RString {}
+
+/// Whether `k` is a key Ruby hashes and compares in C: a Symbol, or a String
+/// whose class is String itself. Reads the header; runs no Ruby.
+#[inline]
+pub(crate) fn plain_key(k: Value) -> bool {
+    if Symbol::from_value(k).is_some() {
+        return true;
+    }
+    RString::from_value(k).is_some_and(|s| {
+        // SAFETY: a String is a heap object, whose header starts with
+        // `RBasic`; `rb_cString` is a C global Ruby sets once at boot.
+        unsafe { (*(s.as_raw() as *const rb_sys::RBasic)).klass == rb_sys::rb_cString }
+    })
+}
 
 impl RArray {
     /// The elements, read one at a time (`rb_ary_entry`), the length read
     /// afresh before each.
     pub fn each(self) -> impl Iterator<Item = Value> {
-        (0..).map_while(move |i: usize| (i < self.len()).then(|| ary_entry(self, i as c_long)))
+        (0..).map_while(move |i: usize| {
+            let i = c_long::try_from(i).ok().filter(|_| i < self.len())?;
+            Some(ary_entry(self, i))
+        })
     }
 }
 
@@ -512,10 +544,4 @@ pub(crate) fn class_inherits(sub: Value, sup: Value) -> bool {
 pub(crate) fn ary_entry(a: RArray, i: c_long) -> Value {
     // SAFETY: `a` is a live Array; the read is bounds-checked by Ruby.
     unsafe { Value::from_raw(rb_sys::rb_ary_entry(a.as_raw(), i)) }
-}
-
-/// `rb_obj_freeze`. Raises nothing.
-pub(crate) fn obj_freeze(v: Value) {
-    // SAFETY: `v` is a live object.
-    unsafe { rb_sys::rb_obj_freeze(v.as_raw()) };
 }

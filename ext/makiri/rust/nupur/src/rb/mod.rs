@@ -19,7 +19,7 @@ pub mod method;
 pub mod ruby;
 pub mod value;
 
-pub use class::{freeze, Class, Module, Object};
+pub use class::{freeze, Class, DataClass, Module, Object};
 pub use convert::{IntoValue, ReturnValue, TryConvert};
 pub use error::{Builtin, Error, ErrorClass, Message};
 pub use global::{Opaque, RbConst};

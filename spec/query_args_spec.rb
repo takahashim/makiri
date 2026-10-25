@@ -67,4 +67,13 @@ RSpec.describe "XPath query arguments" do
     # `Hash#merge`; the keyword binding wins and the override is not consulted.
     expect(xml.xpath("//s:p", h, s: "urn:s").size).to eq(1)
   end
+
+  it "refuses a namespace key of a String subclass, whose #hash is the caller's" do
+    called = false
+    key = Class.new(String) { define_method(:hash) { called = true; super() } }.new("s")
+    h = { key => "urn:s" }
+    called = false
+    expect { xml.xpath("//s:p", h, t: "urn:t") }.to raise_error(TypeError, /not a subclass's/)
+    expect(called).to be(false)
+  end
 end

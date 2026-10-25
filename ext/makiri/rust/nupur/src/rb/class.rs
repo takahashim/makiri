@@ -51,6 +51,26 @@ pub trait Module: ReprValue {
         Ok(RClass::from_known(v))
     }
 
+    /// A class `name` under this module whose instances are the layer's
+    /// wrapped objects ([`DataClass`]): its superclass is `superclass`, or
+    /// `Object` for `None`, and its allocator is taken away, so `.new` makes
+    /// none of a kind no payload backs.
+    fn define_data_class(
+        self,
+        name: &str,
+        superclass: Option<DataClass>,
+    ) -> Result<DataClass, Error> {
+        let sup = match superclass {
+            Some(d) => d.0,
+            // SAFETY: `rb_cObject`, a C global Ruby sets once at boot.
+            None => RClass::from_known(unsafe { Value::from_raw(rb_sys::rb_cObject) }),
+        };
+        let v = crate::raw::define_class_under(self.as_value(), &c_name(name)?, sup)?;
+        let class = RClass::from_known(v);
+        crate::raw::undef_alloc_func(class)?;
+        Ok(DataClass(class))
+    }
+
     /// An exception class `name < superclass` under this module.
     fn define_error(self, name: &str, superclass: ExceptionClass) -> Result<ExceptionClass, Error> {
         let sup = RClass::from_known(superclass.as_value());
@@ -124,10 +144,40 @@ pub trait Object: ReprValue {
 pub trait Class: ReprValue {
     /// Take the allocator away, so `.new` on the class raises: its objects
     /// are made only from Rust, wrapping something.
-    fn undef_default_alloc_func(self) {
-        crate::raw::undef_alloc_func(RClass::from_known(self.as_value()));
+    fn undef_default_alloc_func(self) -> Result<(), Error> {
+        crate::raw::undef_alloc_func(RClass::from_known(self.as_value()))
     }
 }
+
+/// A class made by [`Module::define_data_class`]: one whose instances the
+/// layer makes, wrapping a payload ([`crate::typed`] takes no other class).
+///
+/// Its ancestors are `Object` and such classes only, so no instance of it is
+/// handed to a C method that assumes another layout - a T_DATA object made
+/// with String's class would have `#length` read it as a String. There is no
+/// way to make one from an arbitrary class: no `from_value`.
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub struct DataClass(RClass);
+
+impl DataClass {
+    /// The class, as a class.
+    #[inline]
+    pub fn as_class(self) -> RClass {
+        self.0
+    }
+}
+
+impl ReprValue for DataClass {
+    #[inline]
+    fn as_value(self) -> Value {
+        self.0.as_value()
+    }
+}
+
+impl Module for DataClass {}
+impl Object for DataClass {}
+impl Class for DataClass {}
 
 /// How a method is defined.
 #[derive(Clone, Copy)]
@@ -144,7 +194,8 @@ impl Object for RClass {}
 impl Object for RModule {}
 impl Class for RClass {}
 
-/// Freeze `v` (`rb_obj_freeze`). Raises nothing for a String of ours.
-pub fn freeze(v: Value) {
-    crate::rb::value::obj_freeze(v);
+/// Freeze `v` (`rb_obj_freeze`); a failed allocation of its frozen shape is
+/// `Err` (`NoMemoryError`).
+pub fn freeze(v: Value) -> Result<(), Error> {
+    crate::raw::obj_freeze(v)
 }
