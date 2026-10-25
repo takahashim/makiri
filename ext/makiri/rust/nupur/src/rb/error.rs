@@ -19,7 +19,7 @@ use core::fmt;
 
 use super::ruby::Ruby;
 use super::value::{ExceptionClass, ReprValue, Value};
-use crate::helpers::RbConst;
+use crate::rb::global::RbConst;
 
 /// The class of an exception not yet made: named, and read only when the
 /// exception is raised (or asked [`Error::is_kind_of`]), by a caller that
@@ -30,7 +30,7 @@ use crate::helpers::RbConst;
 pub enum ErrorClass {
     /// One of Ruby's own exception classes.
     Builtin(Builtin),
-    /// A class `init` defines and registers (`Makiri::Error`, ...);
+    /// A class the extension defines at `Init_` and registers;
     /// `RuntimeError` if it is read before it is set.
     Registered(&'static RbConst<ExceptionClass>),
     /// A class value a caller holding the GVL already has.
@@ -169,7 +169,7 @@ impl Error {
         let class = class.into().resolve(ruby);
         match &self.0 {
             Kind::New(c, _) | Kind::Formatted(c, _) => {
-                crate::raw::class_inherits(c.resolve(ruby).as_value(), class.as_value())
+                crate::rb::value::class_inherits(c.resolve(ruby).as_value(), class.as_value())
             }
             Kind::Exception(v) => v.is_kind_of(class),
             Kind::Jump(_) => false,
@@ -228,7 +228,7 @@ impl fmt::Display for Wording<'_> {
         match &self.0 .0 {
             Kind::New(_, msg) => f.write_str(msg),
             Kind::Formatted(_, msg) => f.write_str(msg.as_str()),
-            Kind::Exception(v) => crate::helpers::ExceptionText(self.1, *v).fmt(f),
+            Kind::Exception(v) => crate::describe::ExceptionText(self.1, *v).fmt(f),
             Kind::Jump(_) => f.write_str("error"),
         }
     }
@@ -243,4 +243,28 @@ impl core::fmt::Debug for Error {
             Kind::Jump(state) => write!(f, "Error(<jump {state}>)"),
         }
     }
+}
+
+/* ---- the errors every layer makes ---- */
+
+/// The internal error: the class a broken invariant of the layer raises, as
+/// the extension registers it ([`RbConst::set`](crate::rb::global::RbConst::set)),
+/// and `RuntimeError` until it does.
+pub static INTERNAL_ERROR: RbConst<ExceptionClass> = RbConst::new();
+
+/// An internal error carrying `msg`: a broken invariant, which a bare
+/// `rescue` (StandardError) passes through - the registered class
+/// ([`INTERNAL_ERROR`]), or `RuntimeError` before one is.
+pub fn internal_error(msg: impl crate::rb::Message) -> Error {
+    Error::new(&INTERNAL_ERROR, msg)
+}
+
+/// A `TypeError` with `msg`.
+pub fn type_error(msg: impl crate::rb::Message) -> Error {
+    Error::new(Builtin::TypeError, msg)
+}
+
+/// An `ArgumentError` with `msg`.
+pub fn arg_error(msg: impl crate::rb::Message) -> Error {
+    Error::new(Builtin::ArgumentError, msg)
 }

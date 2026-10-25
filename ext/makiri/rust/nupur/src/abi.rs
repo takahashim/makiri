@@ -1,0 +1,30 @@
+//! The Ruby API version: the one this crate was built against, and the
+//! running Ruby's, for a load check that refuses a binary built for another.
+
+#![allow(unsafe_code)]
+
+/// The `MAJOR.MINOR` of the Ruby whose headers this extension was compiled
+/// against - its ABI, since a teeny release keeps it. Published as
+/// as a constant by the extension.
+pub fn ruby_api_version() -> crate::msg::Msg {
+    crate::msg::Msg::format(format_args!(
+        "{}.{}",
+        rb_sys::RUBY_API_VERSION_MAJOR,
+        rb_sys::RUBY_API_VERSION_MINOR
+    ))
+}
+
+/// The Ruby API `MAJOR.MINOR` this extension was compiled against.
+pub fn built_ruby_api() -> (core::ffi::c_int, core::ffi::c_int) {
+    (
+        rb_sys::RUBY_API_VERSION_MAJOR as core::ffi::c_int,
+        rb_sys::RUBY_API_VERSION_MINOR as core::ffi::c_int,
+    )
+}
+
+/// The running Ruby's API `MAJOR.MINOR`, read from the `ruby_api_version`
+/// it exports (three ints, whose layout no Ruby changes).
+pub fn running_ruby_api() -> (core::ffi::c_int, core::ffi::c_int) {
+    // SAFETY: an immutable `const int[3]` libruby exports, read by value.
+    unsafe { (rb_sys::ruby_api_version[0], rb_sys::ruby_api_version[1]) }
+}

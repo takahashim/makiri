@@ -1,9 +1,7 @@
-//! Ruby objects the glue builds - Arrays, Hashes, Integers, Floats, Symbols -
-//! each made through `raw`'s protected calls, so a failed allocation is `Err`.
-//!
-//! The C constructors raise on a failed allocation, a `longjmp` over the
-//! caller's frames, and are `bridge::raw`'s alone; the glue spells every one
-//! of these here. Strings are `bridge::string`'s.
+//! Ruby objects made from Rust values - Arrays, Hashes, Integers, Floats,
+//! Symbols, UTF-8 Strings - each a protected call of `raw`'s, so a failed
+//! allocation is `Err`. The one way a caller makes one: `raw`'s constructors
+//! are the crate's own. A String written in place is `string`'s.
 
 #![forbid(unsafe_code)]
 

@@ -1,10 +1,10 @@
 //! Exception messages written without the heap.
 //!
 //! A message is formatted into [`Msg`], a fixed buffer kept inline - in a
-//! `bridge::rb::Error`, which `Error::new` given `format_args!` makes - so an
+//! `rb::Error`, which `Error::new` given `format_args!` makes - so an
 //! error path allocates nothing of Rust's: a `format!` there would abort the
 //! process under the very OOM it may be reporting. What a message quotes is written straight into the buffer -
-//! bytes through [`Lossy`] and [`Quoted`], a Ruby value through the bridge's
+//! bytes through [`Lossy`] and [`Quoted`], a Ruby value through `describe`'s
 //! own `Display` types. Ruby-free.
 
 #![forbid(unsafe_code)]

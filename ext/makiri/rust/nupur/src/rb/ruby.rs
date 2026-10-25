@@ -4,12 +4,13 @@
 
 use core::marker::PhantomData;
 
-use super::value::{ExceptionClass, RClass, Value};
+use super::error::Error;
+use super::value::{ExceptionClass, RClass, RModule, Value};
 
 /// The GVL, held: a Ruby method's thread, between its entry and its return.
 ///
 /// A zero-sized token, neither `Send` nor `Sync`, so it cannot be carried into
-/// a GVL-released body (`bridge::gvl::without_gvl`'s `Send` bound). Only the
+/// a GVL-released body (`gvl::without_gvl`'s `Send` bound). Only the
 /// entries Ruby calls make one - a method's trampoline (`method::finish`) and
 /// `Init_` (`method::run_init`) - and everything below them is handed it as
 /// `&Ruby`: there is no other way to get one. Making an [`Error`] needs none,
@@ -80,5 +81,22 @@ impl Ruby {
         class_object => rb_cObject,
         class_encoding => rb_cEncoding,
         class_range => rb_cRange,
+    }
+}
+
+/* What a token defines: modules, at `Init_` (the classes and methods under
+ * them are `class`'s, on the module). */
+impl Ruby {
+    /// A top-level module.
+    pub fn define_module(&self, name: &str) -> Result<RModule, Error> {
+        Ok(RModule::from_known(crate::raw::define_module(
+            self,
+            &super::class::c_name(name)?,
+        )?))
+    }
+
+    /// An anonymous module.
+    pub fn module_new(&self) -> Result<RModule, Error> {
+        crate::raw::module_new(self)
     }
 }

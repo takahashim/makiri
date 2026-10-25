@@ -99,7 +99,7 @@ VERUS_COPIES = [
   ["ext/makiri/rust/src/limits.rs", "ext/makiri/rust/verus/limits.rs", "admit"],
   ["ext/makiri/rust/src/cbuf.rs", "ext/makiri/rust/verus/cbuf.rs", "copy_small"],
   # nupur's copy of it, which writes a String in place (`utf8_str_filled`).
-  ["ext/makiri/rust/nupur/src/raw.rs", "ext/makiri/rust/verus/cbuf.rs", "copy_small"],
+  ["ext/makiri/rust/nupur/src/string.rs", "ext/makiri/rust/verus/cbuf.rs", "copy_small"],
   *%w[as_slice append append_growing raise_limit reserve steal content_limit
       content_limit_for grow_to].map do |name|
     ["ext/makiri/rust/src/cbuf.rs", "ext/makiri/rust/verus/cbuf.rs", "Buf::#{name}"]
@@ -277,7 +277,8 @@ task :no_unwind do
   # The check build is the crate alone, linked as cargo would; macOS's linker
   # refuses undefined symbols unless told otherwise, Linux's does not.
   link = macos ? %w[-C link-arg=-undefined -C link-arg=dynamic_lookup] : []
-  env = { "RUSTFLAGS" => [ENV.fetch("RUSTFLAGS", nil), "--cfg makiri_no_unwind"].compact.join(" ") }
+  # Each crate's own cfg: the extension's sites, and nupur's.
+  env = { "RUSTFLAGS" => [ENV.fetch("RUSTFLAGS", nil), "--cfg makiri_no_unwind --cfg nupur_no_unwind"].compact.join(" ") }
   Dir.chdir(dir) do
     # `cdylib` alone, as the extension is built (extconf.rb): with the `rlib`
     # type in, rustc runs no LTO, and the proof would be of another binary.
@@ -370,10 +371,12 @@ task :dylint do
     sh(*DYLINT_NUPUR)
     # The self-test, once per crate: the extension's probe, and the binding
     # layer's, which holds the cases only code naming rb-sys can write.
-    total = [[DYLINT, "src/lint_probe.rs"], [DYLINT_NUPUR, "nupur/src/lint_probe.rs"]].sum do |cmd, probe|
+    probes = [[DYLINT, "src/lint_probe.rs", "makiri_lint_probe"],
+              [DYLINT_NUPUR, "nupur/src/lint_probe.rs", "nupur_lint_probe"]]
+    total = probes.sum do |cmd, probe, cfg|
       expected = File.readlines(probe).each_with_index
                      .select { |line, _| line.match?(%r{//~\s*\z}) }.map { |_, i| i + 1 }
-      out, = Open3.capture2e({ "RUSTFLAGS" => "--cfg makiri_lint_probe" }, *cmd)
+      out, = Open3.capture2e({ "RUSTFLAGS" => "--cfg #{cfg}" }, *cmd)
       reported = out.scan(%r{--> #{Regexp.escape(probe)}:(\d+):}).flatten.map(&:to_i).uniq.sort
       unless reported == expected
         puts out

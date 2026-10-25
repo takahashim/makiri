@@ -69,15 +69,18 @@ UNSAFE_ISLANDS = {
   "lexbor/stylesheet_diff.rs" => 5,
   "lexbor/tests.rs" => 3,
   "no_unwind.rs" => 2,
+  "nupur/abi.rs" => 1,
+  "nupur/describe.rs" => 4,
   "nupur/encoding.rs" => 9,
   "nupur/gvl.rs" => 3,
-  "nupur/helpers.rs" => 6,
   "nupur/no_unwind.rs" => 2,
-  "nupur/raw.rs" => 91,
-  "nupur/rb/class.rs" => 2,
+  "nupur/raw.rs" => 85,
+  "nupur/rb/global.rs" => 2,
   "nupur/rb/method.rs" => 15,
   "nupur/rb/ruby.rs" => 5,
-  "nupur/rb/value.rs" => 18,
+  "nupur/rb/value.rs" => 20,
+  "nupur/stack.rs" => 1,
+  "nupur/string.rs" => 6,
   "nupur/typed.rs" => 32,
   "utf8_copy.rs" => 1,
 }.freeze
@@ -115,30 +118,31 @@ FORBID_FILES = %w[
   gvl.rs html/dom/mod.rs html/encoding/mod.rs
   html/mod.rs html/tokenizer/mod.rs html/tree/mod.rs
   html_dom.rs lexbor/contains_guard.rs limits.rs
-  node_type.rs nupur/build.rs nupur/msg.rs
-  nupur/rb/convert.rs nupur/rb/error.rs ptr_table.rs
-  rust_tests.rs selectors/mod.rs selectors/stylesheet.rs
-  selectors/text.rs source_lines.rs stack.rs
-  text.rs token.rs utf8_input.rs
-  xml/arena.rs xml/attr_key.rs xml/chars/expand.rs
-  xml/chars/mod.rs xml/css.rs xml/css_tests.rs
-  xml/dom_name.rs xml/encoding_names.rs xml/encoding_sniff.rs
-  xml/index.rs xml/mod.rs xml/model.rs
-  xml/mutate/attr.rs xml/mutate/copy.rs xml/mutate/edit.rs
-  xml/mutate/factory.rs xml/mutate/insert.rs xml/mutate/mod.rs
-  xml/mutate/ns.rs xml/ns_scope.rs xml/qname.rs
-  xml/selftest.rs xml/serialize/bindings.rs xml/serialize/c14n.rs
-  xml/serialize/mod.rs xml/serialize/out.rs xml/serialize/xml.rs
-  xml/tree/cursor.rs xml/tree/decl.rs xml/tree/dtd.rs
-  xml/tree/mod.rs xml/tree/scope.rs xml/verify.rs
-  xml/xpath.rs xpath/abi.rs xpath/ast.rs
-  xpath/ast_ops.rs xpath/attr_pred.rs xpath/axis.rs
-  xpath/ctx.rs xpath/dom.rs xpath/eval.rs
-  xpath/funcs/css_hooks.rs xpath/funcs/ext.rs xpath/funcs/mod.rs
-  xpath/lex.rs xpath/limits.rs xpath/mod.rs
-  xpath/nodetest.rs xpath/number.rs xpath/order.rs
-  xpath/parse.rs xpath/step_index.rs xpath/str_cache.rs
-  xpath/tests.rs xpath/value.rs xpath/verify.rs
+  node_type.rs nupur/args.rs nupur/build.rs
+  nupur/msg.rs nupur/rb/convert.rs nupur/rb/error.rs
+  nupur/table.rs ptr_table.rs rust_tests.rs
+  selectors/mod.rs selectors/stylesheet.rs selectors/text.rs
+  source_lines.rs stack.rs text.rs
+  token.rs utf8_input.rs xml/arena.rs
+  xml/attr_key.rs xml/chars/expand.rs xml/chars/mod.rs
+  xml/css.rs xml/css_tests.rs xml/dom_name.rs
+  xml/encoding_names.rs xml/encoding_sniff.rs xml/index.rs
+  xml/mod.rs xml/model.rs xml/mutate/attr.rs
+  xml/mutate/copy.rs xml/mutate/edit.rs xml/mutate/factory.rs
+  xml/mutate/insert.rs xml/mutate/mod.rs xml/mutate/ns.rs
+  xml/ns_scope.rs xml/qname.rs xml/selftest.rs
+  xml/serialize/bindings.rs xml/serialize/c14n.rs xml/serialize/mod.rs
+  xml/serialize/out.rs xml/serialize/xml.rs xml/tree/cursor.rs
+  xml/tree/decl.rs xml/tree/dtd.rs xml/tree/mod.rs
+  xml/tree/scope.rs xml/verify.rs xml/xpath.rs
+  xpath/abi.rs xpath/ast.rs xpath/ast_ops.rs
+  xpath/attr_pred.rs xpath/axis.rs xpath/ctx.rs
+  xpath/dom.rs xpath/eval.rs xpath/funcs/css_hooks.rs
+  xpath/funcs/ext.rs xpath/funcs/mod.rs xpath/lex.rs
+  xpath/limits.rs xpath/mod.rs xpath/nodetest.rs
+  xpath/number.rs xpath/order.rs xpath/parse.rs
+  xpath/step_index.rs xpath/str_cache.rs xpath/tests.rs
+  xpath/value.rs xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/

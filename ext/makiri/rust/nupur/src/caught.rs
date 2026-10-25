@@ -4,8 +4,8 @@
 //! thread that raised it. That stops being true the moment a C frame is in the
 //! way: Rust turns an unwind at an `extern "C"` boundary into an ABORT, because
 //! unwinding through frames compiled without unwind tables is undefined
-//! behaviour. Lexbor calls back into us in a dozen places - the CSS traversal,
-//! the serializers, the tokenizer's token-done hook - and so does Ruby, through
+//! behaviour. A C library an extension calls can call back into Rust - and so
+//! does Ruby, through
 //! `rb_protect` and `rb_thread_call_without_gvl`. A panic in any of those would
 //! take the host down, which is exactly what `panic = "unwind"` exists to stop.
 //!

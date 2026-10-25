@@ -276,8 +276,7 @@ impl DocumentShell {
         /* Hidden, so no Ruby code reaches the table through `ObjectSpace` to
          * clear, freeze or fill it: its values are handed out as node
          * wrappers unchecked. */
-        let nodes =
-            crate::bridge::rb::ReprValue::as_value(crate::bridge::raw::hidden_hash_new(ruby)?);
+        let nodes = crate::nupur::table::IntTable::new_hidden(ruby)?.as_value();
         let obj = ty.wrap_hidden(
             ruby,
             klass,
@@ -500,55 +499,72 @@ pub(in crate::bridge) fn wrap_cached(
 ) -> Result<Value, Error> {
     let token = source.identity();
     let table = node_table(document)?;
-    if let Some(cached) = crate::bridge::raw::table_get(table, token)? {
+    if let Some(cached) = table.get(token)? {
         return Ok(cached);
     }
     let node = source.into_handle(document);
     let fresh = ty.wrap(ruby, klass, NodeData { node }, [document])?;
     /* The table entry: a Ruby reference, which the GC marks and moves
      * itself. A failure leaves `fresh` unseen and unreferenced. */
-    crate::bridge::raw::table_set(table, token, fresh)?;
+    table.set(token, fresh)?;
     Ok(fresh)
 }
 
 /// The Document's node table (see `DocumentShell::new`).
-fn node_table(document: Value) -> Result<crate::bridge::rb::RHash, Error> {
-    crate::bridge::rb::RHash::from_value(DOC_TYPE.root_known::<0>(&document))
+fn node_table(document: Value) -> Result<crate::nupur::table::IntTable, Error> {
+    crate::nupur::table::IntTable::from_value(DOC_TYPE.root_known::<0>(&document))
         .ok_or_else(|| internal_error("a Document without its node table"))
 }
 
 /// The one wrapper for `token` under `rb_doc`, or None the first time.
 pub(in crate::bridge) fn cached_node(rb_doc: Value, token: usize) -> Result<Option<Value>, Error> {
-    crate::bridge::raw::table_get(node_table(rb_doc)?, token)
+    node_table(rb_doc)?.get(token)
 }
 
-static IVAR_DOCUMENT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
-static IVAR_ERRORS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
-static IVAR_NODE: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+/// The hidden ivars' names, interned at `Init_makiri` ([`init_ivars`]).
+struct Ivars {
+    document: crate::bridge::rb::Id,
+    errors: crate::bridge::rb::Id,
+    node: crate::bridge::rb::Id,
+}
+
+static IVARS: std::sync::OnceLock<Ivars> = std::sync::OnceLock::new();
+
+/// The names, set before any method that reads one is defined.
+#[allow(
+    clippy::expect_used,
+    reason = "`Init_makiri` interns them before it defines a method that reads one; \
+              unset is a broken invariant, a panic the trampoline makes an InternalError"
+)]
+fn ivars() -> &'static Ivars {
+    IVARS
+        .get()
+        .expect("a hidden ivar's name was read before Init_makiri interned it")
+}
 
 /// The hidden ivar an XPathContext keeps its Document in.
-pub(in crate::bridge) fn ivar_document() -> crate::bridge::ruby::ID {
-    IVAR_DOCUMENT.load(core::sync::atomic::Ordering::Relaxed) as crate::bridge::ruby::ID
+pub(in crate::bridge) fn ivar_document() -> crate::bridge::rb::Id {
+    ivars().document
 }
 
 /// The hidden ivar a Document keeps its parse-warning Array in.
-pub(in crate::bridge) fn ivar_errors() -> crate::bridge::ruby::ID {
-    IVAR_ERRORS.load(core::sync::atomic::Ordering::Relaxed) as crate::bridge::ruby::ID
+pub(in crate::bridge) fn ivar_errors() -> crate::bridge::rb::Id {
+    ivars().errors
 }
 
 /// The hidden ivar an XPathContext keeps its context node in.
-pub(in crate::bridge) fn ivar_node() -> crate::bridge::ruby::ID {
-    IVAR_NODE.load(core::sync::atomic::Ordering::Relaxed) as crate::bridge::ruby::ID
+pub(in crate::bridge) fn ivar_node() -> crate::bridge::rb::Id {
+    ivars().node
 }
 
-/// Intern the hidden ivars' names. From `Init_makiri`.
+/// Intern the hidden ivars' names. From `Init_makiri`; a second call keeps
+/// the first names.
 pub fn init_ivars(ruby: &Ruby) -> Result<(), Error> {
-    let d = crate::bridge::raw::intern_cstr(ruby, c"makiri_document")?;
-    let e = crate::bridge::raw::intern_cstr(ruby, c"makiri_errors")?;
-    let n = crate::bridge::raw::intern_cstr(ruby, c"makiri_node")?;
-    IVAR_DOCUMENT.store(d as usize, core::sync::atomic::Ordering::Relaxed);
-    IVAR_ERRORS.store(e as usize, core::sync::atomic::Ordering::Relaxed);
-    IVAR_NODE.store(n as usize, core::sync::atomic::Ordering::Relaxed);
+    let _ = IVARS.set(Ivars {
+        document: crate::bridge::raw::intern_cstr(ruby, c"makiri_document")?,
+        errors: crate::bridge::raw::intern_cstr(ruby, c"makiri_errors")?,
+        node: crate::bridge::raw::intern_cstr(ruby, c"makiri_node")?,
+    });
     Ok(())
 }
 

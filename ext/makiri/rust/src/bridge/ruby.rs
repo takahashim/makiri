@@ -1,11 +1,16 @@
 //! The Ruby helpers that name Makiri: its error classes and its load check.
-//! Everything generic - the argument checks, the common exceptions, the
-//! raising C API - is `nupur::helpers`, re-exported here so the bridge and
-//! the glue keep naming it `bridge::ruby`.
+//! Everything generic is `nupur`'s - the argument checks (`args`), the
+//! messages' value text (`describe`), the common errors and values (`rb`) -
+//! re-exported here so the bridge and the glue keep naming it `bridge::ruby`.
 
 #![forbid(unsafe_code)]
 
-pub use crate::nupur::helpers::*;
+pub use crate::nupur::args::{integer_arg, integer_range_arg, long_arg, name_arg, string_arg};
+pub use crate::nupur::describe::{AsText, Describe, ExceptionText};
+pub use crate::nupur::raw::{check_frozen, range_beg_len};
+pub use crate::nupur::rb::error::{arg_error, internal_error, type_error};
+pub use crate::nupur::rb::global::is_kind_of;
+pub use crate::nupur::rb::value::{boolean, identity_word, nil, same_value};
 
 use crate::bridge::rb::Error;
 
@@ -20,8 +25,8 @@ use crate::bridge::rb::Error;
 /// `ruby_api_version` (three ints, whose layout no Ruby changes) and nothing
 /// else; only a mismatch goes on to build the exception.
 pub fn check_running_ruby_api() -> Result<(), Error> {
-    let running = crate::nupur::helpers::running_ruby_api();
-    let built = crate::nupur::helpers::built_ruby_api();
+    let running = crate::nupur::abi::running_ruby_api();
+    let built = crate::nupur::abi::built_ruby_api();
     if running == built {
         return Ok(());
     }

@@ -1,6 +1,6 @@
 //! The places in the Ruby layer that must not unwind, and the check that they
 //! cannot - `nupur`'s own copy of the mechanism, for its sites (the GC
-//! callbacks, the protect thunk, the trampolines). Makiri keeps its own for
+//! callbacks, the protect thunk, the trampolines). An extension keeps its own for
 //! its types' `Drop`s and the engine's (`crate::no_unwind`): the engine is
 //! built without Ruby, where this module does not exist.
 //!
@@ -11,7 +11,7 @@
 //! runs inside [`must_not_unwind`].
 //!
 //! In a normal build that costs nothing: a site's guard is a zero-sized value
-//! with no `Drop`. Built with `--cfg makiri_no_unwind` (`rake no_unwind`), each
+//! with no `Drop`. Built with `--cfg nupur_no_unwind` (`rake no_unwind`), each
 //! site's guard gets a `Drop` that calls a symbol nobody defines,
 //! `nupur_unwinds_<site>` - and the only path that runs it is an unwind out
 //! of the body, since a normal return forgets it. The optimizer removes that
@@ -52,7 +52,7 @@ macro_rules! sites {
                 $name(())
             }
         }
-        #[cfg(makiri_no_unwind)]
+        #[cfg(nupur_no_unwind)]
         impl Drop for $name {
             #[inline(always)]
             fn drop(&mut self) {
@@ -88,7 +88,7 @@ sites! {
     Method => "nupur_unwinds_method",
     /// The extension's `Init_` (`rb::method::run_init`).
     Init => "nupur_unwinds_init",
-    /// `raw::utf8_str_filled`'s guard, which empties a String a panic left
+    /// `string::utf8_str_filled`'s guard, which empties a String a panic left
     /// unfilled - while that panic unwinds.
     DropUnfilled => "nupur_unwinds_drop_unfilled",
     /// The check's own control ([`self_test`]): a body that CAN unwind, so a
@@ -96,10 +96,10 @@ sites! {
     SelfTest => "nupur_unwinds_self_test",
 }
 
-/// The control for `rake no_unwind`, called from `Init_makiri` in the check
+/// The control for `rake no_unwind`, called from the extension's `Init_` in the check
 /// build only: were the guard ever optimized away whole, every site would
 /// pass, and this one would too - which the task refuses.
-#[cfg(makiri_no_unwind)]
+#[cfg(nupur_no_unwind)]
 #[allow(clippy::panic, reason = "the check's control must be able to unwind")]
 pub fn self_test() {
     must_not_unwind::<SelfTest, _>(|| {

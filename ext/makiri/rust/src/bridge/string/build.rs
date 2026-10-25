@@ -24,7 +24,7 @@ pub fn utf8_str_from_slices<'a>(
     slices: impl Iterator<Item = &'a [u8]>,
     total: usize,
 ) -> Result<Value, Error> {
-    let str = crate::bridge::raw::utf8_str_filled(ruby, total, |out| {
+    let str = crate::nupur::string::utf8_str_filled(ruby, total, |out| {
         for s in slices {
             /* A slice past `total` is refused: `push` writes nothing past
              * the String's end. */

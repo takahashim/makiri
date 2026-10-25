@@ -76,7 +76,7 @@ impl Encoding {
         Encoding(p)
     }
 
-    /// The raw encoding, for a C call in the bridge that takes one.
+    /// The raw encoding, for a C call of the layer's that takes one.
     pub(crate) fn as_raw(self) -> *mut rb_sys::rb_encoding {
         self.0
     }
@@ -107,7 +107,7 @@ impl Encoding {
     /// transcode: UTF-8, US-ASCII, or ASCII-8BIT - deliberately raw bytes.
     /// Anything else is transcoded to UTF-8 first. How the bytes are then
     /// checked is each reader's own: HTML repairs invalid UTF-8 to U+FFFD
-    /// (`ruby_to_utf8`), XML refuses it (`xml_decode`).
+    /// - and the next reader may refuse it.
     pub fn reads_as_utf8_bytes(self, ruby: &crate::rb::Ruby) -> bool {
         self.is_utf8_compatible(ruby) || self.is_ascii8bit()
     }
