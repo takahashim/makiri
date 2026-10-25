@@ -112,7 +112,7 @@ fn max_amplification(ruby: &Ruby, v: Option<Value>) -> Result<Option<usize>, Err
         return Ok(None);
     }
     /* Past a usize is no limit in practice, as for the depth. */
-    Ok(n.to_usize().ok())
+    n.to_usize_within()
 }
 
 /// The `max_tree_depth:` of an HTML parse, as Nokogiri::HTML5 reads it: absent
@@ -138,5 +138,5 @@ fn max_tree_depth(ruby: &Ruby, v: Option<Value>) -> Result<Option<usize>, Error>
     if n.is_negative() {
         return Ok(None);
     }
-    Ok(n.to_usize().ok())
+    n.to_usize_within()
 }

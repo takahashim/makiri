@@ -114,7 +114,7 @@ pub fn node_hash(ruby: &Ruby, rb_self: Value) -> Result<Value, crate::bridge::rb
 /// `TypeError` (`bridge::ruby::integer_arg`): no `to_int` is called.
 fn child_index_arg(i: Value) -> Result<Option<usize>, crate::bridge::rb::Error> {
     let i = crate::bridge::ruby::integer_arg(i)?;
-    Ok(i.to_u64().ok().and_then(|n| usize::try_from(n).ok()))
+    i.to_usize_within()
 }
 
 /// `#child_count` (DOM `childNodes.length`): every child node, counted

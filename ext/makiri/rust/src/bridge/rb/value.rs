@@ -79,6 +79,13 @@ pub trait ReprValue: Copy {
     /// The name of the value's class, for a message, written into `f` -
     /// "Object" when the name cannot be made (an anonymous class's is a fresh
     /// String, and so an allocation that can fail).
+    #[cfg_attr(
+        dylint_lib = "makiri_lints",
+        allow(
+            discarded_ruby_error,
+            reason = "a message cannot raise: a name that cannot be made is written as Object"
+        )
+    )]
     fn write_classname(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         crate::bridge::raw::with_classname(self.as_value(), |name| {
             core::fmt::Display::fmt(&crate::msg::Lossy(name), f)
@@ -377,6 +384,20 @@ impl Integer {
             return Ok(api.fix2long(self.0 .0) as usize);
         }
         Ok(crate::bridge::raw::big2ull(self)? as usize)
+    }
+
+    /// As a `usize`, or `None` when it is negative or past one - and only
+    /// then: any other failure of the conversion is passed on, never read as
+    /// "out of range" (for a limit, that would lift it).
+    pub fn to_usize_within(self) -> Result<Option<usize>, Error> {
+        if self.is_negative() {
+            return Ok(None);
+        }
+        match self.to_u64() {
+            Ok(n) => Ok(usize::try_from(n).ok()),
+            Err(e) if e.is_kind_of(Ruby::get_with(self).exception_range_error()) => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 
     /// Below zero? Reads the sign, converts nothing.

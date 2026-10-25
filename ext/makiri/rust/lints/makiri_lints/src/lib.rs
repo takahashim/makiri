@@ -9,7 +9,7 @@
 //!   `unguarded_no_unwind_site`, `ruby_in_gvl_released_body`,
 //!   `infallible_allocation`, `raising_call_outside_protect`,
 //!   `raw_ruby_outside_bridge`, `runs_callers_ruby`, `raw_node_crossing`,
-//!   `ruby_surface_in_bridge`.
+//!   `ruby_surface_in_bridge`, `discarded_ruby_error`.
 //!
 //! (A second lint, `converted_argument`, checked that no registered method
 //! took a type magnus would convert with the caller's Ruby. Since
@@ -53,6 +53,7 @@ pub fn register_lints(sess: &Session, lint_store: &mut LintStore) {
         RUNS_CALLERS_RUBY,
         RAW_NODE_CROSSING,
         RUBY_SURFACE_IN_BRIDGE,
+        DISCARDED_RUBY_ERROR,
     ]);
     lint_store.register_late_lint_pass(Box::new(|_| Box::new(MakiriLints)));
 }
@@ -174,6 +175,12 @@ declare_lint! {
     "a Ruby method defined, or an argument list split, in bridge/"
 }
 
+declare_lint! {
+    pub DISCARDED_RUBY_ERROR,
+    Deny,
+    "a Result of a Ruby error whose Err is thrown away"
+}
+
 declare_lint_pass!(MakiriLints => [
     RUBY_VALUE_ON_HEAP,
     RUBY_LAYER_IN_ENGINE,
@@ -185,6 +192,7 @@ declare_lint_pass!(MakiriLints => [
     RUNS_CALLERS_RUBY,
     RAW_NODE_CROSSING,
     RUBY_SURFACE_IN_BRIDGE,
+    DISCARDED_RUBY_ERROR,
 ]);
 
 impl<'tcx> LateLintPass<'tcx> for MakiriLints {
@@ -194,6 +202,7 @@ impl<'tcx> LateLintPass<'tcx> for MakiriLints {
 
     fn check_local(&mut self, cx: &LateContext<'tcx>, local: &'tcx LetStmt<'tcx>) {
         value_on_heap::check_local(cx, local);
+        boundaries::check_local(cx, local);
     }
 
     fn check_fn(

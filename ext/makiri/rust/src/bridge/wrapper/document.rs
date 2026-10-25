@@ -506,7 +506,7 @@ pub(in crate::bridge) fn wrap_cached(
 ) -> Result<Value, Error> {
     let token = source.identity();
     let table = node_table(document)?;
-    if let Some(cached) = crate::bridge::raw::table_get(table, token) {
+    if let Some(cached) = crate::bridge::raw::table_get(table, token)? {
         return Ok(cached);
     }
     let node = source.into_handle(document);
@@ -532,7 +532,7 @@ fn node_table(document: Value) -> Result<crate::bridge::rb::RHash, Error> {
 
 /// The one wrapper for `token` under `rb_doc`, or None the first time.
 fn cached_node(rb_doc: Value, token: usize) -> Result<Option<Value>, Error> {
-    Ok(crate::bridge::raw::table_get(node_table(rb_doc)?, token))
+    crate::bridge::raw::table_get(node_table(rb_doc)?, token)
 }
 
 static IVAR_DOCUMENT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);

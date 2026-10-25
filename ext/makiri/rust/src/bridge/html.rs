@@ -125,6 +125,13 @@ impl crate::bridge::wrapper::NodeHandleSource for RawNode {
 /// The key for `node` under `document`, minted only when a wrapper is actually
 /// built. Its caller vouches `node` is a node of `document`, so a refusal is a
 /// broken invariant, not a bad input.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        discarded_ruby_error,
+        reason = "not dropped: a failure here is a broken invariant, raised as InternalError by the panic"
+    )
+)]
 #[allow(
     clippy::expect_used,
     reason = "wrap_html_node's callers vouch the node belongs to the document"

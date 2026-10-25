@@ -340,7 +340,10 @@ bundle exec rake dylint            # the crate's own lints (lints/makiri_lints),
                                    # unguarded_no_unwind_site, ruby_in_gvl_released_body,
                                    # infallible_allocation, raising_call_outside_protect,
                                    # raw_ruby_outside_bridge, runs_callers_ruby,
-                                   # raw_node_crossing, ruby_surface_in_bridge
+                                   # raw_node_crossing, ruby_surface_in_bridge,
+                                   # discarded_ruby_error (an Err of bridge::rb::Error
+                                   # thrown away by .ok() / .unwrap_or* / .is_ok() /
+                                   # let _ =)
                                    # (a sanctioned site is an allow with its reason);
                                    # then their self-test
                                    # (src/lint_probe.rs). Needs the nightly

@@ -84,9 +84,10 @@ impl Drop for GuardedDrop {
     }
 }
 
-fn gvl_released() {
+fn gvl_released() -> Result<(), crate::bridge::rb::Error> {
     let _ = crate::bridge::gvl::without_gvl(|| crate::bridge::ruby::boolean(true)); //~
-    let _ = crate::bridge::gvl::without_gvl(|| engine::names_only_the_engine(b"x"));
+    crate::bridge::gvl::without_gvl(|| engine::names_only_the_engine(b"x"))?;
+    Ok(())
 }
 
 fn allocations() {
@@ -129,4 +130,21 @@ mod bridge {
     fn surface(m: crate::bridge::rb::RModule, f: crate::bridge::rb::method::Func) {
         let _ = crate::bridge::rb::Module::define_method(m, "x", f); //~
     }
+}
+
+fn fallible() -> Result<u32, crate::bridge::rb::Error> {
+    Ok(1)
+}
+
+fn discards_ruby_errors() {
+    let _ = fallible().ok(); //~
+    let _ = fallible(); //~
+    let _ = fallible().is_ok(); //~
+    let _ = fallible().unwrap_or(0); //~
+}
+
+fn passes_ruby_errors_on() -> Result<u32, crate::bridge::rb::Error> {
+    let n = fallible()?;
+    let _ = fallible().map(|_| ())?;
+    Ok(n)
 }

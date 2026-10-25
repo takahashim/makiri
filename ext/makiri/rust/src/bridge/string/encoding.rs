@@ -62,6 +62,13 @@ impl Encoding {
     /// knows, so it reads as None rather than being truncated at the NUL. So
     /// does a lookup whose autoload failed (`LoadError`, `NoMemoryError`): the
     /// caller then refuses the name as unknown, never reads with another.
+    #[cfg_attr(
+        dylint_lib = "makiri_lints",
+        allow(
+            discarded_ruby_error,
+            reason = "a lookup that fails is an unknown name, which the caller refuses"
+        )
+    )]
     pub(in crate::bridge) fn find(name: &[u8]) -> Option<Encoding> {
         let mut buf = [0u8; 64];
         if name.is_empty() || name.len() >= buf.len() || name.contains(&0) {

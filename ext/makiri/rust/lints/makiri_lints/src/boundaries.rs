@@ -20,6 +20,9 @@
 //!   one allowed where it is made, with its reason.
 //! - `raw_node_crossing`: a borrowed HTML node handle made a lifetime-free
 //!   `RawNode` in `bridge/`, each one allowed where it is made.
+//! - `discarded_ruby_error`: a `Result<_, bridge::rb::Error>` whose `Err` is
+//!   thrown away (`.ok()`, `.unwrap_or*`, `.is_ok()`, `let _ =`): a raise or a
+//!   `throw` in it would be lost, and the call taken as having answered.
 //! - `ruby_surface_in_bridge`: a Ruby method defined, or an argument list
 //!   split, in `bridge/` - the glue's work.
 
@@ -27,13 +30,13 @@ use clippy_utils::diagnostics::span_lint_and_help;
 use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::DefId;
 use rustc_hir::intravisit::FnKind;
-use rustc_hir::{Body, Expr, ExprKind, HirId, Node, Path, QPath};
+use rustc_hir::{Body, Expr, ExprKind, HirId, LetStmt, Node, Path, PatKind, QPath};
 use rustc_lint::LateContext;
 use rustc_span::Span;
 use rustc_span::def_id::LocalDefId;
 
 use crate::{
-    INFALLIBLE_ALLOCATION, RAISING_CALL_OUTSIDE_PROTECT, RAW_NODE_CROSSING,
+    DISCARDED_RUBY_ERROR, INFALLIBLE_ALLOCATION, RAISING_CALL_OUTSIDE_PROTECT, RAW_NODE_CROSSING,
     RAW_RUBY_OUTSIDE_BRIDGE, RUBY_IN_GVL_RELEASED_BODY, RUBY_LAYER_IN_ENGINE,
     RUBY_SURFACE_IN_BRIDGE, RUNS_CALLERS_RUBY, UNGUARDED_NO_UNWIND_SITE,
 };
@@ -302,6 +305,7 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
     if !is_extension(cx) {
         return;
     }
+    check_discarded_error(cx, expr);
     check_raw_node_crossing(cx, expr);
     if let ExprKind::MethodCall(..) = expr.kind
         && let Some(did) = callee(cx, expr)
@@ -621,4 +625,59 @@ fn is_drop(cx: &LateContext<'_>, did: LocalDefId) -> bool {
     cx.tcx
         .impl_opt_trait_ref(impl_did)
         .is_some_and(|t| Some(t.skip_binder().def_id) == cx.tcx.lang_items().drop_trait())
+}
+
+/* ---- discarded_ruby_error ---- */
+
+/// The methods that answer a `Result` without its error.
+const DISCARDING: &[&str] = &[
+    "ok", "unwrap_or", "unwrap_or_default", "unwrap_or_else", "map_or", "map_or_else", "is_ok",
+    "is_err", "is_ok_and", "is_err_and",
+];
+
+/// Whether `ty` is `Result<_, makiri::bridge::rb::error::Error>`.
+fn is_ruby_result<'tcx>(cx: &LateContext<'tcx>, ty: rustc_middle::ty::Ty<'tcx>) -> bool {
+    let rustc_middle::ty::Adt(adt, args) = ty.kind() else {
+        return false;
+    };
+    if path_of(cx, adt.did()) != "core::result::Result" {
+        return false;
+    }
+    args.types()
+        .nth(1)
+        .and_then(|e| e.ty_adt_def())
+        .is_some_and(|e| path_of(cx, e.did()) == "makiri::bridge::rb::error::Error")
+}
+
+fn report_discarded(cx: &LateContext<'_>, span: Span, how: &str) {
+    span_lint_and_help(
+        cx,
+        DISCARDED_RUBY_ERROR,
+        span,
+        format!("a Ruby error is thrown away ({how})"),
+        None,
+        "an Err of bridge::rb::Error is a raise, a throw or a refusal: pass it on with `?`; \
+         where dropping it is the answer, allow this with the reason",
+    );
+}
+
+fn check_discarded_error<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
+    if let ExprKind::MethodCall(seg, receiver, ..) = expr.kind
+        && DISCARDING.contains(&seg.ident.name.as_str())
+        && is_ruby_result(cx, cx.typeck_results().expr_ty(receiver))
+    {
+        report_discarded(cx, expr.span.source_callsite(), &format!(".{}()", seg.ident.name));
+    }
+}
+
+pub fn check_local<'tcx>(cx: &LateContext<'tcx>, local: &'tcx LetStmt<'tcx>) {
+    if !is_extension(cx) {
+        return;
+    }
+    if let PatKind::Wild = local.pat.kind
+        && let Some(init) = local.init
+        && is_ruby_result(cx, cx.typeck_results().expr_ty(init))
+    {
+        report_discarded(cx, local.span.source_callsite(), "let _ =");
+    }
 }

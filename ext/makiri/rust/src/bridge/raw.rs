@@ -797,16 +797,18 @@ fn fixnum_key(n: usize) -> Option<VALUE> {
 }
 
 /// `rb_hash_lookup2` at the Fixnum `n`: a Fixnum hashes and compares by
-/// value in C, so no Ruby code runs; protected all the same, as
-/// [`hash_lookup`] is.
+/// value in C, so no Ruby code runs; protected all the same, and a raise
+/// passed on, as [`hash_lookup`]'s is.
 #[inline]
-pub fn table_get(h: RHash, n: usize) -> Option<Value> {
+pub fn table_get(h: RHash, n: usize) -> Result<Option<Value>, Error> {
     const UNDEF: VALUE = rb_sys::Qundef as VALUE;
-    let key = fixnum_key(n)?;
+    let Some(key) = fixnum_key(n) else {
+        return Ok(None);
+    };
     let h = h.as_raw();
-    let v = call(|| unsafe { rb_sys::rb_hash_lookup2(h, key, UNDEF) }).ok()?;
+    let v = call(|| unsafe { rb_sys::rb_hash_lookup2(h, key, UNDEF) })?;
     // SAFETY: a value of the Hash's, or `Qundef`, which is not handed out.
-    (v != UNDEF).then(|| unsafe { Value::from_raw(v) })
+    Ok((v != UNDEF).then(|| unsafe { Value::from_raw(v) }))
 }
 
 /// `rb_hash_aset` at the Fixnum `n`: raises `NoMemoryError`.

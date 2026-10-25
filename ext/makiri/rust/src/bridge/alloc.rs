@@ -21,6 +21,13 @@ pub struct RubyAlloc;
 // (`NoMemoryError`, `ArgumentError`) comes back as `Err` - `raw` protects it -
 // leaving the block untouched. `ruby_xfree` releases one.
 unsafe impl RawAlloc for RubyAlloc {
+    #[cfg_attr(
+        dylint_lib = "makiri_lints",
+        allow(
+            discarded_ruby_error,
+            reason = "RawAlloc answers None; RawVec raises its own NoMemoryError in its place"
+        )
+    )]
     unsafe fn realloc<T>(p: *mut T, _old: usize, new: usize) -> Option<*mut T> {
         // SAFETY: the caller's contract.
         unsafe { super::raw::xrealloc2(p as *mut c_void, new, core::mem::size_of::<T>()) }
