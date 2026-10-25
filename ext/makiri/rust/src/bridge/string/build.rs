@@ -4,27 +4,13 @@
 #![allow(clippy::missing_safety_doc)]
 
 use crate::bridge::rb::value::AsRawValue;
-use crate::bridge::rb::{Error, RString, ReprValue, Value};
+use crate::bridge::rb::{Error, ReprValue, Value};
 use crate::bridge::ruby::{gvl_ruby, makiri_error};
 use rb_sys::StableApiDefinition;
 
 /* ---- assembling Ruby Strings ---- */
 
-/// A UTF-8 String holding a copy of `bytes`; a failed allocation is `Err`
-/// (`NoMemoryError`), as `raw`'s every call is.
-///
-/// `bytes` must be valid UTF-8 (the String is tagged so without a check):
-/// everything a document lends is, by the text-input contract, and so is
-/// every checked view. Bytes that were not would make a wrong String, never
-/// a memory error.
-pub fn utf8_str(bytes: &[u8]) -> Result<Value, Error> {
-    utf8_rstring(bytes).map(|s| s.as_value())
-}
-
-/// [`utf8_str`] as an `RString`.
-pub fn utf8_rstring(bytes: &[u8]) -> Result<RString, Error> {
-    crate::bridge::raw::utf8_str_new(&gvl_ruby(), bytes)
-}
+pub use crate::nupur::build::{utf8_rstring, utf8_str};
 
 /// Join document-order slices totalling `total` bytes into one UTF-8 String.
 ///

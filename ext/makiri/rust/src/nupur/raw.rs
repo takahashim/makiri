@@ -36,27 +36,39 @@
 
 use core::ffi::{c_char, c_int, c_long, c_void};
 
-use crate::bridge::rb::value::AsRawValue;
-use crate::bridge::rb::{
+use crate::nupur::rb::value::AsRawValue;
+use crate::nupur::rb::{
     Error, ExceptionClass, Float, Integer, RArray, RClass, RHash, RModule, RString, Range, Ruby,
     Symbol, Value,
 };
 use rb_sys::{rb_data_type_t, ID, VALUE};
 
-use super::string::Encoding;
+use crate::nupur::encoding::Encoding;
 
-/// The raise sweep's hook (`falloc::inject`, `script/check_raise_injection.rb`):
-/// in an `alloc-inject` build the armed allocating call below raises
-/// `NoMemoryError` in place of its allocation, as a real failure would - so
-/// the sweep can make every one of them raise in turn. Nothing in any other
-/// build. Called inside the thunk, so the raise is protected like the call's.
+/// The raise sweep's hook (`script/check_raise_injection.rb`): in an
+/// `alloc-inject` build the armed allocating call below raises `NoMemoryError`
+/// in place of its allocation, as a real failure would - so the sweep can make
+/// every one of them raise in turn. Nothing in any other build. Called inside
+/// the thunk, so the raise is protected like the call's. Whether a call is
+/// armed is the extension's to answer ([`set_raise_injector`]).
 #[inline(always)]
 unsafe fn injected_raise() {
     #[cfg(feature = "alloc-inject")]
-    if crate::falloc::raise_inject_should_raise() {
+    if RAISE_INJECTOR.get().is_some_and(|armed| armed()) {
         /* Raises without allocating: Ruby keeps the exception preallocated. */
         unsafe { rb_sys::rb_memerror() }
     }
+}
+
+/// The function that answers whether the next allocating call raises.
+#[cfg(feature = "alloc-inject")]
+static RAISE_INJECTOR: std::sync::OnceLock<fn() -> bool> = std::sync::OnceLock::new();
+
+/// Register the raise sweep's answer, once, before any method runs (the
+/// extension's `Init_`); a second registration is ignored.
+#[cfg(feature = "alloc-inject")]
+pub fn set_raise_injector(armed: fn() -> bool) {
+    let _ = RAISE_INJECTOR.set(armed);
 }
 
 /// Run `f` - one C call, and the `Copy` values it reads - under a bare
@@ -77,7 +89,7 @@ fn call<T: Copy, F: FnOnce() -> T + Copy>(f: F) -> Result<T, Error> {
         out: Option<T>,
     }
     unsafe extern "C" fn thunk<T: Copy, F: FnOnce() -> T + Copy>(arg: VALUE) -> VALUE {
-        crate::no_unwind::must_not_unwind::<crate::no_unwind::ProtectThunk, _>(|| {
+        crate::nupur::no_unwind::must_not_unwind::<crate::nupur::no_unwind::ProtectThunk, _>(|| {
             // SAFETY: `arg` is the `Slot` `call` passed, live for the call.
             let slot = unsafe { &mut *(arg as *mut Slot<F, T>) };
             slot.out = Some((slot.f)());
@@ -96,7 +108,7 @@ fn call<T: Copy, F: FnOnce() -> T + Copy>(f: F) -> Result<T, Error> {
     }
     match (state, slot.out) {
         (0, Some(out)) => Ok(out),
-        (0, None) => Err(crate::bridge::ruby::internal_error(
+        (0, None) => Err(crate::nupur::helpers::internal_error(
             "a protected call did not run",
         )),
         (state, _) => Err(Error::from_state(state)),
@@ -114,13 +126,13 @@ fn typed<T>(v: VALUE, of: fn(Value) -> Option<T>, what: &'static str) -> Result<
     // frame's stack until it is converted.
     /* `what` is the whole message, a literal: this runs on the path that
      * raises a caught panic, which must stay `fmt`-free (`rake no_unwind`). */
-    of(unsafe { Value::from_raw(v) }).ok_or_else(|| crate::bridge::ruby::internal_error(what))
+    of(unsafe { Value::from_raw(v) }).ok_or_else(|| crate::nupur::helpers::internal_error(what))
 }
 
 /// A length for the C API's `long`; `ArgumentError` for one it cannot hold.
 #[inline]
 fn c_len(n: usize) -> Result<c_long, Error> {
-    c_long::try_from(n).map_err(|_| crate::bridge::ruby::arg_error("string too large"))
+    c_long::try_from(n).map_err(|_| crate::nupur::helpers::arg_error("string too large"))
 }
 
 /// A String's length, read without a call.
@@ -295,7 +307,7 @@ pub fn const_get(outer: Value, name: &core::ffi::CStr) -> Result<Value, Error> {
 pub fn call_method(recv: Value, name: &core::ffi::CStr, args: &[Value]) -> Result<Value, Error> {
     let id = intern_cstr(&Ruby::get_with(recv), name)?;
     let argc = c_int::try_from(args.len())
-        .map_err(|_| crate::bridge::ruby::arg_error("too many arguments"))?;
+        .map_err(|_| crate::nupur::helpers::arg_error("too many arguments"))?;
     let recv = recv.as_raw();
     /* `Value` is transparent over `VALUE`, so the slice is the C array. */
     let argv = args.as_ptr() as *const VALUE;
@@ -387,7 +399,7 @@ pub fn undef_alloc_func(klass: RClass) {
 
 /// `rb_define_method` / `_private_method` / `_singleton_method`: raise
 /// `FrozenError` on a frozen target.
-pub(in crate::bridge) fn define_method(
+pub(in crate::nupur) fn define_method(
     target: Value,
     name: &core::ffi::CStr,
     func: super::rb::method::Func,
@@ -475,12 +487,12 @@ pub fn yield_value(_: &Ruby, v: Value) -> Result<Value, Error> {
 pub fn hash_foreach(h: RHash, visit: &mut dyn FnMut(Value, Value) -> bool) -> Result<(), Error> {
     struct Walk<'a> {
         visit: &'a mut dyn FnMut(Value, Value) -> bool,
-        latch: crate::caught::PanicLatch,
+        latch: crate::nupur::caught::PanicLatch,
     }
     unsafe extern "C" fn each(k: VALUE, v: VALUE, arg: VALUE) -> c_int {
         const CONTINUE: c_int = rb_sys::st_retval::ST_CONTINUE as c_int;
         const STOP: c_int = rb_sys::st_retval::ST_STOP as c_int;
-        crate::no_unwind::must_not_unwind::<crate::no_unwind::HashEach, _>(|| {
+        crate::nupur::no_unwind::must_not_unwind::<crate::nupur::no_unwind::HashEach, _>(|| {
             // SAFETY: `arg` is the `Walk` `hash_foreach` passed, live for the
             // walk; `k` and `v` are the Hash's, live while it is walked.
             let walk = unsafe { &mut *(arg as *mut Walk<'_>) };
@@ -495,7 +507,7 @@ pub fn hash_foreach(h: RHash, visit: &mut dyn FnMut(Value, Value) -> bool) -> Re
     }
     let mut walk = Walk {
         visit,
-        latch: crate::caught::PanicLatch::new(),
+        latch: crate::nupur::caught::PanicLatch::new(),
     };
     let (h, arg) = (h.as_raw(), &mut walk as *mut Walk<'_> as VALUE);
     let walked = call(|| unsafe {
@@ -546,8 +558,8 @@ pub fn check_frozen(v: Value) -> Result<(), Error> {
 /// kind would be converted with its `to_int`.
 #[inline]
 pub fn range_beg_len(range: Value, count: c_long) -> Result<Option<(c_long, c_long)>, Error> {
-    if crate::bridge::rb::Range::from_value(range).is_none() {
-        return Err(crate::bridge::ruby::type_error("a Range was expected"));
+    if crate::nupur::rb::Range::from_value(range).is_none() {
+        return Err(crate::nupur::helpers::type_error("a Range was expected"));
     }
     let (mut beg, mut len): (c_long, c_long) = (0, 0);
     let (b, l) = (&mut beg as *mut c_long, &mut len as *mut c_long);
@@ -661,7 +673,7 @@ pub fn str_dup(s: RString) -> Result<RString, Error> {
 #[inline]
 pub fn str_subseq(s: RString, beg: usize, len: usize) -> Result<RString, Error> {
     if beg.checked_add(len).is_none_or(|end| end > rstring_len(s)) {
-        return Err(crate::bridge::ruby::internal_error(
+        return Err(crate::nupur::helpers::internal_error(
             "a substring past its String",
         ));
     }
@@ -704,10 +716,10 @@ pub fn str_encode(s: RString, enc: Encoding, flags: c_int) -> Result<RString, Er
 /// which would convert it with its `to_str`.
 #[inline]
 pub fn to_encoding(v: Value) -> Result<Encoding, Error> {
-    use crate::bridge::rb::ReprValue;
-    let ruby = crate::bridge::ruby::gvl_ruby();
+    use crate::nupur::rb::ReprValue;
+    let ruby = crate::nupur::helpers::gvl_ruby();
     if !v.is_kind_of(ruby.class_encoding()) && RString::from_value(v).is_none() {
-        return Err(crate::bridge::ruby::type_error(
+        return Err(crate::nupur::helpers::type_error(
             "an Encoding or a String was expected",
         ));
     }
@@ -815,7 +827,7 @@ pub fn table_get(h: RHash, n: usize) -> Result<Option<Value>, Error> {
 #[inline]
 pub fn table_set(h: RHash, n: usize, v: Value) -> Result<(), Error> {
     let key = fixnum_key(n)
-        .ok_or_else(|| crate::bridge::ruby::internal_error("a node token past a Fixnum"))?;
+        .ok_or_else(|| crate::nupur::helpers::internal_error("a node token past a Fixnum"))?;
     let (h, v) = (h.as_raw(), v.as_raw());
     call(|| unsafe {
         injected_raise();
@@ -841,7 +853,7 @@ pub fn hash_new(_: &Ruby) -> Result<RHash, Error> {
 #[inline]
 pub fn hash_aset(h: RHash, k: Value, v: Value) -> Result<(), Error> {
     if RString::from_value(k).is_none() && Symbol::from_value(k).is_none() {
-        return Err(crate::bridge::ruby::type_error(
+        return Err(crate::nupur::helpers::type_error(
             "a Hash key must be a String or a Symbol",
         ));
     }

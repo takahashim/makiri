@@ -20,15 +20,15 @@
 
 /// The Arrays, Hashes, numbers and Symbols the glue builds, allocation
 /// failures as `Err`.
-pub mod build;
+pub use crate::nupur::build;
 
 /// The Ruby C calls that can raise, each with its raise stated.
-pub mod raw;
+pub use crate::nupur::raw;
 
 /// The Ruby layer over rb-sys: values, errors, method registration, classes.
-pub mod rb;
+pub use crate::nupur::rb;
 
-pub mod gvl;
+pub use crate::nupur::gvl;
 
 /// `ruby_stack_check`, installed into `crate::stack` at `Init_makiri` so the
 /// engine's recursion checks can consult it without depending on Ruby.
@@ -82,6 +82,6 @@ pub mod ruby;
 pub mod string;
 
 /// The TypedData objects and their GC callbacks.
-pub mod typed;
+pub use crate::nupur::typed;
 
 pub mod xml_decode;

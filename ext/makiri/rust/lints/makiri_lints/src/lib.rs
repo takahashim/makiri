@@ -9,7 +9,7 @@
 //!   `unguarded_no_unwind_site`, `ruby_in_gvl_released_body`,
 //!   `infallible_allocation`, `raising_call_outside_protect`,
 //!   `raw_ruby_outside_bridge`, `runs_callers_ruby`, `raw_node_crossing`,
-//!   `ruby_surface_in_bridge`, `discarded_ruby_error`.
+//!   `ruby_surface_in_bridge`, `discarded_ruby_error`, `nupur_names_its_host`.
 //!
 //! (A second lint, `converted_argument`, checked that no registered method
 //! took a type magnus would convert with the caller's Ruby. Since
@@ -54,6 +54,7 @@ pub fn register_lints(sess: &Session, lint_store: &mut LintStore) {
         RAW_NODE_CROSSING,
         RUBY_SURFACE_IN_BRIDGE,
         DISCARDED_RUBY_ERROR,
+        NUPUR_NAMES_ITS_HOST,
     ]);
     lint_store.register_late_lint_pass(Box::new(|_| Box::new(MakiriLints)));
 }
@@ -181,6 +182,12 @@ declare_lint! {
     "a Result of a Ruby error whose Err is thrown away"
 }
 
+declare_lint! {
+    pub NUPUR_NAMES_ITS_HOST,
+    Deny,
+    "the binding layer names something of the extension"
+}
+
 declare_lint_pass!(MakiriLints => [
     RUBY_VALUE_ON_HEAP,
     RUBY_LAYER_IN_ENGINE,
@@ -193,6 +200,7 @@ declare_lint_pass!(MakiriLints => [
     RAW_NODE_CROSSING,
     RUBY_SURFACE_IN_BRIDGE,
     DISCARDED_RUBY_ERROR,
+    NUPUR_NAMES_ITS_HOST,
 ]);
 
 impl<'tcx> LateLintPass<'tcx> for MakiriLints {

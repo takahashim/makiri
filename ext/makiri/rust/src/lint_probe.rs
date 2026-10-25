@@ -148,3 +148,16 @@ fn passes_ruby_errors_on() -> Result<u32, crate::bridge::rb::Error> {
     let _ = fallible().map(|_| ())?;
     Ok(n)
 }
+
+/// Stands in for the binding layer: `nupur_names_its_host` treats
+/// `lint_probe::nupur` as `nupur`.
+#[rustfmt::skip] // keeps each marker on the line reported
+mod nupur {
+    fn names_the_host() -> crate::bridge::rb::ExceptionClass {
+        crate::init::EXC_ERROR.exception() //~
+    }
+
+    fn names_only_itself(v: crate::nupur::rb::Value) -> bool {
+        crate::nupur::helpers::same_value(v, v)
+    }
+}

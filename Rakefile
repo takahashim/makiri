@@ -280,12 +280,17 @@ task :no_unwind do
     sh env, "cargo", "rustc", "--release", "--lib", "--target-dir", target, "--", *link
   end
   lib = Dir[File.join(target, "release", "libmakiri.{dylib,so}")].first or abort "no_unwind: no library built"
+  # Two mechanisms, one per layer: Makiri's (`src/no_unwind.rs`, its types'
+  # and the engine's `Drop`s) and nupur's (`src/nupur/no_unwind.rs`, the GC
+  # callbacks, the protect thunk, the trampolines), each with its control.
   left = `nm -u #{lib.shellescape}`.lines.map(&:strip)
-                                       .filter_map { |l| l[/(?:\A|\s)_?makiri_unwinds_(\w+)\z/, 1] }.uniq.sort
-  abort "no_unwind: the control site was optimized away - the check is not live" unless left.include?("self_test")
-  sites = left - ["self_test"]
-  abort "no_unwind: these sites can unwind (see src/no_unwind.rs): #{sites.join(", ")}" unless sites.empty?
-  puts "no_unwind: every site is unwind-free; the control is live"
+                                       .filter_map { |l| l[/(?:\A|\s)_?((?:makiri|nupur)_unwinds_\w+)\z/, 1] }.uniq.sort
+  controls = %w[makiri_unwinds_self_test nupur_unwinds_self_test]
+  dead = controls - left
+  abort "no_unwind: a control site was optimized away - the check is not live: #{dead.join(", ")}" unless dead.empty?
+  sites = left - controls
+  abort "no_unwind: these sites can unwind (see src/no_unwind.rs, src/nupur/no_unwind.rs): #{sites.join(", ")}" unless sites.empty?
+  puts "no_unwind: every site is unwind-free; both controls are live"
 end
 
 # The vendored Lexbor, built alone. The extension no longer needs it - the

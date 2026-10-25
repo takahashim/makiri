@@ -658,6 +658,13 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
     cutf8.rs               the one UTF-8 validator + strict 1-codepoint decoder
     utf8_input.rs          HTML input sanitiser: invalid UTF-8 -> U+FFFD, per
                            WHATWG; `cbuf`+`cutf8` only, so Ruby/Lexbor-free
+    nupur/                 the magnus-replacement layer (`rb/`, `raw`, `typed`, `gvl`,
+                           `build`, `encoding`, `msg`, `caught`, its own `no_unwind`
+                           sites), names nothing of Makiri's (`rake dylint`'s
+                           `nupur_names_its_host`); Makiri's needs are registered
+                           in (`INTERNAL_ERROR`, `set_raise_injector`). `bridge`
+                           re-exports it, so `bridge::raw` etc. still resolve.
+                           `notes/nupur_crate_plan.ja.md` is its plan
     bridge/                the Ruby boundary - the ONLY layer allowed raw Ruby String
                            access (RSTRING) and verified-string minting. `rb/` is
                            its value and method layer over rb-sys (`Value` and the

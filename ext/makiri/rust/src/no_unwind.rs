@@ -65,25 +65,6 @@ macro_rules! sites {
 }
 
 sites! {
-    /// `bridge::typed`'s mark callback.
-    GcMark => "makiri_unwinds_gc_mark",
-    /// `bridge::typed`'s free callback: the data's whole drop glue.
-    GcFree => "makiri_unwinds_gc_free",
-    /// `bridge::typed`'s free callback for an embedded type.
-    GcFreeEmbedded => "makiri_unwinds_gc_free_embedded",
-    /// `bridge::typed`'s memsize callback.
-    GcMemsize => "makiri_unwinds_gc_memsize",
-    /// `bridge::raw::call`'s `rb_protect` thunk.
-    ProtectThunk => "makiri_unwinds_protect_thunk",
-    /// `bridge::raw::hash_foreach`'s `rb_hash_foreach` callback.
-    HashEach => "makiri_unwinds_hash_each",
-    /// `bridge::gvl::without_gvl`'s body, run with the GVL released.
-    GvlBody => "makiri_unwinds_gvl_body",
-    /// A method's trampoline (`bridge::rb::method::finish`, which
-    /// `finish_cary` runs too).
-    Method => "makiri_unwinds_method",
-    /// `Init_makiri` (`bridge::rb::method::run_init`).
-    Init => "makiri_unwinds_init",
     /// `DocData`'s `Drop`, run from the free callback.
     DropDocData => "makiri_unwinds_drop_doc_data",
     /// `NodeSet`'s `Drop`, run from the free callback.

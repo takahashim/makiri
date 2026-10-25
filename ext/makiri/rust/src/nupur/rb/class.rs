@@ -36,7 +36,7 @@ fn c_name(name: &str) -> Result<CName, Error> {
             dst.copy_from_slice(name.as_bytes());
             Ok(CName(buf))
         }
-        _ => Err(crate::bridge::ruby::arg_error(
+        _ => Err(crate::nupur::helpers::arg_error(
             "a name to define that is too long or holds a NUL byte",
         )),
     }
@@ -47,47 +47,41 @@ fn c_name(name: &str) -> Result<CName, Error> {
 pub trait Module: ReprValue {
     /// `class name < superclass` under this module.
     fn define_class(self, name: &str, superclass: RClass) -> Result<RClass, Error> {
-        let v =
-            crate::bridge::raw::define_class_under(self.as_value(), &c_name(name)?, superclass)?;
+        let v = crate::nupur::raw::define_class_under(self.as_value(), &c_name(name)?, superclass)?;
         Ok(RClass::from_known(v))
     }
 
     /// An exception class `name < superclass` under this module.
     fn define_error(self, name: &str, superclass: ExceptionClass) -> Result<ExceptionClass, Error> {
         let sup = RClass::from_known(superclass.as_value());
-        let v = crate::bridge::raw::define_class_under(self.as_value(), &c_name(name)?, sup)?;
+        let v = crate::nupur::raw::define_class_under(self.as_value(), &c_name(name)?, sup)?;
         Ok(ExceptionClass::from_known(v))
     }
 
     /// `module name` under this module.
     fn define_module(self, name: &str) -> Result<RModule, Error> {
-        let v = crate::bridge::raw::define_module_under(self.as_value(), &c_name(name)?)?;
+        let v = crate::nupur::raw::define_module_under(self.as_value(), &c_name(name)?)?;
         Ok(RModule::from_known(v))
     }
 
     /// The constant `name` = `value`.
     fn const_set(self, name: &str, value: impl ReprValue) -> Result<(), Error> {
-        crate::bridge::raw::const_set(self.as_value(), &c_name(name)?, value.as_value())
+        crate::nupur::raw::const_set(self.as_value(), &c_name(name)?, value.as_value())
     }
 
     /// A public instance method.
     fn define_method(self, name: &str, func: Func) -> Result<(), Error> {
-        crate::bridge::raw::define_method(self.as_value(), &c_name(name)?, func, Visibility::Public)
+        crate::nupur::raw::define_method(self.as_value(), &c_name(name)?, func, Visibility::Public)
     }
 
     /// A private instance method.
     fn define_private_method(self, name: &str, func: Func) -> Result<(), Error> {
-        crate::bridge::raw::define_method(
-            self.as_value(),
-            &c_name(name)?,
-            func,
-            Visibility::Private,
-        )
+        crate::nupur::raw::define_method(self.as_value(), &c_name(name)?, func, Visibility::Private)
     }
 
     /// A module function: a private instance method and a singleton method.
     fn define_module_function(self, name: &str, func: Func) -> Result<(), Error> {
-        crate::bridge::raw::define_method(
+        crate::nupur::raw::define_method(
             self.as_value(),
             &c_name(name)?,
             func,
@@ -97,7 +91,7 @@ pub trait Module: ReprValue {
 
     /// The constant `name`, which Makiri's own Ruby defines.
     fn const_get(self, name: &str) -> Result<Value, Error> {
-        crate::bridge::raw::const_get(self.as_value(), &c_name(name)?)
+        crate::nupur::raw::const_get(self.as_value(), &c_name(name)?)
     }
 
     /// `self.name(*args)`: the caller's Ruby - see `bridge::raw::call_method`.
@@ -109,12 +103,12 @@ pub trait Module: ReprValue {
         )
     )]
     fn call_method(self, name: &str, args: &[Value]) -> Result<Value, Error> {
-        crate::bridge::raw::call_method(self.as_value(), &c_name(name)?, args)
+        crate::nupur::raw::call_method(self.as_value(), &c_name(name)?, args)
     }
 
     /// Include `module`.
     fn include_module(self, module: RModule) -> Result<(), Error> {
-        crate::bridge::raw::include_module(self.as_value(), module.as_value())
+        crate::nupur::raw::include_module(self.as_value(), module.as_value())
     }
 }
 
@@ -122,7 +116,7 @@ pub trait Module: ReprValue {
 pub trait Object: ReprValue {
     /// A method on this object alone - a class method, for a class.
     fn define_singleton_method(self, name: &str, func: Func) -> Result<(), Error> {
-        crate::bridge::raw::define_method(
+        crate::nupur::raw::define_method(
             self.as_value(),
             &c_name(name)?,
             func,
@@ -136,13 +130,13 @@ pub trait Class: ReprValue {
     /// Take the allocator away, so `.new` on the class raises: its objects
     /// are made only from Rust, wrapping something.
     fn undef_default_alloc_func(self) {
-        crate::bridge::raw::undef_alloc_func(RClass::from_known(self.as_value()));
+        crate::nupur::raw::undef_alloc_func(RClass::from_known(self.as_value()));
     }
 }
 
 /// How a method is defined.
 #[derive(Clone, Copy)]
-pub(in crate::bridge) enum Visibility {
+pub(in crate::nupur) enum Visibility {
     Public,
     Private,
     Singleton,
@@ -158,14 +152,14 @@ impl Class for RClass {}
 impl Ruby {
     /// A top-level module.
     pub fn define_module(&self, name: &str) -> Result<RModule, Error> {
-        Ok(RModule::from_known(crate::bridge::raw::define_module(
+        Ok(RModule::from_known(crate::nupur::raw::define_module(
             &c_name(name)?,
         )?))
     }
 
     /// An anonymous module.
     pub fn module_new(&self) -> Result<RModule, Error> {
-        crate::bridge::raw::module_new(self)
+        crate::nupur::raw::module_new(self)
     }
 }
 
@@ -185,7 +179,7 @@ unsafe impl<T> Sync for Opaque<T> {}
 impl<T: ReprValue> Opaque<T> {
     /// `v`, rooted with the GC for the rest of the process.
     pub fn register(v: T) -> Result<Opaque<T>, Error> {
-        crate::bridge::raw::gc_register_mark_object(v.as_value())?;
+        crate::nupur::raw::gc_register_mark_object(v.as_value())?;
         Ok(Opaque(v))
     }
 }
@@ -200,5 +194,5 @@ impl Ruby {
 
 /// Freeze `v` (`rb_obj_freeze`). Raises nothing for a String of ours.
 pub fn freeze(v: Value) {
-    crate::bridge::raw::obj_freeze(v);
+    crate::nupur::raw::obj_freeze(v);
 }

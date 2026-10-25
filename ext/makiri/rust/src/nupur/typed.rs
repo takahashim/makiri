@@ -18,8 +18,8 @@
 use core::ffi::{c_char, c_void};
 use core::marker::PhantomData;
 
-use crate::bridge::rb::value::AsRawValue;
-use crate::bridge::rb::{Error, Value};
+use crate::nupur::rb::value::AsRawValue;
+use crate::nupur::rb::{Error, Value};
 use rb_sys::{rb_data_type_t, VALUE};
 
 /// A `Value` from a raw handle this module holds - a stored field, or what a
@@ -64,11 +64,11 @@ unsafe fn value(raw: VALUE) -> Value {
 /// Document and node, a Document's errors), which the GC marks and moves
 /// itself - where reading it per call would cost more than it saves.
 #[repr(transparent)]
-pub(in crate::bridge) struct Held(VALUE);
+pub(crate) struct Held(VALUE);
 
 impl Held {
     /// What a struct is built with: `Qfalse`, which a mark ignores.
-    pub(in crate::bridge) const fn empty() -> Held {
+    pub(crate) const fn empty() -> Held {
         Held(rb_sys::Qfalse as VALUE)
     }
 
@@ -80,7 +80,7 @@ impl Held {
     /// method argument, a VALUE on the stack). Then the value is marked and
     /// pinned, so live and where it was stored.
     #[inline]
-    pub(in crate::bridge) unsafe fn get(&self) -> Value {
+    pub(crate) unsafe fn get(&self) -> Value {
         // SAFETY: the caller's contract - a marked value of a reachable object.
         unsafe { value(self.0) }
     }
@@ -88,13 +88,13 @@ impl Held {
 
 /// Proof that the object a value is stored into is already wrapped - so its
 /// mark sees the value from the moment it is stored. See [`Held`].
-pub(in crate::bridge) struct Store(());
+pub(crate) struct Store(());
 
 impl Store {
     /// `v`, as a value the wrapped object holds. Store the result in that
     /// object's data, where its mark finds it - see [`Held`].
     #[inline]
-    pub(in crate::bridge) fn hold(&self, v: Value) -> Held {
+    pub(crate) fn hold(&self, v: Value) -> Held {
         Held(v.as_raw())
     }
 }
@@ -110,7 +110,7 @@ pub struct Tracer(());
 impl Tracer {
     /// A value the object holds, PINNED where it is: marked, and never moved.
     #[inline]
-    pub(in crate::bridge) fn pinned(&self, v: &Held) {
+    pub(crate) fn pinned(&self, v: &Held) {
         // SAFETY: called from Ruby's mark phase, with the GVL held.
         unsafe { rb_sys::rb_gc_mark(v.0) };
     }
@@ -152,7 +152,7 @@ pub trait Hooks: Sized {
  * contract, and one branch here means nothing rests on it. */
 
 unsafe extern "C" fn mark_cb<T: Hooks>(ptr: *mut c_void) {
-    crate::no_unwind::must_not_unwind::<crate::no_unwind::GcMark, _>(|| {
+    crate::nupur::no_unwind::must_not_unwind::<crate::nupur::no_unwind::GcMark, _>(|| {
         if ptr.is_null() {
             return;
         }
@@ -163,7 +163,7 @@ unsafe extern "C" fn mark_cb<T: Hooks>(ptr: *mut c_void) {
 }
 
 unsafe extern "C" fn free_cb<T: Hooks>(ptr: *mut c_void) {
-    crate::no_unwind::must_not_unwind::<crate::no_unwind::GcFree, _>(|| {
+    crate::nupur::no_unwind::must_not_unwind::<crate::nupur::no_unwind::GcFree, _>(|| {
         if ptr.is_null() {
             return;
         }
@@ -177,14 +177,14 @@ unsafe extern "C" fn free_cb<T: Hooks>(ptr: *mut c_void) {
          * than unwound into the collector. */
         unsafe {
             let data = core::ptr::read(ptr as *mut T);
-            crate::caught::quietly((), || drop(data));
+            crate::nupur::caught::quietly((), || drop(data));
             rb_sys::ruby_xfree(ptr);
         }
     })
 }
 
 unsafe extern "C" fn free_embedded_cb<T: Hooks>(ptr: *mut c_void) {
-    crate::no_unwind::must_not_unwind::<crate::no_unwind::GcFreeEmbedded, _>(|| {
+    crate::nupur::no_unwind::must_not_unwind::<crate::nupur::no_unwind::GcFreeEmbedded, _>(|| {
         if ptr.is_null() {
             return;
         }
@@ -192,12 +192,12 @@ unsafe extern "C" fn free_embedded_cb<T: Hooks>(ptr: *mut c_void) {
         // the memory is left to Ruby - the object's own slot when it was
         // embedded, and data Ruby frees after this callback when it was not.
         let data = unsafe { core::ptr::read(ptr as *mut T) };
-        crate::caught::quietly((), || drop(data));
+        crate::nupur::caught::quietly((), || drop(data));
     })
 }
 
 unsafe extern "C" fn memsize_cb<T: Hooks>(ptr: *const c_void) -> rb_sys::size_t {
-    crate::no_unwind::must_not_unwind::<crate::no_unwind::GcMemsize, _>(|| {
+    crate::nupur::no_unwind::must_not_unwind::<crate::nupur::no_unwind::GcMemsize, _>(|| {
         if ptr.is_null() {
             return 0;
         }
@@ -207,7 +207,7 @@ unsafe extern "C" fn memsize_cb<T: Hooks>(ptr: *const c_void) -> rb_sys::size_t 
          * still referenced, so it must be unwind-free itself.) */
         // SAFETY: as `mark_cb`.
         let data = unsafe { &*(ptr as *const T) };
-        crate::caught::quietly(0, || data.memsize()) as rb_sys::size_t
+        crate::nupur::caught::quietly(0, || data.memsize()) as rb_sys::size_t
     })
 }
 
@@ -292,7 +292,7 @@ impl<T: Hooks> TypedType<T> {
     /// `v` must be an object of this type (a mismatch panics), and the
     /// caller must keep it rooted - on its stack - for as long as it uses
     /// the reference.
-    pub(in crate::bridge) unsafe fn get_unbound<'a>(&'static self, v: Value) -> &'a T {
+    pub(crate) unsafe fn get_unbound<'a>(&'static self, v: Value) -> &'a T {
         // SAFETY: the caller's contract; `known_ptr` asserts the type.
         unsafe { &*self.known_ptr(v) }
     }
@@ -314,10 +314,10 @@ impl<T: Hooks> TypedType<T> {
     /// the wrap. A raw `VALUE` in a field would get around that; none is
     /// written outside `raw.rs` and this file (`rake dylint`'s
     /// `raw_ruby_outside_bridge`).
-    pub(in crate::bridge) fn wrap(
+    pub(crate) fn wrap(
         &'static self,
-        _: &crate::bridge::rb::Ruby,
-        klass: crate::bridge::rb::RClass,
+        _: &crate::nupur::rb::Ruby,
+        klass: crate::nupur::rb::RClass,
         build: impl FnOnce() -> T,
         store: impl FnOnce(&mut T, &Store),
     ) -> Result<Value, Error> {
@@ -381,10 +381,10 @@ impl<T: Hooks + Snapshot> EmbeddedType<T> {
 
     /// [`TypedType::wrap`]. `store` is lent the data in place, so it must
     /// allocate nothing either: it stores the values `T` holds, no more.
-    pub(in crate::bridge) fn wrap(
+    pub(crate) fn wrap(
         &'static self,
-        ruby: &crate::bridge::rb::Ruby,
-        klass: crate::bridge::rb::RClass,
+        ruby: &crate::nupur::rb::Ruby,
+        klass: crate::nupur::rb::RClass,
         build: impl FnOnce() -> T,
         store: impl FnOnce(&mut T, &Store),
     ) -> Result<Value, Error> {
@@ -465,7 +465,7 @@ fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void, Error> {
         match super::raw::check_typeddata(v, ty) {
             Err(e) => Err(e),
             /* rb_typeddata_is_kind_of said no, so the check should have raised. */
-            Ok(_) => Err(crate::bridge::ruby::type_error("wrong argument type")),
+            Ok(_) => Err(crate::nupur::helpers::type_error("wrong argument type")),
         }
     }
 }
@@ -541,7 +541,7 @@ unsafe fn wrap_built<T>(
     let obj = super::raw::typed_object_zalloc(klass, core::mem::size_of::<T>(), ty)?;
     let p = data_pointer(obj) as *mut T;
     if p.is_null() {
-        return Err(crate::bridge::ruby::internal_error(
+        return Err(crate::nupur::helpers::internal_error(
             "a TypedData object was made without its data",
         ));
     }

@@ -7,11 +7,11 @@
 
 #![forbid(unsafe_code)]
 
-use crate::bridge::rb::ReprValue;
-use crate::bridge::rb::{Error, RArray, RHash, Value};
+use crate::nupur::rb::ReprValue;
+use crate::nupur::rb::{Error, RArray, RHash, Value};
 
+use super::helpers::gvl_ruby;
 use super::raw;
-use super::ruby::gvl_ruby;
 
 /// An empty Array with room for `capa` elements.
 pub fn ary(capa: usize) -> Result<RArray, Error> {
@@ -55,11 +55,27 @@ pub fn enumerator(obj: Value, meth: &str) -> Result<Value, Error> {
 }
 
 /// The Symbol named by the UTF-8 `name`.
-pub fn symbol(name: &str) -> Result<crate::bridge::rb::Symbol, Error> {
-    crate::bridge::raw::sym(&crate::bridge::ruby::gvl_ruby(), name)
+pub fn symbol(name: &str) -> Result<crate::nupur::rb::Symbol, Error> {
+    crate::nupur::raw::sym(&crate::nupur::helpers::gvl_ruby(), name)
 }
 
 /// [`symbol`] as a plain `Value`.
 pub fn sym(name: &str) -> Result<Value, Error> {
     raw::sym(&gvl_ruby(), name).map(|s| s.as_value())
+}
+
+/// A UTF-8 String holding a copy of `bytes`; a failed allocation is `Err`
+/// (`NoMemoryError`), as `raw`'s every call is.
+///
+/// `bytes` must be valid UTF-8 (the String is tagged so without a check):
+/// everything a document lends is, by the text-input contract, and so is
+/// every checked view. Bytes that were not would make a wrong String, never
+/// a memory error.
+pub fn utf8_str(bytes: &[u8]) -> Result<Value, Error> {
+    utf8_rstring(bytes).map(|s| s.as_value())
+}
+
+/// [`utf8_str`] as an `RString`.
+pub fn utf8_rstring(bytes: &[u8]) -> Result<crate::nupur::rb::RString, Error> {
+    crate::nupur::raw::utf8_str_new(&crate::nupur::helpers::gvl_ruby(), bytes)
 }
