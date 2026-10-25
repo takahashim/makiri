@@ -71,8 +71,8 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   parser) and `bridge::raw::hash_foreach`'s `rb_hash_foreach` callback, which
   answers "stop" for a latched panic or an error and never raises from inside
   the walk. For the same reason a Hash is walked only through
-  `glue::hash::hash_foreach` over it (`rake unsafe:boundaries` fails on a
-  direct `.foreach(`, which is how magnus's latch-less walk was spelled). The reference-only
+  `glue::hash::hash_foreach` over it (`RHash` has no walk of its own, so
+  there is no latch-less one to call, as magnus's `foreach` was). The reference-only
   Lexbor callbacks carry it too (`lexbor::selectors`' traversal,
   `lexbor::chunks::chunk_cb`, `tree_guard::hook_token_cb`).
   Two `extern "C"` functions have no latch ON PURPOSE. The GC callbacks in
@@ -160,9 +160,9 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   wrapper hands its one C call to `raw::call`, whose `extern "C"` thunk is the
   only frame a raise crosses, and the raise comes back as `Err`. A caller may
   then own copies, hold document guards and build Ruby objects in any order.
-  `rake unsafe:boundaries` pins the raising names to `raw.rs`, and `rake
-  dylint`'s `raising_call_outside_protect` fails on one called outside the
-  closure handed to `bridge::raw::call`, by resolved path; a new raising call
+  `rake dylint`'s `raising_call_outside_protect` fails on one called outside
+  the closure handed to `bridge::raw::call`, by resolved path - and `call` is
+  private to `raw.rs`, so that is also where they all are; a new raising call
   is a new wrapper with its raise stated. The glue builds Arrays, Hashes, numbers
   and Symbols through `bridge::build`, Strings through
   `bridge::string::utf8_str`, and every wrapped object - a NodeSet included -
@@ -180,7 +180,8 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   `check_typeddata`, `utf8_str_unwritten`). A raw `VALUE` - an integer to
   Rust, which no lint can tell from a `u64` in a `Vec` - is spelled only in
   `raw.rs`, `typed.rs` and the `bridge::rb` files that are the typed values
-  (`unsafe:boundaries`' `VALUE_ALLOWED`; `VALUE_COUNTS`, empty), so
+  (`rake dylint`'s `raw_ruby_outside_bridge`, which also fails on any
+  `rb_sys::` outside `bridge/`), so
   everything else holds typed values; `TypedType::wrap` is safe for that
   reason (`&Ruby`, and a `T` can keep a Ruby value only in a `Held`). A
   `Held` is a private field beside the `trace` that marks it, read through
@@ -337,7 +338,10 @@ bundle exec rake dylint            # the crate's own lints (lints/makiri_lints),
                                    # (a Ruby value in a heap container, a static or a
                                    # wrapped object's data), ruby_layer_in_engine,
                                    # unguarded_no_unwind_site, ruby_in_gvl_released_body,
-                                   # infallible_allocation, raising_call_outside_protect;
+                                   # infallible_allocation, raising_call_outside_protect,
+                                   # raw_ruby_outside_bridge, runs_callers_ruby,
+                                   # raw_node_crossing, ruby_surface_in_bridge
+                                   # (a sanctioned site is an allow with its reason);
                                    # then their self-test
                                    # (src/lint_probe.rs). Needs the nightly
                                    # rust-toolchain.toml pins + cargo-dylint/dylint-link
@@ -658,10 +662,15 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            every `forbid` file, which it counts. `glue/**`, `xpath/**`,
                            `css/**` and `css_match/**` are fully safe
                            (their module roots carry
-                           `#![forbid(unsafe_code)]`, which the gate pins), and
-                           `rb_sys::` and `Value::from_raw` are 0 outside
-                           `bridge/`, and the C calls that can raise live only
-                           in `bridge/raw.rs`
+                           `#![forbid(unsafe_code)]`, which the gate pins);
+                           `rake dylint` holds `rb_sys::` to `bridge/` and the
+                           C calls that can raise to `bridge/raw.rs`, and
+                           `Value::from_raw` is `pub(in crate::bridge)`. A
+                           borrowed HTML handle made a lifetime-free `RawNode`
+                           in `bridge/` is `raw_node_crossing`, each crossing
+                           an allow with its reason (`with_html_node` /
+                           `HtmlParsed::mint_key` / `resolve` are the checked
+                           entries to reach for instead)
     glue/                  THE Ruby surface: every method Makiri defines, with
                            its argument reading, its errors and its
                            registration, one module per feature
@@ -670,8 +679,9 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            read/mutate/css/serialize). All `unsafe`-free; the
                            wrappers, TypedData and the operations that keep a
                            structure's invariants are `bridge/`'s, and
-                           `rake unsafe:boundaries` fails on a method defined -
-                           or an argument list scanned - in `bridge/`
+                           `rake dylint`'s `ruby_surface_in_bridge` fails on a
+                           method defined - or an argument list split - in
+                           `bridge/`
     xpath/                 native XPath 1.0 engine, generic over a `Dom` trait;
                            `#![forbid(unsafe_code)]` and Lexbor/Ruby-free. The
                            two `Dom` instances live with their layers:
@@ -890,11 +900,11 @@ selector, expression, encoding - a `String` or a `Symbol` (`name_arg`), and
 anything else is a `TypeError`, since a `to_s`/`to_str` is the caller's Ruby.
 What converts with `to_s` is `lib/`'s, outside the extension: the parse
 entries (`String(source)`, an IO's `read`) and `XML::Builder`. `rake
-unsafe:boundaries` counts every call that would run the caller's Ruby
-(`USER_CODE_API`); `NodeSet#each`'s `yield` (through `bridge::raw::yield_value`,
-whose `rb_yield` is the third count) and `XML::Namespace.new` are the two
-allowed, with `Module::call_method` (`rb_funcallv`, `XML::Namespace.new`'s)
-counted beside them. A registered method's parameters are held to it by
+dylint`'s `runs_callers_ruby` fails on every call that would run the caller's
+Ruby, by resolved path; `NodeSet#each`'s `yield` (through
+`bridge::raw::yield_value`, over `rb_yield`) and `XML::Namespace.new`
+(`Module::call_method`, over `rb_funcallv`) are the two allowed, each wrapper
+along the way an allow with its reason. A registered method's parameters are held to it by
 type: `bridge::rb::TryConvert` exists only for `Value`, `bool` and Makiri's
 receiver types (`HtmlSelf`, `XmlSelf`, `XPathCtxSelf`, `NodeSetSelf`), so a
 `method!` / `function!` taking an `RString` or an `i64` does not compile.

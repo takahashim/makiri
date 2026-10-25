@@ -123,6 +123,13 @@ pub fn new_empty_document(compat_mode: u32, encoding: &'static str) -> Result<Va
 /// `Document#root`: the root Element node, or nil - for `Document.new`, or once
 /// the root is removed (the HTML parser inserts html/head/body even for empty
 /// input).
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        raw_node_crossing,
+        reason = "the root element, wrapped once the read is over"
+    )
+)]
 pub fn document_root(rb_doc: Value) -> Result<Option<Value>, Error> {
     let root = {
         let read = html_read(&rb_doc)?;

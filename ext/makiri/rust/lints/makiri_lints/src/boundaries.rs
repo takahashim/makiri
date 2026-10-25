@@ -12,7 +12,16 @@
 //!   could reach Ruby.
 //! - `infallible_allocation`: no allocation that aborts on OOM.
 //! - `raising_call_outside_protect`: a C function that can raise is called
-//!   only inside `bridge::raw::call`'s closure.
+//!   only inside `bridge::raw::call`'s closure (which is private to
+//!   `bridge::raw`, so that is also where every raising call is).
+//! - `raw_ruby_outside_bridge`: Ruby's C API is named only in `bridge/`, and
+//!   a raw `VALUE` only in the files that are the typed values.
+//! - `runs_callers_ruby`: a call that would run the caller's Ruby code, each
+//!   one allowed where it is made, with its reason.
+//! - `raw_node_crossing`: a borrowed HTML node handle made a lifetime-free
+//!   `RawNode` in `bridge/`, each one allowed where it is made.
+//! - `ruby_surface_in_bridge`: a Ruby method defined, or an argument list
+//!   split, in `bridge/` - the glue's work.
 
 use clippy_utils::diagnostics::span_lint_and_help;
 use rustc_hir::def::{DefKind, Res};
@@ -24,8 +33,9 @@ use rustc_span::Span;
 use rustc_span::def_id::LocalDefId;
 
 use crate::{
-    INFALLIBLE_ALLOCATION, RAISING_CALL_OUTSIDE_PROTECT, RUBY_IN_GVL_RELEASED_BODY,
-    RUBY_LAYER_IN_ENGINE, UNGUARDED_NO_UNWIND_SITE,
+    INFALLIBLE_ALLOCATION, RAISING_CALL_OUTSIDE_PROTECT, RAW_NODE_CROSSING,
+    RAW_RUBY_OUTSIDE_BRIDGE, RUBY_IN_GVL_RELEASED_BODY, RUBY_LAYER_IN_ENGINE,
+    RUBY_SURFACE_IN_BRIDGE, RUNS_CALLERS_RUBY, UNGUARDED_NO_UNWIND_SITE,
 };
 
 /* ---- paths ---- */
@@ -58,9 +68,27 @@ fn module_of(cx: &LateContext<'_>, hir_id: HirId) -> String {
 /// closure and a GVL-released body may run. `lint_probe::engine` stands in
 /// for one in the lint's self-test.
 const ENGINE: &[&str] = &[
-    "xml", "xpath", "css", "selectors", "html", "html_dom", "child_index", "dom_rules",
-    "falloc", "cbuf", "cutf8", "limits", "node_type", "ptr_table", "text", "token",
-    "utf8_input", "raw_vec", "utf8_copy", "msg", "css_match",
+    "xml",
+    "xpath",
+    "css",
+    "selectors",
+    "html",
+    "html_dom",
+    "child_index",
+    "dom_rules",
+    "falloc",
+    "cbuf",
+    "cutf8",
+    "limits",
+    "node_type",
+    "ptr_table",
+    "text",
+    "token",
+    "utf8_input",
+    "raw_vec",
+    "utf8_copy",
+    "msg",
+    "css_match",
 ];
 
 fn in_engine(module: &str) -> bool {
@@ -68,8 +96,34 @@ fn in_engine(module: &str) -> bool {
         return false;
     };
     rest.starts_with("lint_probe::engine")
-        || ENGINE.iter().any(|m| rest == *m || rest.starts_with(&format!("{m}::")))
+        || ENGINE
+            .iter()
+            .any(|m| rest == *m || rest.starts_with(&format!("{m}::")))
 }
+
+/// Whether `module` is the crate's module `m` or inside it.
+fn within(module: &str, m: &str) -> bool {
+    module
+        .strip_prefix("makiri::")
+        .and_then(|rest| rest.strip_prefix(m))
+        .is_some_and(|tail| tail.is_empty() || tail.starts_with("::"))
+}
+
+/// Whether `module` is in `bridge/`; `lint_probe::bridge` stands in for one
+/// in the self-test.
+fn in_bridge(module: &str) -> bool {
+    within(module, "bridge") || within(module, "lint_probe::bridge")
+}
+
+/// The modules that may spell a raw `VALUE`: the C calls, TypedData and
+/// the GC callbacks, and the `bridge::rb` files that are the typed values.
+const VALUE_HOMES: &[&str] = &[
+    "bridge::raw",
+    "bridge::typed",
+    "bridge::rb::value",
+    "bridge::rb::ruby",
+    "bridge::rb::method",
+];
 
 /// What the engine may not name: the Ruby layer (`bridge`, `glue`, `init`)
 /// and Ruby's C API.
@@ -106,6 +160,42 @@ pub fn check_path(cx: &LateContext<'_>, path: &Path<'_>, hir_id: HirId) {
         return;
     };
     report_ruby_layer(cx, did, path.span.source_callsite(), hir_id);
+    report_raw_ruby(cx, did, path.span.source_callsite(), hir_id);
+}
+
+/* ---- raw_ruby_outside_bridge ---- */
+
+fn report_raw_ruby(cx: &LateContext<'_>, did: DefId, span: Span, hir_id: HirId) {
+    let target = path_of(cx, did);
+    if !target.starts_with("rb_sys::") {
+        return;
+    }
+    let module = module_of(cx, hir_id);
+    if in_engine(&module) {
+        return; /* `ruby_layer_in_engine`'s */
+    }
+    if !in_bridge(&module) {
+        span_lint_and_help(
+            cx,
+            RAW_RUBY_OUTSIDE_BRIDGE,
+            span,
+            format!("`{target}`, Ruby's C API, outside bridge/"),
+            None,
+            "the bridge owns raw values, typed data and the C calls that raise, so a \
+             raise becomes an Err before it can longjmp past a destructor; add a typed \
+             wrapper there",
+        );
+    } else if target.ends_with("::VALUE") && !VALUE_HOMES.iter().any(|m| within(&module, m)) {
+        span_lint_and_help(
+            cx,
+            RAW_RUBY_OUTSIDE_BRIDGE,
+            span,
+            "a raw `VALUE` outside the files that are the typed values",
+            None,
+            "a VALUE is an integer to Rust, which no lint can follow into a Vec or a \
+             field; hold a bridge::rb value (Value, RString, ...) instead",
+        );
+    }
 }
 
 fn report_ruby_layer(cx: &LateContext<'_>, did: DefId, span: Span, hir_id: HirId) {
@@ -144,21 +234,62 @@ const INFALLIBLE: &[&str] = &[
     "::CString::new",
 ];
 
-/// The C functions that can raise, by name: `script/check_unsafe_boundaries.rb`'s
-/// `RAISING_API`, which still counts their call sites.
+/// The C functions that can raise, by name.
 const RAISING: &[&str] = &[
-    "rb_raise", "rb_exc_raise", "rb_jump_tag", "rb_check_typeddata", "rb_sym2str",
-    "rb_check_frozen", "rb_range_beg_len", "rb_thread_check_ints", "rb_intern3", "rb_intern",
-    "rb_utf8_str_new", "rb_enc_interned_str", "rb_str_dup", "rb_str_subseq", "rb_enc_associate",
-    "rb_str_encode", "rb_to_encoding", "rb_enc_find_index", "rb_data_typed_object_wrap",
-    "rb_data_typed_object_zalloc", "ruby_xmalloc", "ruby_xrealloc2", "rb_ary_new_capa",
-    "rb_ary_push", "rb_hash_new", "rb_hash_aset", "rb_ll2inum", "rb_ull2inum", "rb_float_new",
-    "rb_id2sym", "rb_str_cat", "rb_enumeratorize_with_size", "rb_memerror", "rb_hash_foreach",
-    "rb_yield", "rb_define_class_under", "rb_define_module_under", "rb_define_module",
-    "rb_const_set", "rb_const_get", "rb_include_module", "rb_define_method",
-    "rb_define_private_method", "rb_define_singleton_method", "rb_define_module_function",
-    "rb_exc_new_str", "rb_exc_fatal", "rb_big2ll", "rb_big2ull", "rb_hash_lookup2",
-    "rb_gc_register_mark_object", "rb_module_new", "rb_range_values", "rb_funcallv",
+    "rb_raise",
+    "rb_exc_raise",
+    "rb_jump_tag",
+    "rb_check_typeddata",
+    "rb_sym2str",
+    "rb_check_frozen",
+    "rb_range_beg_len",
+    "rb_thread_check_ints",
+    "rb_intern3",
+    "rb_intern",
+    "rb_utf8_str_new",
+    "rb_enc_interned_str",
+    "rb_str_dup",
+    "rb_str_subseq",
+    "rb_enc_associate",
+    "rb_str_encode",
+    "rb_to_encoding",
+    "rb_enc_find_index",
+    "rb_data_typed_object_wrap",
+    "rb_data_typed_object_zalloc",
+    "ruby_xmalloc",
+    "ruby_xrealloc2",
+    "rb_ary_new_capa",
+    "rb_ary_push",
+    "rb_hash_new",
+    "rb_hash_aset",
+    "rb_ll2inum",
+    "rb_ull2inum",
+    "rb_float_new",
+    "rb_id2sym",
+    "rb_str_cat",
+    "rb_enumeratorize_with_size",
+    "rb_memerror",
+    "rb_hash_foreach",
+    "rb_yield",
+    "rb_define_class_under",
+    "rb_define_module_under",
+    "rb_define_module",
+    "rb_const_set",
+    "rb_const_get",
+    "rb_include_module",
+    "rb_define_method",
+    "rb_define_private_method",
+    "rb_define_singleton_method",
+    "rb_define_module_function",
+    "rb_exc_new_str",
+    "rb_exc_fatal",
+    "rb_big2ll",
+    "rb_big2ull",
+    "rb_hash_lookup2",
+    "rb_gc_register_mark_object",
+    "rb_module_new",
+    "rb_range_values",
+    "rb_funcallv",
     "rb_ivar_set",
 ];
 
@@ -170,6 +301,7 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
     if !is_extension(cx) {
         return;
     }
+    check_raw_node_crossing(cx, expr);
     if let ExprKind::MethodCall(..) = expr.kind
         && let Some(did) = callee(cx, expr)
     {
@@ -180,8 +312,13 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
     };
     let path = path_of(cx, did);
 
-    if INFALLIBLE.iter().any(|p| if p.starts_with("::") { path.ends_with(p) } else { path == *p })
-        && !path.starts_with("makiri::")
+    if INFALLIBLE.iter().any(|p| {
+        if p.starts_with("::") {
+            path.ends_with(p)
+        } else {
+            path == *p
+        }
+    }) && !path.starts_with("makiri::")
     {
         span_lint_and_help(
             cx,
@@ -212,10 +349,139 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         );
     }
 
+    if runs_callers_ruby(&path) {
+        span_lint_and_help(
+            cx,
+            RUNS_CALLERS_RUBY,
+            expr.span.source_callsite(),
+            format!("`{path}` runs the caller's Ruby code"),
+            None,
+            "Makiri runs none of its caller's Ruby: no argument is converted, no method \
+             of a caller's object called; a call that must is allowed where it is made, \
+             with its reason, holding no guard or copy across it",
+        );
+    }
+
+    let defines =
+        path.starts_with("makiri::bridge::") && path.rsplit("::").next().is_some_and(is_definition);
+    if defines || path.starts_with("makiri::glue::args::") {
+        let module = module_of(cx, expr.hir_id);
+        if in_bridge(&module)
+            && !within(&module, "bridge::rb::class")
+            && !within(&module, "bridge::raw")
+        {
+            span_lint_and_help(
+                cx,
+                RUBY_SURFACE_IN_BRIDGE,
+                expr.span.source_callsite(),
+                format!("`{path}` in bridge/: the Ruby surface is the glue's"),
+                None,
+                "define the method, or split its arguments, in glue/; a method defined \
+                 in bridge/ splits a feature's Ruby half by where it needed unsafe",
+            );
+        }
+    }
+
     if path == "makiri::bridge::gvl::without_gvl"
         && let ExprKind::Call(_, [body]) = expr.kind
     {
         check_gvl_released(cx, body);
+    }
+}
+
+/// The calls that run the caller's Ruby code: Ruby's C API that converts or
+/// calls (`to_s`, `to_str`, a method, a block), and the bridge's wrappers
+/// over it.
+fn runs_callers_ruby(path: &str) -> bool {
+    if let Some(name) = path
+        .strip_prefix("rb_sys::")
+        .and_then(|p| p.rsplit("::").next())
+    {
+        return matches!(
+            name,
+            "rb_String"
+                | "rb_obj_as_string"
+                | "rb_respond_to"
+                | "rb_block_call"
+                | "rb_call_super"
+                | "rb_str_to_str"
+                | "rb_check_string_type"
+                | "rb_convert_type"
+                | "rb_check_convert_type"
+        ) || [
+            "rb_funcall",
+            "rb_yield",
+            "rb_eval_string",
+            "rb_string_value",
+        ]
+        .iter()
+        .any(|p| name.starts_with(p));
+    }
+    matches!(
+        path,
+        "makiri::bridge::raw::call_method"
+            | "makiri::bridge::raw::yield_value"
+            | "makiri::bridge::rb::class::Module::call_method"
+    )
+}
+
+/// A function that defines a Ruby method: `define_method`,
+/// `define_singleton_method`, `define_module_function`, ...
+fn is_definition(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("define_") else {
+        return false;
+    };
+    let rest = ["singleton_", "private_", "module_"]
+        .iter()
+        .find_map(|p| rest.strip_prefix(p))
+        .unwrap_or(rest);
+    rest == "method" || rest == "function"
+}
+
+/* ---- raw_node_crossing ---- */
+
+const RAW_NODE: &str = "makiri::html::dom::handle::RawNode";
+
+/// `RawNode::from(node)` (as a call or a path, `.map(RawNode::from)`), a
+/// `.into()` that makes one, and `HtmlNodeKey::raw_node`, in `bridge/`.
+fn check_raw_node_crossing<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
+    let did = match expr.kind {
+        ExprKind::Path(ref qpath) => match cx.qpath_res(qpath, expr.hir_id) {
+            Res::Def(DefKind::AssocFn, did) => did,
+            _ => return,
+        },
+        ExprKind::MethodCall(..) => match cx.typeck_results().type_dependent_def_id(expr.hir_id) {
+            Some(did) => did,
+            None => return,
+        },
+        _ => return,
+    };
+    let path = path_of(cx, did);
+    let made = |i: usize| {
+        cx.typeck_results()
+            .node_args(expr.hir_id)
+            .types()
+            .nth(i)
+            .and_then(|t| t.ty_adt_def())
+            .is_some_and(|a| path_of(cx, a.did()) == RAW_NODE)
+    };
+    let crossing = match path.as_str() {
+        "core::convert::From::from" => made(0),
+        "core::convert::Into::into" => made(1),
+        "makiri::html::dom::parsed::raw_node" => true,
+        _ => false,
+    };
+    if crossing && in_bridge(&module_of(cx, expr.hir_id)) {
+        span_lint_and_help(
+            cx,
+            RAW_NODE_CROSSING,
+            expr.span.source_callsite(),
+            "a node handle made a lifetime-free `RawNode` in bridge/",
+            None,
+            "a RawNode outlives the read it came from; reach for with_html_node, \
+             HtmlParsed::mint_key or HtmlParsed::resolve, or allow this crossing here \
+             with its reason",
+        );
     }
 }
 
@@ -275,7 +541,9 @@ fn check_gvl_released<'tcx>(cx: &LateContext<'tcx>, body: &'tcx Expr<'tcx>) {
                             && !path.starts_with("makiri::lint_probe::engine"))
                 }
                 /* A call through a local function value or a pointer. */
-                None => matches!(e.kind, ExprKind::Call(f, _) if !matches!(f.kind, ExprKind::Path(QPath::TypeRelative(..)))),
+                None => {
+                    matches!(e.kind, ExprKind::Call(f, _) if !matches!(f.kind, ExprKind::Path(QPath::TypeRelative(..))))
+                }
             };
             if bad {
                 span_lint_and_help(
@@ -320,15 +588,14 @@ pub fn check_fn<'tcx>(
         FnKind::Method(..) if is_drop(cx, did) => "a `Drop`",
         _ => return,
     };
-    let guarded = clippy_utils::visitors::for_each_expr(cx.tcx, body.value, |e| {
-        match callee(cx, e) {
+    let guarded =
+        clippy_utils::visitors::for_each_expr(cx.tcx, body.value, |e| match callee(cx, e) {
             Some(d) if GUARDS.contains(&path_of(cx, d).as_str()) => {
                 core::ops::ControlFlow::Break(())
             }
             _ => core::ops::ControlFlow::Continue(()),
-        }
-    })
-    .is_some();
+        })
+        .is_some();
     if !guarded {
         span_lint_and_help(
             cx,
@@ -343,7 +610,11 @@ pub fn check_fn<'tcx>(
 }
 
 fn is_drop(cx: &LateContext<'_>, did: LocalDefId) -> bool {
-    let Some(impl_did) = cx.tcx.inherent_impl_of_assoc(did.to_def_id()).or_else(|| cx.tcx.trait_impl_of_assoc(did.to_def_id())) else {
+    let Some(impl_did) = cx
+        .tcx
+        .inherent_impl_of_assoc(did.to_def_id())
+        .or_else(|| cx.tcx.trait_impl_of_assoc(did.to_def_id()))
+    else {
         return false;
     };
     cx.tcx

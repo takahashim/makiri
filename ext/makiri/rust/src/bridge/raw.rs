@@ -252,10 +252,18 @@ pub fn const_get(outer: Value, name: &core::ffi::CStr) -> Result<Value, Error> {
     Ok(unsafe { Value::from_raw(v) })
 }
 
-/// `recv.name(*args)` (`rb_funcallv`): the caller's Ruby, which is why it is
-/// counted (`rake unsafe:boundaries`' `USER_CODE_API`) - the one use is
+/// `recv.name(*args)` (`rb_funcallv`): the caller's Ruby, which is why each
+/// call of it is allowed where it is made (`rake dylint`'s
+/// `runs_callers_ruby`) - the one use is
 /// `XML::Namespace.new`, Makiri's own Data class, whose `new` takes the
 /// arguments as Data's does.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        runs_callers_ruby,
+        reason = "the one call of a method: XML::Namespace.new, Makiri's own Data class"
+    )
+)]
 pub fn call_method(recv: Value, name: &core::ffi::CStr, args: &[Value]) -> Result<Value, Error> {
     let id = intern_cstr(&Ruby::get_with(recv), name)?;
     let argc = c_int::try_from(args.len())
@@ -414,6 +422,13 @@ pub fn block_given(_: &Ruby) -> bool {
 /// `throw` or `return`. Every one of those comes back as `Err` (the
 /// non-exception exits as the jump `rb_protect` caught), and is raised again
 /// at the method's return, so it reaches the block's caller as it left.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        runs_callers_ruby,
+        reason = "NodeSet#each's block, the point of the method"
+    )
+)]
 pub fn yield_value(_: &Ruby, v: Value) -> Result<Value, Error> {
     let v = v.as_raw();
     let out = call(|| unsafe { rb_sys::rb_yield(v) })?;

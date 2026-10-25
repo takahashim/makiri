@@ -273,6 +273,10 @@ pub fn node_token_in(rb_node: Value, document: Value) -> Result<Token, NotInDocu
 ///
 /// The Document branch is kind-aware: an XML Document resolves to its arena's
 /// document node, an HTML one to the HTML arena's.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(raw_node_crossing, reason = "a node's word, for identity alone")
+)]
 pub fn node_raw(rb_node: Value) -> Result<NodeWord, Error> {
     if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_DOCUMENT) {
         DOC_TYPE.get(&rb_node)?; /* TypeError for a non-Document */

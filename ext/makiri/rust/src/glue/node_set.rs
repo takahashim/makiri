@@ -61,6 +61,13 @@ fn aref(ruby: &Ruby, s: NodeSetSelf, args: &[Value]) -> Result<Option<Value>, Er
 ///
 /// Iterates by index, each node read under a short borrow released before the
 /// yield, so the block can call back into this set.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        runs_callers_ruby,
+        reason = "the block is the point of the method; no guard or copy is held across it"
+    )
+)]
 fn each(ruby: &Ruby, s: NodeSetSelf) -> Result<Value, Error> {
     let this = s.value();
     if !crate::bridge::raw::block_given(ruby) {

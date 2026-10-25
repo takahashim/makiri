@@ -24,7 +24,7 @@ use rb_sys::{rb_data_type_t, VALUE};
 
 /// A `Value` from a raw handle this module holds - a stored field, or what a
 /// wrap returned. With `raw.rs`, the only place a raw `VALUE` becomes a
-/// `Value` (`rake unsafe:boundaries`' `VALUE_COUNTS`).
+/// `Value` (`rake dylint`'s `raw_ruby_outside_bridge`).
 ///
 /// # Safety
 /// `raw` is a live Ruby value of the current process, kept rooted by the
@@ -312,8 +312,8 @@ impl<T: Hooks> TypedType<T> {
     /// `&Ruby` is the GVL, and a `T` keeps a Ruby value only in a [`Held`],
     /// which holds nothing until a [`Store`] exists - and `store` runs after
     /// the wrap. A raw `VALUE` in a field would get around that; none is
-    /// written outside `raw.rs` and this file (`rake unsafe:boundaries`'
-    /// `VALUE_COUNTS`).
+    /// written outside `raw.rs` and this file (`rake dylint`'s
+    /// `raw_ruby_outside_bridge`).
     pub(in crate::bridge) fn wrap(
         &'static self,
         _: &crate::bridge::rb::Ruby,

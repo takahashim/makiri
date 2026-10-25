@@ -148,6 +148,10 @@ fn uninitialized() -> Error {
 /// against [`HTML_NODE_TYPE`], which an XML node (wrapped under
 /// `XML_NODE_TYPE`) does not satisfy. The Document node is keyed too: it is its own `owner_document`, so
 /// `mint_key` accepts it.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(raw_node_crossing, reason = "a Document's own node, minted as its key")
+)]
 pub(in crate::bridge) fn html_node_key(rb_node: Value) -> Result<(HtmlNodeKey, Value), Error> {
     if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_DOCUMENT) {
         if crate::bridge::ruby::is_kind_of(rb_node, &CLASS_XML_DOCUMENT) {
@@ -203,6 +207,13 @@ impl HtmlSelf {
     /// across a call that can raise (`rake unsafe:boundaries`): read what is
     /// needed, drop it, then build the Ruby result.
     #[inline]
+    #[cfg_attr(
+        dylint_lib = "makiri_lints",
+        allow(
+            raw_node_crossing,
+            reason = "the receiver's key, as the node its own read resolves"
+        )
+    )]
     pub fn read(&self) -> Result<HtmlView<'_>, Error> {
         Ok(HtmlView {
             read: html_read(&self.document)?,
@@ -213,6 +224,13 @@ impl HtmlSelf {
 
     /// The receiver's node as the boundary handle, for the mutators.
     #[inline]
+    #[cfg_attr(
+        dylint_lib = "makiri_lints",
+        allow(
+            raw_node_crossing,
+            reason = "the receiver's node, for a mutator to resolve inside its edit"
+        )
+    )]
     pub fn raw(&self) -> RawNode {
         self.key.raw_node()
     }
@@ -229,6 +247,13 @@ pub struct HtmlView<'a> {
 impl HtmlView<'_> {
     /// The node `f` finds from the receiver's, wrapped - after the read is
     /// over, since wrapping allocates.
+    #[cfg_attr(
+        dylint_lib = "makiri_lints",
+        allow(
+            raw_node_crossing,
+            reason = "the node a read finds, wrapped once the read is over"
+        )
+    )]
     pub fn wrap(
         self,
         f: impl FnOnce(HtmlNode<'_>) -> Option<HtmlNode<'_>>,
@@ -245,6 +270,13 @@ impl HtmlView<'_> {
     /// `elements_only`), as a NodeSet built with the read held
     /// ([`node_set_from_read`](crate::bridge::node_set::node_set_from_read)).
     /// `f` hands each node to the sink it is given.
+    #[cfg_attr(
+        dylint_lib = "makiri_lints",
+        allow(
+            raw_node_crossing,
+            reason = "the nodes a read lists, as the words a NodeSet holds, pushed with the read held"
+        )
+    )]
     pub fn set(
         self,
         elements_only: bool,
@@ -270,6 +302,13 @@ impl HtmlView<'_> {
     /// is otherwise the dominant, cache-bound cost. A node the index does not
     /// serve (a fragment's, or before the index is due, or after a build OOM)
     /// is walked ([`subtree_text`]). The String is made with the read held.
+    #[cfg_attr(
+        dylint_lib = "makiri_lints",
+        allow(
+            raw_node_crossing,
+            reason = "the node whose text is read, resolved again in the same read"
+        )
+    )]
     pub fn text(self) -> Result<Value, Error> {
         let target = {
             let n = self.node();
@@ -345,6 +384,13 @@ pub fn with_arg_node<R>(v: Value, f: impl FnOnce(HtmlNode<'_>) -> R) -> Result<R
 }
 
 /// [`wrap_html_node`] for an optional handle.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        raw_node_crossing,
+        reason = "a node wrapped: the wrapper keeps its key, and its document alive"
+    )
+)]
 pub fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Result<Option<Value>, Error> {
     node.map(|n| wrap_html_node(RawNode::from(n), document))
         .transpose()
@@ -358,6 +404,13 @@ pub fn wrap_node(node: Option<HtmlNode<'_>>, document: Value) -> Result<Option<V
 /// The links are [`HtmlTree`]'s, the raw ones `#children` follows, so the two
 /// agree - a `<template>`'s own (empty) child list included.
 impl<'d> TokenTree for HtmlTree<'d> {
+    #[cfg_attr(
+        dylint_lib = "makiri_lints",
+        allow(
+            raw_node_crossing,
+            reason = "the child-position memo's token, read back only through the checked lookup"
+        )
+    )]
     fn token(&self, n: HtmlNode<'d>) -> usize {
         RawNode::from(n).word()
     }
@@ -439,6 +492,13 @@ pub(in crate::bridge) fn with_html_node<R>(
 /// that borrow - never through a second handle - and a reference is all that
 /// crosses. The one place a checked key leaves the bridge's handles as a
 /// reference.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        raw_node_crossing,
+        reason = "a checked key as a reference into its document, for an edit that holds it"
+    )
+)]
 pub(in crate::bridge) fn node_ref(rb_doc: Value, key: HtmlNodeKey) -> Result<RawNode, Error> {
     with_html_node(rb_doc, key, |n| RawNode::from(n))
 }
@@ -481,6 +541,13 @@ pub fn edit(this: &mut HtmlSelf) -> Result<HtmlEdit<'_>, Error> {
 /// An Attr receiver's edit changes its OWNER's attribute list, so a frozen
 /// owner refuses it as it refuses `delete` - checked with the receiver's own
 /// frozen flag, before and after the arguments are converted.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        raw_node_crossing,
+        reason = "an Attr's owner, as the wrapper cache's identity key; it does not escape"
+    )
+)]
 fn check_attr_owner_frozen(this: &HtmlSelf) -> Result<(), Error> {
     let owner = {
         let view = this.read()?;
@@ -732,6 +799,13 @@ pub fn set_attribute_ns(
 /// Remove the attribute `local` in namespace `ns` (`None` = none) from the
 /// element `el`; whether there was one. `ns` comes from
 /// `string::namespace_arg`.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        raw_node_crossing,
+        reason = "the attribute found, removed in the same edit"
+    )
+)]
 pub fn remove_attribute_ns(
     d: &mut HtmlDocMut<'_>,
     el: RawNode,

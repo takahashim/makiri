@@ -101,6 +101,13 @@ pub trait Module: ReprValue {
     }
 
     /// `self.name(*args)`: the caller's Ruby - see `bridge::raw::call_method`.
+    #[cfg_attr(
+        dylint_lib = "makiri_lints",
+        allow(
+            runs_callers_ruby,
+            reason = "XML::Namespace.new's, over bridge::raw::call_method"
+        )
+    )]
     fn call_method(self, name: &str, args: &[Value]) -> Result<Value, Error> {
         crate::bridge::raw::call_method(self.as_value(), &c_name(name)?, args)
     }

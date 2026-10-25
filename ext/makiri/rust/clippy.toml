@@ -88,9 +88,4 @@ disallowed-methods = [
   { path = "std::collections::HashSet::insert", reason = "grows and aborts on OOM; use MapInsert::falloc_insert" },
   { path = "std::collections::HashMap::entry", reason = "an insert through it grows and aborts on OOM; falloc_reserve(1) first, under an allow" },
   { path = "core::iter::Iterator::collect", reason = "a collection built by it grows and aborts on OOM; push with falloc" },
-  # The bridge's own call into the caller's Ruby: `Module::call_method`
-  # (`rb_funcallv`). `rake unsafe:boundaries` counts it (`USER_CODE_API`); the
-  # one use, `XML::Namespace.new`, carries the allow.
-  # `allow-invalid`: a build without the `ruby` feature has no such path.
-  { path = "makiri::bridge::rb::Module::call_method", reason = "runs the caller's Ruby; see USER_CODE_API", allow-invalid = true },
 ]

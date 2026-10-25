@@ -7,7 +7,9 @@
 //!   GC cannot see it.
 //! - The layer boundaries ([`boundaries`]): `ruby_layer_in_engine`,
 //!   `unguarded_no_unwind_site`, `ruby_in_gvl_released_body`,
-//!   `infallible_allocation`, `raising_call_outside_protect`.
+//!   `infallible_allocation`, `raising_call_outside_protect`,
+//!   `raw_ruby_outside_bridge`, `runs_callers_ruby`, `raw_node_crossing`,
+//!   `ruby_surface_in_bridge`.
 //!
 //! (A second lint, `converted_argument`, checked that no registered method
 //! took a type magnus would convert with the caller's Ruby. Since
@@ -47,6 +49,10 @@ pub fn register_lints(sess: &Session, lint_store: &mut LintStore) {
         RUBY_IN_GVL_RELEASED_BODY,
         INFALLIBLE_ALLOCATION,
         RAISING_CALL_OUTSIDE_PROTECT,
+        RAW_RUBY_OUTSIDE_BRIDGE,
+        RUNS_CALLERS_RUBY,
+        RAW_NODE_CROSSING,
+        RUBY_SURFACE_IN_BRIDGE,
     ]);
     lint_store.register_late_lint_pass(Box::new(|_| Box::new(MakiriLints)));
 }
@@ -144,6 +150,30 @@ declare_lint! {
     "a raising C call outside bridge::raw::call"
 }
 
+declare_lint! {
+    pub RAW_RUBY_OUTSIDE_BRIDGE,
+    Deny,
+    "Ruby's C API outside bridge/, or a raw VALUE outside the typed values"
+}
+
+declare_lint! {
+    pub RUNS_CALLERS_RUBY,
+    Deny,
+    "a call that runs the caller's Ruby code"
+}
+
+declare_lint! {
+    pub RAW_NODE_CROSSING,
+    Deny,
+    "a node handle made a lifetime-free RawNode in bridge/"
+}
+
+declare_lint! {
+    pub RUBY_SURFACE_IN_BRIDGE,
+    Deny,
+    "a Ruby method defined, or an argument list split, in bridge/"
+}
+
 declare_lint_pass!(MakiriLints => [
     RUBY_VALUE_ON_HEAP,
     RUBY_LAYER_IN_ENGINE,
@@ -151,6 +181,10 @@ declare_lint_pass!(MakiriLints => [
     RUBY_IN_GVL_RELEASED_BODY,
     INFALLIBLE_ALLOCATION,
     RAISING_CALL_OUTSIDE_PROTECT,
+    RAW_RUBY_OUTSIDE_BRIDGE,
+    RUNS_CALLERS_RUBY,
+    RAW_NODE_CROSSING,
+    RUBY_SURFACE_IN_BRIDGE,
 ]);
 
 impl<'tcx> LateLintPass<'tcx> for MakiriLints {

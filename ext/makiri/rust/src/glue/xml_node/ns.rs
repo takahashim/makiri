@@ -24,10 +24,13 @@ fn ns_class() -> Result<RClass, Error> {
 
 /// `Makiri::XML::Namespace.new(prefix, href)`: Makiri's own Data class, but
 /// Ruby code all the same, so no borrow of the arena is held across the call.
-/// One of the two calls `USER_CODE_API` allows.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "Makiri's own Data class; one of the two calls USER_CODE_API allows"
+/// One of the two calls `runs_callers_ruby` (`rake dylint`) allows.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        runs_callers_ruby,
+        reason = "Makiri's own Data class, called with no borrow of the arena held"
+    )
 )]
 fn new_ns(class: RClass, prefix: Value, href: Value) -> Result<Value, Error> {
     class.call_method("new", &[prefix, href])

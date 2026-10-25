@@ -4,7 +4,7 @@
 #
 # The compiler holds the default: `lib.rs` denies `unsafe_code`, so a file that
 # wants unsafe must say `#![allow(unsafe_code)]` and that line shows up in
-# review. This script pins the result, the way it already pins `rb_sys::` and
+# review. This script pins the result, the way it already pins
 # `static mut` - what the compiler cannot do is notice that an island grew.
 #
 # Why the count check runs over EVERY file rather than only the islands: an
@@ -142,105 +142,14 @@ UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/
 # an explicit review of its synchronisation proof.
 STATIC_MUT_COUNTS = {}.freeze
 
-# Ruby's C API outside `bridge/` is forbidden: the bridge is the only owner of
-# raw VALUEs, typed data and the C calls that raise (glue/mod.rs), so a raise
-# there becomes an `Err` before it can longjmp past a Rust destructor. This was
-# a pinned count while the glue still reached across; the port is done, so the
-# table is empty and any `rb_sys::` above the bridge fails. Comment lines are
-# not counted.
-RB_SYS_COUNTS = {}.freeze
-
-# The Ruby C calls that can RAISE - start a `longjmp` that skips every Rust
-# destructor between the raise and the nearest `rb_protect` - are named in ONE
-# file, `bridge/raw.rs`, each wrapper stating what raises it. The names below
-# may appear nowhere else: outside `bridge/` (as before), nor in any other
-# bridge file, which reaches them through `raw`'s wrappers and so under a
-# `protect` or from a frame that owns nothing. A new raising call is a new
-# wrapper there, and this count moves with it on purpose.
-RAISING_API = /\b(?:rb_raise|rb_exc_raise|rb_jump_tag|rb_check_typeddata|
-  rb_sym2str|rb_check_frozen|
-  rb_range_beg_len|rb_thread_check_ints|rb_intern3|rb_intern|rb_utf8_str_new|
-  rb_enc_interned_str|rb_str_dup|rb_str_subseq|rb_enc_associate|rb_str_encode|
-  rb_to_encoding|rb_enc_find_index|rb_data_typed_object_wrap|rb_data_typed_object_zalloc|
-  ruby_xmalloc|ruby_xrealloc2|
-  rb_ary_new_capa|rb_ary_push|rb_hash_new|rb_hash_aset|rb_ll2inum|rb_ull2inum|rb_float_new|
-  rb_id2sym|rb_str_cat|rb_enumeratorize_with_size|rb_memerror|rb_hash_foreach|rb_yield|
-  rb_define_class_under|rb_define_module_under|rb_define_module|rb_const_set|rb_const_get|
-  rb_include_module|rb_define_method|rb_define_private_method|rb_define_singleton_method|
-  rb_define_module_function|rb_exc_new_str|rb_exc_fatal|rb_big2ll|rb_big2ull|rb_hash_lookup2|
-  rb_gc_register_mark_object|rb_module_new|rb_range_values|rb_funcallv|rb_ivar_set)\b/x
-RAISING_COUNTS = { "bridge/raw.rs" => 55 }.freeze # with `rb_memerror` (the raise sweep's injected raise) and `rb_jump_tag` (`jump_error`); 55 with the node table (`rb_hash_lookup2`, `rb_hash_aset`) and the hidden ivars (`rb_ivar_set`)
-
-# Makiri runs none of its caller's Ruby code: no argument is converted with its
-# `to_s`/`to_str`, no method of a caller's object is called, and XPath has no
-# custom-function handler. The C calls and methods that would run such code are
-# counted here, across the crate, and two are allowed: `NodeSet#each`'s
-# `yield` (the block is the point of the method, and no guard or copy is held
-# across it) and `XML::Namespace.new` (Makiri's own Data class, called with no
-# borrow of the arena held).
-USER_CODE_API = /\b(?:rb_String|rb_funcall\w*|rb_obj_as_string|rb_respond_to|rb_yield\w*|
-  rb_block_call|rb_call_super|rb_eval_string\w*|rb_str_to_str|rb_string_value\w*|
-  rb_check_string_type|rb_convert_type|rb_check_convert_type)\b|
-  \.(?:funcall\w*|respond_to|to_r_string|block_call|yield_\w+|yield_splat|call_method)\(|
-  raw::yield_value\(/x
-# `rb_yield` and `rb_funcallv` are `bridge/raw.rs`'s; NodeSet#each yields, and
-# `XML::Namespace.new` is `Module::call_method`'s one use.
-USER_CODE_COUNTS = { "bridge/raw.rs" => 2, "glue/node_set.rs" => 1, "glue/xml_node/ns.rs" => 1 }.freeze
-
-# A raw `VALUE` (`rb_sys::VALUE`, an integer to Rust) is a Ruby value no type
-# keeps honest: no lint can tell it from a `u64` in a `Vec` or a struct field,
-# where the GC would not see it. So it is spelled only where it must be:
-# `bridge/raw.rs` (the C calls), `bridge/typed.rs` (TypedData, `Held`, the GC
-# callbacks) and the `bridge::rb` files that ARE the typed values (`value.rs`,
-# `ruby.rs`, `method.rs`'s trampoline pointer). Everything else holds those
-# typed values, which `clippy.toml` and the dylint lint can see. The reference-only `lexbor/` is
-# not counted. Pinned per file, empty: a new one is a decision.
-VALUE_ALLOWED = %w[bridge/raw.rs bridge/typed.rs bridge/rb/value.rs bridge/rb/ruby.rs bridge/rb/method.rs].freeze
-VALUE_COUNTS = {}.freeze
-
-# `Value::from_raw` outside `bridge/` is the other half of the raw Ruby
-# boundary: a `VALUE` the glue already holds, turned back into a `Value`. The
-# bridge's `value()` accessor owns that conversion now, so this is zero and any
-# direct `Value::from_raw` above the bridge fails.
-VALUE_FROM_RAW = /\bValue::from_raw\b/
-VALUE_FROM_RAW_COUNTS = {}.freeze
-
-# Raw HTML node crossings in `bridge/`: `RawNode::from(<typed>)` turns a
-# borrowed handle into a lifetime-erased pointer, `RawNode::from_ptr` turns an
-# arbitrary pointer into one, and `HtmlNodeKey::raw_node()` takes the raw handle
-# back out of a long-lived key. They are how a raw node pointer crosses or
-# escapes the bridge, and the `unsafe` count table cannot see a SAFE one - a
-# `RawNode::from(node)` returned out of a closure, or a new place that reads a
-# key, is exactly what the handle API exists to keep countable. Pinned per file,
-# exact: a new crossing is a deliberate edit, and the checked entry
-# (`with_html_node` / `HtmlParsed::mint_key` / `HtmlParsed::resolve`) is what to
-# reach for instead.
-RAW_NODE_CROSSING =
-  /\bRawNode::from\s*\(|\bRawNode::from_ptr\b|\.raw_node\(\)|\bHtmlNodeKey::raw_node\b/
-RAW_NODE_CROSSING_COUNTS = {
-  # `node_ref`: a checked key as a reference INTO its document, for an edit
-  # that holds that document by `&mut` (`HtmlDocMut`) and reads the node
-  # through it - the one exit, so an edit never holds a second handle. The
-  # fragment staging that used to cross three times now passes references
-  # inside the edit and crosses none.
-  # 8th: an Attr's owner, read as the wrapper cache's identity key for the
-  # owner-frozen check (`check_attr_owner_frozen`); it does not escape.
-  # 9th/10th: `TokenTree for HtmlTree` (`child_count` / `child_at`), a node's pointer as
-  # the child-position memo's token and back. `child_index::ChildPositionMemo`
-  # answers only for the `tree_version` it was filled under, so a token read
-  # back is still that child; the node is never handed out raw, only wrapped.
-  # 11th: a Document's own node, minted as its key (`html_node_key`); and in
-  # `wrapper/node.rs` the same node as its word (`node_raw`). `bridge/dom.rs`
-  # spelled it once (`document_node`) until the document became a guard's,
-  # read where it is used.
-  # 12th: `HtmlView::set`, the nodes a read lists as the words a NodeSet holds,
-  # pushed under `protect` while the read is held; the glue's `set_of` did it
-  # before the read was a guard.
-  # 13th: `HtmlView::wrap`, the node a read finds - with its type, so the
-  # wrap after the read need not read again.
-  "bridge/html.rs" => 10,
-  "bridge/wrapper/node.rs" => 2,
-}.freeze
+# Six text gates that stood here are `rake dylint`'s now
+# (lints/makiri_lints/src/boundaries.rs), on resolved paths:
+# `raw_ruby_outside_bridge` (`rb_sys::` outside bridge/, a raw `VALUE` outside
+# the files that are the typed values), `raising_call_outside_protect` (whose
+# `call` is private to `bridge::raw`, so it also pins where the raising calls
+# are), `runs_callers_ruby`, `raw_node_crossing` and `ruby_surface_in_bridge`,
+# each sanctioned site an `allow` with its reason where it is made.
+# `Value::from_raw` is `pub(in crate::bridge)`, so the compiler holds that one.
 
 # Lexbor ABI names outside `lexbor/` are forbidden. `lexbor` is the sole owner
 # of the vendored C ABI (notes/rust_third_architecture.ja.md): the bindgen types
@@ -309,11 +218,9 @@ end
 # `--fix` transcribes the two tables that move whenever code moves, so a hand
 # count cannot disagree with the one this script does, and it writes them SORTED
 # (the shape the gate also demands), so running it is idempotent. It deliberately
-# does NOT touch RB_SYS_COUNTS, STATIC_MUT_COUNTS, RAISING_COUNTS or
-# LEXBOR_ABI_COUNTS: those record a boundary DECISION rather than a consequence
-# of moving code, and a new direct `rb_sys::` call, a new process-wide mutable
-# global, a new raising C call outside `bridge/` or a new Lexbor ABI name above
-# `lexbor/` is exactly the thing a person should have to think about. Rewriting
+# does NOT touch STATIC_MUT_COUNTS or LEXBOR_ABI_COUNTS: those record a
+# boundary DECISION rather than a consequence of moving code, and a new
+# process-wide mutable global or a new Lexbor ABI name above `lexbor/` is exactly the thing a person should have to think about. Rewriting
 # them automatically would spend the ratchet it exists to hold.
 FIX = ARGV.delete("--fix")
 abort "usage: check_unsafe_boundaries.rb [--fix]" unless ARGV.empty?
@@ -334,21 +241,6 @@ def rewrite_table!(source, name, open_tok, close_tok, body)
 end
 
 errors = []
-
-# `lexbor::adapter` owns the typed DOM facade.  Keeping this explicit avoids a
-# second, gradually diverging compatibility boundary under the old name - and a
-# file that still names the old module does not build (the fuzz crate quietly
-# did not, because nothing else here looks outside `src/`). So this scans the
-# WHOLE crate, build.rs and fuzz/ included, with comments removed so a
-# doc-comment mention of the old path is not read as a reference.
-CRATE_ROOT = File.join(ROOT, "ext/makiri/rust")
-legacy_adapter_refs = Dir.glob(File.join(CRATE_ROOT, "**", "*.rs"))
-  .reject { |path| path.include?("/target/") }
-  .select { |path| comments_removed(File.binread(path)).match?(/\bdom_adapter\b/) }
-unless legacy_adapter_refs.empty?
-  paths = legacy_adapter_refs.map { |p| p.delete_prefix("#{CRATE_ROOT}/") }.sort
-  errors << "legacy dom_adapter references: #{paths.inspect}"
-end
 
 unless File.binread(File.join(RUST, "lib.rs")).include?("#![deny(unsafe_code)]")
   errors << "lib.rs: must retain #![deny(unsafe_code)] - it is what makes the rest a ratchet"
@@ -456,75 +348,6 @@ if actual != STATIC_MUT_COUNTS
   errors << "static mut boundary changed: #{table_diff(STATIC_MUT_COUNTS, actual)}"
 end
 
-rb_sys = Hash.new(0)
-raising = Hash.new(0)
-RUST_FILES.each do |path|
-  relative = path.delete_prefix("#{RUST}/")
-  code = rust_code(path)
-  # A name in a block comment is documentation, as for the Lexbor names.
-  count = comments_removed(File.binread(path)).scan(RAISING_API).length
-  raising[relative] = count unless count.zero?
-  next if relative.start_with?("bridge/")
-
-  count = code.scan(/\brb_sys::/).length
-  rb_sys[relative] = count unless count.zero?
-end
-
-if rb_sys != RB_SYS_COUNTS
-  errors << "rb_sys:: outside bridge/ changed: #{table_diff(RB_SYS_COUNTS, rb_sys)}"
-end
-if raising != RAISING_COUNTS
-  errors << "raising C API outside bridge/raw.rs changed: #{table_diff(RAISING_COUNTS, raising)}"
-end
-
-user_code = Hash.new(0)
-RUST_FILES.each do |path|
-  relative = path.delete_prefix("#{RUST}/")
-  next if relative.start_with?("lexbor/")
-
-  count = rust_code(path).scan(USER_CODE_API).length
-  user_code[relative] = count unless count.zero?
-end
-if user_code != USER_CODE_COUNTS
-  errors << "calls that run the caller's Ruby code changed: #{table_diff(USER_CODE_COUNTS, user_code)}"
-end
-
-raw_values = Hash.new(0)
-RUST_FILES.each do |path|
-  relative = path.delete_prefix("#{RUST}/")
-  next if relative.start_with?("lexbor/") || VALUE_ALLOWED.include?(relative)
-
-  count = comments_removed(File.binread(path)).scan(/\bVALUE\b/).length
-  raw_values[relative] = count unless count.zero?
-end
-if raw_values != VALUE_COUNTS
-  errors << "raw VALUE outside bridge/raw.rs and bridge/typed.rs changed: #{table_diff(VALUE_COUNTS, raw_values)}"
-end
-
-value_from_raw = Hash.new(0)
-RUST_FILES.each do |path|
-  relative = path.delete_prefix("#{RUST}/")
-  next if relative.start_with?("bridge/")
-
-  count = comments_removed(File.binread(path)).scan(VALUE_FROM_RAW).length
-  value_from_raw[relative] = count unless count.zero?
-end
-if value_from_raw != VALUE_FROM_RAW_COUNTS
-  errors << "Value::from_raw outside bridge/ changed: #{table_diff(VALUE_FROM_RAW_COUNTS, value_from_raw)}"
-end
-
-raw_node_crossing = Hash.new(0)
-Dir.glob(File.join(RUST, "bridge", "**", "*.rs")).sort.each do |path|
-  relative = path.delete_prefix("#{RUST}/")
-  count = comments_removed(File.binread(path)).scan(RAW_NODE_CROSSING).length
-  raw_node_crossing[relative] = count unless count.zero?
-end
-if raw_node_crossing != RAW_NODE_CROSSING_COUNTS
-  errors << "raw-node crossings in bridge/ changed: " \
-            "#{table_diff(RAW_NODE_CROSSING_COUNTS, raw_node_crossing)} " \
-            "(reach for with_html_node / HtmlParsed::mint_key / HtmlParsed::resolve, or record the crossing here)"
-end
-
 lexbor_abi = Hash.new(0)
 RUST_FILES.each do |path|
   relative = path.delete_prefix("#{RUST}/")
@@ -581,24 +404,6 @@ GUARDED_PARSES.each do |name, home|
             "#{guarded_calls[name].inspect}"
 end
 
-# A Hash is walked by `rb_hash_foreach` calling back into Rust, below its C
-# frames, so a panic there would abort the process. `bridge::raw::hash_foreach`
-# latches it, and every Hash walk goes through `glue::hash::hash_foreach` over
-# it (magnus's `RHash::foreach`, which had no latch, was the reason for this
-# check).
-HASH_FOREACH = /\.foreach\(/
-hash_walks = Hash.new(0)
-RUST_FILES.each do |path|
-  relative = path.delete_prefix("#{RUST}/")
-  next if relative == "glue/hash.rs"
-
-  count = comments_removed(File.binread(path)).scan(HASH_FOREACH).length
-  hash_walks[relative] = count unless count.zero?
-end
-unless hash_walks.empty?
-  errors << "RHash#foreach outside glue::hash::hash_foreach (a panic there aborts): #{hash_walks.inspect}"
-end
-
 # Inside it, only the header-less exports are written by hand - everything else
 # is generated, so its signature is Lexbor's. A new hand declaration of a
 # header-declared function belongs in build.rs's allowlist instead; one with no
@@ -647,41 +452,6 @@ if infallible != INFALLIBLE_ALLOC_COUNTS
             "#{table_diff(INFALLIBLE_ALLOC_COUNTS, infallible)}"
 end
 
-# The bridge hands the glue primitives; the Ruby surface - defining a method,
-# scanning its argument list - is the glue's. A method defined in bridge/ is
-# how a feature's Ruby half ends up split across the two layers by where it
-# happened to need an `unsafe`, rather than by what it does.
-RUBY_SURFACE = /\b(?:define_(?:singleton_|private_|module_)?(?:method|function)|scan_args)\b/
-# The layer that defines methods at all: `bridge::rb::class` is the definition
-# functions, `bridge::raw` the C calls under them.
-RUBY_SURFACE_HOME = %w[bridge/rb/class.rs bridge/raw.rs].freeze
-ruby_surface = Hash.new(0)
-Dir.glob(File.join(RUST, "bridge", "**", "*.rs")).sort.each do |path|
-  relative = path.delete_prefix("#{RUST}/")
-  next if RUBY_SURFACE_HOME.include?(relative)
-  count = comments_removed(File.binread(path)).scan(RUBY_SURFACE).length
-  ruby_surface[relative] = count unless count.zero?
-end
-# Every Ruby method runs its body inside its trampoline's catch
-# (`bridge::rb::method::finish`, which `method!` / `function!` expand to), so a
-# panic below it raises Makiri::InternalError: a property of the macros, not of
-# each method, so there is nothing per method to check.
-
-# Three gates that stood here are `rake dylint`'s now, on the compiled code
-# (lints/makiri_lints/src/boundaries.rs): a raising C call only inside
-# `bridge::raw::call`'s closure (`raising_call_outside_protect`), a
-# GVL-released body calling only the engine or a library
-# (`ruby_in_gvl_released_body`), and every `extern "C"` function and `Drop`
-# under `must_not_unwind` (`unguarded_no_unwind_site`). Read as text they
-# matched brackets by hand and named callees by their `crate::` spelling;
-# the lints see resolved paths and macro expansions. RAISING_COUNTS above
-# still pins where the raising calls are.
-
-unless ruby_surface.empty?
-  errors << "Ruby methods defined or argument lists scanned in bridge/ (they are the glue's): " \
-            "#{ruby_surface.inspect}"
-end
-
 if FIX && !errors.empty?
   puts "unsafe-boundaries --fix: NOT rewritten, these record a decision rather than a count:"
   errors.each { |e| puts "  #{e}" }
@@ -695,13 +465,7 @@ puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "#{unsafe_actual.values.sum} unsafe uses in #{unsafe_actual.length} islands " \
      "(glue+xpath #{glue_xpath_unsafe}); " \
      "#{actual.values.sum} reviewed static mut declarations; " \
-     "#{rb_sys.values.sum} rb_sys:: outside bridge/ and #{raising.values.sum} raising C calls in bridge/raw.rs; " \
-     "#{user_code.values.sum} calls into the caller's Ruby (each allowed); " \
-     "#{raw_values.values.sum} raw VALUEs outside raw.rs and typed.rs; " \
-     "#{value_from_raw.values.sum} Value::from_raw and " \
      "#{lexbor_abi.values.sum} Lexbor ABI names outside their layer and " \
      "#{lexbor_decls.values.sum} Lexbor declarations outside lexbor/abi.rs; " \
-     "#{raw_node_crossing.values.sum} raw-node crossings in bridge/; " \
-     "#{ruby_layer.values.sum} Ruby-layer uses inside lexbor/; " \
-     "#{ruby_surface.values.sum} Ruby methods in bridge/; " \
-     "(the engine's layer rules, raises, GVL-released bodies and no-unwind sites: rake dylint)"
+     "#{ruby_layer.values.sum} Ruby-layer uses inside lexbor/ " \
+     "(the Ruby boundary's and the engine's layer rules: rake dylint)"

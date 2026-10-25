@@ -99,3 +99,34 @@ fn allocations() {
 fn raising() {
     let _ = unsafe { rb_sys::rb_ary_new_capa(0) }; //~
 }
+
+fn raw_type(_: rb_sys::VALUE) {} //~
+
+fn callers_ruby(m: crate::bridge::rb::RModule) {
+    let _ = crate::bridge::rb::Module::call_method(m, "new", &[]); //~
+}
+
+/// Stands in for a `bridge/` module: the bridge-scoped lints treat
+/// `lint_probe::bridge` as one (and not as a home of raw `VALUE`s).
+#[rustfmt::skip] // keeps each marker on the line reported
+mod bridge {
+    use crate::html_dom::html::{HtmlNode, RawNode};
+
+    fn value(_: rb_sys::VALUE) {} //~
+
+    fn crossing(n: HtmlNode<'_>) -> RawNode {
+        RawNode::from(n) //~
+    }
+
+    fn crossing_by_path(n: Option<HtmlNode<'_>>) -> Option<RawNode> {
+        n.map(RawNode::from) //~
+    }
+
+    fn crossing_by_into(n: HtmlNode<'_>) -> RawNode {
+        n.into() //~
+    }
+
+    fn surface(m: crate::bridge::rb::RModule, f: crate::bridge::rb::method::Func) {
+        let _ = crate::bridge::rb::Module::define_method(m, "x", f); //~
+    }
+}
