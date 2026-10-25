@@ -90,9 +90,23 @@ impl Default for Budget {
  * frame.
  *
  * The increment. `overflow-checks` is deliberately on in release (a wrapped
- * size is exactly the class of bug fail-closed exists to stop), so `+= 1`
- * carries a panic branch. Comparing before incrementing makes the counter
- * provably below its cap at the add, and admits exactly `max` charges. */
+ * size is exactly the class of bug fail-closed exists to stop), so a plain add
+ * carries a panic branch. Every counter is charged through
+ * `crate::limits::admit`, which compares before it adds: the add is provably
+ * within the cap, and exactly `max` charges are admitted. */
+
+/// Charge `n` to `counter` against `cap`; `false`, and nothing charged, when
+/// it would pass the cap.
+#[inline]
+fn take(counter: &Cell<usize>, n: usize, cap: usize) -> bool {
+    match crate::limits::admit(counter.get(), n, cap) {
+        Some(c) => {
+            counter.set(c);
+            true
+        }
+        None => false,
+    }
+}
 impl Budget {
     /// Default caps, nothing charged, and no error yet.
     pub fn new() -> Budget {
@@ -133,10 +147,9 @@ impl Budget {
     /// Charge one AST node.
     #[inline]
     pub fn charge_ast_node(&self) -> Result<(), Reported> {
-        if self.ast_nodes.get() >= self.limits.max_ast_nodes {
+        if !take(&self.ast_nodes, 1, self.limits.max_ast_nodes) {
             return Err(over_ast_nodes(self.limits.max_ast_nodes, self.sink()));
         }
-        self.ast_nodes.set(self.ast_nodes.get() + 1);
         Ok(())
     }
 
@@ -154,10 +167,9 @@ impl Budget {
     /// query if misapplied, trading one foot-gun-free rule for a conditional one.
     #[inline]
     pub fn charge_op(&self) -> Result<(), Reported> {
-        if self.eval_ops.get() >= self.limits.max_eval_ops {
+        if !take(&self.eval_ops, 1, self.limits.max_eval_ops) {
             return Err(over_eval_ops(self.limits.max_eval_ops, self.sink()));
         }
-        self.eval_ops.set(self.eval_ops.get() + 1);
         Ok(())
     }
 
@@ -173,12 +185,13 @@ impl Budget {
     /// priced a query by text size times nesting depth, and refused
     /// `//*[contains(., "x")]` on a 21 MB page 150 elements deep.
     pub fn charge_bytes(&self, bytes: usize) -> Result<(), Reported> {
-        let ops = bytes / BYTES_PER_OP;
-        let left = self.limits.max_eval_ops.saturating_sub(self.eval_ops.get());
-        if ops > left {
+        if !take(
+            &self.eval_ops,
+            bytes / BYTES_PER_OP,
+            self.limits.max_eval_ops,
+        ) {
             return Err(over_eval_ops(self.limits.max_eval_ops, self.sink()));
         }
-        self.eval_ops.set(self.eval_ops.get() + ops);
         Ok(())
     }
 
@@ -197,12 +210,11 @@ impl Budget {
     /// path rather than being sampled.
     #[inline]
     pub fn enter_recursion(&self) -> Result<(), Reported> {
-        if self.recursion_depth.get() >= self.limits.max_recursion_depth
-            || crate::stack::exhausted()
+        if crate::stack::exhausted()
+            || !take(&self.recursion_depth, 1, self.limits.max_recursion_depth)
         {
             return Err(over_recursion(self.limits.max_recursion_depth, self.sink()));
         }
-        self.recursion_depth.set(self.recursion_depth.get() + 1);
         Ok(())
     }
 

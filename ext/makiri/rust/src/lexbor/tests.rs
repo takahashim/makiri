@@ -1366,7 +1366,7 @@ mod css_match {
             let text = VerifiedText::from_bytes(sel.as_bytes()).expect("verified");
             let parsed_sel =
                 css_parser::parse(&gvl, text).unwrap_or_else(|_| panic!("{sel} parses"));
-            let found = select_all_with_work_limit(root(&doc), parsed_sel.groups(), 20 * N as u64)
+            let found = select_all_with_work_limit(root(&doc), parsed_sel.groups(), 20 * N)
                 .unwrap_or_else(|_| panic!("{sel:?} exceeded work linear in the list"));
             assert_eq!(found.len(), expected, "{sel}");
         }
@@ -1385,7 +1385,7 @@ mod css_match {
         const N: usize = 20_000;
 
         let gvl = Gvl::exclusive();
-        let query = |html: String, limit: u64| {
+        let query = |html: String, limit: usize| {
             let doc = parsed(html.as_bytes());
             let text = VerifiedText::from_bytes(b"input:disabled").expect("verified");
             let sel = css_parser::parse(&gvl, text).unwrap_or_else(|_| panic!("parses"));
@@ -1396,7 +1396,7 @@ mod css_match {
             "<fieldset disabled><legend>t</legend>{}</fieldset>",
             "<input>".repeat(N)
         );
-        assert_eq!(query(wide, 20 * N as u64).ok(), Some(N));
+        assert_eq!(query(wide, 20 * N).ok(), Some(N));
 
         let late_legend = format!(
             "<fieldset disabled>{}<legend>{}</legend></fieldset>",
@@ -1404,7 +1404,7 @@ mod css_match {
             "<input>".repeat(N)
         );
         assert!(matches!(
-            query(late_legend, 20 * N as u64),
+            query(late_legend, 20 * N),
             Err(crate::css_match::QueryFailure::Match(
                 crate::css_match::MatchFailure::WorkExceeded
             ))
@@ -1779,7 +1779,7 @@ mod css_match {
             let gvl = Gvl::exclusive();
             let text = VerifiedText::from_bytes(sel.as_bytes()).expect("verified");
             let p = css_parser::parse(&gvl, text).unwrap_or_else(|_| panic!("{sel} parses"));
-            let found = select_all_with_work_limit(root(&doc), p.groups(), 10 * ROWS as u64)
+            let found = select_all_with_work_limit(root(&doc), p.groups(), 10 * ROWS)
                 .unwrap_or_else(|e| panic!("{sel}: {e:?}"));
             assert_eq!(found.len(), expect, "{sel}");
         }
