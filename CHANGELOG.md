@@ -15,6 +15,22 @@
   by `Makiri::HTML`, `Document#fragment` and `DocumentFragment.parse`, and a
   negative value lifts the limit. `inner_html=` and `outer_html=` use the
   default.
+* A selector, an XPath expression, a name or text is checked to be UTF-8 by
+  Makiri itself, on its own copy of the bytes, rather than trusted on the
+  String's cached coderange, which another C extension could leave wrong.
+
+### Changed
+
+* The extension no longer depends on magnus: it is built on rb-sys alone,
+  with its own layer for Ruby values, method definitions and raising C
+  calls. Every C call that can raise runs under `rb_protect`, and no Ruby
+  value is kept where the GC cannot see it.
+* An exception message is at most 256 bytes; one quoting a longer selector,
+  expression or name ends in `...`.
+* `XPathContext#node=` on a frozen context raises `FrozenError`.
+* A keywords-only call of `#xpath` / `#at_xpath` (`doc.xpath(s: uri)`, no
+  expression) raises Ruby's arity error, `ArgumentError`, rather than a
+  `TypeError` about the Hash, as a call with no arguments does.
 
 ## [0.17.0.rc2] - 2026-10-24
 
