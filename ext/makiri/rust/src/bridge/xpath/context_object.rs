@@ -114,19 +114,19 @@ impl XPathCtxSelf {
             NotInDocument::Unusable(e) => e,
             NotInDocument::Foreign => makiri_error("context node must belong to the same document"),
         })?;
-        let ivar = crate::bridge::wrapper::ivar_node();
-        let old = crate::bridge::raw::ivar_get(self.0, ivar);
-        /* The keepalive first, since the ivar write can raise (a frozen
-         * context, `NoMemoryError`): a failure there leaves the context node
-         * as it was, never rebound behind a raise. */
-        crate::bridge::raw::ivar_set(self.0, ivar, rb_node)?;
-        if let Err(e) = self.ctx.set_context_node(token) {
-            /* Refused: the old node stays the context node, and its keepalive
-             * with it. */
-            crate::bridge::raw::ivar_set(self.0, ivar, old)?;
-            return Err(refused(e, BUSY, BUSY));
+        /* Refused before anything changes: an evaluate in progress read the
+         * node when it began. */
+        if self.ctx.is_evaluating() {
+            return Err(makiri_error(BUSY));
         }
-        Ok(())
+        /* Then the keepalive, since the ivar write can raise (a frozen
+         * context, `NoMemoryError`): a failure there leaves the context node
+         * as it was. After it no Ruby has run, so no evaluate can have begun,
+         * and the engine takes the node: the two never disagree. */
+        crate::bridge::raw::ivar_set(self.0, crate::bridge::wrapper::ivar_node(), rb_node)?;
+        self.ctx.set_context_node(token).map_err(|_| {
+            crate::bridge::ruby::internal_error("an evaluate began during XPathContext#node=")
+        })
     }
 
     /// The keepalive Document.
@@ -210,9 +210,18 @@ impl XPathCtx {
             |_, _| {},
         )?;
         /* The Document and the context node, as hidden ivars: ordinary Ruby
-         * references. */
-        crate::bridge::raw::ivar_set(obj, crate::bridge::wrapper::ivar_document(), document)?;
-        crate::bridge::raw::ivar_set(obj, crate::bridge::wrapper::ivar_node(), rb_node)?;
+         * references. A write that raises leaves a context without them, so
+         * it is hidden before the error is returned: no Ruby code ran since
+         * the wrap, and none can find it through `ObjectSpace` after. */
+        let kept =
+            crate::bridge::raw::ivar_set(obj, crate::bridge::wrapper::ivar_document(), document)
+                .and_then(|()| {
+                    crate::bridge::raw::ivar_set(obj, crate::bridge::wrapper::ivar_node(), rb_node)
+                });
+        if let Err(e) = kept {
+            crate::bridge::ruby::hide(obj);
+            return Err(e);
+        }
         Ok(obj)
     }
 

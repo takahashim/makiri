@@ -180,6 +180,27 @@ def check_usable(doc)
   end
 end
 
+# Every Document and XPathContext Ruby code can reach is whole. An injected
+# raise mid-construction leaves the half-made object unreferenced, but alive
+# until the next collection - and `ObjectSpace` would hand it out. So each is
+# hidden until it is whole, and this finds one that is not: a Document with no
+# content raises InternalError on `#root`, a context with no Document on
+# `#evaluate`. No GC first: that would collect exactly what is looked for.
+def check_reachable_whole
+  bad = []
+  ObjectSpace.each_object(Makiri::Document) do |d|
+    d.root
+  rescue Exception => e # rubocop:disable Lint/RescueException
+    bad << "a reachable #{d.class} is not whole: #{e.class}: #{e.message}"
+  end
+  ObjectSpace.each_object(Makiri::XPathContext) do |c|
+    c.evaluate("count(/)")
+  rescue Exception => e # rubocop:disable Lint/RescueException
+    bad << "a reachable XPathContext is not whole: #{e.class}: #{e.message}"
+  end
+  bad
+end
+
 failures = []
 SCENARIOS.each do |name, run|
   Makiri.__raise_inject(0)
@@ -203,6 +224,7 @@ SCENARIOS.each do |name, run|
     end
     failures << "#{name} ##{n}: the result differs from the baseline" if outcome == :differs
     failures << "#{name} ##{n}: raised #{outcome.class}: #{outcome.message}" if outcome.is_a?(Exception)
+    check_reachable_whole.each { |b| failures << "#{name} ##{n}: #{b}" }
     docs.each_with_index do |doc, i|
       if Makiri.__borrowed?(doc)
         failures << "#{name} ##{n}: document #{i} left borrowed"
@@ -220,7 +242,8 @@ SCENARIOS.each do |name, run|
 end
 
 if failures.empty?
-  puts "check_raise_injection: OK - every injected raise left every document unborrowed and usable"
+  puts "check_raise_injection: OK - every injected raise left every document unborrowed and usable, " \
+       "and nothing half-made reachable"
 else
   puts failures.first(40)
   abort "check_raise_injection: #{failures.size} failure(s)"
