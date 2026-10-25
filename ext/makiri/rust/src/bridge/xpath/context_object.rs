@@ -193,7 +193,7 @@ impl XPathCtx {
         let document = keepalive_document(ruby, rb_node)?;
         let mut ctx = context_for(ruby, rb_node, document)?;
         ctx.set_lax(lax);
-        let obj = XPATH_CTX_TYPE.wrap(
+        let obj = XPATH_CTX_TYPE.wrap_hidden(
             ruby,
             CLASS_XPATH_CONTEXT.defined(ruby)?,
             XPathCtx {
@@ -204,19 +204,11 @@ impl XPathCtx {
             [],
         )?;
         /* The Document and the context node, as hidden ivars: ordinary Ruby
-         * references. A write that raises leaves a context without them, so
-         * it is hidden before the error is returned: no Ruby code ran since
-         * the wrap, and none can find it through `ObjectSpace` after. */
-        let kept =
-            crate::bridge::raw::ivar_set(obj, crate::bridge::wrapper::ivar_document(), document)
-                .and_then(|()| {
-                    crate::bridge::raw::ivar_set(obj, crate::bridge::wrapper::ivar_node(), rb_node)
-                });
-        if let Err(e) = kept {
-            crate::bridge::ruby::hide(obj);
-            return Err(e);
-        }
-        Ok(obj)
+         * references. The context is hidden until both are written, so a
+         * write that raises leaves it where no Ruby code can find it. */
+        obj.ivar_set(crate::bridge::wrapper::ivar_document(), document)?;
+        obj.ivar_set(crate::bridge::wrapper::ivar_node(), rb_node)?;
+        Ok(obj.reveal())
     }
 
     /// Evaluate `expr` in `document`, parsed once and cached.

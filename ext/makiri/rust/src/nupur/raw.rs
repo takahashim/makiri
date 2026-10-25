@@ -945,6 +945,18 @@ pub fn hash_new(_: &Ruby) -> Result<RHash, Error> {
     typed(v, RHash::from_value, "a C call made no Hash")
 }
 
+/// A Hash no Ruby code can find: `rb_hash_new`, then `rb_obj_hide` with
+/// nothing between, so `ObjectSpace` never lists it - an object's private
+/// table (a Document's node table), which is never shown. Raises
+/// `NoMemoryError`. Hand it to no Ruby code: a hidden object has no class.
+pub fn hidden_hash_new(ruby: &Ruby) -> Result<RHash, Error> {
+    let h = hash_new(ruby)?;
+    // SAFETY: the Hash just made, referenced only from this frame; hiding
+    // writes only its class field.
+    unsafe { rb_sys::rb_obj_hide(h.as_raw()) };
+    Ok(h)
+}
+
 /// `rb_hash_aset` for a String or Symbol key, whose hash Ruby computes itself:
 /// any other key would have its `#hash` and `#eql?` called, so it is a
 /// `TypeError` here. Raises `NoMemoryError`, and `FrozenError` for a frozen

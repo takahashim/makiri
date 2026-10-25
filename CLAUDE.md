@@ -141,7 +141,13 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   NodeSet's heap, an XPathContext's AST cache) is reported with a token
   (`typed::report_external`) and given back by `nupur`'s free callback,
   which reads `Payload::reported_external` before the drop: no `Drop` of
-  Makiri's calls Ruby.
+  Makiri's calls Ruby. An object whose data is not complete when it is
+  made - a Document before its content (`DocumentShell`), an XPathContext
+  before its ivars - is made by `wrap_hidden`, hidden from `ObjectSpace`
+  from birth, as a `Hidden` that hands out no `Value` (a hidden object has
+  no class, and Ruby code given one would crash on it) until `reveal`; a
+  Document's node table is `raw::hidden_hash_new`'s, never shown. There is
+  no bare `hide` / `reveal`.
   The other half - no Ruby value kept where the GC's stack scan cannot
   see it (a `Vec`, a `Box`, a static or `thread_local!`, a `Payload` type's
   own field) - is `rake dylint`'s `ruby_value_on_heap`,

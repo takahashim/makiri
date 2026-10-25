@@ -12,7 +12,7 @@ use crate::bridge::ruby::{internal_error, makiri_error};
 
 use super::*;
 use crate::bridge::dom::{Body, Conflict, HtmlRead, HtmlWrite, XmlRead, XmlWrite};
-use crate::bridge::typed::{Payload, TypedType};
+use crate::bridge::typed::{Hidden, Payload, TypedType};
 use crate::child_index::ChildPositionMemo;
 use crate::html_dom::post_parse::HtmlParsed;
 use crate::init::RbConst;
@@ -245,15 +245,16 @@ impl From<DocKind> for Kind {
 /// report is not optional (see `account_document`), and the parse entries used
 /// to make it by hand, each one a place to forget it.
 ///
-/// Until `install` the wrapper is HIDDEN (`rb_obj_hide`: no class, so
-/// `ObjectSpace` does not list it): a Document with no content answers
+/// Until `install` the wrapper is HIDDEN (`TypedType::wrap_hidden`: no class,
+/// so `ObjectSpace` does not list it, and a [`Hidden`] hands out no `Value`
+/// that could reach Ruby code before its class is back): a Document with no
+/// content answers
 /// nothing, and every accessor assumes the content is there. A parse runs
 /// with the GVL released between the two, so another thread could otherwise
 /// find the wrapper and call a method on it; a parse that fails leaves it
 /// hidden for the GC to free.
 pub struct DocumentShell {
-    obj: Value,
-    klass: crate::bridge::rb::RClass,
+    obj: Hidden<DocData, 1>,
 }
 
 impl DocumentShell {
@@ -272,12 +273,12 @@ impl DocumentShell {
          * kept in locals, so the conservative stack scan pins them across the
          * wrap's allocation; the table goes into the slot with the data. */
         let errors = crate::bridge::rb::ReprValue::as_value(crate::bridge::build::ary(ruby, 0)?);
-        let nodes = crate::bridge::rb::ReprValue::as_value(crate::bridge::raw::hash_new(ruby)?);
         /* Hidden, so no Ruby code reaches the table through `ObjectSpace` to
          * clear, freeze or fill it: its values are handed out as node
          * wrappers unchecked. */
-        crate::bridge::ruby::hide(nodes);
-        let obj = ty.wrap(
+        let nodes =
+            crate::bridge::rb::ReprValue::as_value(crate::bridge::raw::hidden_hash_new(ruby)?);
+        let obj = ty.wrap_hidden(
             ruby,
             klass,
             DocData {
@@ -288,12 +289,10 @@ impl DocumentShell {
             },
             [nodes],
         )?;
-        /* Hidden whether or not the ivar write succeeds: a failure there must
-         * not leave a content-less Document where `ObjectSpace` lists it. */
-        let errors_set = crate::bridge::raw::ivar_set(obj, ivar_errors(), errors);
-        crate::bridge::ruby::hide(obj);
-        errors_set?;
-        Ok(DocumentShell { obj, klass })
+        /* Hidden from its birth (`wrap_hidden`), so a failure here leaves no
+         * content-less Document where `ObjectSpace` lists it. */
+        obj.ivar_set(ivar_errors(), errors)?;
+        Ok(DocumentShell { obj })
     }
 
     /// Give the HTML Document its parsed document - the GC owns it from here -
@@ -314,13 +313,13 @@ impl DocumentShell {
     fn install(self, ruby: &crate::bridge::rb::Ruby, content: Body) -> Value {
         /* `self.obj` is a Document wrapper with no content yet, so nothing is
          * overwritten. */
-        if DOC_TYPE.get_known(&self.obj).content.set(content).is_err() {
+        if self.obj.data().content.set(content).is_err() {
             panic!("a Document installed twice");
         }
-        account_document(ruby, self.obj);
         /* Content in place: the Document can be seen now. */
-        crate::bridge::ruby::reveal(self.obj, self.klass);
-        self.obj
+        let obj = self.obj.reveal();
+        account_document(ruby, obj);
+        obj
     }
 }
 

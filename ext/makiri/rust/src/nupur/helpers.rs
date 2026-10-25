@@ -263,21 +263,6 @@ pub fn identity_word(v: impl ReprValue) -> usize {
     v.as_raw() as usize
 }
 
-/// Hide `v` from `ObjectSpace` (`rb_obj_hide`: its class field cleared), as
-/// a Document is until it has content. Raises nothing.
-pub fn hide(v: Value) {
-    // SAFETY: a live object of ours, by `Value`'s rule; hiding writes only its
-    // class field.
-    unsafe { rb_sys::rb_obj_hide(v.as_raw()) };
-}
-
-/// Show `v` again with `klass`, the class it was made with (`rb_obj_reveal`).
-/// Raises nothing.
-pub fn reveal(v: Value, klass: crate::nupur::rb::RClass) {
-    // SAFETY: as `hide`; `klass` is a live class, by type.
-    unsafe { rb_sys::rb_obj_reveal(v.as_raw(), klass.as_raw()) };
-}
-
 /// Is the current thread's (or Fiber's) Ruby-managed machine stack close to
 /// exhausted (`ruby_stack_check`)?
 ///
