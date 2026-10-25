@@ -424,6 +424,13 @@ impl Integer {
     /// reads its digits and raises nothing - so "too large" is answered
     /// without making the `RangeError` `rb_big2ull` would raise.
     #[inline]
+    #[cfg_attr(
+        dylint_lib = "makiri_lints",
+        allow(
+            raising_call_outside_protect,
+            reason = "its raise is for a non-Integer, converted by `#to_int`; `self` is an Integer"
+        )
+    )]
     fn magnitude_fits_u64(self) -> bool {
         // SAFETY: `self` is a live Integer; the C reads its digits.
         let bytes = unsafe { rb_sys::rb_absint_size(self.0 .0, core::ptr::null_mut()) };

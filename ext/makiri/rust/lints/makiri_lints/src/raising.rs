@@ -32,7 +32,10 @@ use crate::boundaries::{callee, is_extension, module_of, path_of};
 use crate::{RAISING_CALL_OUTSIDE_PROTECT, UNRAISING_CALL_IN_RAW};
 
 /// Ruby's C functions that raise nothing, whatever a caller of the layer
-/// hands them.
+/// hands them. `rake dylint` holds the table to Ruby's headers
+/// (`script/check_non_raising.rb`): an entry whose doc names an exception,
+/// or that never returns, fails - which is how `rb_absint_size` (it converts
+/// a non-Integer with `#to_int`) left it for an `allow` at its call site.
 const NON_RAISING: &[&str] = &[
     /* Reads of the thread and its current frame. */
     "rb_errinfo",
@@ -51,10 +54,9 @@ const NON_RAISING: &[&str] = &[
     /* A check: false for a value of any other type. */
     "rb_typeddata_is_kind_of",
     /* Reads of an object: an ivar (nil when unset), an Array element (nil
-     * past the end), a Bignum's size. */
+     * past the end). */
     "rb_attr_get",
     "rb_ary_entry",
-    "rb_absint_size",
     /* An object's class field, written: hiding and showing. */
     "rb_obj_hide",
     "rb_obj_reveal",

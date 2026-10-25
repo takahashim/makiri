@@ -188,6 +188,12 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   reason); every other rb-sys function is taken to raise, so an unclassified
   one is refused until someone classifies it - the list of RAISING functions
   it replaced let `rb_undef_alloc_func` and `rb_obj_freeze` through.
+  The table is held to what Ruby's headers say, as rb-sys's bindings carry
+  their doc comments: an entry documented to raise (`@exception`) or that
+  never returns fails `rake dylint` (`script/check_non_raising.rb`), which
+  took `rb_absint_size` out - it converts a non-Integer with `#to_int`. The
+  headers seldom write down an allocation's `NoMemoryError`, so passing is
+  no proof; failing is.
   `raising_call_outside_protect` fails on such a call outside the closure
   handed to `raw::call` (a function that raises only for what its caller
   rules out, `rb_obj_is_kind_of` with a non-class, is an `allow` at its
@@ -391,7 +397,10 @@ bundle exec rake dylint            # the crate's own lints (lints/makiri_lints),
                                    # unguarded_no_unwind_site, ruby_in_gvl_released_body,
                                    # infallible_allocation, raising_call_outside_protect
                                    # (any rb-sys fn not in NON_RAISING, outside
-                                   # raw::call), unraising_call_in_raw,
+                                   # raw::call; the table is held to Ruby's
+                                   # headers as rb-sys's bindings carry them -
+                                   # no entry documented to raise or noreturn,
+                                   # script/check_non_raising.rb), unraising_call_in_raw,
                                    # raw_ruby_outside_bridge, runs_callers_ruby,
                                    # raw_node_crossing, ruby_surface_in_bridge,
                                    # discarded_ruby_error (an Err of bridge::rb::Error
