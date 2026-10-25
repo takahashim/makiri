@@ -40,6 +40,7 @@ fn holds_for<const ELEM: usize>() {
 
     match grow_capacity(cap, need, ELEM) {
         Some(nc) => {
+            kani::cover!(cap != 0 && nc > cap, "a live allocation grows");
             assert!(nc >= need, "the new capacity must cover what was needed");
             assert!(
                 nc.checked_mul(ELEM).is_some(),
@@ -59,6 +60,7 @@ fn holds_for<const ELEM: usize>() {
                 need.checked_mul(ELEM).is_none(),
                 "the only failure is need not fitting"
             );
+            kani::cover!(true, "a need that does not fit");
         }
     }
 }

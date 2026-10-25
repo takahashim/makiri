@@ -79,6 +79,11 @@ fn extent_matches_the_grammar() {
     }
     assert!(dots <= 1, "at most one decimal point");
     assert!(digits >= 1, "a bare '.' is not a Number");
+    kani::cover!(
+        dots == 1 && n < s.len(),
+        "a decimal that stops short of the slice"
+    );
+    kani::cover!(dots == 0 && n == s.len(), "digits to the end of the slice");
 
     // Maximal munch: the byte after the extent could not have extended it.
     if n < s.len() {
@@ -130,4 +135,5 @@ fn accepted_bytes_satisfy_the_parser_precondition() {
         assert!(b != b'-' && b != b'+' && b != b'e' && b != b'E');
         i += 1;
     }
+    kani::cover!(accepted.contains(&b'.'), "an accepted decimal");
 }

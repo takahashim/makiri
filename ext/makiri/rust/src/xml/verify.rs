@@ -40,9 +40,11 @@ fn predicate_inclusions() {
     let c: u32 = kani::any();
     if is_name_start(c) {
         assert!(is_name_char(c), "NameStartChar must be a NameChar");
+        kani::cover!(c > 0x7F, "a non-ASCII NameStartChar");
     }
     if is_name_char(c) {
         assert!(is_char(c), "NameChar must be a Char");
+        kani::cover!(!is_name_start(c), "a NameChar that cannot start a name");
     }
 }
 
@@ -68,6 +70,7 @@ fn accepted_is_utf8() {
             core::str::from_utf8(s).is_ok(),
             "accepted bytes must be UTF-8"
         );
+        kani::cover!(len == N, "an accepted buffer of the full bound");
     }
 }
 
@@ -101,5 +104,6 @@ fn decode1_length_and_range() {
             !(0xD800..=0xDFFF).contains(&cp),
             "surrogates must be rejected"
         );
+        kani::cover!(bl == 4, "a 4-byte code point decodes");
     }
 }

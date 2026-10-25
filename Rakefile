@@ -832,7 +832,29 @@ task :kani do
   # names each harness and its verdict.
   jobs = ENV["KANI_JOBS"].to_s.strip
   argv += ["--jobs", jobs, "--output-format=terse"] unless jobs.empty?
-  Dir.chdir("ext/makiri/rust") { sh(*argv) }
+  # A proof whose assertions no execution reaches - an `assume` too strong, a
+  # bound too small - still reports "0 failed". So every harness states, with
+  # `kani::cover!`, that its claim is reached, and Kani (which only reports a
+  # cover it cannot satisfy) is held to it here: each harness must report
+  # covers, all of them satisfied.
+  puts argv.join(" ")
+  out = +""
+  ok = Dir.chdir("ext/makiri/rust") do
+    IO.popen(argv, err: %i[child out]) do |io|
+      io.each_line { |line| print line; out << line }
+    end
+    $?.success?
+  end
+  abort "rake kani: cargo kani failed" unless ok
+  harnesses = out.scan(/Checking harness (\S+?)\.\.\./).flatten.uniq
+  covers = out.scan(/\*\* (\d+) of (\d+) cover properties satisfied/)
+  unsatisfied = covers.count { |got, of| got != of }
+  if covers.length != harnesses.length || unsatisfied.positive?
+    abort "rake kani: #{harnesses.length} harnesses, #{covers.length} reported covers, " \
+          "#{unsatisfied} with a cover unsatisfied - every harness needs a kani::cover! " \
+          "its claim reaches, and each must be satisfiable (see the output above)"
+  end
+  puts "rake kani: every harness's covers satisfied (#{harnesses.length} harnesses)"
 end
 
 # The Kani harnesses in groups, each with the code its proofs depend on, so CI

@@ -405,6 +405,10 @@ bundle exec rake kani              # Kani proofs over the Ruby-free core (needs 
                                    # depends on); CI runs only the groups whose
                                    # code changed (`rake kani:groups`), and all of
                                    # them weekly. KANI_JOBS=N runs N in parallel.
+                                   # Every harness states with kani::cover! that its
+                                   # claim is reached, and the task fails on a harness
+                                   # with no cover or an unsatisfied one - a proof an
+                                   # over-strong assume made vacuous still says "0 failed"
 bundle exec rake bench             # perf vs Nokogiri (bench-only gems; runs outside bundle)
 ```
 

@@ -54,6 +54,8 @@ fn decode1_is_strict() {
         assert!(n <= len, "decode1: length within the input");
         assert!(cp <= 0x10FFFF, "decode1: scalar range");
         assert!(!(0xD800..=0xDFFF).contains(&cp), "decode1: no surrogates");
+        kani::cover!(n == 1, "an ASCII byte decodes");
+        kani::cover!(n == 4, "a 4-byte code point decodes");
     }
 }
 
@@ -87,6 +89,7 @@ fn decode1_agrees_with_from_utf8() {
                 .next()
                 .unwrap();
             assert!(first as u32 == cp, "decode1: same code point as from_utf8");
+            kani::cover!(n == 4, "a 4-byte code point is compared");
         }
         None => {
             /* Nothing to assert about an arbitrary rejection: a valid buffer's
@@ -96,6 +99,7 @@ fn decode1_agrees_with_from_utf8() {
 
     if valid(s) && len > 0 {
         assert!(decode1(s).is_some(), "valid non-empty input decodes");
+        kani::cover!(len == 4, "a valid 4-byte buffer");
     }
 }
 
@@ -136,8 +140,10 @@ fn chain_consumes_exactly_valid_input() {
             consumed_all && off == len,
             "valid input: the chain consumes it exactly"
         );
+        kani::cover!(len == N, "a valid buffer of the full bound");
     }
     if consumed_all && off == len {
         assert!(ok, "a fully consumed buffer is valid");
+        kani::cover!(len > 0, "a non-empty buffer fully consumed");
     }
 }
