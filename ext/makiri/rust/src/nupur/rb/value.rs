@@ -35,7 +35,7 @@ impl Value {
     /// `v` is a live Ruby value, kept where the GC finds it for as long as the
     /// `Value` is used.
     #[inline]
-    pub(in crate::bridge) const unsafe fn from_raw(v: VALUE) -> Value {
+    pub(in crate::nupur) const unsafe fn from_raw(v: VALUE) -> Value {
         Value(v, PhantomData)
     }
 }
@@ -73,7 +73,7 @@ pub trait ReprValue: Copy {
     /// ancestry, runs no Ruby (`rb_obj_is_kind_of`).
     #[inline]
     fn is_kind_of(self, class: impl ReprValue) -> bool {
-        crate::bridge::raw::obj_is_kind_of(self.as_value(), class.as_value())
+        crate::nupur::raw::obj_is_kind_of(self.as_value(), class.as_value())
     }
 
     /// The name of the value's class, for a message, written into `f` -
@@ -87,8 +87,8 @@ pub trait ReprValue: Copy {
         )
     )]
     fn write_classname(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        crate::bridge::raw::with_classname(self.as_value(), |name| {
-            core::fmt::Display::fmt(&crate::msg::Lossy(name), f)
+        crate::nupur::raw::with_classname(self.as_value(), |name| {
+            core::fmt::Display::fmt(&crate::nupur::msg::Lossy(name), f)
         })
         .unwrap_or_else(|_| f.write_str("Object"))
     }
@@ -140,7 +140,7 @@ macro_rules! handle {
             /// made as one, or a Ruby global of that kind.
             #[inline]
             #[allow(dead_code)]
-            pub(in crate::bridge) fn from_known(v: Value) -> $name {
+            pub(in crate::nupur) fn from_known(v: Value) -> $name {
                 debug_assert!({
                     let test: fn(Value) -> bool = $test;
                     test(v)
@@ -214,7 +214,7 @@ handle!(
      * test, so a debug build would recurse without end. */
     |v| of_type(v, ruby_value_type::RUBY_T_CLASS)
         // SAFETY: a C global Ruby sets once at boot, read under the GVL.
-        && crate::bridge::raw::class_inherits(v, unsafe { Value::from_raw(rb_sys::rb_eException) })
+        && crate::nupur::raw::class_inherits(v, unsafe { Value::from_raw(rb_sys::rb_eException) })
 );
 
 impl RString {
@@ -296,7 +296,7 @@ impl RArray {
     /// `rb_ary_entry`, which raises nothing.
     #[inline]
     pub fn entry(self, i: isize) -> Result<Value, Error> {
-        Ok(crate::bridge::raw::ary_entry(self, i as c_long))
+        Ok(crate::nupur::raw::ary_entry(self, i as c_long))
     }
 }
 
@@ -320,7 +320,7 @@ impl RHash {
     /// which can raise - `Err`, passed on (`raw::hash_lookup`).
     #[inline]
     pub fn get(self, key: impl HashKey) -> Result<Option<Value>, Error> {
-        crate::bridge::raw::hash_lookup(self, key.as_value())
+        crate::nupur::raw::hash_lookup(self, key.as_value())
     }
 }
 
@@ -334,7 +334,7 @@ impl RArray {
     /// afresh before each.
     pub fn each(self) -> impl Iterator<Item = Value> {
         (0..).map_while(move |i: usize| {
-            (i < self.len()).then(|| crate::bridge::raw::ary_entry(self, i as c_long))
+            (i < self.len()).then(|| crate::nupur::raw::ary_entry(self, i as c_long))
         })
     }
 }
@@ -343,7 +343,7 @@ impl Range {
     /// The first end, the last end and whether the last is excluded.
     #[inline]
     pub fn values(self) -> Result<(Value, Value, bool), Error> {
-        crate::bridge::raw::range_values(self)
+        crate::nupur::raw::range_values(self)
     }
 }
 
@@ -361,7 +361,7 @@ impl Integer {
         if api.fixnum_p(self.0 .0) {
             return Ok(api.fix2long(self.0 .0) as u64);
         }
-        crate::bridge::raw::big2ull(self)
+        crate::nupur::raw::big2ull(self)
     }
 
     /// As an `i64`; a value out of its range is Ruby's `RangeError`.
@@ -371,7 +371,7 @@ impl Integer {
         if api.fixnum_p(self.0 .0) {
             return Ok(api.fix2long(self.0 .0) as i64);
         }
-        crate::bridge::raw::big2ll(self)
+        crate::nupur::raw::big2ll(self)
     }
 
     /// As a `usize`; a negative value or one out of range is `RangeError`.

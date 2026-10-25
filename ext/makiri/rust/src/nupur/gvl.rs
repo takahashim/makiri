@@ -42,15 +42,15 @@ use core::ffi::c_void;
 /// - It did not run: the interrupt is delivered HERE, under `protect`, so it
 ///   comes back as `Err` through ordinary Rust returns. If delivering it raised
 ///   nothing (a trap handler that returned), the call is simply made again.
-pub fn without_gvl<F: FnOnce() -> R + Send, R>(f: F) -> Result<R, crate::bridge::rb::Error> {
+pub fn without_gvl<F: FnOnce() -> R + Send, R>(f: F) -> Result<R, crate::nupur::rb::Error> {
     struct Slot<F, R> {
         f: Option<F>,
         out: Option<R>,
-        panic: crate::caught::PanicLatch,
+        panic: crate::nupur::caught::PanicLatch,
     }
 
     unsafe extern "C" fn run<F: FnOnce() -> R, R>(p: *mut c_void) -> *mut c_void {
-        crate::no_unwind::must_not_unwind::<crate::no_unwind::GvlBody, _>(|| {
+        crate::nupur::no_unwind::must_not_unwind::<crate::nupur::no_unwind::GvlBody, _>(|| {
             // SAFETY: `p` is the `&mut Slot` passed below, live for this call.
             let slot = unsafe { &mut *(p as *mut Slot<F, R>) };
             /* Never a panic here: this frame is Ruby's C, outside the guard
@@ -72,7 +72,7 @@ pub fn without_gvl<F: FnOnce() -> R + Send, R>(f: F) -> Result<R, crate::bridge:
     let mut slot = Slot {
         f: Some(f),
         out: None,
-        panic: crate::caught::PanicLatch::new(),
+        panic: crate::nupur::caught::PanicLatch::new(),
     };
     loop {
         // SAFETY: the trampoline runs `f` at most once and returns; the unblock
@@ -93,11 +93,11 @@ pub fn without_gvl<F: FnOnce() -> R + Send, R>(f: F) -> Result<R, crate::bridge:
         }
         if slot.f.is_none() {
             /* It ran and neither answered nor panicked - which `run` cannot do. */
-            return Err(crate::bridge::ruby::internal_error(
+            return Err(crate::nupur::helpers::internal_error(
                 "the GVL-released body ran without a result",
             ));
         }
         /* An interrupt was pending, so the body never started: deliver it. */
-        crate::bridge::raw::thread_check_ints(&crate::bridge::ruby::gvl_ruby())?;
+        crate::nupur::raw::thread_check_ints(&crate::nupur::helpers::gvl_ruby())?;
     }
 }

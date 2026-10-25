@@ -62,10 +62,6 @@ pub mod falloc;
 /// `Buf`, the capped byte buffer more than one subsystem writes into.
 pub mod cbuf;
 
-/// `Msg`: an exception message written into a fixed buffer on the stack,
-/// so an error path allocates nothing.
-pub mod msg;
-
 /// `Utf8Copy`: owned bytes checked to be UTF-8 - what the bridge's checked
 /// views of a Ruby String are, so a `&str` rests on no Ruby-side flag.
 pub mod utf8_copy;
@@ -75,7 +71,10 @@ pub mod utf8_copy;
 pub mod no_unwind;
 
 /// Catching a panic at a C boundary and re-raising it past one, so a panic in a
-/// Lexbor or Ruby callback becomes an exception rather than an abort.
+/// Lexbor callback becomes an exception rather than an abort - for the
+/// reference-only Lexbor layer, built without Ruby. The Ruby layer has its
+/// own (`nupur::caught`).
+#[cfg(feature = "lexbor")]
 pub mod caught;
 
 /// Holding the GVL as a value: the token the process-global CSS engines ask
@@ -161,6 +160,15 @@ pub mod dom_rules;
 /// Counting and indexing a child list without building it, with the
 /// position memo a document keeps. Unconditional, like `dom_rules`.
 pub mod child_index;
+
+/// The Ruby binding layer the bridge is built on, which knows nothing of
+/// Makiri (`nupur/mod.rs`).
+#[cfg(feature = "ruby")]
+pub mod nupur;
+
+/// `nupur::msg`, under the name the bridge and the glue use.
+#[cfg(feature = "ruby")]
+pub use nupur::msg;
 
 /// The Ruby boundary - the only part of the crate that depends on rb-sys.
 #[cfg(feature = "ruby")]

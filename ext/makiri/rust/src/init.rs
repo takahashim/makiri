@@ -33,14 +33,10 @@
 //! Every leaf also loses its allocator. These objects are created only from
 //! Rust, wrapping a live node; `.new` would hand back one wrapping nothing.
 
-use std::sync::OnceLock;
-
 use crate::bridge::rb::{
-    Class, Error, ExceptionClass, Module, Object, Opaque, RClass, RModule, ReprValue, Ruby, Value,
+    Class, Error, ExceptionClass, Module, Object, RClass, RModule, ReprValue, Ruby, Value,
 };
 use crate::function;
-
-use crate::bridge::ruby::gvl_ruby;
 
 /* ------------------------------------------------------------------ *
  * the classes and modules other modules read                         *
@@ -48,61 +44,6 @@ use crate::bridge::ruby::gvl_ruby;
  *
  * Written once by `init`, read by the glue modules that raise or check against
  * them. */
-
-/// A class, module or exception class `init` defines, for the glue to read.
-///
-/// Typed: an `RbConst<RClass>` can only ever hold an `RClass`, so a read hands
-/// the handle back with no type check to fail. It is written once, by `init`,
-/// which also registers the object with the GC - so it stays alive and unmoved
-/// even if Ruby code removes the constant that named it.
-///
-/// Unset is the state before `Init_makiri`, when none of the methods that read
-/// one exist yet. A read in that state answers `None` (or the documented
-/// fallback of the reader below) rather than panicking.
-pub struct RbConst<T>(OnceLock<Opaque<T>>);
-
-impl<T: ReprValue> RbConst<T> {
-    const fn new() -> RbConst<T> {
-        RbConst(OnceLock::new())
-    }
-
-    /// Record `v`, rooted for the rest of the process. `init` is the only
-    /// writer, and a second write is refused rather than replacing the first.
-    fn set(&self, v: T) -> Result<(), Error> {
-        self.0.set(Opaque::register(v)?).map_err(|_| {
-            Error::new(
-                gvl_ruby().exception_runtime_error(),
-                "Makiri: a class handle was set twice",
-            )
-        })
-    }
-
-    /// The object, or `None` before `Init_makiri`.
-    #[inline]
-    pub fn get(&self) -> Option<T> {
-        self.0.get().map(|o| gvl_ruby().get_inner(*o))
-    }
-
-    /// The object, for the registration code `init` runs once it is set.
-    pub fn defined(&self) -> Result<T, Error> {
-        self.get().ok_or_else(|| {
-            Error::new(
-                gvl_ruby().exception_runtime_error(),
-                "Makiri: a class handle was read before Init_makiri",
-            )
-        })
-    }
-}
-
-impl RbConst<ExceptionClass> {
-    /// The class to raise. Before `Init_makiri` - when nothing that raises one
-    /// of these can run - it is `RuntimeError`, so a raise still raises.
-    #[inline]
-    pub fn exception(&self) -> ExceptionClass {
-        self.get()
-            .unwrap_or_else(|| gvl_ruby().exception_runtime_error())
-    }
-}
 
 macro_rules! exported {
     ($ty:ty: $($name:ident),* $(,)?) => {
@@ -124,8 +65,15 @@ exported! { RClass:
 
 exported! { RModule: MOD_XML, MOD_LEXBOR, MOD_HTML_NODE_METHODS, MOD_XML_NODE_METHODS }
 
+/// `Makiri::InternalError`: the class `nupur` raises for a broken invariant,
+/// registered with it here so the layer names no class of Makiri's.
+pub use crate::nupur::helpers::INTERNAL_ERROR as EXC_INTERNAL_ERROR;
+
+/// The rooted handle each of these is (`nupur::helpers::RbConst`).
+pub use crate::nupur::helpers::RbConst;
+
 exported! { ExceptionClass:
-    EXC_ERROR, EXC_INTERNAL_ERROR, EXC_XPATH_SYNTAX_ERROR, EXC_XPATH_LIMIT_EXCEEDED,
+    EXC_ERROR, EXC_XPATH_SYNTAX_ERROR, EXC_XPATH_LIMIT_EXCEEDED,
     EXC_CSS_SYNTAX_ERROR, EXC_XML_SYNTAX_ERROR, EXC_XML_LIMIT_EXCEEDED,
 }
 
@@ -361,6 +309,11 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     crate::bridge::ruby::check_running_ruby_api(ruby)?;
     #[cfg(makiri_no_unwind)]
     crate::no_unwind::self_test();
+    #[cfg(makiri_no_unwind)]
+    crate::nupur::no_unwind::self_test();
+    /* The raise sweep's answer, for `nupur::raw`'s allocating calls. */
+    #[cfg(feature = "alloc-inject")]
+    crate::nupur::raw::set_raise_injector(crate::falloc::raise_inject_should_raise);
     let makiri = ruby.define_module("Makiri")?;
     crate::bridge::wrapper::init_ivars(ruby)?;
 

@@ -23,6 +23,8 @@
 //! - `discarded_ruby_error`: a `Result<_, bridge::rb::Error>` whose `Err` is
 //!   thrown away (`.ok()`, `.unwrap_or*`, `.is_ok()`, `let _ =`): a raise or a
 //!   `throw` in it would be lost, and the call taken as having answered.
+//! - `nupur_names_its_host`: the binding layer (`nupur`) names nothing of
+//!   the extension outside it.
 //! - `ruby_surface_in_bridge`: a Ruby method defined, or an argument list
 //!   split, in `bridge/` - the glue's work.
 
@@ -30,15 +32,16 @@ use clippy_utils::diagnostics::span_lint_and_help;
 use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::DefId;
 use rustc_hir::intravisit::FnKind;
-use rustc_hir::{Body, Expr, ExprKind, HirId, LetStmt, Node, Path, PatKind, QPath};
+use rustc_hir::{Body, Expr, ExprKind, HirId, LetStmt, Node, PatKind, Path, QPath};
 use rustc_lint::LateContext;
 use rustc_span::Span;
 use rustc_span::def_id::LocalDefId;
 
 use crate::{
-    DISCARDED_RUBY_ERROR, INFALLIBLE_ALLOCATION, RAISING_CALL_OUTSIDE_PROTECT, RAW_NODE_CROSSING,
-    RAW_RUBY_OUTSIDE_BRIDGE, RUBY_IN_GVL_RELEASED_BODY, RUBY_LAYER_IN_ENGINE,
-    RUBY_SURFACE_IN_BRIDGE, RUNS_CALLERS_RUBY, UNGUARDED_NO_UNWIND_SITE,
+    DISCARDED_RUBY_ERROR, INFALLIBLE_ALLOCATION, NUPUR_NAMES_ITS_HOST,
+    RAISING_CALL_OUTSIDE_PROTECT, RAW_NODE_CROSSING, RAW_RUBY_OUTSIDE_BRIDGE,
+    RUBY_IN_GVL_RELEASED_BODY, RUBY_LAYER_IN_ENGINE, RUBY_SURFACE_IN_BRIDGE, RUNS_CALLERS_RUBY,
+    UNGUARDED_NO_UNWIND_SITE,
 };
 
 /* ---- paths ---- */
@@ -89,7 +92,6 @@ const ENGINE: &[&str] = &[
     "token",
     "utf8_input",
     "utf8_copy",
-    "msg",
     "css_match",
 ];
 
@@ -114,24 +116,24 @@ fn within(module: &str, m: &str) -> bool {
 /// Whether `module` is in `bridge/`; `lint_probe::bridge` stands in for one
 /// in the self-test.
 fn in_bridge(module: &str) -> bool {
-    within(module, "bridge") || within(module, "lint_probe::bridge")
+    within(module, "bridge") || within(module, "nupur") || within(module, "lint_probe::bridge")
 }
 
 /// The modules that may spell a raw `VALUE`: the C calls, TypedData and
 /// the GC callbacks, and the `bridge::rb` files that are the typed values.
 const VALUE_HOMES: &[&str] = &[
-    "bridge::raw",
-    "bridge::typed",
-    "bridge::rb::value",
-    "bridge::rb::ruby",
-    "bridge::rb::method",
+    "nupur::raw",
+    "nupur::typed",
+    "nupur::rb::value",
+    "nupur::rb::ruby",
+    "nupur::rb::method",
 ];
 
 /// What the engine may not name: the Ruby layer (`bridge`, `glue`, `init`)
 /// and Ruby's C API.
 fn ruby_layer(path: &str) -> bool {
     path.starts_with("rb_sys::")
-        || ["bridge", "glue", "init"]
+        || ["bridge", "glue", "init", "nupur"]
             .iter()
             .any(|m| path == format!("makiri::{m}") || path.starts_with(&format!("makiri::{m}::")))
 }
@@ -163,6 +165,39 @@ pub fn check_path(cx: &LateContext<'_>, path: &Path<'_>, hir_id: HirId) {
     };
     report_ruby_layer(cx, did, path.span.source_callsite(), hir_id);
     report_raw_ruby(cx, did, path.span.source_callsite(), hir_id);
+    report_host(cx, did, path.span.source_callsite(), hir_id);
+}
+
+/* ---- nupur_names_its_host ---- */
+
+/// Whether `module` is `nupur`, the binding layer; `lint_probe::nupur`
+/// stands in for it in the self-test.
+fn in_nupur(module: &str) -> bool {
+    within(module, "nupur") || within(module, "lint_probe::nupur")
+}
+
+/// `nupur` names nothing of the extension it binds for: no `makiri::` path
+/// outside `makiri::nupur`.
+fn report_host(cx: &LateContext<'_>, did: DefId, span: Span, hir_id: HirId) {
+    let module = module_of(cx, hir_id);
+    if !in_nupur(&module) {
+        return;
+    }
+    let target = path_of(cx, did);
+    if target.starts_with("makiri::")
+        && !within(&target, "nupur")
+        && !within(&target, "lint_probe::nupur")
+    {
+        span_lint_and_help(
+            cx,
+            NUPUR_NAMES_ITS_HOST,
+            span,
+            format!("`nupur` names `{target}`, of the extension it binds for"),
+            None,
+            "the binding layer knows nothing of Makiri: take what it needs as a registration \
+             (an exception class, a hook) at Init_, or move the item into nupur",
+        );
+    }
 }
 
 /* ---- raw_ruby_outside_bridge ---- */
@@ -310,6 +345,7 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         && let Some(did) = callee(cx, expr)
     {
         report_ruby_layer(cx, did, expr.span.source_callsite(), expr.hir_id);
+        report_host(cx, did, expr.span.source_callsite(), expr.hir_id);
     }
     let Some(did) = callee(cx, expr) else {
         return;
@@ -366,13 +402,13 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         );
     }
 
-    let defines =
-        path.starts_with("makiri::bridge::") && path.rsplit("::").next().is_some_and(is_definition);
+    let defines = (path.starts_with("makiri::bridge::") || path.starts_with("makiri::nupur::"))
+        && path.rsplit("::").next().is_some_and(is_definition);
     if defines || path.starts_with("makiri::glue::args::") {
         let module = module_of(cx, expr.hir_id);
         if in_bridge(&module)
-            && !within(&module, "bridge::rb::class")
-            && !within(&module, "bridge::raw")
+            && !within(&module, "nupur::rb::class")
+            && !within(&module, "nupur::raw")
         {
             span_lint_and_help(
                 cx,
@@ -386,7 +422,7 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         }
     }
 
-    if path == "makiri::bridge::gvl::without_gvl"
+    if path == "makiri::nupur::gvl::without_gvl"
         && let ExprKind::Call(_, [body]) = expr.kind
     {
         check_gvl_released(cx, body);
@@ -423,9 +459,9 @@ fn runs_callers_ruby(path: &str) -> bool {
     }
     matches!(
         path,
-        "makiri::bridge::raw::call_method"
-            | "makiri::bridge::raw::yield_value"
-            | "makiri::bridge::rb::class::Module::call_method"
+        "makiri::nupur::raw::call_method"
+            | "makiri::nupur::raw::yield_value"
+            | "makiri::nupur::rb::class::Module::call_method"
     )
 }
 
@@ -500,7 +536,7 @@ fn inside_protect(cx: &LateContext<'_>, hir_id: HirId) -> bool {
                     && args.iter().any(|a| a.hir_id == child)
                     && let ExprKind::Path(ref qpath) = f.kind
                     && let Res::Def(_, did) = cx.qpath_res(qpath, f.hir_id)
-                    && path_of(cx, did) == "makiri::bridge::raw::call"
+                    && path_of(cx, did) == "makiri::nupur::raw::call"
                 {
                     return true;
                 }
@@ -509,7 +545,7 @@ fn inside_protect(cx: &LateContext<'_>, hir_id: HirId) -> bool {
                 let p = path_of(cx, item.owner_id.to_def_id());
                 return RAISES_ON_PURPOSE
                     .iter()
-                    .any(|f| p == format!("makiri::bridge::raw::{f}"));
+                    .any(|f| p == format!("makiri::nupur::raw::{f}"));
             }
             _ => {}
         }
@@ -571,9 +607,10 @@ fn check_gvl_released<'tcx>(cx: &LateContext<'tcx>, body: &'tcx Expr<'tcx>) {
 /// trampolines' and `Init_makiri`'s helpers, which do.
 const GUARDS: &[&str] = &[
     "makiri::no_unwind::must_not_unwind",
-    "makiri::bridge::rb::method::finish",
-    "makiri::bridge::rb::method::finish_cary",
-    "makiri::bridge::rb::method::run_init",
+    "makiri::nupur::no_unwind::must_not_unwind",
+    "makiri::nupur::rb::method::finish",
+    "makiri::nupur::rb::method::finish_cary",
+    "makiri::nupur::rb::method::run_init",
 ];
 
 pub fn check_fn<'tcx>(
@@ -630,11 +667,19 @@ fn is_drop(cx: &LateContext<'_>, did: LocalDefId) -> bool {
 
 /// The methods that answer a `Result` without its error.
 const DISCARDING: &[&str] = &[
-    "ok", "unwrap_or", "unwrap_or_default", "unwrap_or_else", "map_or", "map_or_else", "is_ok",
-    "is_err", "is_ok_and", "is_err_and",
+    "ok",
+    "unwrap_or",
+    "unwrap_or_default",
+    "unwrap_or_else",
+    "map_or",
+    "map_or_else",
+    "is_ok",
+    "is_err",
+    "is_ok_and",
+    "is_err_and",
 ];
 
-/// Whether `ty` is `Result<_, makiri::bridge::rb::error::Error>`.
+/// Whether `ty` is `Result<_, makiri::nupur::rb::error::Error>`.
 fn is_ruby_result<'tcx>(cx: &LateContext<'tcx>, ty: rustc_middle::ty::Ty<'tcx>) -> bool {
     let rustc_middle::ty::Adt(adt, args) = ty.kind() else {
         return false;
@@ -645,7 +690,7 @@ fn is_ruby_result<'tcx>(cx: &LateContext<'tcx>, ty: rustc_middle::ty::Ty<'tcx>) 
     args.types()
         .nth(1)
         .and_then(|e| e.ty_adt_def())
-        .is_some_and(|e| path_of(cx, e.did()) == "makiri::bridge::rb::error::Error")
+        .is_some_and(|e| path_of(cx, e.did()) == "makiri::nupur::rb::error::Error")
 }
 
 fn report_discarded(cx: &LateContext<'_>, span: Span, how: &str) {
@@ -665,7 +710,11 @@ fn check_discarded_error<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         && DISCARDING.contains(&seg.ident.name.as_str())
         && is_ruby_result(cx, cx.typeck_results().expr_ty(receiver))
     {
-        report_discarded(cx, expr.span.source_callsite(), &format!(".{}()", seg.ident.name));
+        report_discarded(
+            cx,
+            expr.span.source_callsite(),
+            &format!(".{}()", seg.ident.name),
+        );
     }
 }
 

@@ -46,14 +46,14 @@ impl<T: ReprValue> IntoValue for T {
 impl IntoValue for () {
     #[inline]
     fn into_value(self) -> Result<Value, Error> {
-        Ok(crate::bridge::ruby::nil())
+        Ok(crate::nupur::helpers::nil())
     }
 }
 
 impl IntoValue for bool {
     #[inline]
     fn into_value(self) -> Result<Value, Error> {
-        Ok(crate::bridge::ruby::boolean(self))
+        Ok(crate::nupur::helpers::boolean(self))
     }
 }
 
@@ -62,7 +62,7 @@ impl<T: IntoValue> IntoValue for Option<T> {
     fn into_value(self) -> Result<Value, Error> {
         match self {
             Some(v) => v.into_value(),
-            None => Ok(crate::bridge::ruby::nil()),
+            None => Ok(crate::nupur::helpers::nil()),
         }
     }
 }
@@ -72,7 +72,7 @@ macro_rules! signed {
         impl IntoValue for $t {
             #[inline]
             fn into_value(self) -> Result<Value, Error> {
-                crate::bridge::build::int(self as i64)
+                crate::nupur::build::int(self as i64)
             }
         }
     )*};
@@ -84,7 +84,7 @@ macro_rules! unsigned {
         impl IntoValue for $t {
             #[inline]
             fn into_value(self) -> Result<Value, Error> {
-                crate::bridge::build::uint(self as u64)
+                crate::nupur::build::uint(self as u64)
             }
         }
     )*};
@@ -94,16 +94,16 @@ unsigned!(u32, u64, usize);
 impl IntoValue for &'static str {
     #[inline]
     fn into_value(self) -> Result<Value, Error> {
-        crate::bridge::string::utf8_str(self.as_bytes())
+        crate::nupur::build::utf8_str(self.as_bytes())
     }
 }
 
 impl<A: IntoValue, B: IntoValue> IntoValue for (A, B) {
     fn into_value(self) -> Result<Value, Error> {
         let (a, b) = (self.0.into_value()?, self.1.into_value()?);
-        let ary = crate::bridge::build::ary(2)?;
-        crate::bridge::build::push(ary, a)?;
-        crate::bridge::build::push(ary, b)?;
+        let ary = crate::nupur::build::ary(2)?;
+        crate::nupur::build::push(ary, a)?;
+        crate::nupur::build::push(ary, b)?;
         Ok(ary.as_value())
     }
 }
