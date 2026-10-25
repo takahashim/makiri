@@ -378,8 +378,9 @@ bundle exec rake miri              # the Ruby-free unsafe modules' tests (raw_ve
                                    # cbuf) under Miri, strict provenance (nightly + miri;
                                    # CI: verify.yml)
 bundle exec rake verus             # Verus proofs (ext/makiri/rust/verus/): falloc's
-                                   # grow_capacity and RawVec, copied and checked against
-                                   # the source (`verus:sync`) - unbounded.
+                                   # grow_capacity, RawVec, and ptr_table's probing and
+                                   # load factor, copied and checked against the source
+                                   # (`verus:sync`) - unbounded.
                                    # VERUS=path/to/verus (Rakefile's VERUS_VERSION); CI:
                                    # verify.yml. Heavy tools stay in CI, like Miri and Kani
 bundle exec rake kani              # Kani proofs over the Ruby-free core (needs cargo-kani).
@@ -577,7 +578,9 @@ by the check that concluded "every undefined symbol is legitimate".
   (`html/dom/copy.rs`).
 - Pointer-keyed
   tables hash with `crate::ptr_table::ptr_hash`, and are a `PtrTable` (sized
-  once) or a `PtrMap` (grows) rather than another hand-written probe loop; a
+  once) or a `PtrMap` (grows) rather than another hand-written probe loop -
+  Verus proves the probe always stops (`verus/ptr_table.rs`), so a change to
+  either table goes through `rake verus:sync`; a
   key that can be 0 (an XML token) supplies its own empty marker through
   `TableKey`. An XPath step's name test is compiled once into a
   `nodetest::CompiledTest` - where an unknown prefix is reported, via
@@ -723,7 +726,11 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            `rake verus:sync` holds the rest to the source token for
                            token), proved over `Block`'s contract as the one axiom:
                            the contents are what was pushed, a failure changes
-                           nothing, every `set` and `prefix` within the block
+                           nothing, every `set` and `prefix` within the block;
+                           `ptr_table.rs` the same for `src/ptr_table.rs`: `probe`
+                           always stops (at the key or an empty slot), and every
+                           `PtrTable` / `PtrMap` operation, `grow` included, keeps
+                           a slot free - the load factor - so it always can
   fuzz/                    cargo-fuzz harnesses (xml/html, xpath/xml_xpath/
                            html_xpath, css = the XML matcher held to the lowering, html_css = the
                            HTML matcher over an arbitrary document, asserting

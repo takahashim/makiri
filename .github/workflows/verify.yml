@@ -135,7 +135,7 @@ jobs:
         env:
           MIRIFLAGS: "-Zmiri-strict-provenance"
         # Quoted: an unquoted `name:: ` would be read as a YAML mapping.
-        run: "cargo +nightly miri test --no-default-features --lib -- raw_vec:: utf8_copy:: falloc:: cbuf::"
+        run: "cargo +nightly miri test --no-default-features --lib -- raw_vec:: utf8_copy:: falloc:: cbuf:: ptr_table::"
 
   # Verus over ext/makiri/rust/verus/: `falloc::grow_capacity` (copied,
   # and checked against the source by `rake verus:sync`) and a model of

@@ -86,17 +86,26 @@ VERUS_COPIES = [
   ["ext/makiri/rust/src/falloc/mod.rs", "ext/makiri/rust/verus/raw_vec.rs", "grow_capacity"],
   *%w[as_slice reserve grow_to push].map do |name|
     ["ext/makiri/rust/src/raw_vec/mod.rs", "ext/makiri/rust/verus/raw_vec.rs", name]
+  end,
+  *%w[capacity_for probe lookup PtrTable::with_keys PtrTable::insert PtrTable::get
+      PtrMap::clear PtrMap::get PtrMap::insert PtrMap::set PtrMap::grow].map do |name|
+    ["ext/makiri/rust/src/ptr_table.rs", "ext/makiri/rust/verus/ptr_table.rs", name]
   end
 ].freeze
+# The files `rake verus` verifies.
+VERUS_PROOFS = %w[raw_vec.rs ptr_table.rs].freeze
 
-# The body of `fn name` in `src`, as tokens: lines marked `// [verus]` and
-# comments dropped, from the brace that opens the body to the one closing it,
+# The body of `fn name` in `src` - `Type::name` for the one in `impl ... Type`
+# - as tokens: lines marked `// [verus]` and
+# comments (line and block) dropped, from the brace that opens the body to the one closing it,
 # and a trailing comma before a closing bracket dropped too - `cargo fmt`
 # adds one when it breaks a call across lines, and it changes nothing.
 def verus_body_tokens(src, name)
   text = src.lines.reject { |l| l.rstrip.end_with?("// [verus]") }
-            .map { |l| l.sub(%r{//.*$}, "") }.join
-  at = text.index(/\bfn\s+#{Regexp.escape(name)}\b/) or return nil
+            .map { |l| l.sub(%r{//.*$}, "") }.join.gsub(%r{/\*.*?\*/}m, " ")
+  type, name = name.include?("::") ? name.split("::", 2) : [nil, name]
+  from = type ? (text.index(/^impl\b[^{]*\b#{Regexp.escape(type)}\s*</) or return nil) : 0
+  at = text.index(/\bfn\s+#{Regexp.escape(name)}\b/, from) or return nil
   open = text.index("{", at) or return nil
   depth = 0
   close = (open...text.length).find do |i|
@@ -127,14 +136,14 @@ end
 desc "Verify the Verus proofs (ext/makiri/rust/verus/; needs Verus #{VERUS_VERSION})"
 task verus: "verus:sync" do
   verus = ENV.fetch("VERUS", "verus")
-  Dir.chdir("ext/makiri/rust/verus") { sh verus, "raw_vec.rs" }
+  Dir.chdir("ext/makiri/rust/verus") { VERUS_PROOFS.each { |f| sh verus, f } }
 end
 
 # Miri over the Ruby-free modules that hold `unsafe`, and the buffer built on
 # them: their tests on Miri's interpreter, which reports undefined behaviour a
 # run on hardware passes over (CI: verify.yml). Needs the nightly toolchain
 # with the `miri` component. MIRI_FILTERS replaces the module list.
-MIRI_FILTERS = %w[raw_vec:: utf8_copy:: falloc:: cbuf::].freeze # raw_vec:: covers raw_vec::block
+MIRI_FILTERS = %w[raw_vec:: utf8_copy:: falloc:: cbuf:: ptr_table::].freeze # raw_vec:: covers raw_vec::block
 desc "Run the Ruby-free unsafe modules' tests under Miri (nightly)"
 task :miri do
   filters = ENV["MIRI_FILTERS"] ? ENV["MIRI_FILTERS"].split(",") : MIRI_FILTERS
