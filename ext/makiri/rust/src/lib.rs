@@ -70,10 +70,6 @@ pub mod msg;
 /// views of a Ruby String are, so a `&str` rests on no Ruby-side flag.
 pub mod utf8_copy;
 
-/// `RawVec`: the growable array behind a NodeSet's node array, over an
-/// allocator that is only `realloc` and `free` (Ruby's, in the bridge).
-pub mod raw_vec;
-
 /// The bodies that must not unwind (an `extern "C"` function's, a `Drop`
 /// run from the GC), and the build that checks they cannot.
 pub mod no_unwind;

@@ -396,11 +396,11 @@ bundle exec rake oom               # OOM-injection sweep: rebuilds with
                                    # borrowed (`Makiri.__borrowed?`) or unusable - the
                                    # runtime check of the guards-across-raises rule.
                                    # Prefix with MAKIRI_SANITIZE=address to combine ASan.
-bundle exec rake miri              # the Ruby-free unsafe modules' tests (raw_vec, falloc,
-                                   # cbuf) under Miri, strict provenance (nightly + miri;
+bundle exec rake miri              # the Ruby-free unsafe modules' tests (utf8_copy, falloc,
+                                   # cbuf, ptr_table) under Miri, strict provenance (nightly + miri;
                                    # CI: verify.yml)
 bundle exec rake verus             # Verus proofs (ext/makiri/rust/verus/): falloc's
-                                   # grow_capacity, RawVec, ptr_table's probing and
+                                   # grow_capacity, ptr_table's probing and
                                    # load factor, cbuf's Buf (content, ceiling,
                                    # fail-closed) with copy_small, and limits::admit,
                                    # the one rule every work budget charges through, copied and checked against the source
@@ -588,8 +588,10 @@ by the check that concluded "every undefined symbol is legitimate".
   place - a non-embedded type's data is `xcalloc`'d, which is also where Ruby
   decides whether malloc pressure calls for a GC, so a Document's arena
   report (`rb_gc_adjust_memory_usage`, which only adds to that pressure) gets
-  its collection (`spec/gc_accounting_spec.rb`). `NodeSet`'s node array is
-  `ruby_xrealloc2`'s. Their failure is `NoMemoryError`, Ruby's own, which
+  its collection (`spec/gc_accounting_spec.rb`). `NodeSet`'s node array is a
+  `falloc` `Vec`, reported to the GC the same way as it grows and given back
+  in its `Drop` - exactly the bytes held, where `ruby_xrealloc2`, which it
+  used to be, was counted ~20% over them. Their failure is `NoMemoryError`, Ruby's own, which
   `bridge::raw`'s protected calls hand back as `Err`. An exception message
   allocates nothing at all: a `bridge::rb::Error` holds a `&'static str` or a
   `format_args!` written into `crate::msg::Msg` (256 bytes, inline; longer is
@@ -652,15 +654,6 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            the copy itself - what a checked view of a Ruby String
                            (`RubyText` / `RubyData`) is, so a `&str` never rests on
                            a String's cached coderange
-    raw_vec/               `RawVec<T, A>`: a growable array over an allocator that is
-                           only realloc + free - a NodeSet's node array, with Ruby's
-                           allocator in `bridge::alloc` (`RubyVec`). The pointer is
-                           `block.rs`'s alone (`Block`: `cap` elements, all
-                           initialised - growth fills with `T::default()` - seen as
-                           a slice); `mod.rs` is safe code over it, which Verus
-                           proves as written (`verus/`), Kani bounded against an
-                           allocator that may fail at any call (`verify.rs`), and
-                           Miri runs
     cbuf.rs                `Buf`: the owned, capped, growable byte buffer
     cutf8.rs               the one UTF-8 validator + strict 1-codepoint decoder
     utf8_input.rs          HTML input sanitiser: invalid UTF-8 -> U+FFFD, per
@@ -764,14 +757,10 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            (`stylesheet.rs`) and the CSSOM selector writer
                            (`text.rs`); Ruby- and Lexbor-free,
                            `#![forbid(unsafe_code)]` at its root
-  verus/                   Verus proofs: `raw_vec.rs` holds falloc's `grow_capacity`
-                           and `RawVec`'s `as_slice` / `reserve` / `grow_to` / `push`,
-                           copied (lines only Verus needs end in `// [verus]`, and
-                           `rake verus:sync` holds the rest to the source token for
-                           token), proved over `Block`'s contract as the one axiom:
-                           the contents are what was pushed, a failure changes
-                           nothing, every `set` and `prefix` within the block;
-                           `ptr_table.rs` the same for `src/ptr_table.rs`: `probe`
+  verus/                   Verus proofs, each over code copied from the source (lines
+                           only Verus needs end in `// [verus]`, and `rake verus:sync`
+                           holds the rest to the source token for token):
+                           `ptr_table.rs` for `src/ptr_table.rs`: `probe`
                            always stops (at the key or an empty slot), every
                            `PtrTable` / `PtrMap` operation, `grow` included, keeps
                            a slot free - the load factor - so it always can, and
@@ -781,7 +770,9 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            `cbuf.rs` for `src/cbuf.rs`: a `Buf` holds exactly
                            what was appended, its room never passes the ceiling,
                            a failure changes nothing, and `copy_small` copies
-                           exactly - at every length, where Kani ran out of memory
+                           exactly - at every length, where Kani ran out of memory -
+                           with falloc's `grow_capacity`; `limits.rs`: `admit`, the
+                           one rule every work budget charges through
   fuzz/                    cargo-fuzz harnesses (xml/html, xpath/xml_xpath/
                            html_xpath, css = the XML matcher held to the lowering, html_css = the
                            HTML matcher over an arbitrary document, asserting

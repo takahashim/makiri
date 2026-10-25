@@ -13,9 +13,15 @@
 //!
 //! # This wrapper type lives in the bridge
 //!
-//! It owns its `rb_data_type_t`, its GC `mark`/`size`/free, and a buffer in
-//! Ruby's allocator (`alloc::RubyVec`), so its layout is private and it belongs
-//! with the other raw-Ruby-ABI seams rather than in the glue. The glue builds a set through
+//! It owns its `rb_data_type_t`, its GC `mark`/`size`/free, and a node buffer
+//! whose bytes it reports to Ruby's GC, so its layout is private and it belongs
+//! with the other raw-Ruby-ABI seams rather than in the glue.
+//!
+//! The buffer is a `Vec` grown through `falloc`, not Ruby's allocator: the
+//! report is exactly the bytes it holds, as a Document's arena report is.
+//! (It was `ruby_xrealloc2`'s, behind a proven `RawVec`; the `Vec` measured
+//! 5-10% faster on large sets, and Ruby counted the reallocations ~20% over
+//! the bytes held, so it collected more often than the memory called for.) The glue builds a set through
 //! `node_set_with_fill`, `node_set_from` or `node_set_of_nodes`, all over
 //! the Document's opaque `VALUE`; the [`Fill`] handle carries the "this is a
 //! NodeSet" invariant so its pushes are safe.
@@ -28,8 +34,7 @@
 
 #![allow(unsafe_code)]
 
-use crate::bridge::alloc::{GrowError, RubyVec};
-use crate::falloc::{Reserve, SetInsert};
+use crate::falloc::{Reserve, SetInsert, VecGrow};
 use std::cell::RefCell;
 use std::collections::HashSet;
 
@@ -60,14 +65,19 @@ use crate::bridge::ruby::is_kind_of;
 const INLINE_NODES: usize = 8;
 
 /// The set's node array, under the set's size cap: up to [`INLINE_NODES`] in
-/// the set itself, and past that a [`RubyVec`] that holds them all.
+/// the set itself, and past that a heap `Vec` that holds them all.
 struct NodeVec {
     inline: [NodeWord; INLINE_NODES],
     /// The nodes in `inline`; 0 once the set has spilled to `heap`.
     inline_len: usize,
     /// Every node once the set has spilled (its capacity is then non-zero);
-    /// empty, holding no allocation, before.
-    heap: RubyVec<NodeWord>,
+    /// empty, holding no allocation, before. On the system allocator through
+    /// `falloc`, so `rake oom` fails each growth; its bytes are reported to
+    /// Ruby's GC as a Document's arena is (`reported`).
+    heap: Vec<NodeWord>,
+    /// The heap's bytes as last reported to the GC, given back when the set
+    /// is freed.
+    reported: usize,
 }
 
 /// Why a push was refused.
@@ -101,22 +111,40 @@ impl From<PushError> for Error {
     }
 }
 
-impl From<GrowError> for PushError {
-    fn from(e: GrowError) -> PushError {
-        match e {
-            GrowError::Overflow => PushError::CapacityOverflow,
-            GrowError::NoMemory => PushError::NoMemory,
-        }
-    }
-}
-
 impl NodeVec {
     const fn new() -> Self {
         NodeVec {
             inline: [NodeWord::NULL; INLINE_NODES],
             inline_len: 0,
-            heap: RubyVec::new(),
+            heap: Vec::new(),
+            reported: 0,
         }
+    }
+
+    /// Tell the GC how far the heap's bytes moved since the last report: a
+    /// growth is memory Ruby did not allocate and would not otherwise see.
+    /// Called after each growth, which is under the GVL (a fill runs in a
+    /// method).
+    fn account(&mut self) {
+        let bytes = self
+            .heap
+            .capacity()
+            .saturating_mul(core::mem::size_of::<NodeWord>());
+        if bytes != self.reported {
+            let delta = (bytes as isize).saturating_sub(self.reported as isize);
+            crate::bridge::ruby::report_external_bytes(delta);
+            self.reported = bytes;
+        }
+    }
+
+    /// Room for `want` nodes in all on the heap.
+    fn grow_to(&mut self, want: usize) -> Result<(), PushError> {
+        let more = want.saturating_sub(self.heap.len());
+        self.heap
+            .falloc_reserve(more)
+            .map_err(|()| PushError::NoMemory)?;
+        self.account();
+        Ok(())
     }
 
     fn spilled(&self) -> bool {
@@ -147,12 +175,23 @@ impl NodeVec {
     /// Move to the heap with room for `n` nodes (at least the ones held), in
     /// one allocation.
     fn spill(&mut self, n: usize) -> Result<(), PushError> {
-        self.heap.reserve(n.max(self.inline_len))?;
+        self.grow_to(n.max(self.inline_len))?;
         for &w in &self.inline[..self.inline_len] {
             /* Room was reserved above, so this grows nothing. */
-            self.heap.push(w)?;
+            self.heap.falloc_push(w).map_err(|()| PushError::NoMemory)?;
         }
         self.inline_len = 0;
+        Ok(())
+    }
+
+    /// Append to the heap, growing it (and reporting the growth) when full.
+    #[inline]
+    fn heap_push(&mut self, w: NodeWord) -> Result<(), PushError> {
+        let full = self.heap.len() == self.heap.capacity();
+        self.heap.falloc_push(w).map_err(|()| PushError::NoMemory)?;
+        if full {
+            self.account();
+        }
         Ok(())
     }
 
@@ -162,7 +201,7 @@ impl NodeVec {
     fn reserve(&mut self, n: usize) -> Result<(), PushError> {
         let n = n.min(NODE_SET_MAX);
         if self.spilled() {
-            Ok(self.heap.reserve(n)?)
+            self.grow_to(n)
         } else if n > INLINE_NODES {
             self.spill(n)
         } else {
@@ -180,7 +219,7 @@ impl NodeVec {
             if self.spilled() {
                 let room = NODE_SET_MAX.saturating_sub(self.heap.len());
                 for w in nodes.by_ref().take(room) {
-                    self.heap.push(w)?;
+                    self.heap_push(w)?;
                 }
                 if nodes.peek().is_some() {
                     return Err(PushError::SizeLimit);
@@ -202,7 +241,7 @@ impl NodeVec {
             if self.heap.len() >= NODE_SET_MAX {
                 return Err(PushError::SizeLimit);
             }
-            return Ok(self.heap.push(node)?);
+            return self.heap_push(node);
         }
         if let Some(slot) = self.inline.get_mut(self.inline_len) {
             *slot = node;
@@ -212,7 +251,7 @@ impl NodeVec {
         /* Full inline: spill, with room to grow (NODE_SET_MAX is far above
          * INLINE_NODES, so the cap is not reached here). */
         self.spill(INLINE_NODES * 4)?;
-        Ok(self.heap.push(node)?)
+        self.heap_push(node)
     }
 }
 
@@ -256,6 +295,21 @@ impl Hooks for NodeSet {
             ),
             Err(_) => base,
         }
+    }
+}
+
+impl Drop for NodeSet {
+    fn drop(&mut self) {
+        crate::no_unwind::must_not_unwind::<crate::no_unwind::DropNodeSet, _>(|| {
+            /* Give back what the heap's growth reported, as a Document's
+             * Drop does: a plain counter adjustment from the free hook. */
+            let reported = self.nodes.get_mut().reported;
+            if reported != 0 {
+                crate::bridge::ruby::report_external_bytes(
+                    0isize.saturating_sub(reported as isize),
+                );
+            }
+        })
     }
 }
 

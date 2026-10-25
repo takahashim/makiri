@@ -83,18 +83,14 @@ task :deny do
 end
 
 # Verus over what Kani proves bounded (ext/makiri/rust/verus/): the growth
-# arithmetic, copied from falloc, and RawVec over its Block's contract. The
-# copies are checked
+# arithmetic, copied from falloc, the pointer tables, the byte buffer and the
+# work budgets' one rule. The copies are checked
 # against the source first - every line only Verus needs ends in `// [verus]`,
 # and the rest of the body must be the source's, token for token - so a
 # change to `grow_capacity` fails here until the proof is redone. VERUS names
 # the binary (else `verus` on PATH); CI: verify.yml, at VERUS_VERSION.
 VERUS_VERSION = "0.2026.10.04.426d8b0"
 VERUS_COPIES = [
-  ["ext/makiri/rust/src/falloc/mod.rs", "ext/makiri/rust/verus/raw_vec.rs", "grow_capacity"],
-  *%w[as_slice reserve grow_to push].map do |name|
-    ["ext/makiri/rust/src/raw_vec/mod.rs", "ext/makiri/rust/verus/raw_vec.rs", name]
-  end,
   *%w[capacity_for probe lookup PtrTable::with_keys PtrTable::insert PtrTable::get
       PtrMap::clear PtrMap::get PtrMap::insert PtrMap::set PtrMap::grow].map do |name|
     ["ext/makiri/rust/src/ptr_table.rs", "ext/makiri/rust/verus/ptr_table.rs", name]
@@ -108,7 +104,7 @@ VERUS_COPIES = [
   end
 ].freeze
 # The files `rake verus` verifies.
-VERUS_PROOFS = %w[raw_vec.rs ptr_table.rs cbuf.rs limits.rs].freeze
+VERUS_PROOFS = %w[ptr_table.rs cbuf.rs limits.rs].freeze
 
 # The body of `fn name` in `src` - `Type::name` for the one in `impl ... Type`
 # - as tokens: lines marked `// [verus]` and
@@ -153,7 +149,7 @@ end
 # (std's spec assumed), an `assume(` or `admit(`. Each one is named in its
 # file's module doc; a new one is a new axiom, and this count moves with it on
 # purpose. The canaries may hold none.
-VERUS_TRUSTED = { "raw_vec.rs" => 5, "ptr_table.rs" => 4, "cbuf.rs" => 4, "limits.rs" => 0 }.freeze
+VERUS_TRUSTED = { "ptr_table.rs" => 4, "cbuf.rs" => 4, "limits.rs" => 0 }.freeze
 # Verus's `admit()` takes no argument, which tells it from a function named
 # `admit` (`limits.rs`).
 VERUS_TRUST = /#\[verifier::external(?:_body)?\]|\bassume_specification\b|\bassume\(|\badmit\(\s*\)/
@@ -252,7 +248,7 @@ end
 # them: their tests on Miri's interpreter, which reports undefined behaviour a
 # run on hardware passes over (CI: verify.yml). Needs the nightly toolchain
 # with the `miri` component. MIRI_FILTERS replaces the module list.
-MIRI_FILTERS = %w[raw_vec:: utf8_copy:: falloc:: cbuf:: ptr_table::].freeze # raw_vec:: covers raw_vec::block
+MIRI_FILTERS = %w[utf8_copy:: falloc:: cbuf:: ptr_table::].freeze
 desc "Run the Ruby-free unsafe modules' tests under Miri (nightly)"
 task :miri do
   filters = ENV["MIRI_FILTERS"] ? ENV["MIRI_FILTERS"].split(",") : MIRI_FILTERS
@@ -992,11 +988,6 @@ KANI_GROUPS = {
   "alloc" => {
     harnesses: %w[cbuf::verify:: falloc::verify::],
     paths: %W[#{RUST_SRC}/cbuf.rs #{RUST_SRC}/cbuf/ #{RUST_SRC}/falloc/]
-  },
-  # `RawVec`, a NodeSet's node array: its growth over `falloc::grow_capacity`.
-  "raw_vec" => {
-    harnesses: %w[raw_vec::verify::],
-    paths: %W[#{RUST_SRC}/raw_vec/ #{RUST_SRC}/falloc/ #{RUST_SRC}/no_unwind.rs]
   },
   "utf8" => {
     harnesses: %w[cutf8::verify::],
