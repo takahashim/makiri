@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, Value};
 
 use super::*;
@@ -110,7 +111,7 @@ pub trait ChildListHost: crate::bridge::rb::TryConvert {
     ) -> Result<R, Error>;
     /// The child a token names, as its Ruby wrapper; None is nil. Called
     /// once the read the token came from is over, since wrapping allocates.
-    fn wrap_child(&self, token: Option<usize>) -> Result<Option<Value>, Error>;
+    fn wrap_child(&self, ruby: &Ruby, token: Option<usize>) -> Result<Option<Value>, Error>;
 
     /// How many children are in `list`.
     fn child_count(&self, list: ChildList) -> Result<usize, Error> {
@@ -120,12 +121,12 @@ pub trait ChildListHost: crate::bridge::rb::TryConvert {
     }
 
     /// The wrapped child at `index` in `list`, or nil past the end.
-    fn child_at(&self, list: ChildList, index: usize) -> Result<Option<Value>, Error> {
+    fn child_at(&self, ruby: &Ruby, list: ChildList, index: usize) -> Result<Option<Value>, Error> {
         let found = self.with_children(list, |c| {
             let found =
                 with_child_memo(self.document(), |memo, version| c.at(memo, version, index))?;
             Ok::<_, Error>(found.map(|n| c.tree.token(n)))
         })??;
-        self.wrap_child(found)
+        self.wrap_child(ruby, found)
     }
 }

@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 use crate::bridge::rb::value::AsRawValue;
+use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, RString};
 
 /// The shared owned buffer.
@@ -73,8 +74,8 @@ impl GivenEncoding {
     /// The encoding `name` names, or None for a name neither Ruby nor the
     /// Encoding Standard knows. May autoload a Ruby encoding - see
     /// [`Encoding::find`].
-    pub fn resolve(name: &[u8]) -> Option<GivenEncoding> {
-        Encoding::find(name)
+    pub fn resolve(ruby: &Ruby, name: &[u8]) -> Option<GivenEncoding> {
+        Encoding::find(ruby, name)
             .map(GivenEncoding::Ruby)
             .or_else(|| crate::html::encoding::for_label(name).map(GivenEncoding::Label))
     }

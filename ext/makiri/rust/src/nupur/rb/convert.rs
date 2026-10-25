@@ -10,59 +10,60 @@
 #![forbid(unsafe_code)]
 
 use super::error::Error;
+use super::ruby::Ruby;
 use super::value::{ReprValue, Value};
 
 /// A method argument read from its `Value`.
 pub trait TryConvert: Sized {
-    fn try_convert(v: Value) -> Result<Self, Error>;
+    fn try_convert(ruby: &Ruby, v: Value) -> Result<Self, Error>;
 }
 
 impl TryConvert for Value {
     #[inline]
-    fn try_convert(v: Value) -> Result<Value, Error> {
+    fn try_convert(_: &Ruby, v: Value) -> Result<Value, Error> {
         Ok(v)
     }
 }
 
 impl TryConvert for bool {
     #[inline]
-    fn try_convert(v: Value) -> Result<bool, Error> {
+    fn try_convert(_: &Ruby, v: Value) -> Result<bool, Error> {
         Ok(v.to_bool())
     }
 }
 
 /// A method's result, as the `Value` Ruby receives.
 pub trait IntoValue {
-    fn into_value(self) -> Result<Value, Error>;
+    fn into_value(self, ruby: &Ruby) -> Result<Value, Error>;
 }
 
 impl<T: ReprValue> IntoValue for T {
     #[inline]
-    fn into_value(self) -> Result<Value, Error> {
+    fn into_value(self, _: &Ruby) -> Result<Value, Error> {
         Ok(self.as_value())
     }
 }
 
 impl IntoValue for () {
     #[inline]
-    fn into_value(self) -> Result<Value, Error> {
-        Ok(crate::nupur::helpers::nil())
+    fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
+        Ok(crate::nupur::helpers::nil(ruby))
     }
 }
 
 impl IntoValue for bool {
     #[inline]
-    fn into_value(self) -> Result<Value, Error> {
-        Ok(crate::nupur::helpers::boolean(self))
+    fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
+        Ok(crate::nupur::helpers::boolean(ruby, self))
     }
 }
 
 impl<T: IntoValue> IntoValue for Option<T> {
     #[inline]
-    fn into_value(self) -> Result<Value, Error> {
+    fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
         match self {
-            Some(v) => v.into_value(),
-            None => Ok(crate::nupur::helpers::nil()),
+            Some(v) => v.into_value(ruby),
+            None => Ok(crate::nupur::helpers::nil(ruby)),
         }
     }
 }
@@ -71,8 +72,8 @@ macro_rules! signed {
     ($($t:ty),*) => {$(
         impl IntoValue for $t {
             #[inline]
-            fn into_value(self) -> Result<Value, Error> {
-                crate::nupur::build::int(self as i64)
+            fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
+                crate::nupur::build::int(ruby, self as i64)
             }
         }
     )*};
@@ -83,8 +84,8 @@ macro_rules! unsigned {
     ($($t:ty),*) => {$(
         impl IntoValue for $t {
             #[inline]
-            fn into_value(self) -> Result<Value, Error> {
-                crate::nupur::build::uint(self as u64)
+            fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
+                crate::nupur::build::uint(ruby, self as u64)
             }
         }
     )*};
@@ -93,15 +94,15 @@ unsigned!(u32, u64, usize);
 
 impl IntoValue for &'static str {
     #[inline]
-    fn into_value(self) -> Result<Value, Error> {
-        crate::nupur::build::utf8_str(self.as_bytes())
+    fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
+        crate::nupur::build::utf8_str(ruby, self.as_bytes())
     }
 }
 
 impl<A: IntoValue, B: IntoValue> IntoValue for (A, B) {
-    fn into_value(self) -> Result<Value, Error> {
-        let (a, b) = (self.0.into_value()?, self.1.into_value()?);
-        let ary = crate::nupur::build::ary(2)?;
+    fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
+        let (a, b) = (self.0.into_value(ruby)?, self.1.into_value(ruby)?);
+        let ary = crate::nupur::build::ary(ruby, 2)?;
         crate::nupur::build::push(ary, a)?;
         crate::nupur::build::push(ary, b)?;
         Ok(ary.as_value())
@@ -110,19 +111,19 @@ impl<A: IntoValue, B: IntoValue> IntoValue for (A, B) {
 
 /// What a registered function returns: a value, or a `Result` of one.
 pub trait ReturnValue {
-    fn into_return(self) -> Result<Value, Error>;
+    fn into_return(self, ruby: &Ruby) -> Result<Value, Error>;
 }
 
 impl<T: IntoValue> ReturnValue for T {
     #[inline]
-    fn into_return(self) -> Result<Value, Error> {
-        self.into_value()
+    fn into_return(self, ruby: &Ruby) -> Result<Value, Error> {
+        self.into_value(ruby)
     }
 }
 
 impl<T: IntoValue> ReturnValue for Result<T, Error> {
     #[inline]
-    fn into_return(self) -> Result<Value, Error> {
-        self?.into_value()
+    fn into_return(self, ruby: &Ruby) -> Result<Value, Error> {
+        self?.into_value(ruby)
     }
 }

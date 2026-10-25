@@ -43,9 +43,12 @@ pub struct CArgv(*const Value);
 /// the error's own message has been released ([`Error::raise`]).
 #[doc(hidden)]
 #[inline]
-pub fn finish(f: impl FnOnce() -> Result<Value, Error>) -> Value {
+pub fn finish(f: impl FnOnce(&Ruby) -> Result<Value, Error>) -> Value {
     crate::nupur::no_unwind::must_not_unwind::<crate::nupur::no_unwind::Method, _>(|| {
-        let e = match std::panic::catch_unwind(AssertUnwindSafe(f)) {
+        // SAFETY: only a trampoline Ruby calls runs this: its thread, the GVL
+        // held. The one token a method's body sees is this one.
+        let ruby = unsafe { Ruby::get_unchecked() };
+        let e = match std::panic::catch_unwind(AssertUnwindSafe(|| f(&ruby))) {
             Ok(Ok(v)) => return v,
             Ok(Err(e)) => e,
             Err(payload) => {
@@ -59,7 +62,7 @@ pub fn finish(f: impl FnOnce() -> Result<Value, Error>) -> Value {
                 crate::nupur::helpers::internal_error(msg)
             }
         };
-        e.raise()
+        e.raise(&ruby)
     })
 }
 
@@ -70,7 +73,7 @@ pub fn finish(f: impl FnOnce() -> Result<Value, Error>) -> Value {
 pub fn finish_cary(
     argc: c_int,
     argv: CArgv,
-    f: impl FnOnce(&[Value]) -> Result<Value, Error>,
+    f: impl FnOnce(&Ruby, &[Value]) -> Result<Value, Error>,
 ) -> Value {
     let args: &[Value] = if argc <= 0 || argv.0.is_null() {
         &[]
@@ -80,7 +83,7 @@ pub fn finish_cary(
         // `CArgv` exists only as the parameter Ruby filled.
         unsafe { core::slice::from_raw_parts(argv.0, argc as usize) }
     };
-    finish(|| f(args))
+    finish(|ruby| f(ruby, args))
 }
 
 impl Func {
@@ -118,7 +121,7 @@ macro_rules! arity {
 
         #[doc(hidden)]
         pub trait $method<S, $($t,)* R> {
-            fn invoke(self, s: Value $(, $a: Value)*) -> Result<Value, Error>;
+            fn invoke(self, ruby: &Ruby, s: Value $(, $a: Value)*) -> Result<Value, Error>;
         }
 
         impl<F, S, $($t,)* R> $method<S, $($t,)* R> for F
@@ -129,14 +132,14 @@ macro_rules! arity {
             R: ReturnValue,
         {
             #[inline]
-            fn invoke(self, s: Value $(, $a: Value)*) -> Result<Value, Error> {
-                (self)(S::try_convert(s)? $(, $t::try_convert($a)?)*).into_return()
+            fn invoke(self, ruby: &Ruby, s: Value $(, $a: Value)*) -> Result<Value, Error> {
+                (self)(S::try_convert(ruby, s)? $(, $t::try_convert(ruby, $a)?)*).into_return(ruby)
             }
         }
 
         #[doc(hidden)]
         pub trait $ruby_method<S, $($t,)* R> {
-            fn invoke(self, s: Value $(, $a: Value)*) -> Result<Value, Error>;
+            fn invoke(self, ruby: &Ruby, s: Value $(, $a: Value)*) -> Result<Value, Error>;
         }
 
         impl<F, S, $($t,)* R> $ruby_method<S, $($t,)* R> for F
@@ -147,16 +150,14 @@ macro_rules! arity {
             R: ReturnValue,
         {
             #[inline]
-            fn invoke(self, s: Value $(, $a: Value)*) -> Result<Value, Error> {
-                // SAFETY: Ruby is calling this method: its thread, the GVL held.
-                let ruby = unsafe { Ruby::get_unchecked() };
-                (self)(&ruby, S::try_convert(s)? $(, $t::try_convert($a)?)*).into_return()
+            fn invoke(self, ruby: &Ruby, s: Value $(, $a: Value)*) -> Result<Value, Error> {
+                (self)(ruby, S::try_convert(ruby, s)? $(, $t::try_convert(ruby, $a)?)*).into_return(ruby)
             }
         }
 
         #[doc(hidden)]
         pub trait $function<$($t,)* R> {
-            fn invoke(self, s: Value $(, $a: Value)*) -> Result<Value, Error>;
+            fn invoke(self, ruby: &Ruby, s: Value $(, $a: Value)*) -> Result<Value, Error>;
         }
 
         impl<F, $($t,)* R> $function<$($t,)* R> for F
@@ -166,14 +167,14 @@ macro_rules! arity {
             R: ReturnValue,
         {
             #[inline]
-            fn invoke(self, _: Value $(, $a: Value)*) -> Result<Value, Error> {
-                (self)($($t::try_convert($a)?),*).into_return()
+            fn invoke(self, ruby: &Ruby, _: Value $(, $a: Value)*) -> Result<Value, Error> {
+                (self)($($t::try_convert(ruby, $a)?),*).into_return(ruby)
             }
         }
 
         #[doc(hidden)]
         pub trait $ruby_function<$($t,)* R> {
-            fn invoke(self, s: Value $(, $a: Value)*) -> Result<Value, Error>;
+            fn invoke(self, ruby: &Ruby, s: Value $(, $a: Value)*) -> Result<Value, Error>;
         }
 
         impl<F, $($t,)* R> $ruby_function<$($t,)* R> for F
@@ -183,10 +184,8 @@ macro_rules! arity {
             R: ReturnValue,
         {
             #[inline]
-            fn invoke(self, _: Value $(, $a: Value)*) -> Result<Value, Error> {
-                // SAFETY: Ruby is calling this function: its thread, the GVL held.
-                let ruby = unsafe { Ruby::get_unchecked() };
-                (self)(&ruby $(, $t::try_convert($a)?)*).into_return()
+            fn invoke(self, ruby: &Ruby, _: Value $(, $a: Value)*) -> Result<Value, Error> {
+                (self)(ruby $(, $t::try_convert(ruby, $a)?)*).into_return(ruby)
             }
         }
     };
@@ -202,7 +201,7 @@ arity!(4, new4, Method4, RubyMethod4, Function4, RubyFunction4; a0: A0, a1: A1, 
 /// Arity -1, with a receiver: `f(S, &[Value])`.
 #[doc(hidden)]
 pub trait MethodCAry<S, R> {
-    fn invoke(self, s: Value, args: &[Value]) -> Result<Value, Error>;
+    fn invoke(self, ruby: &Ruby, s: Value, args: &[Value]) -> Result<Value, Error>;
 }
 
 impl<F, S, R> MethodCAry<S, R> for F
@@ -212,15 +211,15 @@ where
     R: ReturnValue,
 {
     #[inline]
-    fn invoke(self, s: Value, args: &[Value]) -> Result<Value, Error> {
-        (self)(S::try_convert(s)?, args).into_return()
+    fn invoke(self, ruby: &Ruby, s: Value, args: &[Value]) -> Result<Value, Error> {
+        (self)(S::try_convert(ruby, s)?, args).into_return(ruby)
     }
 }
 
 /// Arity -1, with `&Ruby` and a receiver: `f(&Ruby, S, &[Value])`.
 #[doc(hidden)]
 pub trait RubyMethodCAry<S, R> {
-    fn invoke(self, s: Value, args: &[Value]) -> Result<Value, Error>;
+    fn invoke(self, ruby: &Ruby, s: Value, args: &[Value]) -> Result<Value, Error>;
 }
 
 impl<F, S, R> RubyMethodCAry<S, R> for F
@@ -230,17 +229,15 @@ where
     R: ReturnValue,
 {
     #[inline]
-    fn invoke(self, s: Value, args: &[Value]) -> Result<Value, Error> {
-        // SAFETY: Ruby is calling this method: its thread, the GVL held.
-        let ruby = unsafe { Ruby::get_unchecked() };
-        (self)(&ruby, S::try_convert(s)?, args).into_return()
+    fn invoke(self, ruby: &Ruby, s: Value, args: &[Value]) -> Result<Value, Error> {
+        (self)(ruby, S::try_convert(ruby, s)?, args).into_return(ruby)
     }
 }
 
 /// Arity -1, no receiver: `f(&[Value])`.
 #[doc(hidden)]
 pub trait FunctionCAry<R> {
-    fn invoke(self, s: Value, args: &[Value]) -> Result<Value, Error>;
+    fn invoke(self, ruby: &Ruby, s: Value, args: &[Value]) -> Result<Value, Error>;
 }
 
 impl<F, R> FunctionCAry<R> for F
@@ -249,15 +246,15 @@ where
     R: ReturnValue,
 {
     #[inline]
-    fn invoke(self, _: Value, args: &[Value]) -> Result<Value, Error> {
-        (self)(args).into_return()
+    fn invoke(self, ruby: &Ruby, _: Value, args: &[Value]) -> Result<Value, Error> {
+        (self)(args).into_return(ruby)
     }
 }
 
 /// Arity -1, with `&Ruby` and no receiver: `f(&Ruby, &[Value])`.
 #[doc(hidden)]
 pub trait RubyFunctionCAry<R> {
-    fn invoke(self, s: Value, args: &[Value]) -> Result<Value, Error>;
+    fn invoke(self, ruby: &Ruby, s: Value, args: &[Value]) -> Result<Value, Error>;
 }
 
 impl<F, R> RubyFunctionCAry<R> for F
@@ -266,10 +263,8 @@ where
     R: ReturnValue,
 {
     #[inline]
-    fn invoke(self, _: Value, args: &[Value]) -> Result<Value, Error> {
-        // SAFETY: Ruby is calling this function: its thread, the GVL held.
-        let ruby = unsafe { Ruby::get_unchecked() };
-        (self)(&ruby, args).into_return()
+    fn invoke(self, ruby: &Ruby, _: Value, args: &[Value]) -> Result<Value, Error> {
+        (self)(ruby, args).into_return(ruby)
     }
 }
 
@@ -285,7 +280,7 @@ macro_rules! method {
         ) -> $crate::nupur::rb::Value {
             #[allow(unused_imports)]
             use $crate::nupur::rb::method::{MethodCAry as _, RubyMethodCAry as _};
-            $crate::nupur::rb::method::finish_cary(argc, argv, |args| $f.invoke(rb_self, args))
+            $crate::nupur::rb::method::finish_cary(argc, argv, |ruby, args| $f.invoke(ruby, rb_self, args))
         }
         $crate::nupur::rb::method::Func::cary(anon)
     }};
@@ -308,7 +303,7 @@ macro_rules! function {
         ) -> $crate::nupur::rb::Value {
             #[allow(unused_imports)]
             use $crate::nupur::rb::method::{FunctionCAry as _, RubyFunctionCAry as _};
-            $crate::nupur::rb::method::finish_cary(argc, argv, |args| $f.invoke(rb_self, args))
+            $crate::nupur::rb::method::finish_cary(argc, argv, |ruby, args| $f.invoke(ruby, rb_self, args))
         }
         $crate::nupur::rb::method::Func::cary(anon)
     }};
@@ -329,7 +324,7 @@ macro_rules! __trampoline {
         ) -> $crate::nupur::rb::Value {
             #[allow(unused_imports)]
             use $crate::nupur::rb::method::{$plain as _, $ruby as _};
-            $crate::nupur::rb::method::finish(|| $f.invoke(rb_self $(, $a)*))
+            $crate::nupur::rb::method::finish(|ruby| $f.invoke(ruby, rb_self $(, $a)*))
         }
         $crate::nupur::rb::method::Func::$new(anon)
     }};
@@ -356,6 +351,7 @@ pub fn run_init(init: fn(&Ruby) -> Result<(), Error>) {
                     });
                 crate::nupur::caught::quietly((), || drop(payload));
                 match crate::nupur::raw::exception_new(
+                    &ruby,
                     ruby.exception_runtime_error(),
                     msg.as_bytes(),
                 ) {
@@ -364,6 +360,6 @@ pub fn run_init(init: fn(&Ruby) -> Result<(), Error>) {
                 }
             }
         };
-        e.raise()
+        e.raise(&ruby)
     })
 }

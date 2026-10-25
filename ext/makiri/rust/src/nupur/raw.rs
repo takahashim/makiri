@@ -179,8 +179,8 @@ pub fn exc_raise(exc: Value) -> ! {
 
 /// An exception of `class` with the UTF-8 message `msg`: `rb_exc_new_str`,
 /// which allocates and runs the class's `initialize`, and so raises.
-pub fn exception_new(class: ExceptionClass, msg: &[u8]) -> Result<Value, Error> {
-    let s = utf8_str_new(&Ruby::get_with(class), msg)?.as_raw();
+pub fn exception_new(ruby: &Ruby, class: ExceptionClass, msg: &[u8]) -> Result<Value, Error> {
+    let s = utf8_str_new(ruby, msg)?.as_raw();
     let class = class.as_raw();
     let exc = call(|| unsafe {
         injected_raise();
@@ -284,8 +284,8 @@ pub fn range_values(r: Range) -> Result<(Value, Value, bool), Error> {
 /// The constant `name` of `outer` (`rb_const_get`): raises `NameError` for
 /// none, and an autoload runs Ruby code - used only for a class Makiri's own
 /// Ruby defines.
-pub fn const_get(outer: Value, name: &core::ffi::CStr) -> Result<Value, Error> {
-    let id = intern_cstr(&Ruby::get_with(outer), name)?;
+pub fn const_get(ruby: &Ruby, outer: Value, name: &core::ffi::CStr) -> Result<Value, Error> {
+    let id = intern_cstr(ruby, name)?;
     let outer = outer.as_raw();
     let v = call(|| unsafe { rb_sys::rb_const_get(outer, id) })?;
     // SAFETY: the constant's value, live while it is bound.
@@ -304,8 +304,13 @@ pub fn const_get(outer: Value, name: &core::ffi::CStr) -> Result<Value, Error> {
         reason = "the one call of a method: XML::Namespace.new, Makiri's own Data class"
     )
 )]
-pub fn call_method(recv: Value, name: &core::ffi::CStr, args: &[Value]) -> Result<Value, Error> {
-    let id = intern_cstr(&Ruby::get_with(recv), name)?;
+pub fn call_method(
+    ruby: &Ruby,
+    recv: Value,
+    name: &core::ffi::CStr,
+    args: &[Value],
+) -> Result<Value, Error> {
+    let id = intern_cstr(ruby, name)?;
     let argc = c_int::try_from(args.len())
         .map_err(|_| crate::nupur::helpers::arg_error("too many arguments"))?;
     let recv = recv.as_raw();
@@ -378,8 +383,8 @@ pub fn define_module(name: &core::ffi::CStr) -> Result<Value, Error> {
 }
 
 /// `rb_const_set`: raises `FrozenError` on a frozen namespace.
-pub fn const_set(outer: Value, name: &core::ffi::CStr, v: Value) -> Result<(), Error> {
-    let id = intern_cstr(&Ruby::get_with(outer), name)?;
+pub fn const_set(ruby: &Ruby, outer: Value, name: &core::ffi::CStr, v: Value) -> Result<(), Error> {
+    let id = intern_cstr(ruby, name)?;
     let (outer, v) = (outer.as_raw(), v.as_raw());
     call(|| unsafe { rb_sys::rb_const_set(outer, id, v) })
 }
@@ -715,9 +720,8 @@ pub fn str_encode(s: RString, enc: Encoding, flags: c_int) -> Result<RString, Er
 /// an unknown name. Any other value is a `TypeError` here, before the call,
 /// which would convert it with its `to_str`.
 #[inline]
-pub fn to_encoding(v: Value) -> Result<Encoding, Error> {
+pub fn to_encoding(ruby: &Ruby, v: Value) -> Result<Encoding, Error> {
     use crate::nupur::rb::ReprValue;
-    let ruby = crate::nupur::helpers::gvl_ruby();
     if !v.is_kind_of(ruby.class_encoding()) && RString::from_value(v).is_none() {
         return Err(crate::nupur::helpers::type_error(
             "an Encoding or a String was expected",

@@ -68,7 +68,6 @@ xml and xmlns take only their own)";
 /// `what` name"), `Makiri::Error` for a namespace. Returns (prefix, local
 /// name), the prefix empty when there is none.
 pub fn dom_extract<'q>(
-    ruby: &Ruby,
     ns: &[u8],
     qname: &'q [u8],
     local_ok: fn(&[u8]) -> bool,
@@ -76,7 +75,7 @@ pub fn dom_extract<'q>(
 ) -> Result<(&'q [u8], &'q [u8]), Error> {
     dom_name::validate_and_extract(ns, qname, local_ok).map_err(|e| match e {
         dom_name::ExtractError::Name => Error::new(
-            ruby.exception_arg_error(),
+            crate::bridge::rb::Builtin::ArgumentError,
             format_args!("invalid {what} name"),
         ),
         dom_name::ExtractError::Namespace => makiri_error(NS_MISFIT),
@@ -86,11 +85,15 @@ pub fn dom_extract<'q>(
 /// Node identity: equal iff both wrappers name the same node of the same
 /// Document, so an HTML node is never equal to an XML one, nor a node to one
 /// of another document that happens to share its word (see [`node_key`]).
-pub fn node_equals(rb_self: Value, other: Value) -> Result<bool, crate::bridge::rb::Error> {
-    if !crate::bridge::ruby::is_kind_of(other, &CLASS_NODE) {
+pub fn node_equals(
+    ruby: &Ruby,
+    rb_self: Value,
+    other: Value,
+) -> Result<bool, crate::bridge::rb::Error> {
+    if !crate::bridge::ruby::is_kind_of(ruby, other, &CLASS_NODE) {
         return Ok(false);
     }
-    Ok(node_key(rb_self)? == node_key(other)?)
+    Ok(node_key(ruby, rb_self)? == node_key(ruby, other)?)
 }
 
 /// Nokogiri-compatible identity: the underlying node pointer as an Integer.
@@ -98,8 +101,8 @@ pub fn node_equals(rb_self: Value, other: Value) -> Result<bool, crate::bridge::
 /// freed-then-reallocated node may reuse an address (the same caveat as
 /// `Nokogiri::XML::Node#pointer_id`). `a.pointer_id == b.pointer_id` iff
 /// `a.eql?(b)`.
-pub fn node_pointer_id(_ruby: &Ruby, rb_self: Value) -> Result<Value, crate::bridge::rb::Error> {
-    crate::bridge::build::uint(node_identity(rb_self)? as u64)
+pub fn node_pointer_id(ruby: &Ruby, rb_self: Value) -> Result<Value, crate::bridge::rb::Error> {
+    crate::bridge::build::uint(ruby, node_identity(ruby, rb_self)? as u64)
 }
 
 /// A stable hash from the node word, so `a == b` implies `a.hash == b.hash`
@@ -112,9 +115,9 @@ pub fn node_hash(ruby: &Ruby, rb_self: Value) -> Result<Value, crate::bridge::rb
 /// A `child_at` / `element_child_at` index argument: None (so nil) for a
 /// negative one, or one too large for any list. Not an Integer is a
 /// `TypeError` (`bridge::ruby::integer_arg`): no `to_int` is called.
-fn child_index_arg(i: Value) -> Result<Option<usize>, crate::bridge::rb::Error> {
+fn child_index_arg(ruby: &Ruby, i: Value) -> Result<Option<usize>, crate::bridge::rb::Error> {
     let i = crate::bridge::ruby::integer_arg(i)?;
-    i.to_usize_within()
+    i.to_usize_within(ruby)
 }
 
 /// `#child_count` (DOM `childNodes.length`): every child node, counted
@@ -131,11 +134,12 @@ pub fn element_child_count<S: ChildListHost>(this: S) -> Result<usize, crate::br
 /// `#child_at(i)` (DOM `childNodes[i]`): the child node at `i`, or nil when
 /// `i` is negative or past the end.
 pub fn child_at<S: ChildListHost>(
+    ruby: &Ruby,
     this: S,
     i: Value,
 ) -> Result<Option<Value>, crate::bridge::rb::Error> {
-    match child_index_arg(i)? {
-        Some(i) => this.child_at(ChildList::Nodes, i),
+    match child_index_arg(ruby, i)? {
+        Some(i) => this.child_at(ruby, ChildList::Nodes, i),
         None => Ok(None),
     }
 }
@@ -143,11 +147,12 @@ pub fn child_at<S: ChildListHost>(
 /// `#element_child_at(i)` (DOM `children[i]`): the child element at `i`, or
 /// nil.
 pub fn element_child_at<S: ChildListHost>(
+    ruby: &Ruby,
     this: S,
     i: Value,
 ) -> Result<Option<Value>, crate::bridge::rb::Error> {
-    match child_index_arg(i)? {
-        Some(i) => this.child_at(ChildList::Elements, i),
+    match child_index_arg(ruby, i)? {
+        Some(i) => this.child_at(ruby, ChildList::Elements, i),
         None => Ok(None),
     }
 }

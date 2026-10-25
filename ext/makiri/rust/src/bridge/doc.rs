@@ -72,6 +72,7 @@ pub fn tree_depth_error(limit: ParseLimits) -> Error {
 /// before calling this. Source locations for `Node#line` are always tracked.
 /// A tree deeper than `limit` fails the parse (see `html_dom::tree_guard`).
 pub fn parse_document(
+    ruby: &Ruby,
     source: Value,
     limit: ParseLimits,
     given: Option<crate::bridge::string::GivenEncoding>,
@@ -81,7 +82,7 @@ pub fn parse_document(
      * frees cleanly through GC - and first, before this frame owns the
      * source's copy: the wrapper's allocation can raise. This entry is
      * defined on Makiri::HTML::Document, so the result is always HTML. */
-    let shell = DocumentShell::new(DocKind::Html)?;
+    let shell = DocumentShell::new(ruby, DocKind::Html)?;
     /* The bytes as they are, with the transport layer's encoding: `given`,
      * else the String's own (none for binary, which is sniffed). The copy is
      * what the parse reads with the GVL released, so nothing here borrows
@@ -91,8 +92,9 @@ pub fn parse_document(
     /* The body - sniffing, decoding and parsing - runs on this thread with
      * the GVL released, so the parsed handle comes back as it is. */
     let input = src.input();
-    let result =
-        crate::bridge::gvl::without_gvl(|| crate::html::tree::parse_document_bytes(input, limit))?;
+    let result = crate::bridge::gvl::without_gvl(ruby, || {
+        crate::html::tree::parse_document_bytes(input, limit)
+    })?;
     drop(src);
 
     let parsed = result.map_err(|e| match e {
@@ -107,9 +109,13 @@ pub fn parse_document(
 /// An empty HTML document - no children - in `compat_mode` (Lexbor's
 /// numbering) and `encoding`: `Makiri::HTML::Document.new` (no-quirks,
 /// UTF-8) and the copy `Document#dup` fills.
-pub fn new_empty_document(compat_mode: u32, encoding: &'static str) -> Result<Value, Error> {
+pub fn new_empty_document(
+    ruby: &Ruby,
+    compat_mode: u32,
+    encoding: &'static str,
+) -> Result<Value, Error> {
     /* The wrapper first, while nothing needs freeing - see DocumentShell. */
-    let shell = DocumentShell::new(DocKind::Html)?;
+    let shell = DocumentShell::new(ruby, DocKind::Html)?;
     let mut parsed = empty_html_document(compat_mode)
         .map_err(|_| makiri_error("failed to create HTML document"))?;
     parsed.set_encoding(encoding);
@@ -130,23 +136,24 @@ pub fn new_empty_document(compat_mode: u32, encoding: &'static str) -> Result<Va
         reason = "the root element, wrapped once the read is over"
     )
 )]
-pub fn document_root(rb_doc: Value) -> Result<Option<Value>, Error> {
+pub fn document_root(ruby: &Ruby, rb_doc: Value) -> Result<Option<Value>, Error> {
     let root = {
         let read = html_read(&rb_doc)?;
         read.doc().as_node().document_root().map(RawNode::from)
     };
-    root.map(|root| wrap_html_node(root, rb_doc)).transpose()
+    root.map(|root| wrap_html_node(ruby, root, rb_doc))
+        .transpose()
 }
 
 /// `Document#title`: the document `<title>`, or `""`.
 ///
 /// Protected: a collapsed title is this frame's own copy, which the String's
 /// allocation raising past the frame would leak.
-pub fn document_title(rb_doc: Value) -> Result<RString, Error> {
+pub fn document_title(ruby: &Ruby, rb_doc: Value) -> Result<RString, Error> {
     let read = html_read(&rb_doc)?;
     let title = read.doc().title();
     let bytes = title.as_deref().unwrap_or(&[]);
-    crate::bridge::string::utf8_rstring(bytes)
+    crate::bridge::string::utf8_rstring(ruby, bytes)
 }
 
 /// `Document#encoding`: the character encoding the document was read in, by
@@ -157,9 +164,9 @@ pub fn document_encoding(rb_doc: Value) -> Result<&'static str, Error> {
 
 /// `Document#quirks_mode`, as an Integer matching Lexbor (and Gumbo/Nokogiri):
 /// 0 no-quirks, 1 quirks, 2 limited-quirks. Set by the parser from the doctype.
-pub fn document_quirks_mode(_ruby: &Ruby, rb_doc: Value) -> Result<Value, Error> {
+pub fn document_quirks_mode(ruby: &Ruby, rb_doc: Value) -> Result<Value, Error> {
     let mode = html_read(&rb_doc)?.doc().compat_mode();
-    crate::bridge::build::int(mode)
+    crate::bridge::build::int(ruby, mode)
 }
 
 /// `Document#errors`: the (currently always empty) parse-warning Array.
@@ -178,25 +185,25 @@ pub fn document_errors(rb_doc: Value) -> Value {
 /// Unlike `Node#clone_node` the copy belongs to the receiver, so this is the way
 /// to bring a node across documents (Makiri never moves one between arenas). The
 /// source is untouched and the copy is detached.
-pub fn import_node(rb_self: Value, node_v: Value, deep: bool) -> Result<Value, Error> {
+pub fn import_node(ruby: &Ruby, rb_self: Value, node_v: Value, deep: bool) -> Result<Value, Error> {
     crate::bridge::html::check_owning_doc(&rb_self)?;
 
     /* An XML node is TRANSLATED across representations (mkr -> lxb) into a
      * detached lxb subtree owned by this document. */
     if node_repr(node_v) == NodeRepr::Xml {
-        let xml_doc = xml_node_document(node_v)?;
-        let src = xml_node_unwrap(node_v)?;
+        let xml_doc = xml_node_document(ruby, node_v)?;
+        let src = xml_node_unwrap(ruby, node_v)?;
         let imp = {
             let xdoc = xml_read(&xml_doc)?;
             new_node(&rb_self, |d| d.import_xml(&xdoc, src, deep))?
         };
-        return wrap_html_node(xml_mut_result(imp)?, rb_self);
+        return wrap_html_node(ruby, xml_mut_result(imp)?, rb_self);
     }
 
     /* Err on a non-node. A node of THIS document is copied by reference -
      * the edit holds the document, and reads it through its own borrow; one
      * of another document is read through that document's. */
-    let (key, src_doc) = html_node_key(node_v)?;
+    let (key, src_doc) = html_node_key(ruby, node_v)?;
     /* The DOM's importNode refuses a document (NotSupportedError), as
      * `clone_node` does here. */
     if crate::bridge::ruby::same_value(node_v, src_doc) {
@@ -213,7 +220,7 @@ pub fn import_node(rb_self: Value, node_v: Value, deep: bool) -> Result<Value, E
         })??
     };
     let imp = imp.map_err(|_| makiri_error("failed to import node"))?;
-    wrap_html_node(imp, rb_self)
+    wrap_html_node(ruby, imp, rb_self)
 }
 
 /// `Node#clone_node(deep = false)`: a copy owned by the same document and
@@ -222,8 +229,8 @@ pub fn import_node(rb_self: Value, node_v: Value, deep: bool) -> Result<Value, E
 /// Built on the same import + `<template>`-content fixup as the fragment parser,
 /// so a deep-cloned `<template>` carries its contents (which `import_node` alone
 /// omits). Fails closed: a null import is an error rather than a partial node.
-pub fn clone_node(rb_self: Value, deep: bool) -> Result<Value, Error> {
-    let (key, document) = html_node_key(rb_self)?;
+pub fn clone_node(ruby: &Ruby, rb_self: Value, deep: bool) -> Result<Value, Error> {
+    let (key, document) = html_node_key(ruby, rb_self)?;
     /* A Document's copy would wrap back to the receiver itself - the original
      * handed out as a copy. `HTML::Document#dup` is the document copy. */
     if crate::bridge::ruby::same_value(rb_self, document) {
@@ -232,5 +239,5 @@ pub fn clone_node(rb_self: Value, deep: bool) -> Result<Value, Error> {
     let raw = crate::bridge::html::node_ref(document, key)?;
     let clone = new_node(&document, |d| d.copy(raw, deep))?
         .map_err(|_| makiri_error("failed to clone node"))?;
-    wrap_html_node(clone, document)
+    wrap_html_node(ruby, clone, document)
 }

@@ -17,6 +17,7 @@
 #![forbid(unsafe_code)]
 
 use crate::bridge::rb::value::AsRawValue;
+use crate::bridge::rb::Ruby;
 
 use crate::bridge::rb::{prelude::*, Error, Value};
 use crate::bridge::ruby::makiri_error;
@@ -66,14 +67,15 @@ static XML_NODE_CLASSES: NodeClasses = NodeClasses {
 /// second wrapper, so the arena has exactly one owner. The id resolves through
 /// `document`'s arena; a caller with no node holds an `Option` and maps `None`
 /// to nil itself.
-pub fn wrap_xml_node(id: NodeId, document: Value) -> Result<Value, Error> {
+pub fn wrap_xml_node(ruby: &Ruby, id: NodeId, document: Value) -> Result<Value, Error> {
     let ty = xml_read(&document)?.type_(id);
-    wrap_xml_node_of_type(id, ty, document)
+    wrap_xml_node_of_type(ruby, id, ty, document)
 }
 
 /// [`wrap_xml_node`] for a node that must be one of `document`'s: an
 /// `InternalError` when the arena has no node by that id.
 pub(in crate::bridge) fn wrap_xml_node_checked(
+    ruby: &Ruby,
     id: NodeId,
     document: Value,
 ) -> Result<Value, Error> {
@@ -83,12 +85,13 @@ pub(in crate::bridge) fn wrap_xml_node_checked(
             "a stored node of another document",
         ));
     }
-    wrap_xml_node_of_type(id, ty, document)
+    wrap_xml_node_of_type(ruby, id, ty, document)
 }
 
 /// [`wrap_xml_node`] for a caller that read the node's type already, in the
 /// read it found the node in - one read the fewer.
 fn wrap_xml_node_of_type(
+    ruby: &Ruby,
     id: NodeId,
     ty: Option<ArenaKind>,
     document: Value,
@@ -96,9 +99,9 @@ fn wrap_xml_node_of_type(
     if ty == Some(ArenaKind::Document) {
         return Ok(document);
     }
-    let klass = XML_NODE_CLASSES.class_for(ty.map_or(CrateKind::Other, Into::into))?;
+    let klass = XML_NODE_CLASSES.class_for(ruby, ty.map_or(CrateKind::Other, Into::into))?;
 
-    crate::bridge::wrapper::wrap_cached(&XML_NODE_TYPE, klass, id, document)
+    crate::bridge::wrapper::wrap_cached(ruby, &XML_NODE_TYPE, klass, id, document)
 }
 
 impl crate::bridge::wrapper::NodeHandleSource for NodeId {
@@ -140,10 +143,10 @@ impl ChildListHost for XmlSelf {
             list,
         }))
     }
-    fn wrap_child(&self, token: Option<usize>) -> Result<Option<Value>, Error> {
+    fn wrap_child(&self, ruby: &Ruby, token: Option<usize>) -> Result<Option<Value>, Error> {
         token
             .and_then(NodeId::from_token)
-            .map(|id| wrap_xml_node(id, self.document))
+            .map(|id| wrap_xml_node(ruby, id, self.document))
             .transpose()
     }
 }
@@ -152,8 +155,8 @@ impl ChildListHost for XmlSelf {
 ///
 /// An XML Document resolves to its arena's DOCUMENT node. Anything else goes
 /// through the XML TypedData type, which fails with TypeError for an HTML node.
-pub fn xml_node_unwrap(rb_self: Value) -> Result<NodeId, Error> {
-    if crate::bridge::ruby::is_kind_of(rb_self, &CLASS_XML_DOCUMENT) {
+pub fn xml_node_unwrap(ruby: &Ruby, rb_self: Value) -> Result<NodeId, Error> {
+    if crate::bridge::ruby::is_kind_of(ruby, rb_self, &CLASS_XML_DOCUMENT) {
         XML_DOC_TYPE.get(&rb_self)?; /* TypeError for any other Document */
         return Ok(xml_read(&rb_self)?.doc_node());
     }
@@ -163,7 +166,7 @@ pub fn xml_node_unwrap(rb_self: Value) -> Result<NodeId, Error> {
      * trampoline would also make one) - `XmlSelf::try_convert` reads it. */
     nd.node.xml().ok_or_else(|| {
         Error::new(
-            crate::init::EXC_INTERNAL_ERROR.exception(),
+            &crate::init::EXC_INTERNAL_ERROR,
             "an XML node wrapper without its node",
         )
     })
@@ -176,8 +179,8 @@ pub fn xml_doc_check(rb_doc: Value) -> Result<(), Error> {
 
 /// The keepalive Document of an XML node. XML-strict: it rejects an HTML node
 /// at the type boundary, like [`xml_node_unwrap`].
-pub fn xml_node_document(rb_self: Value) -> Result<Value, Error> {
-    if crate::bridge::ruby::is_kind_of(rb_self, &CLASS_XML_DOCUMENT) {
+pub fn xml_node_document(ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
+    if crate::bridge::ruby::is_kind_of(ruby, rb_self, &CLASS_XML_DOCUMENT) {
         return Ok(rb_self);
     }
     Ok(XML_NODE_TYPE.read(rb_self)?.document)
@@ -198,9 +201,9 @@ pub struct XmlSelf {
 }
 
 impl crate::bridge::rb::TryConvert for XmlSelf {
-    fn try_convert(value: Value) -> Result<Self, Error> {
-        let id = xml_node_unwrap(value)?;
-        let document = xml_node_document(value)?;
+    fn try_convert(ruby: &Ruby, value: Value) -> Result<Self, Error> {
+        let id = xml_node_unwrap(ruby, value)?;
+        let document = xml_node_document(ruby, value)?;
         Ok(XmlSelf {
             value,
             id,
@@ -246,22 +249,27 @@ impl XmlView<'_> {
     /// over, since wrapping allocates.
     pub fn wrap(
         self,
+        ruby: &Ruby,
         f: impl FnOnce(&XmlDoc, NodeId) -> Option<NodeId>,
     ) -> Result<Option<Value>, Error> {
         let found = f(&self, self.id).map(|n| (n, self.type_(n)));
         let document = self.document;
         drop(self);
         found
-            .map(|(n, ty)| wrap_xml_node_of_type(n, ty, document))
+            .map(|(n, ty)| wrap_xml_node_of_type(ruby, n, ty, document))
             .transpose()
     }
 
     /// The nodes `f` lists from the receiver's, as a NodeSet built with the
     /// read held ([`node_set_from_read`](crate::bridge::node_set::node_set_from_read)).
     /// `f` hands each node to the sink it is given.
-    pub fn set(self, f: impl Fn(&XmlDoc, NodeId, &mut dyn FnMut(NodeId))) -> Result<Value, Error> {
+    pub fn set(
+        self,
+        ruby: &Ruby,
+        f: impl Fn(&XmlDoc, NodeId, &mut dyn FnMut(NodeId)),
+    ) -> Result<Value, Error> {
         let document = self.document;
-        crate::bridge::node_set::node_set_from_read(self, document, |view, out| {
+        crate::bridge::node_set::node_set_from_read(ruby, self, document, |view, out| {
             f(view, view.id, &mut |n| out(n.into()));
         })
     }
@@ -327,7 +335,7 @@ xml and xmlns take only their own)"
          * exception a parse raises for the same cause. */
         MutError::Limit => {
             return Error::new(
-                EXC_XML_LIMIT_EXCEEDED.exception(),
+                &EXC_XML_LIMIT_EXCEEDED,
                 "XML document exceeded its byte or node budget",
             )
         }
@@ -523,8 +531,8 @@ pub fn begin_edit(this: &mut XmlSelf) -> Result<Editing<'_>, Error> {
 
 /// A String argument verified as an engine string - valid UTF-8, no NUL - and
 /// short enough for an arena span (4 GiB).
-pub fn verified_text(v: Value, what: &str) -> Result<RubyText, Error> {
-    fits_xml_node(ruby_verified_text(v, what)?)
+pub fn verified_text(ruby: &Ruby, v: Value, what: &str) -> Result<RubyText, Error> {
+    fits_xml_node(ruby_verified_text(ruby, v, what)?)
 }
 
 /// `t`, unless it is too long for an XML node's `u32` span.
@@ -538,8 +546,8 @@ fn fits_xml_node<T: core::ops::Deref<Target = str>>(t: T) -> Result<T, Error> {
 /// [`verified_text`] for a name given to a factory or a setter: a NUL raises
 /// `ArgumentError`, as any other refused name does
 /// ([`crate::bridge::string::ruby_verified_name`]).
-pub fn verified_name(v: Value, what: &str) -> Result<RubyText, Error> {
-    fits_xml_node(crate::bridge::string::ruby_verified_name(v, what)?)
+pub fn verified_name(ruby: &Ruby, v: Value, what: &str) -> Result<RubyText, Error> {
+    fits_xml_node(crate::bridge::string::ruby_verified_name(ruby, v, what)?)
 }
 
 /// [`verified_text`] for DATA - text, comment, CDATA and PI content, an
@@ -547,36 +555,41 @@ pub fn verified_name(v: Value, what: &str) -> Result<RubyText, Error> {
 /// ([`crate::bridge::string::ruby_verified_data`], what HTML's data takes).
 /// XML cannot write U+0000, so the serializers refuse a tree holding one, as
 /// they refuse any character XML has no `Char` for.
-pub fn verified_data(v: Value, what: &str) -> Result<crate::bridge::string::RubyData, Error> {
-    fits_xml_node(crate::bridge::string::ruby_verified_data(v, what)?)
+pub fn verified_data(
+    ruby: &Ruby,
+    v: Value,
+    what: &str,
+) -> Result<crate::bridge::string::RubyData, Error> {
+    fits_xml_node(crate::bridge::string::ruby_verified_data(ruby, v, what)?)
 }
 
 /// [`verified_data`] for an optional argument: `nil` is `None`.
 pub fn verified_data_opt(
+    ruby: &Ruby,
     v: Value,
     what: &str,
 ) -> Result<Option<crate::bridge::string::RubyData>, Error> {
     if v.is_nil() {
         return Ok(None);
     }
-    verified_data(v, what).map(Some)
+    verified_data(ruby, v, what).map(Some)
 }
 
 /// [`verified_name`] for an optional argument: `nil` is `None`.
-pub fn verified_name_opt(v: Value, what: &str) -> Result<Option<RubyText>, Error> {
+pub fn verified_name_opt(ruby: &Ruby, v: Value, what: &str) -> Result<Option<RubyText>, Error> {
     if v.is_nil() {
         return Ok(None);
     }
-    verified_name(v, what).map(Some)
+    verified_name(ruby, v, what).map(Some)
 }
 
 /// [`verified_text`] for an optional argument: `nil` is `None` - the same
 /// shape as `bridge::string::ruby_verified_text_opt`.
-pub fn verified_text_opt(v: Value, what: &str) -> Result<Option<RubyText>, Error> {
+pub fn verified_text_opt(ruby: &Ruby, v: Value, what: &str) -> Result<Option<RubyText>, Error> {
     if v.is_nil() {
         return Ok(None);
     }
-    verified_text(v, what).map(Some)
+    verified_text(ruby, v, what).map(Some)
 }
 
 /* ------------------------------------------------------------------ */
@@ -586,10 +599,10 @@ pub fn verified_text_opt(v: Value, what: &str) -> Result<Option<RubyText>, Error
 /// A `Makiri::XML::SyntaxError`-family error for a parse status.
 fn parse_status_error(status: ParseError, unit: Unit) -> Error {
     match status {
-        ParseError::Syntax => Error::new(EXC_XML_SYNTAX_ERROR.exception(), unit.malformed()),
-        ParseError::Limit => Error::new(EXC_XML_LIMIT_EXCEEDED.exception(), unit.budget()),
+        ParseError::Syntax => Error::new(&EXC_XML_SYNTAX_ERROR, unit.malformed()),
+        ParseError::Limit => Error::new(&EXC_XML_LIMIT_EXCEEDED, unit.budget()),
         ParseError::Unsupported => Error::new(
-            EXC_XML_SYNTAX_ERROR.exception(),
+            &EXC_XML_SYNTAX_ERROR,
             "unsupported DTD construct: Makiri does not apply attribute defaults or \
              non-CDATA attribute types, expand parameter entities, or expand entities \
              a DTD declares",
@@ -637,19 +650,19 @@ impl Unit {
 /// byte or a NUL all raise), then copies into a private buffer BEFORE the
 /// wrapper exists, so no GC point can run between obtaining the decoded String
 /// and copying it.
-pub fn parse_xml_document(source: Value, limits: ParseLimits) -> Result<Value, Error> {
+pub fn parse_xml_document(ruby: &Ruby, source: Value, limits: ParseLimits) -> Result<Value, Error> {
     let source = crate::bridge::ruby::string_arg(source)?;
-    let decoded = xml_decode_input_value(source, Some(limits.budget()))?;
+    let decoded = xml_decode_input_value(ruby, source, Some(limits.budget()))?;
     /* The wrapper first, while nothing needs freeing (see DocumentShell): its
      * allocation can raise, and the copy below is this frame's to free. The
      * decoded String is a local, so the stack scan keeps it across it. */
-    let shell = DocumentShell::new(DocKind::Xml)?;
+    let shell = DocumentShell::new(ruby, DocKind::Xml)?;
     let src = crate::bridge::string::ruby_string_bytes(decoded)?;
 
     /* Ruby-free from here: only the copied bytes and the limits cross. */
     let bytes = src.as_slice();
     let result =
-        crate::bridge::gvl::without_gvl(|| crate::xml::tree::parse_ex(bytes, Some(&limits)))?;
+        crate::bridge::gvl::without_gvl(ruby, || crate::xml::tree::parse_ex(bytes, Some(&limits)))?;
     drop(src);
 
     let arena = result.map_err(|status| parse_status_error(status, Unit::Document))?;
@@ -659,30 +672,30 @@ pub fn parse_xml_document(source: Value, limits: ParseLimits) -> Result<Value, E
 }
 
 /// `Document#root` for an XML document: the root element, or nil.
-pub fn document_root(rb_self: Value) -> Result<Option<Value>, Error> {
+pub fn document_root(ruby: &Ruby, rb_self: Value) -> Result<Option<Value>, Error> {
     let root = xml_read(&rb_self)?.root();
-    root.map(|n| wrap_xml_node(n, rb_self)).transpose()
+    root.map(|n| wrap_xml_node(ruby, n, rb_self)).transpose()
 }
 
 /// `Document#internal_subset` for an XML document: the DOCTYPE node, or nil.
-pub fn document_internal_subset(rb_self: Value) -> Result<Option<Value>, Error> {
+pub fn document_internal_subset(ruby: &Ruby, rb_self: Value) -> Result<Option<Value>, Error> {
     let doctype = xml_read(&rb_self)?.doctype();
-    doctype.map(|n| wrap_xml_node(n, rb_self)).transpose()
+    doctype.map(|n| wrap_xml_node(ruby, n, rb_self)).transpose()
 }
 
 /// `Document#_copy`: a whole-document copy of `document`, node for node
 /// (`mutate::copy_document`, where what it keeps is stated).
-pub fn copy_xml_document(document: Value) -> Result<Value, Error> {
+pub fn copy_xml_document(ruby: &Ruby, document: Value) -> Result<Value, Error> {
     /* The wrapper first, while nothing needs freeing - see DocumentShell. The
      * copy then reads `document` and runs no Ruby. */
-    let shell = DocumentShell::new(DocKind::Xml)?;
+    let shell = DocumentShell::new(ruby, DocKind::Xml)?;
     let arena = crate::xml::mutate::copy_document(&*xml_read(&document)?).map_err(xml_mut_error)?;
     Ok(shell.install_xml(arena))
 }
 
 /// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.
-pub fn new_empty_xml_document() -> Result<Value, Error> {
-    let shell = DocumentShell::new(DocKind::Xml)?;
+pub fn new_empty_xml_document(ruby: &Ruby) -> Result<Value, Error> {
+    let shell = DocumentShell::new(ruby, DocKind::Xml)?;
     let arena =
         XmlDoc::create(None).map_err(|_| makiri_error("out of memory allocating XML document"))?;
     Ok(shell.install_xml(arena))
@@ -694,13 +707,14 @@ pub fn new_empty_xml_document() -> Result<Value, Error> {
 /// This runs UNDER the GVL on purpose: a fragment is small, and an existing
 /// document's arena must never be mutated with the GVL released.
 pub fn fragment_into(
+    ruby: &Ruby,
     document: Value,
     source: Value,
     inherit_doc_ns: bool,
 ) -> Result<NodeId, Error> {
     let max_bytes = xml_read(&document)?.max_bytes();
     let source = crate::bridge::ruby::string_arg(source)?;
-    let decoded = xml_decode_input_value(source, Some(max_bytes))?;
+    let decoded = xml_decode_input_value(ruby, source, Some(max_bytes))?;
     let src = crate::bridge::string::ruby_string_bytes(decoded)?;
     let mut xdoc = arena_mut(&document)?;
     tree::parse_fragment(&mut xdoc, src.as_slice(), inherit_doc_ns)
@@ -717,12 +731,12 @@ pub fn fragment_into(
 /// `None` for a non-element (the name is then not even verified, matching the
 /// readers' nil-returning behaviour). The name is converted BEFORE the arena is
 /// borrowed: a Symbol's name or a transcode is a Ruby allocation.
-pub fn find_attribute(this: XmlSelf, name: Value) -> Result<Option<NodeId>, Error> {
+pub fn find_attribute(ruby: &Ruby, this: XmlSelf, name: Value) -> Result<Option<NodeId>, Error> {
     let id = this.id;
     if this.read()?.type_(id) != Some(ArenaKind::Element) {
         return Ok(None);
     }
-    let nv = ruby_verified_text(name, "attribute name")?;
+    let nv = ruby_verified_text(ruby, name, "attribute name")?;
     let view = this.read()?;
     Ok(AttrKey::QName(nv.as_bytes()).find_in(&view, id))
 }
@@ -731,13 +745,18 @@ pub fn find_attribute(this: XmlSelf, name: Value) -> Result<Option<NodeId>, Erro
 /// name `local` - DOM "get an attribute by namespace and local name", the key
 /// `remove_attribute_ns` removes by. Converted before the arena is borrowed,
 /// as [`find_attribute`].
-pub fn find_attribute_ns(this: XmlSelf, ns: Value, local: Value) -> Result<Option<NodeId>, Error> {
+pub fn find_attribute_ns(
+    ruby: &Ruby,
+    this: XmlSelf,
+    ns: Value,
+    local: Value,
+) -> Result<Option<NodeId>, Error> {
     let id = this.id;
     if this.read()?.type_(id) != Some(ArenaKind::Element) {
         return Ok(None);
     }
-    let lv = ruby_verified_text(local, "attribute local name")?;
-    let nv = crate::bridge::string::namespace_arg(ns, "namespace")?;
+    let lv = ruby_verified_text(ruby, local, "attribute local name")?;
+    let nv = crate::bridge::string::namespace_arg(ruby, ns, "namespace")?;
     let key = AttrKey::Ns {
         ns: nv.as_ref().map_or(&b""[..], |n| n.as_bytes()),
         local: lv.as_bytes(),
@@ -810,12 +829,13 @@ impl Adoption {
 /// has succeeded - the adopted original taken out of its own document
 /// ([`Adoption::finish`]), which nothing outside this module can call.
 pub fn insert(
+    ruby: &Ruby,
     mut this: XmlSelf,
     arg: Value,
     at: crate::xml::mutate::Place,
 ) -> Result<Value, Error> {
     let edit = begin_edit(&mut this)?;
-    let (node, adoption) = incoming_node(edit.document(), arg)?;
+    let (node, adoption) = incoming_node(ruby, edit.document(), arg)?;
     /* An adoption writes the source too, so it is taken for the edit before
      * the copy is placed: a refusal then comes first, rather than after the
      * placement, which would leave the copy in and the original where it
@@ -836,14 +856,20 @@ pub fn insert(
         a.finish(sdoc);
     }
     drop(source);
-    wrap_xml_node(node, this.document)
+    wrap_xml_node(ruby, node, this.document)
 }
 
 /// `arg` as a node of `target_doc`'s arena: itself when it already lives there
 /// (a move), or a copy imported from its own document plus the [`Adoption`]
 /// that takes it out of there once it is placed.
-fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Adoption>), Error> {
-    if !is_kind_of(arg, &CLASS_NODE) || !is_kind_of(xml_node_document(arg)?, &CLASS_XML_DOCUMENT) {
+fn incoming_node(
+    ruby: &Ruby,
+    target_doc: Value,
+    arg: Value,
+) -> Result<(NodeId, Option<Adoption>), Error> {
+    if !is_kind_of(ruby, arg, &CLASS_NODE)
+        || !is_kind_of(ruby, xml_node_document(ruby, arg)?, &CLASS_XML_DOCUMENT)
+    {
         return Err(crate::bridge::ruby::type_error(
             "expected a Makiri::XML node",
         ));
@@ -859,8 +885,8 @@ fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Adopti
      * CLAUDE.md on why a per-node wrapper cache was rejected). A child the caller
      * never named is out of reach by construction, not by choice. */
     check_frozen(arg)?;
-    let src = xml_node_unwrap(arg)?;
-    let src_document = xml_node_document(arg)?;
+    let src = xml_node_unwrap(ruby, arg)?;
+    let src_document = xml_node_document(ruby, arg)?;
     if src_document.as_raw() == target_doc.as_raw() {
         return Ok((src, None)); /* same arena -> move */
     }
@@ -885,13 +911,18 @@ fn incoming_node(target_doc: Value, arg: Value) -> Result<(NodeId, Option<Adopti
 
 /// `Document#import_node`'s copy: `node_v` - XML from any document, or HTML -
 /// copied, detached, into the XML Document `rb_self`. The source is untouched.
-pub fn import_copy(rb_self: Value, node_v: Value, deep: bool) -> Result<NodeId, Error> {
+pub fn import_copy(
+    ruby: &Ruby,
+    rb_self: Value,
+    node_v: Value,
+    deep: bool,
+) -> Result<NodeId, Error> {
     xml_doc_check(rb_self)?; /* TypeError for anything but an XML Document */
     let copy = match node_repr(node_v) {
         NodeRepr::Xml => {
             /* Read, not written: the copy goes into the receiver's arena. */
-            let src_document = xml_node_document(node_v)?;
-            let src = xml_node_unwrap(node_v)?;
+            let src_document = xml_node_document(ruby, node_v)?;
+            let src = xml_node_unwrap(ruby, node_v)?;
             let copied = if crate::bridge::ruby::same_value(src_document, rb_self) {
                 /* Same arena: the single-`&mut` clone path. */
                 clone_node(&mut *arena_mut(&rb_self)?, src, deep)
@@ -904,7 +935,7 @@ pub fn import_copy(rb_self: Value, node_v: Value, deep: bool) -> Result<NodeId, 
         NodeRepr::Html => {
             /* The HTML source, read for the closure; the copy goes into the
              * receiver's arena, another document. */
-            let copied = with_arg_node(node_v, |src| {
+            let copied = with_arg_node(ruby, node_v, |src| {
                 Ok::<_, Error>(cross_html_to_xml(&mut *arena_mut(&rb_self)?, src, deep))
             })??;
             xml_mut_result(copied)?

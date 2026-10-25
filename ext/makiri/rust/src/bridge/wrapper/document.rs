@@ -4,6 +4,7 @@
 
 #![allow(unsafe_code)]
 
+use crate::bridge::rb::Ruby;
 use core::cell::{Cell, OnceCell, RefCell};
 
 use crate::bridge::rb::{Error, Value};
@@ -269,25 +270,29 @@ pub struct DocumentShell {
 }
 
 impl DocumentShell {
-    pub fn new(kind: DocKind) -> Result<DocumentShell, Error> {
+    pub fn new(ruby: &Ruby, kind: DocKind) -> Result<DocumentShell, Error> {
         let (klass, ty) = match kind {
-            DocKind::Html => (crate::init::CLASS_HTML_DOCUMENT.defined()?, &HTML_DOC_TYPE),
-            DocKind::Xml => (crate::init::CLASS_XML_DOCUMENT.defined()?, &XML_DOC_TYPE),
+            DocKind::Html => (
+                crate::init::CLASS_HTML_DOCUMENT.defined(ruby)?,
+                &HTML_DOC_TYPE,
+            ),
+            DocKind::Xml => (
+                crate::init::CLASS_XML_DOCUMENT.defined(ruby)?,
+                &XML_DOC_TYPE,
+            ),
         };
         /* The errors array is built before the wrap and kept in a local, so the
          * conservative stack scan pins it across the wrap's allocation and the
          * store closure does not allocate (an allocation there could raise
          * NoMemoryError while the caller holds a live resource). */
-        let errors = crate::bridge::rb::ReprValue::as_value(crate::bridge::build::ary(0)?);
-        let nodes = crate::bridge::rb::ReprValue::as_value(crate::bridge::raw::hash_new(
-            &crate::bridge::ruby::gvl_ruby(),
-        )?);
+        let errors = crate::bridge::rb::ReprValue::as_value(crate::bridge::build::ary(ruby, 0)?);
+        let nodes = crate::bridge::rb::ReprValue::as_value(crate::bridge::raw::hash_new(ruby)?);
         /* Hidden, so no Ruby code reaches the table through `ObjectSpace` to
          * clear, freeze or fill it: its values are handed out as node
          * wrappers unchecked. */
         crate::bridge::ruby::hide(nodes);
         let obj = ty.wrap(
-            &crate::bridge::ruby::gvl_ruby(),
+            ruby,
             klass,
             || DocData {
                 content: OnceCell::new(),
@@ -466,7 +471,7 @@ impl NodeClasses {
     /// an unknown number). A DOCUMENT is the caller's to map back onto the
     /// Ruby Document before asking.
     #[inline]
-    pub fn class_for(&self, t: NodeType) -> Result<crate::bridge::rb::RClass, Error> {
+    pub fn class_for(&self, ruby: &Ruby, t: NodeType) -> Result<crate::bridge::rb::RClass, Error> {
         match t {
             NodeType::Element => self.element,
             NodeType::Attribute => self.attr,
@@ -478,7 +483,7 @@ impl NodeClasses {
             NodeType::DocumentFragment => self.fragment,
             _ => self.node,
         }
-        .defined()
+        .defined(ruby)
     }
 }
 
@@ -502,6 +507,7 @@ impl NodeClasses {
 /// representation `ty` wraps, and `klass` a class of it: only the two
 /// `wrap_*_node` functions call this, each for its own kind.
 pub(in crate::bridge) fn wrap_cached(
+    ruby: &Ruby,
     ty: &'static crate::bridge::typed::EmbeddedType<NodeData>,
     klass: crate::bridge::rb::RClass,
     source: impl NodeHandleSource,
@@ -514,7 +520,7 @@ pub(in crate::bridge) fn wrap_cached(
     }
     let node = source.into_handle(document);
     let fresh = ty.wrap(
-        &crate::bridge::ruby::gvl_ruby(),
+        ruby,
         klass,
         || NodeData::new(node),
         |nd, store| nd.hold_document(store, document),
@@ -558,7 +564,7 @@ pub(in crate::bridge) fn ivar_node() -> crate::bridge::ruby::ID {
 }
 
 /// Intern the hidden ivars' names. From `Init_makiri`.
-pub fn init_ivars(ruby: &crate::bridge::rb::Ruby) -> Result<(), Error> {
+pub fn init_ivars(ruby: &Ruby) -> Result<(), Error> {
     let d = crate::bridge::raw::intern_cstr(ruby, c"makiri_document")?;
     let e = crate::bridge::raw::intern_cstr(ruby, c"makiri_errors")?;
     let n = crate::bridge::raw::intern_cstr(ruby, c"makiri_node")?;

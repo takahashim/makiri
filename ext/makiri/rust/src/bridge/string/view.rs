@@ -4,6 +4,7 @@
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
 
+use crate::bridge::rb::Ruby;
 use core::ops::Deref;
 
 use crate::bridge::rb::Coderange;
@@ -233,8 +234,8 @@ const NOT_UTF8_CONVERTIBLE: &str = "could not be converted to UTF-8 from its enc
 /// refusal; anything else - a `NoMemoryError`, an interrupt delivered while
 /// Ruby loaded a converter - is not about the String, and is returned as it
 /// was rather than reworded as one.
-fn encoding_refusal(what: &str, e: Error) -> Error {
-    if e.is_kind_of(crate::bridge::ruby::gvl_ruby().exception_encoding_error()) {
+fn encoding_refusal(ruby: &Ruby, what: &str, e: Error) -> Error {
+    if e.is_kind_of(ruby, crate::bridge::rb::Builtin::EncodingError) {
         text_error(what, NOT_UTF8_CONVERTIBLE)
     } else {
         e
@@ -252,24 +253,28 @@ fn text_error(what: &str, problem: &str) -> Error {
 }
 
 /// [`ruby_verified_text`] for an optional argument: `nil` is `None`.
-pub fn ruby_verified_text_opt(in_: Value, what: &str) -> Result<Option<RubyText>, Error> {
+pub fn ruby_verified_text_opt(
+    ruby: &Ruby,
+    in_: Value,
+    what: &str,
+) -> Result<Option<RubyText>, Error> {
     if in_.is_nil() {
         return Ok(None);
     }
-    ruby_verified_text(in_, what).map(Some)
+    ruby_verified_text(ruby, in_, what).map(Some)
 }
 
 /// The `namespace_or_nil` argument of the namespaced APIs: `nil` and the empty
 /// string ALIKE mean "no namespace", so everything below receives `None` or a
 /// non-empty URI and never re-decides.
-pub fn namespace_arg(in_: Value, what: &str) -> Result<Option<RubyText>, Error> {
-    Ok(ruby_verified_text_opt(in_, what)?.filter(|t| !t.is_empty()))
+pub fn namespace_arg(ruby: &Ruby, in_: Value, what: &str) -> Result<Option<RubyText>, Error> {
+    Ok(ruby_verified_text_opt(ruby, in_, what)?.filter(|t| !t.is_empty()))
 }
 
 /// Coerce to a String and enforce the strict contract (valid UTF-8, no NUL),
 /// naming `what` in the error. The names-and-engine-input path.
-pub fn ruby_verified_text(in_: Value, what: &str) -> Result<RubyText, Error> {
-    verified_text_raising(in_, what, |m| makiri_error(m))
+pub fn ruby_verified_text(ruby: &Ruby, in_: Value, what: &str) -> Result<RubyText, Error> {
+    verified_text_raising(ruby, in_, what, |m| makiri_error(m))
 }
 
 /// [`ruby_verified_text`] for a NAME given to a factory or a setter: the same
@@ -279,8 +284,8 @@ pub fn ruby_verified_text(in_: Value, what: &str) -> Result<RubyText, Error> {
 /// ran, so a caller translating `ArgumentError` into a DOMException let that
 /// one through. Invalid UTF-8 stays `Makiri::Error`: it breaks the String
 /// contract every input shares, not a naming rule.
-pub fn ruby_verified_name(in_: Value, what: &str) -> Result<RubyText, Error> {
-    verified_text_raising(in_, what, |m| crate::bridge::ruby::arg_error(m))
+pub fn ruby_verified_name(ruby: &Ruby, in_: Value, what: &str) -> Result<RubyText, Error> {
+    verified_text_raising(ruby, in_, what, |m| crate::bridge::ruby::arg_error(m))
 }
 
 /// The one acquisition behind [`ruby_verified_text`] and
@@ -288,6 +293,7 @@ pub fn ruby_verified_name(in_: Value, what: &str) -> Result<RubyText, Error> {
 /// is handed the message. Everything else - invalid UTF-8, a copy that ran out
 /// of memory - is answered the same way for both.
 fn verified_text_raising(
+    ruby: &Ruby,
     in_: Value,
     what: &str,
     on_nul: fn(core::fmt::Arguments<'_>) -> Error,
@@ -304,7 +310,7 @@ fn verified_text_raising(
         )),
         Refusal::Check(v) => text_error(what, v.problem().unwrap_or_default()),
         Refusal::Oom => oom_reading(),
-        Refusal::Encoding(e) => encoding_refusal(what, e),
+        Refusal::Encoding(e) => encoding_refusal(ruby, what, e),
     })
 }
 
@@ -313,13 +319,13 @@ fn verified_text_raising(
 ///
 /// The same acquisition as [`ruby_verified_text`], with the data check - which
 /// lets NUL through - in place of the text one.
-pub fn ruby_verified_data(in_: Value, what: &str) -> Result<RubyData, Error> {
+pub fn ruby_verified_data(ruby: &Ruby, in_: Value, what: &str) -> Result<RubyData, Error> {
     let s = string_arg(in_)?;
     let not_utf8 = TextVerdict::InvalidUtf8.data_problem().unwrap_or_default();
     RubyData::acquire(s, not_utf8, |_| None).map_err(|r| match r {
         Refusal::Check(problem) => text_error(what, problem),
         Refusal::Oom => oom_reading(),
-        Refusal::Encoding(e) => encoding_refusal(what, e),
+        Refusal::Encoding(e) => encoding_refusal(ruby, what, e),
     })
 }
 

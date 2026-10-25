@@ -17,6 +17,7 @@
 
 #![forbid(unsafe_code)]
 
+use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, RString};
 
 use super::string::{prefix, text_check_from, Encoding};
@@ -25,8 +26,8 @@ use crate::xml::encoding_sniff::{sniff, SNIFF_WINDOW};
 
 /// Whether `e` is an `EncodingError` (an undefined conversion, an invalid
 /// byte sequence, no converter).
-fn is_encoding_error(e: &Error) -> bool {
-    e.is_kind_of(crate::bridge::ruby::gvl_ruby().exception_encoding_error())
+fn is_encoding_error(ruby: &Ruby, e: &Error) -> bool {
+    e.is_kind_of(ruby, crate::bridge::rb::Builtin::EncodingError)
 }
 
 /// Two encodings agree, for conflict purposes, when identical or when either is
@@ -57,19 +58,19 @@ fn claims_no_encoding(tag: Encoding) -> bool {
 /// the input is decoded by whatever was detected. Any disagreement between the
 /// three is a fatal `Makiri::XML::SyntaxError`, so the caller only ever sees one
 /// self-consistent answer.
-fn effective_encoding(str: RString) -> Result<Encoding, Error> {
+fn effective_encoding(ruby: &Ruby, str: RString) -> Result<Encoding, Error> {
     let tag = Encoding::of(str);
     /* The sniff reads a copy of the first bytes; the name lookups - which can
      * allocate - come after. */
     let (head, n) = prefix::<SNIFF_WINDOW>(str);
     let (bom, decl) = sniff(head.get(..n).unwrap_or(&[]));
-    let bom = bom.and_then(|b| Encoding::find(b.name().as_bytes()));
+    let bom = bom.and_then(|b| Encoding::find(ruby, b.name().as_bytes()));
     /* XML 1.0 §4.3.3: the name is an IANA charset name or alias, Ruby's or
      * one `encoding_names` maps to Ruby's; an entity in an encoding the
      * processor cannot process is a fatal error - never read as another. */
     let decl = match decl {
         None => None,
-        Some(d) => Some(declared_encoding(d.as_bytes()).ok_or_else(|| {
+        Some(d) => Some(declared_encoding(ruby, d.as_bytes()).ok_or_else(|| {
             syntax_error(format_args!(
                 "XML encoding declaration names an unknown encoding: {}",
                 crate::msg::Lossy(d.as_bytes())
@@ -111,25 +112,26 @@ fn effective_encoding(str: RString) -> Result<Encoding, Error> {
 /// alias (`encoding_names` supplying the aliases Ruby lacks). Ruby's own
 /// names for the process's encodings (`locale`, `external`, ...) name no
 /// charset, so a document cannot reach them.
-fn declared_encoding(name: &[u8]) -> Option<Encoding> {
+fn declared_encoding(ruby: &Ruby, name: &[u8]) -> Option<Encoding> {
     if crate::xml::encoding_names::is_ruby_special(name) {
         return None;
     }
-    Encoding::find(name)
-        .or_else(|| crate::xml::encoding_names::ruby_name(name).and_then(Encoding::find))
+    Encoding::find(ruby, name).or_else(|| {
+        crate::xml::encoding_names::ruby_name(name).and_then(|n| Encoding::find(ruby, n))
+    })
 }
 
 /// A `Makiri::XML::SyntaxError` carrying `msg`.
 fn syntax_error(msg: impl crate::bridge::rb::Message) -> Error {
-    Error::new(EXC_XML_SYNTAX_ERROR.exception(), msg)
+    Error::new(&EXC_XML_SYNTAX_ERROR, msg)
 }
 
 /// Decode `str` to a validated, UTF-8-tagged, BOM-stripped String, or the
 /// error that rejects it. A `max_bytes` of `None` skips the budget check (the
 /// `__decode` test hook).
 ///
-fn xml_decode_input(str: RString, max_bytes: Option<usize>) -> Result<RString, Error> {
-    let eff = effective_encoding(str)?;
+fn xml_decode_input(ruby: &Ruby, str: RString, max_bytes: Option<usize>) -> Result<RString, Error> {
+    let eff = effective_encoding(ruby, str)?;
 
     /* Phase 2: decode to UTF-8, strictly. What is read as UTF-8 bytes is
      * validated below; anything else is transcoded in a mode that raises
@@ -148,8 +150,8 @@ fn xml_decode_input(str: RString, max_bytes: Option<usize>) -> Result<RString, E
          * interrupt) is passed through as it is. */
         match super::raw::str_encode(input, Encoding::utf8(), 0) {
             Ok(out) => out,
-            Err(e) if is_encoding_error(&e) => {
-                let msg = e.wording();
+            Err(e) if is_encoding_error(ruby, &e) => {
+                let msg = e.wording(ruby);
                 return Err(syntax_error(format_args!(
                     "XML input could not be decoded to UTF-8: {msg}"
                 )));
@@ -174,7 +176,7 @@ fn xml_decode_input(str: RString, max_bytes: Option<usize>) -> Result<RString, E
      * arena budget can never parse. */
     if max_bytes.is_some_and(|max| len > max) {
         return Err(Error::new(
-            EXC_XML_LIMIT_EXCEEDED.exception(),
+            &EXC_XML_LIMIT_EXCEEDED,
             "XML input exceeds the byte budget",
         ));
     }
@@ -197,6 +199,10 @@ fn xml_decode_input(str: RString, max_bytes: Option<usize>) -> Result<RString, E
 
 /// [`xml_decode_input`] as a safe call: `s` is a String by type, and so is
 /// the result.
-pub fn xml_decode_input_value(s: RString, max_bytes: Option<usize>) -> Result<RString, Error> {
-    xml_decode_input(s, max_bytes)
+pub fn xml_decode_input_value(
+    ruby: &Ruby,
+    s: RString,
+    max_bytes: Option<usize>,
+) -> Result<RString, Error> {
+    xml_decode_input(ruby, s, max_bytes)
 }

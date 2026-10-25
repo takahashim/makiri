@@ -64,7 +64,7 @@ impl QueryArgs {
             match RHash::from_value(v) {
                 Some(h) => q.namespaces = Some(h),
                 None => return Err(Error::new(
-                    ruby.exception_arg_error(),
+                    crate::bridge::rb::Builtin::ArgumentError,
                     "expected a namespace Hash; custom XPath function handlers are not supported",
                 )),
             }
@@ -85,8 +85,8 @@ impl QueryArgs {
 /// through the Hash storage rather than a Ruby `merge` a Hash subclass could
 /// redefine. `rb_hash_foreach`/`rb_hash_aset` are the C operations, so no
 /// caller's method runs.
-fn merge_hashes(_ruby: &Ruby, a: RHash, b: RHash) -> Result<RHash, Error> {
-    let out: RHash = crate::bridge::build::hash()?;
+fn merge_hashes(ruby: &Ruby, a: RHash, b: RHash) -> Result<RHash, Error> {
+    let out: RHash = crate::bridge::build::hash(ruby)?;
     crate::glue::hash::hash_foreach(a, |k, v| crate::bridge::build::aset(out, k, v))?;
     crate::glue::hash::hash_foreach(b, |k, v| crate::bridge::build::aset(out, k, v))?;
     Ok(out)
@@ -124,14 +124,15 @@ impl Keywords {
 fn matching_lax(ruby: &Ruby, v: Value) -> Result<bool, Error> {
     /* By identity: a Symbol is unique, and `eql?` would be the caller's
      * value's method. */
-    if v.is_nil() || crate::bridge::ruby::same_value(v, crate::bridge::build::sym("strict")?) {
+    if v.is_nil() || crate::bridge::ruby::same_value(v, crate::bridge::build::sym(ruby, "strict")?)
+    {
         return Ok(false);
     }
-    if crate::bridge::ruby::same_value(v, crate::bridge::build::sym("lax")?) {
+    if crate::bridge::ruby::same_value(v, crate::bridge::build::sym(ruby, "lax")?) {
         return Ok(true);
     }
     Err(Error::new(
-        ruby.exception_arg_error(),
+        crate::bridge::rb::Builtin::ArgumentError,
         format_args!(
             "namespace_matching: must be :strict or :lax, got {}",
             crate::bridge::ruby::Describe(v)
@@ -146,6 +147,7 @@ fn matching_lax(ruby: &Ruby, v: Value) -> Result<bool, Error> {
 /// the caller's owner then frees the context, so a partial registration is
 /// never handed out.
 fn bind_each(
+    ruby: &Ruby,
     h: RHash,
     mut register: impl FnMut(&[u8], &[u8]) -> Result<(), Error>,
     cap: usize,
@@ -160,8 +162,7 @@ fn bind_each(
             h.len()
         )));
     }
-    let ruby = crate::bridge::ruby::gvl_ruby();
-    crate::glue::hash::each_pair(&ruby, h, |prefix, uri| {
+    crate::glue::hash::each_pair(ruby, h, |prefix, uri| {
         bind_pair(prefix, uri, cap, &mut register)
     })
 }
@@ -190,12 +191,13 @@ pub fn bind_pair(
 ///
 /// RSS and Atom live in a default namespace, so a prefix is the strict-mode way
 /// to select them.
-pub fn register_namespaces(ctx: &Cx, namespaces: Option<RHash>) -> Result<(), Error> {
+pub fn register_namespaces(ruby: &Ruby, ctx: &Cx, namespaces: Option<RHash>) -> Result<(), Error> {
     let Some(h) = namespaces else {
         return Ok(());
     };
     let cap = ctx.limits().max_string_bytes;
     bind_each(
+        ruby,
         h,
         |prefix, uri| {
             ctx.register_ns(prefix, uri)
@@ -210,11 +212,12 @@ pub type NamespaceBindings = Vec<(Vec<u8>, Vec<u8>)>;
 
 /// A `{prefix => uri}` Hash's bindings, copied out and checked as `#xpath`'s
 /// are (`bind_pair`) - for HTML CSS, whose matcher takes them as bytes.
-pub fn namespace_bindings(h: RHash) -> Result<NamespaceBindings, Error> {
+pub fn namespace_bindings(ruby: &Ruby, h: RHash) -> Result<NamespaceBindings, Error> {
     use crate::falloc::{try_to_vec, VecGrow};
     let oom = || makiri_error("out of memory reading namespace bindings");
     let mut out = Vec::new();
     bind_each(
+        ruby,
         h,
         |prefix, uri| {
             let pair = (
@@ -230,46 +233,56 @@ pub fn namespace_bindings(h: RHash) -> Result<NamespaceBindings, Error> {
 
 /// Register a `{prefix => uri}` Hash onto an `XPathContext`, for every later
 /// evaluate.
-pub fn register_bindings(ctx: &XPathCtx, bindings: RHash) -> Result<(), Error> {
+pub fn register_bindings(ruby: &Ruby, ctx: &XPathCtx, bindings: RHash) -> Result<(), Error> {
     let cap = ctx.limits().max_string_bytes;
-    bind_each(bindings, |prefix, uri| ctx.bind_namespace(prefix, uri), cap)
+    bind_each(
+        ruby,
+        bindings,
+        |prefix, uri| ctx.bind_namespace(prefix, uri),
+        cap,
+    )
 }
 
 /// The context a query on `rb_self` runs under: rooted there (a Document's is
 /// its document node), in the chosen mode, with the query's own prefixes.
-pub fn query_context(rb_self: Value, document: Value, q: &QueryArgs) -> Result<Cx, Error> {
-    let mut ctx = context_for(rb_self, document)?;
+pub fn query_context(
+    ruby: &Ruby,
+    rb_self: Value,
+    document: Value,
+    q: &QueryArgs,
+) -> Result<Cx, Error> {
+    let mut ctx = context_for(ruby, rb_self, document)?;
     ctx.set_lax(q.lax);
-    register_namespaces(&ctx, q.namespaces)?; /* ctx drops on error */
+    register_namespaces(ruby, &ctx, q.namespaces)?; /* ctx drops on error */
     Ok(ctx)
 }
 
 /// A throwaway context per call, so `Node#xpath` caches nothing;
 /// `Makiri::XPathContext` is what a caller reaches for when many queries share
 /// one namespace set and one set of compiled expressions.
-fn xpath_run(rb_self: Value, q: QueryArgs, answer: Answer) -> Result<Value, Error> {
-    let document = keepalive_document(rb_self)?;
-    let ctx = query_context(rb_self, document, &q)?;
+fn xpath_run(ruby: &Ruby, rb_self: Value, q: QueryArgs, answer: Answer) -> Result<Value, Error> {
+    let document = keepalive_document(ruby, rb_self)?;
+    let ctx = query_context(ruby, rb_self, document, &q)?;
     /* Parsed AFTER the namespaces are registered: that step runs Ruby and may
      * collect, and the borrowed expression bytes must not be live across it. */
-    let ast = parse_query(&ctx, q.text)?;
-    evaluate_to_ruby(ctx, QueryAst::owned(ast), document, answer)
+    let ast = parse_query(ruby, &ctx, q.text)?;
+    evaluate_to_ruby(ruby, ctx, QueryAst::owned(ast), document, answer)
 }
 
 fn node_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    xpath_run(rb_self, QueryArgs::scan(ruby, args)?, Answer::All)
+    xpath_run(ruby, rb_self, QueryArgs::scan(ruby, args)?, Answer::All)
 }
 
 /// The first matching node for a node-set result, or the scalar otherwise.
 fn node_at_xpath(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    xpath_run(rb_self, QueryArgs::scan(ruby, args)?, Answer::First)
+    xpath_run(ruby, rb_self, QueryArgs::scan(ruby, args)?, Answer::First)
 }
 
 /// `#xpath` / `#at_xpath` on both node-method modules. From `Init_makiri`,
 /// after the classes exist.
-pub fn init_xpath() -> Result<(), Error> {
+pub fn init_xpath(ruby: &Ruby) -> Result<(), Error> {
     for module in [&MOD_HTML_NODE_METHODS, &MOD_XML_NODE_METHODS] {
-        let m = module.defined()?;
+        let m = module.defined(ruby)?;
         m.define_method("xpath", method!(node_xpath, -1))?;
         m.define_method("at_xpath", method!(node_at_xpath, -1))?;
     }

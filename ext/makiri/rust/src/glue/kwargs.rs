@@ -28,11 +28,11 @@ impl Kwargs {
     /// Keyword `name`, or `None` when it is absent or `nil`. A plain lookup
     /// rather than `get_kwargs`, which allocates a second hash for the keys it
     /// was not asked about - so unknown keywords are ignored.
-    pub(crate) fn value(self, _ruby: &Ruby, name: &str) -> Result<Option<Value>, Error> {
+    pub(crate) fn value(self, ruby: &Ruby, name: &str) -> Result<Option<Value>, Error> {
         let Some(h) = self.0 else {
             return Ok(None);
         };
-        Ok(h.get(crate::bridge::build::symbol(name)?)?
+        Ok(h.get(crate::bridge::build::symbol(ruby, name)?)?
             .filter(|v: &Value| !v.is_nil()))
     }
 
@@ -51,14 +51,14 @@ impl Kwargs {
     /// `dup`/`delete`, which a Hash subclass can redefine.
     pub(crate) fn split_off(
         self,
-        _ruby: &Ruby,
+        ruby: &Ruby,
         name: &str,
     ) -> Result<(Option<Value>, Option<RHash>), Error> {
         /* No keywords is the common call: answer it without a symbol or a Hash. */
         let Some(h) = self.0.filter(|h| !h.is_empty()) else {
             return Ok((None, None));
         };
-        let sym = crate::bridge::build::symbol(name)?;
+        let sym = crate::bridge::build::symbol(ruby, name)?;
         let taken = h.get(sym)?.filter(|v: &Value| !v.is_nil());
         let sym = sym.as_value();
         /* Made on the first key that stays, so a call passing only `name`
@@ -68,7 +68,7 @@ impl Kwargs {
             if !crate::bridge::ruby::same_value(k, sym) {
                 let into = match rest {
                     Some(h) => h,
-                    None => *rest.insert(crate::bridge::build::hash()?),
+                    None => *rest.insert(crate::bridge::build::hash(ruby)?),
                 };
                 crate::bridge::build::aset(into, k, v)?;
             }
@@ -103,7 +103,7 @@ fn max_amplification(ruby: &Ruby, v: Option<Value>) -> Result<Option<usize>, Err
     };
     let n = crate::bridge::rb::Integer::from_value(v).ok_or_else(|| {
         Error::new(
-            ruby.exception_type_error(),
+            crate::bridge::rb::Builtin::TypeError,
             "max_amplification must be an Integer",
         )
     })?;
@@ -111,7 +111,7 @@ fn max_amplification(ruby: &Ruby, v: Option<Value>) -> Result<Option<usize>, Err
         return Ok(None);
     }
     /* Past a usize is no limit in practice, as for the depth. */
-    n.to_usize_within()
+    n.to_usize_within(ruby)
 }
 
 /// The `max_tree_depth:` of an HTML parse, as Nokogiri::HTML5 reads it: absent
@@ -128,7 +128,7 @@ fn max_tree_depth(ruby: &Ruby, v: Option<Value>) -> Result<Option<usize>, Error>
     };
     let n = crate::bridge::rb::Integer::from_value(v).ok_or_else(|| {
         Error::new(
-            ruby.exception_type_error(),
+            crate::bridge::rb::Builtin::TypeError,
             "max_tree_depth must be an Integer",
         )
     })?;
@@ -137,5 +137,5 @@ fn max_tree_depth(ruby: &Ruby, v: Option<Value>) -> Result<Option<usize>, Error>
     if n.is_negative() {
         return Ok(None);
     }
-    n.to_usize_within()
+    n.to_usize_within(ruby)
 }

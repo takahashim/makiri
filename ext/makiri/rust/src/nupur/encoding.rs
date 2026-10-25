@@ -51,16 +51,14 @@ impl Encoding {
             reason = "a lookup that fails is an unknown name, which the caller refuses"
         )
     )]
-    pub(crate) fn find(name: &[u8]) -> Option<Encoding> {
+    pub(crate) fn find(ruby: &crate::nupur::rb::Ruby, name: &[u8]) -> Option<Encoding> {
         let mut buf = [0u8; 64];
         if name.is_empty() || name.len() >= buf.len() || name.contains(&0) {
             return None;
         }
         buf[..name.len()].copy_from_slice(name);
         let c = core::ffi::CStr::from_bytes_with_nul(&buf[..name.len() + 1]).ok()?;
-        crate::nupur::raw::enc_find(&crate::nupur::helpers::gvl_ruby(), c)
-            .ok()
-            .flatten()
+        crate::nupur::raw::enc_find(ruby, c).ok().flatten()
     }
 
     /// An encoding from Ruby's pointer to it.

@@ -20,7 +20,7 @@ pub mod value;
 
 pub use class::{freeze, Class, Module, Object, Opaque};
 pub use convert::{IntoValue, ReturnValue, TryConvert};
-pub use error::{Error, Message};
+pub use error::{Builtin, Error, ErrorClass, Message};
 pub use ruby::Ruby;
 pub use value::{
     Coderange, ExceptionClass, Float, HashKey, Integer, RArray, RClass, RHash, RModule, RString,

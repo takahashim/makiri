@@ -10,6 +10,7 @@
 
 #![forbid(unsafe_code)]
 
+use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{prelude::*, Error, Value};
 
 use crate::bridge::ruby::makiri_error;
@@ -57,8 +58,8 @@ pub struct ContextElement {
 impl ContextArg {
     /// The element wrapped by `v` as a context; `Err` for an XML node or a
     /// node that is not an element.
-    pub fn element(v: Value) -> Result<ContextArg, Error> {
-        let (key, document) = html_node_key(v)?;
+    pub fn element(ruby: &Ruby, v: Value) -> Result<ContextArg, Error> {
+        let (key, document) = html_node_key(ruby, v)?;
         if !with_html_node(document, key, is_context_element)? {
             return Err(not_an_element());
         }
@@ -74,6 +75,7 @@ impl ContextArg {
 /// context such as SVG `<desc>`), and may belong to another document -
 /// `DocumentFragment.parse`'s always does. `Err` for an unusable one.
 pub fn resolve_fragment_context(
+    ruby: &Ruby,
     document: Value,
     context: Option<Value>,
 ) -> Result<ContextArg, Error> {
@@ -81,15 +83,15 @@ pub fn resolve_fragment_context(
         return Ok(ContextArg::Tag(FragmentTag::BODY));
     };
 
-    if is_kind_of(context, &CLASS_NODE) {
+    if is_kind_of(ruby, context, &CLASS_NODE) {
         /* Refused now, before the HTML argument is converted: an XML node or
          * a non-element. */
-        return ContextArg::element(context);
+        return ContextArg::element(ruby, context);
     }
 
     /* A context tag name is a programmatic control string, not parsed HTML, so
      * it follows the strict text-input contract (valid UTF-8, no NUL). */
-    let cv = ruby_verified_text(context, "fragment context element")?;
+    let cv = ruby_verified_text(ruby, context, "fragment context element")?;
     let name = cv.as_bytes();
     /* The name table also holds the special ids it gives non-elements
      * (`#text`, `#document`, `!--`, ...), which would make the context a
@@ -216,6 +218,7 @@ pub fn set_template_inner_html(
 /// context `at`, refusing a tree deeper than `limit`. The fragment node is made
 /// only once the parse has succeeded.
 pub fn build_fragment(
+    ruby: &Ruby,
     document: Value,
     rb_html: Value,
     at: ContextArg,
@@ -249,15 +252,15 @@ pub fn build_fragment(
      * namespace URI (`FragNs::Uri`, a context node of another document). */
     drop(src);
     drop(context);
-    wrap_html_node(frag, document)
+    wrap_html_node(ruby, frag, document)
 }
 
 /// The standalone fragment's backing document: a throwaway
 /// `<html><body></body></html>` shell, owned by the fragment's wrapper.
-pub fn fragment_shell_document() -> Result<Value, Error> {
+pub fn fragment_shell_document(ruby: &Ruby) -> Result<Value, Error> {
     const SHELL: &[u8] = b"<html><body></body></html>";
     /* The wrapper first, while nothing needs freeing - see DocumentShell. */
-    let shell = DocumentShell::new(DocKind::Html)?;
+    let shell = DocumentShell::new(ruby, DocKind::Html)?;
     let Ok(parsed) = parse_html(SHELL, true, ParseLimits::DEFAULT) else {
         return Err(makiri_error("failed to create fragment document"));
     };

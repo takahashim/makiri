@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, Value};
 
 use crate::bridge::wrapper::{DocKind, NodeWord};
@@ -20,18 +21,19 @@ use crate::bridge::wrapper::{DocKind, NodeWord};
 /// that the word is the document's; the arena's checked lookup makes that a
 /// test rather than a promise, for a stamp compare and a bounds check.)
 pub(in crate::bridge) fn wrap_doc_node(
+    ruby: &Ruby,
     kind: DocKind,
     node: NodeWord,
     document: Value,
 ) -> Result<Value, Error> {
     match kind {
         DocKind::Xml => match node.xml() {
-            Some(id) => crate::bridge::xml::wrap_xml_node_checked(id, document),
-            None => Ok(crate::bridge::ruby::nil()),
+            Some(id) => crate::bridge::xml::wrap_xml_node_checked(ruby, id, document),
+            None => Ok(crate::bridge::ruby::nil(ruby)),
         },
         DocKind::Html => match node.html() {
-            Some(n) => crate::bridge::html::wrap_html_node_checked(n, document),
-            None => Ok(crate::bridge::ruby::nil()),
+            Some(n) => crate::bridge::html::wrap_html_node_checked(ruby, n, document),
+            None => Ok(crate::bridge::ruby::nil(ruby)),
         },
     }
 }

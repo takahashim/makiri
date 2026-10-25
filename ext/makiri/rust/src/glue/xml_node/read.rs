@@ -27,8 +27,8 @@ use crate::child_index;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
 /// Wrap an optional reached node under the receiver's Document (None -> nil).
-fn wrap_rel(this: XmlSelf, rel: Option<NodeId>) -> Result<Option<Value>, Error> {
-    rel.map(|n| wrap(n, this.document)).transpose()
+fn wrap_rel(ruby: &Ruby, this: XmlSelf, rel: Option<NodeId>) -> Result<Option<Value>, Error> {
+    rel.map(|n| wrap(ruby, n, this.document)).transpose()
 }
 
 fn is_element(d: &XmlDoc, id: NodeId) -> bool {
@@ -37,8 +37,8 @@ fn is_element(d: &XmlDoc, id: NodeId) -> bool {
 
 /* ---- name ---- */
 
-pub fn name(_ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
-    let name = str_from_read(this.read()?, StrKind::Utf8, |d| {
+pub fn name(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+    let name = str_from_read(ruby, this.read()?, StrKind::Utf8, |d| {
         let id = d.id;
         if let Some(n) = d.name_parts(id) {
             return Some(n.qname);
@@ -55,37 +55,37 @@ pub fn name(_ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     })?;
     match name {
         Some(name) => Ok(name),
-        None => utf8_str(b""),
+        None => utf8_str(ruby, b""),
     }
 }
 
 /// `#local_name`: Element and Attribute only.
-pub fn local_name(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
-    str_from_read(this.read()?, StrKind::DomName, |d| {
+pub fn local_name(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+    str_from_read(ruby, this.read()?, StrKind::DomName, |d| {
         d.name_parts(d.id).map(|n| n.local)
     })
 }
 
 /// `#prefix`: nil when unprefixed - the distinction `#namespace` depends on -
 /// and for any kind but Element and Attribute.
-pub fn prefix(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
-    str_from_read(this.read()?, StrKind::DomName, |d| {
+pub fn prefix(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+    str_from_read(ruby, this.read()?, StrKind::DomName, |d| {
         d.name_parts(d.id).and_then(|n| n.prefix)
     })
 }
 
 /// `#namespace_uri`: nil in no namespace, and for any kind but Element and
 /// Attribute.
-pub fn namespace_uri(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
-    str_from_read(this.read()?, StrKind::DomName, |d| {
+pub fn namespace_uri(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+    str_from_read(ruby, this.read()?, StrKind::DomName, |d| {
         d.name_parts(d.id).and_then(|n| n.ns_uri)
     })
 }
 
 /// `Element#tag_name` (DOM `tagName`): the qualified name - XML keeps its case
 /// - or nil for a non-element.
-pub fn tag_name(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
-    str_from_read(this.read()?, StrKind::DomName, |d| {
+pub fn tag_name(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+    str_from_read(ruby, this.read()?, StrKind::DomName, |d| {
         d.name_parts(d.id)
             .filter(|_| is_element(d, d.id))
             .map(|n| n.qname)
@@ -93,8 +93,8 @@ pub fn tag_name(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
 }
 
 /// `ProcessingInstruction#target`, or nil for a non-PI.
-pub fn pi_target(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
-    str_from_read(this.read()?, StrKind::Utf8, |d| {
+pub fn pi_target(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+    str_from_read(ruby, this.read()?, StrKind::Utf8, |d| {
         (d.type_(d.id) == Some(ArenaKind::Pi)).then(|| d.local(d.id))
     })
 }
@@ -107,14 +107,14 @@ pub fn node_type(_ruby: &Ruby, this: XmlSelf) -> Result<u32, Error> {
  *
  * An omitted id answers nil; an empty literal (`PUBLIC ""`) answers `""`. */
 
-pub fn dtd_external_id(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
-    str_from_read(this.read()?, StrKind::Utf8, |d| {
+pub fn dtd_external_id(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+    str_from_read(ruby, this.read()?, StrKind::Utf8, |d| {
         d.doctype_ids(d.id).and_then(|ids| ids.public)
     })
 }
 
-pub fn dtd_system_id(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
-    str_from_read(this.read()?, StrKind::Utf8, |d| {
+pub fn dtd_system_id(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+    str_from_read(ruby, this.read()?, StrKind::Utf8, |d| {
         d.doctype_ids(d.id).and_then(|ids| ids.system)
     })
 }
@@ -127,7 +127,7 @@ pub fn dtd_system_id(_ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error
 /// Measured first and built into one Ruby String of that size, so the copy is
 /// Ruby's allocation - a failure is `NoMemoryError` (as `Err`), not a Rust
 /// abort.
-pub fn content(_ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+pub fn content(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     let d = this.read()?;
     let id = this.id;
     if matches!(
@@ -140,10 +140,10 @@ pub fn content(_ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
                 | ArenaKind::Pi
         )
     ) {
-        let value = str_from_read(d, StrKind::Utf8, |d| Some(d.value(d.id)))?;
+        let value = str_from_read(ruby, d, StrKind::Utf8, |d| Some(d.value(d.id)))?;
         return match value {
             Some(value) => Ok(value),
-            None => utf8_str(b""),
+            None => utf8_str(ruby, b""),
         };
     }
 
@@ -156,46 +156,47 @@ pub fn content(_ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     let Some(total) = total else {
         return Err(crate::bridge::ruby::makiri_error("text content too large"));
     };
-    crate::bridge::string::utf8_str_from_slices(texts(), total)
+    crate::bridge::string::utf8_str_from_slices(ruby, texts(), total)
 }
 
 /* ---- navigation ---- */
 
-pub fn parent(this: XmlSelf) -> Result<Option<Value>, Error> {
-    this.read()?.wrap(|d, id| d.parent(id))
+pub fn parent(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+    this.read()?.wrap(ruby, |d, id| d.parent(id))
 }
-pub fn next(this: XmlSelf) -> Result<Option<Value>, Error> {
-    this.read()?.wrap(|d, id| d.next(id))
+pub fn next(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+    this.read()?.wrap(ruby, |d, id| d.next(id))
 }
-pub fn previous(this: XmlSelf) -> Result<Option<Value>, Error> {
-    this.read()?.wrap(|d, id| d.prev(id))
+pub fn previous(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+    this.read()?.wrap(ruby, |d, id| d.prev(id))
 }
-pub fn first_child(this: XmlSelf) -> Result<Option<Value>, Error> {
-    this.read()?.wrap(|d, id| d.first_child(id))
+pub fn first_child(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+    this.read()?.wrap(ruby, |d, id| d.first_child(id))
 }
 
-pub fn last_child(this: XmlSelf) -> Result<Option<Value>, Error> {
-    this.read()?.wrap(|d, id| d.last_child(id))
+pub fn last_child(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+    this.read()?.wrap(ruby, |d, id| d.last_child(id))
 }
 
 /// `#root_node` (DOM `getRootNode()`) - see [`crate::dom_rules::root`]; an
 /// Attr is its own root.
-pub fn root_node(this: XmlSelf) -> Result<Value, Error> {
+pub fn root_node(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     let root = crate::dom_rules::root(&*this.read()?, this.id);
-    wrap(root, this.document)
+    wrap(ruby, root, this.document)
 }
 
-pub fn next_element(this: XmlSelf) -> Result<Option<Value>, Error> {
-    this.read()?.wrap(child_index::next_element_sibling)
+pub fn next_element(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+    this.read()?.wrap(ruby, child_index::next_element_sibling)
 }
-pub fn previous_element(this: XmlSelf) -> Result<Option<Value>, Error> {
-    this.read()?.wrap(child_index::previous_element_sibling)
+pub fn previous_element(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+    this.read()?
+        .wrap(ruby, child_index::previous_element_sibling)
 }
-pub fn first_element_child(this: XmlSelf) -> Result<Option<Value>, Error> {
-    this.read()?.wrap(child_index::first_element_child)
+pub fn first_element_child(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+    this.read()?.wrap(ruby, child_index::first_element_child)
 }
-pub fn last_element_child(this: XmlSelf) -> Result<Option<Value>, Error> {
-    this.read()?.wrap(child_index::last_element_child)
+pub fn last_element_child(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
+    this.read()?.wrap(ruby, child_index::last_element_child)
 }
 
 pub fn get_document(this: XmlSelf) -> Result<Value, Error> {
@@ -207,15 +208,15 @@ fn children_of(d: &XmlDoc, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
 }
 
 /// `#children`: every child node.
-pub fn children(this: XmlSelf) -> Result<Value, Error> {
+pub fn children(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     this.read()?
-        .set(|d, id, out| children_of(d, id).for_each(out))
+        .set(ruby, |d, id, out| children_of(d, id).for_each(out))
 }
 
 /// `#_traverse_order`: this node and its descendants in post-order, as
 /// HTML's.
-pub fn traverse_order(this: XmlSelf) -> Result<Value, Error> {
-    this.read()?.set(|d, id, out| {
+pub fn traverse_order(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+    this.read()?.set(ruby, |d, id, out| {
         crate::glue::node::post_order(
             id,
             |n| n == id,
@@ -229,8 +230,8 @@ pub fn traverse_order(this: XmlSelf) -> Result<Value, Error> {
 
 /// `#ancestors`: the element ancestors, nearest first, the node itself
 /// excluded - as HTML's.
-pub fn ancestors(this: XmlSelf) -> Result<Value, Error> {
-    this.read()?.set(|d, id, out| {
+pub fn ancestors(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+    this.read()?.set(ruby, |d, id, out| {
         core::iter::successors(d.parent(id), |&p| d.parent(p))
             .filter(|&n| is_element(d, n))
             .for_each(out)
@@ -238,8 +239,8 @@ pub fn ancestors(this: XmlSelf) -> Result<Value, Error> {
 }
 
 /// `#element_children` / `#elements`: the child elements only.
-pub fn element_children(this: XmlSelf) -> Result<Value, Error> {
-    this.read()?.set(|d, id, out| {
+pub fn element_children(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+    this.read()?.set(ruby, |d, id, out| {
         children_of(d, id)
             .filter(|&n| is_element(d, n))
             .for_each(out)
@@ -257,67 +258,77 @@ fn attrs_of(d: &XmlDoc, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
 }
 
 /// `#[]` - the attribute's value, or nil.
-pub fn aref(_ruby: &Ruby, this: XmlSelf, rb_name: Value) -> Result<Option<Value>, Error> {
-    let found = crate::bridge::xml::find_attribute(this, rb_name)?;
-    str_from_read(this.read()?, StrKind::Utf8, |d| found.map(|at| d.value(at)))
+pub fn aref(ruby: &Ruby, this: XmlSelf, rb_name: Value) -> Result<Option<Value>, Error> {
+    let found = crate::bridge::xml::find_attribute(ruby, this, rb_name)?;
+    str_from_read(ruby, this.read()?, StrKind::Utf8, |d| {
+        found.map(|at| d.value(at))
+    })
 }
 
 /// `#key?` / `#has_attribute?`: whether `#[]` finds an attribute by that
 /// qualified name (DOM `hasAttribute`) - case-sensitive, as XML names are.
-pub fn has_key(_ruby: &Ruby, this: XmlSelf, rb_name: Value) -> Result<bool, Error> {
-    Ok(crate::bridge::xml::find_attribute(this, rb_name)?.is_some())
+pub fn has_key(ruby: &Ruby, this: XmlSelf, rb_name: Value) -> Result<bool, Error> {
+    Ok(crate::bridge::xml::find_attribute(ruby, this, rb_name)?.is_some())
 }
 
 /// `#attribute_value_ns(ns, local)` (DOM `getAttributeNS`): the value of the
 /// attribute in namespace `ns` (nil or "" for none) with local name `local`,
 /// or nil - for a non-element too.
 pub fn attribute_value_ns(
-    _ruby: &Ruby,
+    ruby: &Ruby,
     this: XmlSelf,
     rb_ns: Value,
     rb_local: Value,
 ) -> Result<Option<Value>, Error> {
-    let found = crate::bridge::xml::find_attribute_ns(this, rb_ns, rb_local)?;
-    str_from_read(this.read()?, StrKind::Utf8, |d| found.map(|at| d.value(at)))
+    let found = crate::bridge::xml::find_attribute_ns(ruby, this, rb_ns, rb_local)?;
+    str_from_read(ruby, this.read()?, StrKind::Utf8, |d| {
+        found.map(|at| d.value(at))
+    })
 }
 
 /// `#attribute_node_ns(ns, local)` (DOM `getAttributeNodeNS`): the Attr
 /// [`attribute_value_ns`] reads, or nil.
 pub fn attribute_node_ns(
+    ruby: &Ruby,
     this: XmlSelf,
     rb_ns: Value,
     rb_local: Value,
 ) -> Result<Option<Value>, Error> {
-    let found = crate::bridge::xml::find_attribute_ns(this, rb_ns, rb_local)?;
-    wrap_rel(this, found)
+    let found = crate::bridge::xml::find_attribute_ns(ruby, this, rb_ns, rb_local)?;
+    wrap_rel(ruby, this, found)
 }
 
 /// The Attr NODE with that qualified name.
-pub fn attribute_by_qualified_name(this: XmlSelf, rb_name: Value) -> Result<Option<Value>, Error> {
-    let a = crate::bridge::xml::find_attribute(this, rb_name)?;
-    wrap_rel(this, a)
+pub fn attribute_by_qualified_name(
+    ruby: &Ruby,
+    this: XmlSelf,
+    rb_name: Value,
+) -> Result<Option<Value>, Error> {
+    let a = crate::bridge::xml::find_attribute(ruby, this, rb_name)?;
+    wrap_rel(ruby, this, a)
 }
 
-pub fn attribute_nodes(this: XmlSelf) -> Result<Value, Error> {
-    this.read()?.set(|d, id, out| attrs_of(d, id).for_each(out))
+pub fn attribute_nodes(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+    this.read()?
+        .set(ruby, |d, id, out| attrs_of(d, id).for_each(out))
 }
 
 /// `#keys` -> the attribute names, in document order.
-pub fn keys(_ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+pub fn keys(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     let d = this.read()?;
-    let ary = crate::bridge::build::ary(0)?;
+    let ary = crate::bridge::build::ary(ruby, 0)?;
     for at in attrs_of(&d, this.id) {
-        crate::bridge::build::push(ary, utf8_str(d.qname(at))?)?;
+        crate::bridge::build::push(ary, utf8_str(ruby, d.qname(at))?)?;
     }
     Ok(ary.as_value())
 }
 
 /// `#values` -> the attribute values, in document order.
-pub fn values(_ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
+pub fn values(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     let d = this.read()?;
-    let ary = crate::bridge::build::ary(0)?;
+    let ary = crate::bridge::build::ary(ruby, 0)?;
     for at in attrs_of(&d, this.id) {
-        crate::bridge::build::push(ary, utf8_str(d.value(at))?)?;
+        crate::bridge::build::push(ary, utf8_str(ruby, d.value(at))?)?;
     }
     Ok(ary.as_value())
 }
@@ -326,16 +337,16 @@ pub fn values(_ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
 /// non-node, a node of another document (an HTML one included), an attribute,
 /// or two nodes in different trees. Comparable, which `Makiri::Node`
 /// includes, supplies `<`, `>` and the rest.
-pub fn spaceship(_ruby: &Ruby, this: XmlSelf, other: Value) -> Result<Option<i64>, Error> {
-    let same_document = crate::bridge::ruby::is_kind_of(other, &crate::init::CLASS_NODE)
+pub fn spaceship(ruby: &Ruby, this: XmlSelf, other: Value) -> Result<Option<i64>, Error> {
+    let same_document = crate::bridge::ruby::is_kind_of(ruby, other, &crate::init::CLASS_NODE)
         && crate::bridge::ruby::same_value(
-            crate::bridge::wrapper::keepalive_document(other)?,
+            crate::bridge::wrapper::keepalive_document(ruby, other)?,
             this.document,
         );
     if !same_document {
         return Ok(None);
     }
-    let other = crate::bridge::xml::xml_node_unwrap(other)?;
+    let other = crate::bridge::xml::xml_node_unwrap(ruby, other)?;
     let order = crate::xml::xpath::document_order(&*this.read()?, this.id, other);
     Ok(order.map(|o| o as i64))
 }

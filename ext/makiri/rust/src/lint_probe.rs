@@ -55,8 +55,8 @@ thread_local! {
 /// `lint_probe::engine` as one.
 #[rustfmt::skip] // keeps each marker on the line reported
 mod engine {
-    pub fn names_the_ruby_layer() -> crate::bridge::rb::Value { //~
-        crate::bridge::ruby::nil() //~
+    pub fn names_the_ruby_layer() -> crate::bridge::rb::Error { //~
+        crate::bridge::ruby::type_error("x") //~
     }
 
     pub fn names_only_the_engine(b: &[u8]) -> bool {
@@ -84,9 +84,9 @@ impl Drop for GuardedDrop {
     }
 }
 
-fn gvl_released() -> Result<(), crate::bridge::rb::Error> {
-    let _ = crate::bridge::gvl::without_gvl(|| crate::bridge::ruby::boolean(true)); //~
-    crate::bridge::gvl::without_gvl(|| engine::names_only_the_engine(b"x"))?;
+fn gvl_released(ruby: &crate::bridge::rb::Ruby) -> Result<(), crate::bridge::rb::Error> {
+    let _ = crate::bridge::gvl::without_gvl(ruby, || crate::bridge::ruby::type_error("x")); //~
+    crate::bridge::gvl::without_gvl(ruby, || engine::names_only_the_engine(b"x"))?;
     Ok(())
 }
 
@@ -103,8 +103,8 @@ fn raising() {
 
 fn raw_type(_: rb_sys::VALUE) {} //~
 
-fn callers_ruby(m: crate::bridge::rb::RModule) {
-    let _ = crate::bridge::rb::Module::call_method(m, "new", &[]); //~
+fn callers_ruby(ruby: &crate::bridge::rb::Ruby, m: crate::bridge::rb::RModule) {
+    let _ = crate::bridge::rb::Module::call_method(m, ruby, "new", &[]); //~
 }
 
 /// Stands in for a `bridge/` module: the bridge-scoped lints treat
@@ -153,8 +153,8 @@ fn passes_ruby_errors_on() -> Result<u32, crate::bridge::rb::Error> {
 /// `lint_probe::nupur` as `nupur`.
 #[rustfmt::skip] // keeps each marker on the line reported
 mod nupur {
-    fn names_the_host() -> crate::bridge::rb::ExceptionClass {
-        crate::init::EXC_ERROR.exception() //~
+    fn names_the_host(ruby: &crate::nupur::rb::Ruby) -> crate::bridge::rb::ExceptionClass {
+        crate::init::EXC_ERROR.exception(ruby) //~
     }
 
     fn names_only_itself(v: crate::nupur::rb::Value) -> bool {

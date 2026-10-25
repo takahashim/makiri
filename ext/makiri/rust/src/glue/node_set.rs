@@ -34,7 +34,7 @@ fn aref(ruby: &Ruby, s: NodeSetSelf, args: &[Value]) -> Result<Option<Value>, Er
              * raises, as `Array#[]` does. The ends are Integers or nil: one
              * that is not would be converted by its `to_int`. */
             match range_beg_len(crate::bridge::ruby::integer_range_arg(*range)?, count)? {
-                Some((beg, len)) => s.slice(beg as usize, len as usize),
+                Some((beg, len)) => s.slice(ruby, beg as usize, len as usize),
                 None => Ok(None),
             }
         }
@@ -43,7 +43,7 @@ fn aref(ruby: &Ruby, s: NodeSetSelf, args: &[Value]) -> Result<Option<Value>, Er
             if i < 0 || i >= count {
                 return Ok(None);
             }
-            s.at(i as usize)
+            s.at(ruby, i as usize)
         }
         [beg, len] => {
             let beg = from_end(crate::bridge::ruby::long_arg(*beg)?);
@@ -51,9 +51,9 @@ fn aref(ruby: &Ruby, s: NodeSetSelf, args: &[Value]) -> Result<Option<Value>, Er
             if beg < 0 || beg > count || len < 0 {
                 return Ok(None);
             }
-            s.slice(beg as usize, len as usize)
+            s.slice(ruby, beg as usize, len as usize)
         }
-        _ => Err(crate::glue::args::arity_error(ruby, args.len(), 1, Some(2))),
+        _ => Err(crate::glue::args::arity_error(args.len(), 1, Some(2))),
     }
 }
 
@@ -71,7 +71,7 @@ fn aref(ruby: &Ruby, s: NodeSetSelf, args: &[Value]) -> Result<Option<Value>, Er
 fn each(ruby: &Ruby, s: NodeSetSelf) -> Result<Value, Error> {
     let this = s.value();
     if !crate::bridge::raw::block_given(ruby) {
-        return crate::bridge::build::enumerator(this, "each");
+        return crate::bridge::build::enumerator(ruby, this, "each");
     }
     /* By index, not over a copy: a set is never changed once filled, and
      * a copy would be owned by this frame - which an Enumerator over
@@ -80,7 +80,7 @@ fn each(ruby: &Ruby, s: NodeSetSelf) -> Result<Value, Error> {
     for i in 0..s.count()? {
         /* Never None while the set is unchanged; a shrunk set would be a
          * broken invariant, not a shorter answer. */
-        let node = s.at(i)?.ok_or_else(|| {
+        let node = s.at(ruby, i)?.ok_or_else(|| {
             crate::bridge::ruby::internal_error("a node set changed while it was iterated")
         })?;
         crate::bridge::raw::yield_value(ruby, node)?;
@@ -88,24 +88,24 @@ fn each(ruby: &Ruby, s: NodeSetSelf) -> Result<Value, Error> {
     Ok(this)
 }
 
-fn dup(s: NodeSetSelf, _args: &[Value]) -> Result<Value, Error> {
-    s.copy()
+fn dup(ruby: &Ruby, s: NodeSetSelf, _args: &[Value]) -> Result<Value, Error> {
+    s.copy(ruby)
 }
 
 fn op_or(ruby: &Ruby, s: NodeSetSelf, other: Value) -> Result<Value, Error> {
-    s.union(&*s.operand(ruby, other)?)
+    s.union(ruby, &*s.operand(ruby, other)?)
 }
 
 fn op_plus(ruby: &Ruby, s: NodeSetSelf, other: Value) -> Result<Value, Error> {
-    s.concat(&*s.operand(ruby, other)?)
+    s.concat(ruby, &*s.operand(ruby, other)?)
 }
 
 fn op_and(ruby: &Ruby, s: NodeSetSelf, other: Value) -> Result<Value, Error> {
-    s.filter(&*s.operand(ruby, other)?, Membership::In)
+    s.filter(ruby, &*s.operand(ruby, other)?, Membership::In)
 }
 
 fn op_minus(ruby: &Ruby, s: NodeSetSelf, other: Value) -> Result<Value, Error> {
-    s.filter(&*s.operand(ruby, other)?, Membership::NotIn)
+    s.filter(ruby, &*s.operand(ruby, other)?, Membership::NotIn)
 }
 
 /// `NodeSet.new(document_or_node, list = [])`.
@@ -118,13 +118,13 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     let owner = a.required(0);
     let list = a.optional(0);
 
-    let document = if is_kind_of(owner, &CLASS_DOCUMENT) {
+    let document = if is_kind_of(ruby, owner, &CLASS_DOCUMENT) {
         owner
-    } else if is_kind_of(owner, &CLASS_NODE) {
-        keepalive_document(owner)?
+    } else if is_kind_of(ruby, owner, &CLASS_NODE) {
+        keepalive_document(ruby, owner)?
     } else {
         return Err(Error::new(
-            ruby.exception_type_error(),
+            crate::bridge::rb::Builtin::TypeError,
             "expected a Makiri::Document or Node as the first argument",
         ));
     };
@@ -132,7 +132,7 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
         None => None,
         Some(v) => Some(RArray::from_value(v).ok_or_else(|| {
             Error::new(
-                ruby.exception_type_error(),
+                crate::bridge::rb::Builtin::TypeError,
                 "expected an Array of nodes as the second argument",
             )
         })?),
@@ -141,8 +141,8 @@ fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
 }
 
 /// From `Init_makiri`, with the classes already defined.
-pub fn init_node_set() -> Result<(), Error> {
-    let klass = CLASS_NODE_SET.defined()?;
+pub fn init_node_set(ruby: &Ruby) -> Result<(), Error> {
+    let klass = CLASS_NODE_SET.defined(ruby)?;
 
     /* Sets are made by queries and by `.new` below, never allocated bare. */
     klass.undef_default_alloc_func();

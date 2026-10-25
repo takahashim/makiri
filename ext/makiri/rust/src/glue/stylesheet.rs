@@ -11,7 +11,7 @@ use crate::bridge::rb::{prelude::*, Error, RArray, RHash, Ruby, Value};
 use crate::function;
 
 use crate::bridge::build::{ary, aset, hash, int, push, sym};
-use crate::bridge::ruby::{boolean, error_class};
+use crate::bridge::ruby::boolean;
 use crate::bridge::string::{ruby_verified_text, utf8_str};
 use crate::init::MOD_LEXBOR;
 use crate::selectors::stylesheet::{parse, Decl, Fail, Rule, MAX_DEPTH};
@@ -44,55 +44,55 @@ struct Keys {
 }
 
 impl Keys {
-    fn new() -> Result<Keys, Error> {
+    fn new(ruby: &Ruby) -> Result<Keys, Error> {
         Ok(Keys {
-            type_: sym("type")?,
-            selectors: sym("selectors")?,
-            declarations: sym("declarations")?,
-            name: sym("name")?,
-            value: sym("value")?,
-            important: sym("important")?,
-            text: sym("text")?,
-            specificity: sym("specificity")?,
-            selector_text: sym("selector_text")?,
-            prelude: sym("prelude")?,
-            rules: sym("rules")?,
-            sym_style: sym("style")?,
-            sym_bad_style: sym("bad_style")?,
-            sym_at_rule: sym("at_rule")?,
+            type_: sym(ruby, "type")?,
+            selectors: sym(ruby, "selectors")?,
+            declarations: sym(ruby, "declarations")?,
+            name: sym(ruby, "name")?,
+            value: sym(ruby, "value")?,
+            important: sym(ruby, "important")?,
+            text: sym(ruby, "text")?,
+            specificity: sym(ruby, "specificity")?,
+            selector_text: sym(ruby, "selector_text")?,
+            prelude: sym(ruby, "prelude")?,
+            rules: sym(ruby, "rules")?,
+            sym_style: sym(ruby, "style")?,
+            sym_bad_style: sym(ruby, "bad_style")?,
+            sym_at_rule: sym(ruby, "at_rule")?,
         })
     }
 }
 
-fn decls_to_ruby(k: &Keys, ds: &[Decl]) -> Result<RArray, Error> {
-    let a = ary(ds.len())?;
+fn decls_to_ruby(ruby: &Ruby, k: &Keys, ds: &[Decl]) -> Result<RArray, Error> {
+    let a = ary(ruby, ds.len())?;
     for d in ds {
-        let h = hash()?;
-        aset(h, k.name, utf8_str(&d.name)?)?;
-        aset(h, k.value, utf8_str(&d.value)?)?;
-        aset(h, k.important, boolean(d.important))?;
+        let h = hash(ruby)?;
+        aset(h, k.name, utf8_str(ruby, &d.name)?)?;
+        aset(h, k.value, utf8_str(ruby, &d.value)?)?;
+        aset(h, k.important, boolean(ruby, d.important))?;
         push(a, h.as_value())?;
     }
     Ok(a)
 }
 
-fn rules_to_ruby(k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
-    let a = ary(rs.len())?;
+fn rules_to_ruby(ruby: &Ruby, k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
+    let a = ary(ruby, rs.len())?;
     for r in rs {
-        let h: RHash = hash()?;
+        let h: RHash = hash(ruby)?;
         match r {
             Rule::Style {
                 selectors,
                 declarations,
             } => {
                 aset(h, k.type_, k.sym_style)?;
-                let sa = ary(selectors.len())?;
+                let sa = ary(ruby, selectors.len())?;
                 for s in selectors {
-                    let sh = hash()?;
-                    aset(sh, k.text, utf8_str(&s.text)?)?;
-                    let sp = ary(3)?;
+                    let sh = hash(ruby)?;
+                    aset(sh, k.text, utf8_str(ruby, &s.text)?)?;
+                    let sp = ary(ruby, 3)?;
                     for v in s.specificity {
-                        push(sp, int(v as i64)?)?;
+                        push(sp, int(ruby, v as i64)?)?;
                     }
                     aset(sh, k.specificity, sp.as_value())?;
                     push(sa, sh.as_value())?;
@@ -101,7 +101,7 @@ fn rules_to_ruby(k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
                 aset(
                     h,
                     k.declarations,
-                    decls_to_ruby(k, declarations)?.as_value(),
+                    decls_to_ruby(ruby, k, declarations)?.as_value(),
                 )?;
             }
             Rule::BadStyle {
@@ -109,11 +109,11 @@ fn rules_to_ruby(k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
                 declarations,
             } => {
                 aset(h, k.type_, k.sym_bad_style)?;
-                aset(h, k.selector_text, utf8_str(selector_text)?)?;
+                aset(h, k.selector_text, utf8_str(ruby, selector_text)?)?;
                 aset(
                     h,
                     k.declarations,
-                    decls_to_ruby(k, declarations)?.as_value(),
+                    decls_to_ruby(ruby, k, declarations)?.as_value(),
                 )?;
             }
             Rule::At {
@@ -123,13 +123,13 @@ fn rules_to_ruby(k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
                 declarations,
             } => {
                 aset(h, k.type_, k.sym_at_rule)?;
-                aset(h, k.name, utf8_str(name)?)?;
-                aset(h, k.prelude, utf8_str(prelude)?)?;
-                aset(h, k.rules, rules_to_ruby(k, rules)?.as_value())?;
+                aset(h, k.name, utf8_str(ruby, name)?)?;
+                aset(h, k.prelude, utf8_str(ruby, prelude)?)?;
+                aset(h, k.rules, rules_to_ruby(ruby, k, rules)?.as_value())?;
                 aset(
                     h,
                     k.declarations,
-                    decls_to_ruby(k, declarations)?.as_value(),
+                    decls_to_ruby(ruby, k, declarations)?.as_value(),
                 )?;
             }
         }
@@ -139,13 +139,13 @@ fn rules_to_ruby(k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
 }
 
 /// `Makiri.parse_stylesheet(text)`.
-fn parse_stylesheet(_ruby: &Ruby, text: Value) -> Result<RArray, Error> {
-    let tv = ruby_verified_text(text, "CSS stylesheet")?;
+fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
+    let tv = ruby_verified_text(ruby, text, "CSS stylesheet")?;
     /* `tv` is this frame's own copy of the String's bytes, so nothing Ruby
      * does can move or mutate them. */
     let css: &[u8] = tv.as_bytes();
 
-    let eclass = error_class();
+    let eclass = &crate::init::EXC_ERROR;
     let err = |m: &'static str| Error::new(eclass, m);
 
     let parsed = match parse(css) {
@@ -164,14 +164,14 @@ fn parse_stylesheet(_ruby: &Ruby, text: Value) -> Result<RArray, Error> {
     /* Building the result allocates Ruby objects; a failed allocation comes
      * back as `Err` (`bridge::build`), and the parsed rules and the input's
      * copy drop with this frame. */
-    rules_to_ruby(&Keys::new()?, &parsed)
+    rules_to_ruby(ruby, &Keys::new(ruby)?, &parsed)
 }
 
 /// `Makiri::Lexbor::CSS.parse_stylesheet`. From `Init_makiri`.
 pub fn init_lexbor_css(ruby: &Ruby) -> Result<(), Error> {
-    let lexbor = MOD_LEXBOR.defined()?;
+    let lexbor = MOD_LEXBOR.defined(ruby)?;
     let css = ruby.module_new()?;
-    lexbor.const_set("CSS", css)?;
+    lexbor.const_set(ruby, "CSS", css)?;
     css.define_module_function("parse_stylesheet", function!(parse_stylesheet, 1))?;
     Ok(())
 }

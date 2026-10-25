@@ -4,15 +4,18 @@
 
 use core::marker::PhantomData;
 
-use super::value::{ExceptionClass, RClass, ReprValue, Value};
+use super::value::{ExceptionClass, RClass, Value};
 
 /// The GVL, held: a Ruby method's thread, between its entry and its return.
 ///
 /// A zero-sized token, neither `Send` nor `Sync`, so it cannot be carried into
-/// a GVL-released body (`bridge::gvl::without_gvl`'s `Send` bound). A method
-/// is handed one by its trampoline; anything else gets one from a value
-/// (`get_with`, a value existing being proof enough) or, where nothing else
-/// is at hand, from `bridge::ruby::gvl_ruby`.
+/// a GVL-released body (`bridge::gvl::without_gvl`'s `Send` bound). Only the
+/// entries Ruby calls make one - a method's trampoline (`method::finish`) and
+/// `Init_` (`method::run_init`) - and everything below them is handed it as
+/// `&Ruby`: there is no other way to get one. Making an [`Error`] needs none,
+/// since its class is read only when it is raised.
+///
+/// [`Error`]: super::error::Error
 pub struct Ruby(PhantomData<*mut ()>);
 
 macro_rules! globals {
@@ -36,12 +39,6 @@ impl Ruby {
     /// On a Ruby thread holding the GVL.
     #[inline]
     pub unsafe fn get_unchecked() -> Ruby {
-        Ruby(PhantomData)
-    }
-
-    /// The token, from a value: one exists only where the GVL is held.
-    #[inline]
-    pub fn get_with(_: impl ReprValue) -> Ruby {
         Ruby(PhantomData)
     }
 

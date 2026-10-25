@@ -98,7 +98,6 @@ pub(crate) fn scan<'a>(ruby: &Ruby, args: &'a [Value], shape: Shape) -> Result<S
     let given = positional.len();
     if given < shape.required || (!shape.rest && given > max) {
         return Err(arity_error(
-            ruby,
             given,
             shape.required,
             (!shape.rest).then_some(max),
@@ -113,8 +112,8 @@ pub(crate) fn scan<'a>(ruby: &Ruby, args: &'a [Value], shape: Shape) -> Result<S
 
 /// Ruby's `ArgumentError` for `given` arguments where `min` to `max` (`None`:
 /// any number) are taken: `rb_error_arity`'s message.
-pub(crate) fn arity_error(ruby: &Ruby, given: usize, min: usize, max: Option<usize>) -> Error {
-    let class = ruby.exception_arg_error();
+pub(crate) fn arity_error(given: usize, min: usize, max: Option<usize>) -> Error {
+    let class = crate::bridge::rb::Builtin::ArgumentError;
     match max {
         Some(max) if max == min => Error::new(
             class,

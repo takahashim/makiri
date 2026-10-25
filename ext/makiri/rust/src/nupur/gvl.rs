@@ -42,7 +42,10 @@ use core::ffi::c_void;
 /// - It did not run: the interrupt is delivered HERE, under `protect`, so it
 ///   comes back as `Err` through ordinary Rust returns. If delivering it raised
 ///   nothing (a trap handler that returned), the call is simply made again.
-pub fn without_gvl<F: FnOnce() -> R + Send, R>(f: F) -> Result<R, crate::nupur::rb::Error> {
+pub fn without_gvl<F: FnOnce() -> R + Send, R>(
+    ruby: &crate::nupur::rb::Ruby,
+    f: F,
+) -> Result<R, crate::nupur::rb::Error> {
     struct Slot<F, R> {
         f: Option<F>,
         out: Option<R>,
@@ -98,6 +101,6 @@ pub fn without_gvl<F: FnOnce() -> R + Send, R>(f: F) -> Result<R, crate::nupur::
             ));
         }
         /* An interrupt was pending, so the body never started: deliver it. */
-        crate::nupur::raw::thread_check_ints(&crate::nupur::helpers::gvl_ruby())?;
+        crate::nupur::raw::thread_check_ints(ruby)?;
     }
 }

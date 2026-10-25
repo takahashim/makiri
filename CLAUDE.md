@@ -1487,14 +1487,16 @@ Key decisions that got there, worth not regressing:
   (`Timeout`, `Thread#raise`) as it returns, a longjmp over the Rust frames
   holding the parsed document and the source copy, which leaked both on every
   interrupted parse. `bridge::gvl::without_gvl` delivers an interrupt only
-  when the body never started, under `protect`. Its `Send` bound keeps a
-  Ruby handle from being carried into the body but not from being MADE
-  there (`bridge::ruby::gvl_ruby`), so `rake dylint`'s
-  `ruby_in_gvl_released_body` holds the body's closure to calls into the
-  engine or a library, by resolved path - a call through a function value,
-  whose target no one can see, is refused too (hoist it). A runtime check in `gvl_ruby` was tried and
-  dropped: always on it cost the light readers 5-10%, and it could not see
-  the one hole left, a function pointer the engine calls into Ruby's C.
+  when the body never started, under `protect`. Its `Send` bound keeps the
+  GVL token (`&Ruby`, which only a method's trampoline and `Init_` make,
+  every callee being handed it) and every Ruby value out of the body, and
+  nothing in the body can make a token; `rake dylint`'s
+  `ruby_in_gvl_released_body` still holds the body's closure to calls into
+  the engine or a library, by resolved path - a call through a function
+  value, whose target no one can see, is refused too (hoist it) - since a
+  Ruby-layer call needing no token (an `Error` made, which reads its class
+  only when raised) is not a type error. What neither can see is a function
+  pointer the engine calls into Ruby's C.
   **XPath holds
   the GVL for the whole evaluation by design** (`xpath::ctx::Session::evaluate` is a plain
   GVL-held call). The engine and DOM are not thread-safe against concurrent

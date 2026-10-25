@@ -107,7 +107,7 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
          * serializer's buffer: the lookup returns the error instead. The
          * name is a copy, so the bytes stay valid across the serializer's
          * call. */
-        let (e, bytes) = crate::bridge::string::encoding_arg(enc_opt)?;
+        let (e, bytes) = crate::bridge::string::encoding_arg(ruby, enc_opt)?;
         (Some(e), Some(bytes))
     };
 
@@ -119,7 +119,7 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
     );
     let buf = out.map_err(|f| failure_error(f, "serialize"))?;
     /* A failed allocation is `Err`, and `buf` (and `enc_name`) drop. */
-    let mut str = crate::bridge::string::utf8_rstring(buf.as_slice())?;
+    let mut str = crate::bridge::string::utf8_rstring(ruby, buf.as_slice())?;
     drop(buf);
 
     if let Some(enc) = to_enc {
@@ -134,20 +134,20 @@ fn canonicalize(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Val
     let comments = Kwargs::scan(ruby, args)?.flag(ruby, "comments")?;
     let buf = xml_serialize::canonicalize(&*this.read()?, this.id, comments)
         .map_err(|f| failure_error(f, "canonicalize"))?;
-    Ok(crate::bridge::string::utf8_rstring(buf.as_slice())?.as_value())
+    Ok(crate::bridge::string::utf8_rstring(ruby, buf.as_slice())?.as_value())
 }
 
-fn no_serialize(ruby: &Ruby, _rb_self: Value, _args: &[Value]) -> Result<Value, Error> {
+fn no_serialize(_rb_self: Value, _args: &[Value]) -> Result<Value, Error> {
     Err(Error::new(
-        ruby.exception_not_imp_error(),
+        crate::bridge::rb::Builtin::NotImplementedError,
         "Makiri::XML does not HTML-serialize (to_html / inner_html / outer_html); \
          use #to_xml for XML output.",
     ))
 }
 
 /// From `Init_makiri`.
-pub fn init_xml_node_serialize() -> Result<(), Error> {
-    let m = MOD_XML_NODE_METHODS.defined()?;
+pub fn init_xml_node_serialize(ruby: &Ruby) -> Result<(), Error> {
+    let m = MOD_XML_NODE_METHODS.defined(ruby)?;
     for name in ["to_xml", "to_s"] {
         m.define_method(name, method!(to_xml, -1))?;
     }
