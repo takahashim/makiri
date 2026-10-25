@@ -158,6 +158,24 @@ RSpec.describe "a Rust panic" do
     end
   end
 
+  # A panic while a String is written in place (`raw::utf8_str_filled`): the
+  # String is left for the GC, and until then `ObjectSpace` can hand it to
+  # Ruby code, so the unwind must empty it - an `Err` did, a panic skipped
+  # that until the guard became a `Drop`.
+  describe "while a String is filled in place" do
+    it "is an InternalError, and leaves no String holding unwritten bytes" do
+      GC.disable
+      begin
+        expect { Makiri.__panic(7) }
+          .to raise_error(Makiri::InternalError, /panic while a String is filled/)
+        left = ObjectSpace.each_object(String).count { |s| s.bytesize == 12_345 }
+        expect(left).to eq(0)
+      ensure
+        GC.enable
+      end
+    end
+  end
+
   it "rejects an unknown kind with an ordinary ArgumentError" do
     expect { Makiri.__panic(99) }.to raise_error(ArgumentError, /kind must be/)
   end
