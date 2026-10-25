@@ -164,9 +164,35 @@ unsafe fn borrow<'a>(s: RString) -> &'a [u8] {
 /// # Safety
 /// `f` must run no Ruby: no allocation of a Ruby object, no method call,
 /// nothing that can trigger a GC or let another thread run.
-pub(in crate::bridge) unsafe fn with_bytes<R>(s: RString, f: impl FnOnce(&[u8]) -> R) -> R {
+unsafe fn with_bytes<R>(s: RString, f: impl FnOnce(&[u8]) -> R) -> R {
     // SAFETY: the caller's contract - nothing runs Ruby while the slice lives.
     f(unsafe { borrow(s) })
+}
+
+/// The first `N` bytes of `s` (all of them when it is shorter), copied, with
+/// how many there are: what a sniff of a document's start reads, owned.
+pub(in crate::bridge) fn prefix<const N: usize>(s: RString) -> ([u8; N], usize) {
+    let mut out = [0u8; N];
+    // SAFETY: a copy into a stack array, which runs no Ruby.
+    let n = unsafe {
+        with_bytes(s, |bytes| {
+            let n = bytes.len().min(N);
+            if let (Some(dst), Some(src)) = (out.get_mut(..n), bytes.get(..n)) {
+                dst.copy_from_slice(src);
+            }
+            n
+        })
+    };
+    (out, n)
+}
+
+/// [`text_check`] over `s`'s bytes from `off` (none past its end), read in
+/// place: the strict text contract over a whole document, which a copy would
+/// double.
+pub(in crate::bridge) fn text_check_from(s: RString, off: usize) -> TextVerdict {
+    // SAFETY: `text_check` reads the bytes and the cached coderange, and runs
+    // no Ruby.
+    unsafe { with_bytes(s, |bytes| text_check(s, bytes.get(off..).unwrap_or(&[]))) }
 }
 
 /// A live Ruby String's raw bytes, copied into an owned buffer.
