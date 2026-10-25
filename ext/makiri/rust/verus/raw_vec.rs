@@ -35,6 +35,7 @@ pub fn grow_capacity(cap: usize, need: usize, elem: usize) -> (result: Option<us
 {
     need.checked_mul(elem)?;
     if need == 0 {
+        // [canary]
         return Some(if cap != 0 && cap.checked_mul(elem).is_some() {
             cap
         } else {
@@ -56,11 +57,13 @@ pub fn grow_capacity(cap: usize, need: usize, elem: usize) -> (result: Option<us
             cap > 0 && fits(cap as int, elem as int) ==> nc >= cap, // [verus]
         decreases usize::MAX - nc, // [verus]
     {
+        // [canary]
         match nc.checked_mul(2) {
             Some(next) if next.checked_mul(elem).is_some() => nc = next,
             _ => return Some(need),
         }
     }
+    // [canary]
     Some(nc)
 }
 
@@ -154,6 +157,7 @@ impl<T: Copy> RawVec<T> {
         ensures // [verus]
             s@ == self.view(), // [verus]
     {
+        // [canary]
         self.block.prefix(self.len)
     }
 
@@ -166,6 +170,7 @@ impl<T: Copy> RawVec<T> {
             r.is_ok() ==> final(self).block.view().len() >= n, // [verus]
     {
         if n > self.block.cap() {
+            // [canary]
             self.grow_to(n)?;
         }
         Ok(())
@@ -195,6 +200,7 @@ impl<T: Copy> RawVec<T> {
         proof { // [verus]
             assert(self.view() =~= before); // [verus]
         } // [verus]
+        // [canary]
         r // [verus]
     }
 
@@ -216,12 +222,14 @@ impl<T: Copy> RawVec<T> {
                     Some(c) => c,
                     None => return Err(GrowError::Overflow),
                 };
+            // [canary]
             self.grow_to(new_cap)?;
         }
         let ghost before = self.view(); // [verus]
         self.block.set(self.len, item);
         self.len += 1;
         assert(self.view() =~= before.push(item)); // [verus]
+        // [canary]
         Ok(())
     }
 }

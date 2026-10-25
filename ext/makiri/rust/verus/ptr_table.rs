@@ -156,6 +156,7 @@ pub fn capacity_for(keys: usize) -> (r: Option<usize>)
         r.is_some() ==> is_pow2(r.unwrap()) && r.unwrap() >= 8 && r.unwrap() >= 2 * keys, // [verus]
 {
     proof { assert(is_pow2(8usize)) by (compute); } // [verus]
+    // [canary]
     Some(keys.checked_mul(2)?.checked_next_power_of_two()?.max(8))
 }
 
@@ -200,6 +201,7 @@ fn probe<K: TableKey + PartialEqSpec, V>(slots: &[(K, V)], key: K) -> (r: usize)
             i as int == (h + steps) % n, // [verus]
         decreases d - steps, // [verus]
     {
+        // [canary]
         proof { // [verus]
             if steps == d { // [verus]
                 assert(i as int == j); // [verus]
@@ -211,6 +213,7 @@ fn probe<K: TableKey + PartialEqSpec, V>(slots: &[(K, V)], key: K) -> (r: usize)
         i = (i + 1) & mask;
         proof { steps = steps + 1; } // [verus]
     }
+    // [canary]
     i
 }
 
@@ -226,6 +229,7 @@ fn lookup<K: TableKey + PartialEqSpec, V: Copy>(slots: &[(K, V)], key: K) -> (r:
     }
     let (k, v) = slots[probe(slots, key)];
     if k != K::EMPTY {
+        // [canary]
         Some(v)
     } else {
         None
@@ -308,6 +312,7 @@ impl<K: TableKey + PartialEqSpec, V: Copy> PtrTable<K, V> {
         if keys > 0 {
             let cap = capacity_for(keys)?;
             slots = crate::falloc::try_vec_filled(cap, (K::EMPTY, empty))?;
+            // [canary]
             assert(occ(slots@) =~= Set::<int>::empty()); // [verus]
         }
         assert(occ(slots@) =~= Set::<int>::empty()); // [verus]
@@ -339,10 +344,12 @@ impl<K: TableKey + PartialEqSpec, V: Copy> PtrTable<K, V> {
             if self.len == self.limit {
                 return None;
             }
+            // [canary]
             proof { lemma_occ_write(self.slots@, i as int, key, value); } // [verus]
             self.slots[i] = (key, value);
             self.len += 1;
         }
+        // [canary]
         Some(i)
     }
 
@@ -357,6 +364,7 @@ impl<K: TableKey + PartialEqSpec, V: Copy> PtrTable<K, V> {
                 lemma_free(self.slots@); // [verus]
             } // [verus]
         } // [verus]
+        // [canary]
         lookup(&self.slots, key)
     }
 }
@@ -405,6 +413,7 @@ impl<K: TableKey + PartialEqSpec, V: Copy + Default> PtrMap<K, V> {
                     forall|k: int| 0 <= k < j ==> (#[trigger] self.slots@[k]).0 == K::EMPTY, // [verus]
                 decreases self.slots.len() - j, // [verus]
             {
+                // [canary]
                 self.slots[j] = (K::EMPTY, V::default());
                 j += 1;
             }
@@ -425,6 +434,7 @@ impl<K: TableKey + PartialEqSpec, V: Copy + Default> PtrMap<K, V> {
                 lemma_free(self.slots@); // [verus]
             } // [verus]
         } // [verus]
+        // [canary]
         lookup(&self.slots, key)
     }
 
@@ -449,6 +459,7 @@ impl<K: TableKey + PartialEqSpec, V: Copy + Default> PtrMap<K, V> {
                 return Ok(());
             }
             if (self.len + 1) * 2 <= self.slots.len() {
+                // [canary]
                 proof { lemma_occ_write(self.slots@, i as int, key, value); } // [verus]
                 self.slots[i] = (key, value);
                 self.len += 1;
@@ -461,6 +472,7 @@ impl<K: TableKey + PartialEqSpec, V: Copy + Default> PtrMap<K, V> {
             lemma_free(self.slots@); // [verus]
         } // [verus]
         let i = probe(&self.slots, key);
+        // [canary]
         proof { lemma_occ_write(self.slots@, i as int, key, value); } // [verus]
         self.slots[i] = (key, value);
         self.len += 1;
@@ -483,6 +495,7 @@ impl<K: TableKey + PartialEqSpec, V: Copy + Default> PtrMap<K, V> {
             let i = probe(&self.slots, key);
             if self.slots[i].0 == key {
                 proof { lemma_occ_write(self.slots@, i as int, key, value); } // [verus]
+                // [canary]
                 self.slots[i].1 = value;
                 assert(self.slots@ == old(self).slots@.update(i as int, (key, value))); // [verus]
                 return Ok(());
@@ -555,6 +568,7 @@ impl<K: TableKey + PartialEqSpec, V: Copy + Default> PtrMap<K, V> {
                 } // [verus]
                 let i = probe(&slots, k);
                 proof { lemma_occ_write(slots@, i as int, k, v); } // [verus]
+                // [canary]
                 slots[i] = (k, v);
             }
             j += 1;
@@ -563,6 +577,7 @@ impl<K: TableKey + PartialEqSpec, V: Copy + Default> PtrMap<K, V> {
             lemma_occ_finite(self.slots@, j as int); // [verus]
             assert(occ_below(self.slots@, j as int) =~= occ(self.slots@)); // [verus]
         } // [verus]
+        // [canary]
         self.slots = slots;
         Ok(())
     }

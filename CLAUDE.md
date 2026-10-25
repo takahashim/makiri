@@ -396,7 +396,13 @@ bundle exec rake verus             # Verus proofs (ext/makiri/rust/verus/): fall
                                    # load factor, copied and checked against the source
                                    # (`verus:sync`) - unbounded.
                                    # VERUS=path/to/verus (Rakefile's VERUS_VERSION); CI:
-                                   # verify.yml. Heavy tools stay in CI, like Miri and Kani
+                                   # verify.yml. Heavy tools stay in CI, like Miri and Kani.
+                                   # Vacuity is checked by what must FAIL: an
+                                   # assert(false) at each `// [canary]` mark, one
+                                   # variant each, and verus/canaries/'s callers; what
+                                   # each proof trusts (external_body,
+                                   # assume_specification, assume) is pinned
+                                   # (VERUS_TRUSTED)
 bundle exec rake kani              # Kani proofs over the Ruby-free core (needs cargo-kani).
                                    # The successor to the C-era CBMC harnesses: the
                                    # allocator, cbuf, UTF-8 validate/decode.
