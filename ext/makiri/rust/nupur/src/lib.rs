@@ -2,14 +2,27 @@
 //! method trampolines, TypedData, the GVL, and every C call that can raise,
 //! over rb-sys alone.
 //!
-//! It knows nothing of Makiri: it names no module of the crate outside
-//! `crate::nupur` (`rake dylint`'s `nupur_names_its_host` holds it to that),
-//! and what it needs of the extension - the exception a broken invariant
-//! raises, the raise sweep's hook - is registered at `Init_`
-//! ([`helpers::INTERNAL_ERROR`], `raw::set_raise_injector`). Stage 1 of
-//! `notes/nupur_crate_plan.ja.md`: a module of the extension's crate, on its
-//! way to a crate of its own. `bridge` re-exports it under its old names, so
-//! the rest of the extension is unchanged.
+//! It knows nothing of Makiri - it is a crate of its own, which does not
+//! depend on the extension - and what it needs of the extension (the
+//! exception a broken invariant raises, the raise sweep's hook) is
+//! registered at `Init_` ([`helpers::INTERNAL_ERROR`],
+//! `raw::set_raise_injector`). `notes/nupur_crate_plan.ja.md` is its plan.
+//!
+//! Every `unsafe` the extension needs to talk to Ruby is here, each with its
+//! contract stated; what it hands out is safe. The crate denies `unsafe_code`
+//! and the files that need it carry an `allow` each, which `rake
+//! unsafe:boundaries` counts.
+
+#![deny(unsafe_code)]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+/* `rake dylint` sets `dylint_lib` for the whole build, the extension's run
+ * compiling this crate as a plain dependency: there the extension's lints,
+ * which the `allow`s here name, are unknown. */
+#![cfg_attr(dylint_lib = "makiri_lints", allow(unknown_lints))]
+
+/// The lints' self-test for this crate (`rake dylint`).
+#[cfg(makiri_lint_probe)]
+mod lint_probe;
 
 /// The value and method layer: `Value` and the class-checked handles,
 /// `Error`, the `method!` / `function!` trampolines, class definitions.

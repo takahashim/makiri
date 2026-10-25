@@ -14,9 +14,15 @@
 //! `rake unsafe:boundaries` holds that: no method is defined, and no argument
 //! list scanned, in this layer.
 //!
-//! A failure comes back as `Err(crate::bridge::rb::Error)` rather than as a raise: `ruby`
-//! holds the few places a raising C function is still called, and turns each
-//! raise into an `Err` there.
+//! A failure comes back as `Err(crate::bridge::rb::Error)` rather than as a
+//! raise: every raising C call is `nupur::raw`'s, which turns its raise into
+//! an `Err` there.
+//!
+//! Unsafe-free, from this root down: what reads Ruby's memory or calls its C
+//! is `nupur`'s, behind safe types, and this layer is Makiri's rules over
+//! them.
+
+#![forbid(unsafe_code)]
 
 /// The Arrays, Hashes, numbers and Symbols the glue builds, allocation
 /// failures as `Err`.

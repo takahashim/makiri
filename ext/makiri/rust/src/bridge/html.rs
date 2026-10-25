@@ -106,6 +106,12 @@ pub(in crate::bridge) fn wrap_html_node_checked(
     node: RawNode,
     document: Value,
 ) -> Result<Value, Error> {
+    /* A wrapper in the table was made for this word, checked then - and a
+     * word names one node of one document for the document's life - so a
+     * hit needs no check, no type and no class. */
+    if let Some(cached) = crate::bridge::wrapper::cached_node(document, node.word())? {
+        return Ok(cached);
+    }
     let node_type = html_read(&document)?
         .doc()
         .checked(node)
@@ -193,7 +199,7 @@ pub(in crate::bridge) fn html_node_key(
         .map_err(|ForeignNode| foreign_node_error())?;
         return Ok((key, rb_node));
     }
-    let nd = HTML_NODE_TYPE.read(rb_node)?;
+    let nd = crate::bridge::wrapper::read_node(&HTML_NODE_TYPE, rb_node)?;
     let key = nd.node.html().ok_or_else(uninitialized)?;
     Ok((key, nd.document))
 }
@@ -568,11 +574,11 @@ pub struct HtmlEdit<'a> {
 
 /// Clear the receiver for an edit. Convert every argument after this and
 /// before [`HtmlEdit::with_tree`].
-pub fn edit(this: &mut HtmlSelf) -> Result<HtmlEdit<'_>, Error> {
+pub fn edit<'a>(ruby: &Ruby, this: &'a mut HtmlSelf) -> Result<HtmlEdit<'a>, Error> {
     crate::bridge::ruby::check_frozen(this.value)?;
     check_attr_owner_frozen(this)?;
     /* Before any argument is converted: see `account_growth`. */
-    crate::bridge::wrapper::account_growth(this.document);
+    crate::bridge::wrapper::account_growth(ruby, this.document);
     Ok(HtmlEdit { this })
 }
 
@@ -678,13 +684,18 @@ pub fn check_owning_doc(rb_doc: &Value) -> Result<(), Error> {
 /// receiver can be frozen; what is refused, by the guard, is a document a read
 /// still holds. `f` must run no
 /// Ruby, as [`HtmlEdit::with_tree`]'s must not.
-pub fn new_node<R>(rb_doc: &Value, f: impl FnOnce(&mut HtmlNewNodes<'_>) -> R) -> Result<R, Error> {
-    lend_document(rb_doc, |write| f(&mut write.new_nodes()))
+pub fn new_node<R>(
+    ruby: &crate::bridge::rb::Ruby,
+    rb_doc: &Value,
+    f: impl FnOnce(&mut HtmlNewNodes<'_>) -> R,
+) -> Result<R, Error> {
+    lend_document(ruby, rb_doc, |write| f(&mut write.new_nodes()))
 }
 
 /// Check `rb_doc` can be lent - an HTML Document -
 /// hand its document to `lend`, and report what the loan grew it by.
 fn lend_document<R>(
+    ruby: &crate::bridge::rb::Ruby,
     rb_doc: &Value,
     lend: impl FnOnce(&mut crate::bridge::dom::HtmlWrite<'_>) -> R,
 ) -> Result<R, Error> {
@@ -699,7 +710,7 @@ fn lend_document<R>(
      * of a megabyte, a fragment imported - so it reports here, after the
      * loan: the arguments were converted to copies before, and what it made
      * is still a bare node, so a collection here can free nothing it needs. */
-    crate::bridge::wrapper::account_growth(*rb_doc);
+    crate::bridge::wrapper::account_growth(ruby, *rb_doc);
     Ok(r)
 }
 
@@ -730,7 +741,7 @@ pub fn insert(
     place: Place,
 ) -> Result<Value, Error> {
     let document = this.document;
-    let edit = edit(this)?;
+    let edit = edit(ruby, this)?;
     let (key, incoming_doc) = html_node_key(ruby, rb_incoming)?;
     /* The argument is relinked too - `place` changes its parent and siblings, and
      * an adoption removes it from its own document - so a frozen argument is a
@@ -801,7 +812,7 @@ pub fn insert(
     record_edit(incoming_doc, EditKind::ChildList);
     release_from_tree(&mut source.edit(), incoming);
     drop(source);
-    crate::bridge::wrapper::account_growth(incoming_doc);
+    crate::bridge::wrapper::account_growth(ruby, incoming_doc);
     wrap_html_node(ruby, placed, document)
 }
 

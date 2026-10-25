@@ -19,10 +19,11 @@
 //! short copy stays on the stack ([`Bytes::Inline`]), so the hot paths - a
 //! selector, an expression - allocate nothing.
 //!
-//! What a borrow still buys is a scan that needs no copy at all: the XML
-//! reader's encoding sniff reads a prefix of a possibly large String before
-//! deciding how to decode it. That is [`with_bytes`], the one scoped borrow,
-//! whose closure must run no Ruby.
+//! Nothing here borrows a String's bytes: `nupur` reads a String only by
+//! copying out of it (`RString::copy_to` into a caller's buffer, `append_to`
+//! into a `Vec`'s reserved room). The XML reader's encoding sniff reads a
+//! copy of the document's start ([`prefix`]); the decode copies the
+//! document once, and checks and parses that copy.
 
 mod build;
 mod encoding;

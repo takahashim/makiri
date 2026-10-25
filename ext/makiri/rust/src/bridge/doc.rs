@@ -87,7 +87,7 @@ pub fn parse_document(
      * else the String's own (none for binary, which is sniffed). The copy is
      * what the parse reads with the GVL released, so nothing here borrows
      * from the Ruby String. */
-    let src = DocumentSource::from_ruby(s, given)?;
+    let src = DocumentSource::from_ruby(ruby, s, given)?;
 
     /* The body - sniffing, decoding and parsing - runs on this thread with
      * the GVL released, so the parsed handle comes back as it is. */
@@ -103,7 +103,7 @@ pub fn parse_document(
     })?;
     /* The GC learns the arena's size in `install`; `owned` is already gone, so
      * a collection that triggers has nothing of ours to invalidate. */
-    Ok(shell.install_html(parsed))
+    Ok(shell.install_html(ruby, parsed))
 }
 
 /// An empty HTML document - no children - in `compat_mode` (Lexbor's
@@ -119,7 +119,7 @@ pub fn new_empty_document(
     let mut parsed = empty_html_document(compat_mode)
         .map_err(|_| makiri_error("failed to create HTML document"))?;
     parsed.set_encoding(encoding);
-    Ok(shell.install_html(parsed))
+    Ok(shell.install_html(ruby, parsed))
 }
 
 /* ------------------------------------------------------------------ *
@@ -195,7 +195,7 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, node_v: Value, deep: bool) -> Re
         let src = xml_node_unwrap(ruby, node_v)?;
         let imp = {
             let xdoc = xml_read(&xml_doc)?;
-            new_node(&rb_self, |d| d.import_xml(&xdoc, src, deep))?
+            new_node(ruby, &rb_self, |d| d.import_xml(&xdoc, src, deep))?
         };
         return wrap_html_node(ruby, xml_mut_result(imp)?, rb_self);
     }
@@ -213,10 +213,10 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, node_v: Value, deep: bool) -> Re
     }
     let raw = crate::bridge::html::node_ref(src_doc, key)?;
     let imp = if crate::bridge::ruby::same_value(src_doc, rb_self) {
-        new_node(&rb_self, |d| d.copy(raw, deep))?
+        new_node(ruby, &rb_self, |d| d.copy(raw, deep))?
     } else {
         with_html_node(src_doc, key, |src| {
-            new_node(&rb_self, |d| d.import(src, deep))
+            new_node(ruby, &rb_self, |d| d.import(src, deep))
         })??
     };
     let imp = imp.map_err(|_| makiri_error("failed to import node"))?;
@@ -237,7 +237,7 @@ pub fn clone_node(ruby: &Ruby, rb_self: Value, deep: bool) -> Result<Value, Erro
         return Err(makiri_error("clone_node cannot copy a document; use #dup"));
     }
     let raw = crate::bridge::html::node_ref(document, key)?;
-    let clone = new_node(&document, |d| d.copy(raw, deep))?
+    let clone = new_node(ruby, &document, |d| d.copy(raw, deep))?
         .map_err(|_| makiri_error("failed to clone node"))?;
     wrap_html_node(ruby, clone, document)
 }

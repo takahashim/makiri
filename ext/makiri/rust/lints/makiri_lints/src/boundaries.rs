@@ -23,8 +23,6 @@
 //! - `discarded_ruby_error`: a `Result<_, bridge::rb::Error>` whose `Err` is
 //!   thrown away (`.ok()`, `.unwrap_or*`, `.is_ok()`, `let _ =`): a raise or a
 //!   `throw` in it would be lost, and the call taken as having answered.
-//! - `nupur_names_its_host`: the binding layer (`nupur`) names nothing of
-//!   the extension outside it.
 //! - `ruby_surface_in_bridge`: a Ruby method defined, or an argument list
 //!   split, in `bridge/` - the glue's work.
 
@@ -38,10 +36,9 @@ use rustc_span::Span;
 use rustc_span::def_id::LocalDefId;
 
 use crate::{
-    DISCARDED_RUBY_ERROR, INFALLIBLE_ALLOCATION, NUPUR_NAMES_ITS_HOST,
-    RAISING_CALL_OUTSIDE_PROTECT, RAW_NODE_CROSSING, RAW_RUBY_OUTSIDE_BRIDGE,
-    RUBY_IN_GVL_RELEASED_BODY, RUBY_LAYER_IN_ENGINE, RUBY_SURFACE_IN_BRIDGE, RUNS_CALLERS_RUBY,
-    UNGUARDED_NO_UNWIND_SITE,
+    DISCARDED_RUBY_ERROR, INFALLIBLE_ALLOCATION, RAISING_CALL_OUTSIDE_PROTECT, RAW_NODE_CROSSING,
+    RAW_RUBY_OUTSIDE_BRIDGE, RUBY_IN_GVL_RELEASED_BODY, RUBY_LAYER_IN_ENGINE,
+    RUBY_SURFACE_IN_BRIDGE, RUNS_CALLERS_RUBY, UNGUARDED_NO_UNWIND_SITE,
 };
 
 /* ---- paths ---- */
@@ -49,8 +46,16 @@ use crate::{
 /// `did`'s path, its crate's name first: `makiri::html::tree::parse_html`,
 /// `rb_sys::rb_str_new`, `alloc::borrow::ToOwned::to_owned`. Unnamed parts
 /// (an `impl` block, a closure) are left out.
+///
+/// The binding layer is a crate of its own, `nupur`, which the extension
+/// names as `crate::nupur`; its items are spelled `makiri::nupur::...` here,
+/// whichever crate is being linted, so one set of paths serves both.
 pub fn path_of(cx: &LateContext<'_>, did: DefId) -> String {
-    let mut parts = vec![cx.tcx.crate_name(did.krate).to_string()];
+    let krate = cx.tcx.crate_name(did.krate);
+    let mut parts = vec![match krate.as_str() {
+        NUPUR => "makiri::nupur".to_string(),
+        k => k.to_string(),
+    }];
     for d in cx.tcx.def_path(did).data {
         if let Some(name) = d.data.get_opt_name() {
             parts.push(name.to_string());
@@ -59,10 +64,16 @@ pub fn path_of(cx: &LateContext<'_>, did: DefId) -> String {
     parts.join("::")
 }
 
-/// Whether the crate being linted is the extension itself, not its build
-/// script or a test target.
+/// The binding layer's crate name.
+pub const NUPUR: &str = "nupur";
+
+/// Whether the crate being linted is the extension or its binding layer, not
+/// a build script or a test target.
 fn is_extension(cx: &LateContext<'_>) -> bool {
-    cx.tcx.crate_name(rustc_span::def_id::LOCAL_CRATE).as_str() == "makiri"
+    matches!(
+        cx.tcx.crate_name(rustc_span::def_id::LOCAL_CRATE).as_str(),
+        "makiri" | NUPUR
+    )
 }
 
 /// The path of the module the code at `hir_id` is in, crate first.
@@ -140,7 +151,7 @@ fn ruby_layer(path: &str) -> bool {
 
 /// The function an expression calls, when it can be named: a path call or
 /// a method call.
-fn callee(cx: &LateContext<'_>, expr: &Expr<'_>) -> Option<DefId> {
+pub(crate) fn callee(cx: &LateContext<'_>, expr: &Expr<'_>) -> Option<DefId> {
     match expr.kind {
         ExprKind::Call(f, _) => match f.kind {
             ExprKind::Path(ref qpath) => match cx.qpath_res(qpath, f.hir_id) {
@@ -165,39 +176,6 @@ pub fn check_path(cx: &LateContext<'_>, path: &Path<'_>, hir_id: HirId) {
     };
     report_ruby_layer(cx, did, path.span.source_callsite(), hir_id);
     report_raw_ruby(cx, did, path.span.source_callsite(), hir_id);
-    report_host(cx, did, path.span.source_callsite(), hir_id);
-}
-
-/* ---- nupur_names_its_host ---- */
-
-/// Whether `module` is `nupur`, the binding layer; `lint_probe::nupur`
-/// stands in for it in the self-test.
-fn in_nupur(module: &str) -> bool {
-    within(module, "nupur") || within(module, "lint_probe::nupur")
-}
-
-/// `nupur` names nothing of the extension it binds for: no `makiri::` path
-/// outside `makiri::nupur`.
-fn report_host(cx: &LateContext<'_>, did: DefId, span: Span, hir_id: HirId) {
-    let module = module_of(cx, hir_id);
-    if !in_nupur(&module) {
-        return;
-    }
-    let target = path_of(cx, did);
-    if target.starts_with("makiri::")
-        && !within(&target, "nupur")
-        && !within(&target, "lint_probe::nupur")
-    {
-        span_lint_and_help(
-            cx,
-            NUPUR_NAMES_ITS_HOST,
-            span,
-            format!("`nupur` names `{target}`, of the extension it binds for"),
-            None,
-            "the binding layer knows nothing of Makiri: take what it needs as a registration \
-             (an exception class, a hook) at Init_, or move the item into nupur",
-        );
-    }
 }
 
 /* ---- raw_ruby_outside_bridge ---- */
@@ -345,7 +323,6 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         && let Some(did) = callee(cx, expr)
     {
         report_ruby_layer(cx, did, expr.span.source_callsite(), expr.hir_id);
-        report_host(cx, did, expr.span.source_callsite(), expr.hir_id);
     }
     let Some(did) = callee(cx, expr) else {
         return;

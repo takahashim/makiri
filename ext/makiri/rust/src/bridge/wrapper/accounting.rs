@@ -20,7 +20,7 @@ use super::*;
 /// May run a collection right here, so `rb_doc` must be reachable from the
 /// caller's frame (a local VALUE is), and nothing borrowed from a Ruby String
 /// may be held across the call.
-pub(super) fn account_document(rb_doc: Value) {
+pub(super) fn account_document(ruby: &crate::bridge::rb::Ruby, rb_doc: Value) {
     let d = DOC_TYPE.get_known(&rb_doc);
     /* Content an edit holds is measured at the next report - which no
      * caller reaches with an edit open, since none runs Ruby. */
@@ -33,7 +33,7 @@ pub(super) fn account_document(rb_doc: Value) {
     /* After the cell is written: the report may run a collection, which
      * reads `d` shared - as it may, now that nothing holds it `&mut`. */
     if let Some(diff) = diff {
-        crate::bridge::ruby::report_external_bytes(diff);
+        crate::bridge::typed::report_external(ruby, diff);
     }
 }
 
@@ -60,9 +60,9 @@ pub(super) const GROWTH_MIN_BYTES: usize = 512 * 1024;
 /// so, like [`account_document`], it must be called with `rb_doc` on the
 /// caller's stack and no borrowed Ruby String held - which is so at the start
 /// of an edit, before any argument is converted.
-pub fn account_growth(rb_doc: Value) {
+pub fn account_growth(ruby: &crate::bridge::rb::Ruby, rb_doc: Value) {
     if doc_data_known(&rb_doc).grown_enough() {
-        account_document(rb_doc);
+        account_document(ruby, rb_doc);
     }
 }
 
@@ -83,8 +83,8 @@ pub fn has_kept_order(rb_doc: Value) -> bool {
 /// Called once the evaluate's walk is over, since
 /// the report may run a collection: like [`account_document`], with `rb_doc`
 /// on the caller's stack and no borrowed Ruby String held.
-pub fn account_kept_order(rb_doc: Value, had: bool) {
+pub fn account_kept_order(ruby: &crate::bridge::rb::Ruby, rb_doc: Value, had: bool) {
     if !had && has_kept_order(rb_doc) {
-        account_document(rb_doc);
+        account_document(ruby, rb_doc);
     }
 }

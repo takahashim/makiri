@@ -28,7 +28,7 @@ Gem::Specification.new do |spec|
   spec.metadata["rubygems_mfa_required"] = "true"
 
   # What a user's install needs, and nothing else: the Ruby library, the
-  # crate's sources and manifests (with Cargo.lock, so a source install builds
+  # crates' sources and manifests (with Cargo.lock, so a source install builds
   # the dependency versions CI tested), the signatures and the documents. The
   # list is of what to INCLUDE, so a new development file - a workflow, a fuzz
   # target, a script - stays out without anyone remembering to exclude it.
@@ -45,8 +45,11 @@ Gem::Specification.new do |spec|
     vendor/lexbor/LICENSE vendor/lexbor/NOTICE
     ext/makiri/rust/Cargo.toml ext/makiri/rust/Cargo.lock
     ext/makiri/rust/build.rs ext/makiri/rust/extconf.rb
+    ext/makiri/rust/nupur/Cargo.toml
   ]
-  shipped_dirs = %w[lib/ sig/ ext/makiri/rust/src/]
+  # The extension's crate and the binding layer it depends on by path
+  # (`nupur/`, a member of the same workspace, whose one Cargo.lock is above).
+  shipped_dirs = %w[lib/ sig/ ext/makiri/rust/src/ ext/makiri/rust/nupur/src/]
   spec.files = IO.popen(%w[git ls-files -z --recurse-submodules], chdir: __dir__, err: IO::NULL) do |ls|
     ls.readlines("\x0", chomp: true).select do |f|
       shipped.include?(f) || f.start_with?(*shipped_dirs)

@@ -47,14 +47,14 @@ impl<T: ReprValue> IntoValue for T {
 impl IntoValue for () {
     #[inline]
     fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
-        Ok(crate::nupur::helpers::nil(ruby))
+        Ok(crate::helpers::nil(ruby))
     }
 }
 
 impl IntoValue for bool {
     #[inline]
     fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
-        Ok(crate::nupur::helpers::boolean(ruby, self))
+        Ok(crate::helpers::boolean(ruby, self))
     }
 }
 
@@ -63,7 +63,7 @@ impl<T: IntoValue> IntoValue for Option<T> {
     fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
         match self {
             Some(v) => v.into_value(ruby),
-            None => Ok(crate::nupur::helpers::nil(ruby)),
+            None => Ok(crate::helpers::nil(ruby)),
         }
     }
 }
@@ -73,7 +73,7 @@ macro_rules! signed {
         impl IntoValue for $t {
             #[inline]
             fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
-                crate::nupur::build::int(ruby, self as i64)
+                crate::build::int(ruby, self as i64)
             }
         }
     )*};
@@ -85,7 +85,7 @@ macro_rules! unsigned {
         impl IntoValue for $t {
             #[inline]
             fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
-                crate::nupur::build::uint(ruby, self as u64)
+                crate::build::uint(ruby, self as u64)
             }
         }
     )*};
@@ -95,16 +95,16 @@ unsigned!(u32, u64, usize);
 impl IntoValue for &'static str {
     #[inline]
     fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
-        crate::nupur::build::utf8_str(ruby, self.as_bytes())
+        crate::build::utf8_str(ruby, self.as_bytes())
     }
 }
 
 impl<A: IntoValue, B: IntoValue> IntoValue for (A, B) {
     fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
         let (a, b) = (self.0.into_value(ruby)?, self.1.into_value(ruby)?);
-        let ary = crate::nupur::build::ary(ruby, 2)?;
-        crate::nupur::build::push(ary, a)?;
-        crate::nupur::build::push(ary, b)?;
+        let ary = crate::build::ary(ruby, 2)?;
+        crate::build::push(ary, a)?;
+        crate::build::push(ary, b)?;
         Ok(ary.as_value())
     }
 }

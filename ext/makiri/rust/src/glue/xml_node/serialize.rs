@@ -123,7 +123,7 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
     drop(buf);
 
     if let Some(enc) = to_enc {
-        if enc.needs_transcode() {
+        if enc.needs_transcode(ruby) {
             str = enc.encode_charref(str)?;
         }
     }

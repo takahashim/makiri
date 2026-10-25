@@ -9,7 +9,9 @@
 //!   `unguarded_no_unwind_site`, `ruby_in_gvl_released_body`,
 //!   `infallible_allocation`, `raising_call_outside_protect`,
 //!   `raw_ruby_outside_bridge`, `runs_callers_ruby`, `raw_node_crossing`,
-//!   `ruby_surface_in_bridge`, `discarded_ruby_error`, `nupur_names_its_host`.
+//!   `ruby_surface_in_bridge`, `discarded_ruby_error`.
+//! - `ffi_without_gvl_proof` ([`gvl_proof`]): a call into Ruby's C API from a
+//!   binding-layer function with no proof of the GVL in its signature.
 //!
 //! (A second lint, `converted_argument`, checked that no registered method
 //! took a type magnus would convert with the caller's Ruby. Since
@@ -26,6 +28,7 @@ extern crate rustc_session;
 extern crate rustc_span;
 
 mod boundaries;
+mod gvl_proof;
 mod value_on_heap;
 
 use rustc_hir::def_id::{DefId, LocalDefId};
@@ -54,7 +57,7 @@ pub fn register_lints(sess: &Session, lint_store: &mut LintStore) {
         RAW_NODE_CROSSING,
         RUBY_SURFACE_IN_BRIDGE,
         DISCARDED_RUBY_ERROR,
-        NUPUR_NAMES_ITS_HOST,
+        FFI_WITHOUT_GVL_PROOF,
     ]);
     lint_store.register_late_lint_pass(Box::new(|_| Box::new(MakiriLints)));
 }
@@ -65,7 +68,7 @@ declare_lint! {
     /// a heap container (`Box`, `Vec`, `VecDeque`, `HashMap`, `HashSet`,
     /// `BTreeMap`, `BTreeSet`, `Rc`, `Arc`, ...), in a `static` or
     /// `thread_local!`, or directly in the data of a wrapped Ruby object (a
-    /// Makiri `Hooks` type).
+    /// Makiri `Payload` type).
     ///
     /// ### Why is this bad?
     /// Ruby's GC finds values by scanning the machine stack. A value kept on
@@ -77,7 +80,7 @@ declare_lint! {
     /// let kept: Vec<RString> = strings.collect();
     /// ```
     /// Use instead: keep the values on the stack, in a Ruby Array, or - in a
-    /// wrapped object's data - in a field its mark traces (`Held`, `Opaque`).
+    /// wrapped object - in one of its slots (`TypedType`'s `roots`).
     pub RUBY_VALUE_ON_HEAP,
     Deny,
     "a Ruby value kept where Ruby's GC cannot see it"
@@ -177,15 +180,23 @@ declare_lint! {
 }
 
 declare_lint! {
-    pub DISCARDED_RUBY_ERROR,
+    /// ### What it does
+    /// Reports a call into Ruby's C API (`rb_sys::`) from a function of the
+    /// binding layer whose signature holds no proof it runs with the GVL: a
+    /// `&Ruby`, a Ruby value, or a handle made only from one.
+    ///
+    /// ### Why is this bad?
+    /// Safe code could call such a function from a thread Ruby does not run,
+    /// or with the GVL released, and Ruby's C functions touch the VM.
+    pub FFI_WITHOUT_GVL_PROOF,
     Deny,
-    "a Result of a Ruby error whose Err is thrown away"
+    "a call into Ruby's C API from a function that holds no proof of the GVL"
 }
 
 declare_lint! {
-    pub NUPUR_NAMES_ITS_HOST,
+    pub DISCARDED_RUBY_ERROR,
     Deny,
-    "the binding layer names something of the extension"
+    "a Result of a Ruby error whose Err is thrown away"
 }
 
 declare_lint_pass!(MakiriLints => [
@@ -200,7 +211,7 @@ declare_lint_pass!(MakiriLints => [
     RAW_NODE_CROSSING,
     RUBY_SURFACE_IN_BRIDGE,
     DISCARDED_RUBY_ERROR,
-    NUPUR_NAMES_ITS_HOST,
+    FFI_WITHOUT_GVL_PROOF,
 ]);
 
 impl<'tcx> LateLintPass<'tcx> for MakiriLints {
@@ -232,11 +243,18 @@ impl<'tcx> LateLintPass<'tcx> for MakiriLints {
 
     fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         boundaries::check_expr(cx, expr);
+        gvl_proof::check_expr(cx, expr);
     }
 }
 
 /// The traits the lint asks about, looked up once per crate: the crate's
 /// own, since `bridge::rb` is the crate's.
+/// Whether `did` is the extension's or its binding layer's (the crate
+/// `nupur`, where `ReprValue`, `Payload` and `Opaque` are defined).
+pub fn ours(cx: &LateContext<'_>, did: DefId) -> bool {
+    did.is_local() || cx.tcx.crate_name(did.krate).as_str() == boundaries::NUPUR
+}
+
 #[derive(Default)]
 struct Traits {
     repr_value: Option<DefId>,
@@ -248,18 +266,18 @@ thread_local! {
 }
 
 /// `bridge::rb::ReprValue`, and the wrapped-object data trait,
-/// `bridge::typed::Hooks`.
-fn traits<'tcx>(cx: &LateContext<'tcx>) -> (Option<DefId>, Vec<DefId>) {
+/// `bridge::typed::Payload`.
+pub(crate) fn traits<'tcx>(cx: &LateContext<'tcx>) -> (Option<DefId>, Vec<DefId>) {
     TRAITS.with(|cell| {
         let t = cell.get_or_init(|| {
             let mut t = Traits::default();
             for did in cx.tcx.all_traits_including_private() {
-                if !did.is_local() {
+                if !ours(cx, did) {
                     continue;
                 }
                 match cx.tcx.item_name(did).as_str() {
                     "ReprValue" => t.repr_value = Some(did),
-                    "Hooks" => t.wrapped.push(did),
+                    "Payload" => t.wrapped.push(did),
                     _ => {}
                 }
             }

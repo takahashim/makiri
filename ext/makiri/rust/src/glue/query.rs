@@ -163,7 +163,7 @@ fn bind_each(
         )));
     }
     crate::glue::hash::each_pair(ruby, h, |prefix, uri| {
-        bind_pair(prefix, uri, cap, &mut register)
+        bind_pair(ruby, prefix, uri, cap, &mut register)
     })
 }
 
@@ -175,6 +175,7 @@ fn bind_each(
 /// The prefix is a String or a Symbol (a keyword binding's key), the URI a
 /// String; nothing else converts.
 pub fn bind_pair(
+    ruby: &crate::bridge::rb::Ruby,
     prefix: Value,
     uri: Value,
     cap: usize,
@@ -182,8 +183,9 @@ pub fn bind_pair(
 ) -> Result<(), Error> {
     let ks = crate::bridge::ruby::name_arg(prefix)?;
     let vs = crate::bridge::ruby::string_arg(uri)?;
-    let (pv, uv) = ruby_try_verified_text_pair(ks, vs, cap)
-        .map_err(|reason| makiri_error(format_args!("invalid namespace mapping: {reason}")))?;
+    let (pv, uv) = ruby_try_verified_text_pair(ruby, ks, vs, cap).map_err(|r| {
+        r.into_error(|reason| makiri_error(format_args!("invalid namespace mapping: {reason}")))
+    })?;
     register(pv.as_bytes(), uv.as_bytes())
 }
 

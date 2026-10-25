@@ -180,6 +180,14 @@ create_rust_makefile("makiri/makiri") do |r|
   r.extra_rustflags = rustflags
   r.env = cargo_env
   r.target = cargo_target if cargo_target
+  # The extension alone: the crate's `rlib` type is for the fuzz crate, and
+  # with it in the build rustc runs no LTO ("lto can only be run for
+  # executables, cdylibs and static library outputs") - which once cost
+  # nothing, the crate being one codegen unit, but makes every call into the
+  # binding layer (`nupur`, a crate of its own) an opaque cross-crate call:
+  # the light readers measured 9-25% slower. With `cdylib` alone, the
+  # release profile's `lto = true` applies.
+  r.extra_cargo_args = ["--crate-type", "cdylib"]
   # The C was built -O2. Match it: a debug-profile extension is several times
   # slower, and every benchmark in this project is stated against a release one.
   r.profile = (ENV["MAKIRI_CARGO_PROFILE"] || "release").to_sym

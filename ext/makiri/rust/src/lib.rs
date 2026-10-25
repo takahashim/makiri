@@ -161,10 +161,15 @@ pub mod dom_rules;
 /// position memo a document keeps. Unconditional, like `dom_rules`.
 pub mod child_index;
 
-/// The Ruby binding layer the bridge is built on, which knows nothing of
-/// Makiri (`nupur/mod.rs`).
+/// The Ruby binding layer the bridge is built on, a crate of its own that
+/// knows nothing of Makiri (`nupur/`). Named `crate::nupur` here, and its
+/// `method!` / `function!` macros are in scope crate-wide.
 #[cfg(feature = "ruby")]
-pub mod nupur;
+extern crate nupur;
+
+/// The method-registration macros, by the path the glue imports them from.
+#[cfg(feature = "ruby")]
+pub(crate) use nupur::{function, method};
 
 /// `nupur::msg`, under the name the bridge and the glue use.
 #[cfg(feature = "ruby")]

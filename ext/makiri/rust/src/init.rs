@@ -34,7 +34,7 @@
 //! Rust, wrapping a live node; `.new` would hand back one wrapping nothing.
 
 use crate::bridge::rb::{
-    Class, Error, ExceptionClass, Module, Object, RClass, RModule, ReprValue, Ruby, Value,
+    Class, Error, ExceptionClass, Module, Object, RClass, RModule, Ruby, Value,
 };
 use crate::function;
 
@@ -250,7 +250,8 @@ fn panic_probe(ruby: &Ruby, kind: Value) -> Result<(), Error> {
 fn xml_decode(ruby: &Ruby, str: Value) -> Result<Value, Error> {
     let s = crate::bridge::ruby::string_arg(str)?;
     /* decode-only: no arena, no budget */
-    crate::bridge::xml_decode::xml_decode_input_value(ruby, s, None).map(|d| d.as_value())
+    crate::bridge::xml_decode::xml_decode_input(ruby, s, None)
+        .and_then(|d| crate::bridge::string::utf8_str(ruby, d.as_slice()))
 }
 
 /* ------------------------------------------------------------------ *
@@ -298,7 +299,9 @@ fn seal_leaves(methods: RModule, leaves: &[RClass]) -> Result<(), Error> {
 #[allow(non_snake_case, unsafe_code)]
 #[no_mangle]
 pub extern "C" fn Init_makiri() {
-    crate::bridge::rb::method::run_init(init);
+    // SAFETY: this is the `Init_` function Ruby calls, on its thread with the
+    // GVL held.
+    unsafe { crate::bridge::rb::method::run_init(init) };
 }
 
 fn init(ruby: &Ruby) -> Result<(), Error> {
@@ -489,7 +492,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     /* The recursion checks in css/ and xpath/ consult this without knowing
      * Ruby exists; see crate::stack for why a depth count alone does not
      * bound the native stack. */
-    crate::stack::install(crate::bridge::stack::low);
+    crate::stack::install(crate::bridge::stack::probe(ruby));
 
     makiri.define_singleton_method("__alloc_inject?", function!(alloc_inject_p, 0))?;
     makiri.define_singleton_method("__panic", function!(panic_probe, 1))?;

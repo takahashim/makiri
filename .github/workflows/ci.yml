@@ -87,6 +87,7 @@ jobs:
         working-directory: ext/makiri/rust
         run: |
           cargo clippy --all-features --tests -- -D warnings
+          cargo clippy -p nupur --all-features --tests -- -D warnings
           cargo clippy --no-default-features --features ruby -- -D warnings
           cargo clippy --no-default-features --features html-dom --tests -- -D warnings
 

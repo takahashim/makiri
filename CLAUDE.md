@@ -21,8 +21,10 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   (`docs/parser_differences.ja.md`, `compat`), never an edit to Lexbor.
 - **No libxml2 / libxslt** anywhere - not linked, vendored, or derived. The
   XPath engine is original. See `NOTICE`.
-- **One language.** The extension is a single Rust crate
-  (`ext/makiri/rust`), and no C ships at all: the vendored Lexbor is built
+- **One language.** The extension is Rust - a cargo workspace at
+  `ext/makiri/rust` of two crates, the extension (`makiri_rs`) and the Ruby
+  binding layer it is built on (`nupur/`, which does not depend on the
+  extension) - and no C ships at all: the vendored Lexbor is built
   only for the tests (`rake lexbor`) and keeps its `lxb_*` names. No SYMBOL of ours carries a C-style prefix any more: the crate
   exports only `Init_makiri` and `ruby_abi_version`, so every other item is
   named as Rust. (The `mkr_` prefix was the C ABI's symbol convention and went
@@ -76,7 +78,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   Lexbor callbacks carry it too (`lexbor::selectors`' traversal,
   `lexbor::chunks::chunk_cb`, `tree_guard::hook_token_cb`).
   Two `extern "C"` functions have no latch ON PURPOSE. The GC callbacks in
-  `bridge/typed.rs` run where nothing can be raised and a half-freed object is
+  `nupur/src/typed.rs` run where nothing can be raised and a half-freed object is
   worse than a stop, so they keep aborting - keep their bodies trivial. The
   `rb_protect` thunk of `bridge::raw::call` holds one C call and the `Copy`
   values it reads (`F: Copy`, `T: Copy`), so there is no Rust there to panic
@@ -107,40 +109,54 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   a value left unmarked is freed while referenced - so they are proven
   unwind-free as they are. CI runs it in one cell.
 
-  **A VALUE inside a wrapped object is a `bridge::typed::Held`**, and a
-  `Held` that holds anything can only be made with a `Store`, which exists
-  only where the owner is already a Ruby object (`TypedType::wrap`'s store
-  step). So "store a VALUE into a struct only after its wrapper exists" -
-  the `DocData.errors` crash - is a type rule, not a convention: a struct is
-  built holding `Held::empty()`, and its `Hooks::trace` hands each `Held` it
-  keeps to the `Tracer`, which marks it PINNED. The type enforces that ORDER
-  only: that a `Held` stays where its owner's trace finds it is beyond the
-  type system, so reading one back (`Held::get`) is `unsafe` with that as
-  its contract, and both types are visible to `bridge/` alone.
-  **Only three `Held`s exist, each one field written once in the store
-  step**: a node wrapper's Document, a Document's node table, a NodeSet's
-  Document - the reads too hot for an ivar. Nothing re-points one and none
-  is movable, so there is no compaction callback and no relocation to get
-  wrong. Every other value a wrapper keeps alive is a hidden ivar of its
-  object (`raw::ivar_set` / `ivar_get`, names without `@`, so Ruby code
-  cannot see them): an XPathContext's Document and node (`#node=` is an
-  ivar write), a Document's errors. The node table - one wrapper per node,
-  so a node navigated to twice is the SAME object - is a Ruby Hash from the
-  node's token (a Fixnum) to its wrapper, which the GC marks and moves
-  itself, in place of the Rust map of movable values it replaced; its
-  entries are written only once the wrapper exists, and a wrapper is handed
-  out only once it is in the table. Measured against the Rust map
-  (`notes/magnus_replacement_plan.ja.md`): the light readers unchanged,
-  a cached traverse +4-8%, wrapping fresh nodes about +12%; moving the
-  node's and the NodeSet's Document to ivars too cost +15-65% and was not
-  taken. A `DocData`'s changing fields are cells, so the GC callbacks and
-  every method read a wrapper's data through `&T`: no `&mut` of it is made
-  at all.
+  **A VALUE a wrapped object keeps alive is one of its SLOTS, which `nupur`
+  owns** (`bridge::typed`, i.e. `nupur::typed`). An object's data is an
+  envelope: the payload `T` (a `Payload`, which holds no Ruby value at all)
+  and `N` slots (`TypedType<T, N>`, `EmbeddedType<T, N>`), written by
+  `wrap(ruby, klass, data, roots)` in the same step, right after the
+  object's allocation and with nothing run between - the roots were on the
+  caller's stack through it, where the stack scan pins them - and never
+  written again. The mark callback marks every slot PINNED in a fixed loop,
+  so there is no per-type trace to forget, and "store a VALUE into a struct
+  only after its wrapper exists" - the `DocData.errors` crash - has no step
+  to happen in. A slot is read back by `root_known::<I>()` (`I < N` checked
+  when it compiles; no runtime check, since the hot path reads a node's
+  Document) or with an embedded payload by `read`. Nothing re-points a slot
+  and none is movable, so there is no compaction callback.
+  **Three objects have a slot, each one**: a node wrapper (its Document,
+  `NodeWrapperType`), a Document (its node table, `DocType`), a NodeSet (its
+  Document, `NodeSetType`) - the reads too hot for an ivar. Every other value
+  a wrapper keeps alive is a hidden ivar of its object (`raw::ivar_set` /
+  `ivar_get`, names without `@`, so Ruby code cannot see them): an
+  XPathContext's Document and node (`#node=` is an ivar write), a Document's
+  errors. The node table - one wrapper per node, so a node navigated to
+  twice is the SAME object - is a Ruby Hash from the node's token (a Fixnum)
+  to its wrapper, which the GC marks and moves itself, in place of the Rust
+  map of movable values it replaced; its entries are written only once the
+  wrapper exists, and a wrapper is handed out only once it is in the table.
+  Measured against the Rust map (`notes/magnus_replacement_plan.ja.md`): the
+  light readers unchanged, a cached traverse +4-8%, wrapping fresh nodes
+  about +12%; moving the node's and the NodeSet's Document to ivars too cost
+  +15-65% and was not taken. A `DocData`'s changing fields are cells, so the
+  GC callbacks and every method read a wrapper's data through `&T`: no
+  `&mut` of it is made at all. **Memory reported to the GC** (an arena, a
+  NodeSet's heap, an XPathContext's AST cache) is reported with a token
+  (`typed::report_external`) and given back by `nupur`'s free callback,
+  which reads `Payload::reported_external` before the drop: no `Drop` of
+  Makiri's calls Ruby. An object whose data is not complete when it is
+  made - a Document before its content (`DocumentShell`), an XPathContext
+  before its ivars - is made by `wrap_hidden`, which writes its hidden
+  ivars while it still has its class (generic ivar storage may read it) and
+  then hides it from `ObjectSpace`, as a `Hidden` that hands out no `Value`
+  (a hidden object has no class, and Ruby code given one would crash on it)
+  until `reveal`; a
+  Document's node table is `raw::hidden_hash_new`'s, never shown. There is
+  no bare `hide` / `reveal`.
   The other half - no Ruby value kept where the GC's stack scan cannot
-  see it (a `Vec`, a `Box`, a static or `thread_local!`, a `Hooks` type's
+  see it (a `Vec`, a `Box`, a static or `thread_local!`, a `Payload` type's
   own field) - is `rake dylint`'s `ruby_value_on_heap`,
-  which reads the types; it is why raw `VALUE`s stay in `bridge/raw.rs` and
-  `bridge/typed.rs`, since a lint sees a `VALUE` only as an integer. What it
+  which reads the types; it is why raw `VALUE`s stay in `nupur/src/raw.rs` and
+  `nupur/src/typed.rs`, since a lint sees a `VALUE` only as an integer. What it
   cannot see is a temporary handed straight to a call (`f(vec![v])`).
   A node wrapper's `NodeData` is EMBEDDED in its object's slot
   (`bridge::typed::EmbeddedType`, `RUBY_TYPED_EMBEDDABLE`, Ruby 3.3+): one
@@ -148,13 +164,14 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   freeing memory. Compaction moves that data with the object, so a
   `&NodeData` held across anything that can allocate would point at where
   it was - and `EmbeddedType` has no `get` to hand one out: a reader takes
-  `read`'s copy (`NodeRef`, the handle and the Document, from `NodeData`'s
-  `Snapshot`), and only the GC callbacks and that snapshot see the data in
+  `read`'s copy (the payload is `Copy`; `read_node` makes it a `NodeRef`,
+  the handle and the Document), and only the GC callbacks see the data in
   place. A new embedded type goes through `EmbeddedType` too. (The NodeSet
   was not embedded for this reason: its fill holds `&NodeSet` across its own
-  growth.)
+  growth - borrowed from the `FreshSet` that owns the new set, never with a
+  lifetime of its own.)
 
-  **Every C call that can raise is a wrapper in `bridge/raw.rs`, and every
+  **Every C call that can raise is a wrapper in `nupur/src/raw.rs` (`bridge::raw`), and every
   wrapper runs it under `rb_protect` and returns `Result`.** A raise is a
   `longjmp` over every Rust frame up to the nearest `rb_protect`, and crossing
   a frame with a `Drop` or a `catch_unwind` is undefined behaviour; so each
@@ -177,17 +194,19 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   `bridge::string::Encoding`, check what the C function would not (a Hash
   key's kind, a substring's bounds, `to_encoding`'s argument), and one with
   no Ruby value takes `&Ruby` as the GVL's proof. Only those over raw memory
-  stay `unsafe` (`typed_object_zalloc`, `xrealloc2`,
-  `check_typeddata`, `utf8_str_unwritten`). A raw `VALUE` - an integer to
+  stay `unsafe`, and are `nupur`'s alone (`typed_object_zalloc`,
+  `check_typeddata`; `pub(crate)`, as are the three that longjmp - `exc_raise`,
+  `jump_tag`, `exc_fatal` - which only a trampoline's raise may call); a String made in place is `utf8_str_filled`, safe,
+  whose `fill` writes front to back through an `Unwritten` and must reach
+  the end. A raw `VALUE` - an integer to
   Rust, which no lint can tell from a `u64` in a `Vec` - is spelled only in
   `raw.rs`, `typed.rs` and the `bridge::rb` files that are the typed values
   (`rake dylint`'s `raw_ruby_outside_bridge`, which also fails on any
   `rb_sys::` outside `bridge/`), so
   everything else holds typed values; `TypedType::wrap` is safe for that
-  reason (`&Ruby`, and a `T` can keep a Ruby value only in a `Held`). A
-  `Held` is a private field beside the `trace` that marks it, read through
-  that module's accessor (`NodeData`'s snapshot, `node_table`,
-  `NodeSet::document`).
+  reason (`&Ruby`, and a payload keeps no Ruby value - its roots are slots).
+  `bridge/` itself is `#![forbid(unsafe_code)]` from its root down: every
+  `unsafe` that reads Ruby's memory or calls its C is `nupur`'s.
 
   **A Document's content is reached only through a guard** (`bridge::dom`,
   over `crate::doc_cell`, which is Ruby-free so its `compile_fail` doctests
@@ -344,7 +363,10 @@ bundle exec rake dylint            # the crate's own lints (lints/makiri_lints),
                                    # raw_node_crossing, ruby_surface_in_bridge,
                                    # discarded_ruby_error (an Err of bridge::rb::Error
                                    # thrown away by .ok() / .unwrap_or* / .is_ok() /
-                                   # let _ =)
+                                   # let _ =), ffi_without_gvl_proof (in nupur: a
+                                   # safe fn calling rb_sys:: whose signature holds
+                                   # no &Ruby, Ruby value or handle made from one;
+                                   # extern "C" entries and unsafe fns exempt)
                                    # (a sanctioned site is an allow with its reason);
                                    # then their self-test
                                    # (src/lint_probe.rs). Needs the nightly
@@ -391,7 +413,7 @@ bundle exec rake oom               # OOM-injection sweep: rebuilds with
                                    # (clean raise or baseline-identical result), then
                                    # reuses the same document/context after GC.compact.
                                    # Then the raise sweep (script/check_raise_injection.rb):
-                                   # each allocating C call of bridge/raw.rs raises
+                                   # each allocating C call of nupur's raw.rs raises
                                    # NoMemoryError in turn, and no document may be left
                                    # borrowed (`Makiri.__borrowed?`) or unusable - the
                                    # runtime check of the guards-across-raises rule.
@@ -632,10 +654,35 @@ by the check that concluded "every undefined symbol is legitimate".
 
 ```
 lib/makiri/                Ruby API (Document, Node, Element, NodeSet, XPathContext, ...)
-ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `makiri`
+ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and the
+                           root of a workspace with `nupur/` (`fuzz/` and
+                           `lints/` are crates of their own, each `[workspace]`)
   extconf.rb               hands the crate to cargo via create_rust_makefile; owns
                            the link arguments and the export trim (it builds no
-                           Lexbor: `rake lexbor` does, for the tests)
+                           Lexbor: `rake lexbor` does, for the tests). It builds
+                           `--crate-type cdylib` alone: with the crate's `rlib`
+                           (the fuzz crate's) in, rustc runs NO LTO, and every
+                           call into `nupur` is an opaque cross-crate call (the
+                           light readers measured 9-25% slower; with LTO they
+                           are 12-14% faster than the one-crate build, which
+                           never had LTO either). `rake no_unwind` builds the
+                           same way, since its proof is of the shipped binary
+  nupur/                   the Ruby binding layer, a crate of its own over rb-sys
+                           (`rb/`, `raw`, `typed`, `gvl`, `build`, `encoding`,
+                           `helpers`, `msg`, `caught`, its own `no_unwind` sites):
+                           every `unsafe` that talks to Ruby. It cannot name the
+                           extension (no dependency), which names it as
+                           `crate::nupur` (`extern crate`); what it needs of
+                           Makiri is registered at Init_ (`INTERNAL_ERROR`,
+                           `set_raise_injector`). `bridge` re-exports its
+                           modules, so `bridge::raw` etc. still resolve. The
+                           macros' helpers (`finish`, `finish_cary`,
+                           `run_init`) are `unsafe fn`: only the macros'
+                           expansion can call them, so nothing else makes a
+                           `Ruby` token. A function on a no_unwind site's path
+                           is `#[inline]`, or the proof cannot see into it
+                           across the crate. `notes/nupur_crate_plan.ja.md` is
+                           its plan
   build.rs                 bindgen over Lexbor's own headers -> the layout and
                            constants the crate reads (never transcribed by hand)
   src/
@@ -658,13 +705,6 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
     cutf8.rs               the one UTF-8 validator + strict 1-codepoint decoder
     utf8_input.rs          HTML input sanitiser: invalid UTF-8 -> U+FFFD, per
                            WHATWG; `cbuf`+`cutf8` only, so Ruby/Lexbor-free
-    nupur/                 the magnus-replacement layer (`rb/`, `raw`, `typed`, `gvl`,
-                           `build`, `encoding`, `msg`, `caught`, its own `no_unwind`
-                           sites), names nothing of Makiri's (`rake dylint`'s
-                           `nupur_names_its_host`); Makiri's needs are registered
-                           in (`INTERNAL_ERROR`, `set_raise_injector`). `bridge`
-                           re-exports it, so `bridge::raw` etc. still resolve.
-                           `notes/nupur_crate_plan.ja.md` is its plan
     bridge/                the Ruby boundary - the ONLY layer allowed raw Ruby String
                            access (RSTRING) and verified-string minting. `rb/` is
                            its value and method layer over rb-sys (`Value` and the
@@ -672,7 +712,7 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            `function!` trampolines, class definitions), which
                            replaced magnus under its names; `raw.rs` is every
                            raising C call Makiri makes. It is also where
-                           the C calls that can raise (`bridge/raw.rs`) and the
+                           the C calls that can raise (`nupur/src/raw.rs`) and the
                            wrap-then-store constructor live; a raise becomes `Err`
                            there. `rake unsafe:boundaries` pins that boundary:
                            the crate denies `unsafe_code` (`lib.rs`), so every
@@ -684,7 +724,7 @@ ext/makiri/rust/           the extension: one crate, package makiri_rs, lib `mak
                            (their module roots carry
                            `#![forbid(unsafe_code)]`, which the gate pins);
                            `rake dylint` holds `rb_sys::` to `bridge/` and the
-                           C calls that can raise to `bridge/raw.rs`, and
+                           C calls that can raise to `nupur`'s `raw.rs`, and
                            `Value::from_raw` is `pub(in crate::bridge)`. A
                            borrowed HTML handle made a lifetime-free `RawNode`
                            in `bridge/` is `raw_node_crossing`, each crossing
@@ -802,8 +842,9 @@ docs/design_doc.ja.md      authoritative design (read this)
 ```
 
 Seven features, and the default is the extension: **`ruby`** (the
-Ruby boundary over rb-sys - `bridge`, whose `bridge::rb` is the value and
-method layer - + `glue` + `init`), **`html-dom`** (the parser port's
+Ruby boundary over `nupur` - `bridge`, whose `bridge::rb` is nupur's value
+and method layer - + `glue` + `init`; with it off, neither `nupur` nor
+rb-sys is in the dependency graph), **`html-dom`** (the parser port's
 index-arena DOM, `html::dom`, behind the `html_dom` facade and parsed by the
 ported tree builder `html::tree`, with what sits over it - the HTML CSS
 matcher, XPath's HTML instance, the bridge's HTML half; `ruby` and `lexbor`
@@ -906,12 +947,15 @@ make the `&str` undefined behaviour. The parse source and the XML input check
 still take the coderange as a hint, where a wrong one stays safe code. Nothing Ruby
 does afterwards - a GC, the caller rewriting or growing the String - reaches
 the copy. The HTML source (`HtmlSource`) is a copy too, the
-one a document parse needs to read it with the GVL released. The only borrow
-of a String's bytes left is `string::with_bytes`, a scoped read for the XML
-encoding sniff, whose closure must run no Ruby. (The views used to hold the
+one a document parse needs to read it with the GVL released, and so is the
+XML input: the decode copies the document once, BOM stripped, and both the
+strict check and the parse read that copy. No String's bytes are borrowed
+outside `nupur` at all: a String is read only by `RString::copy_to` (into a
+caller's buffer) and `append_to` (into a `Vec`'s reserved room, never
+growing it), each a read and a copy with nothing run between. (The views used to hold the
 String under `rb_str_locktmp`, with a copy when it was already locked, a
 frozen fast path and a raise to re-propagate - all to spare a copy of a few
-bytes; `spec/mutation_argument_conversion_spec.rb` pins the copy semantics.)
+bytes.)
 `Makiri::XML`'s data
 takes NUL too (`bridge::xml::verified_data`), as the DOM does, and so does every
 character XML has no `Char` for: the XML mutators hold what the DOM holds, and
@@ -1613,7 +1657,7 @@ Key decisions that got there, worth not regressing:
   each expression once and re-runs the cached AST (bounded by `AST_CACHE_MAX`).
   `Node#xpath` uses a throwaway context and does not cache.
 - **Every Document reports its arena to the GC** (`account_document`, which
-  `DocumentShell::install` calls; `impl Drop for DocData` takes the report back). Neither
+  `DocumentShell::install` calls; the free callback takes the report back, through `Payload::reported_external`). Neither
   arena, HTML or XML, is an `xmalloc`, so without the report Ruby
   sees a parsed Document as ~56 bytes and NO collection is triggered by memory
   pressure: `500.times { Makiri::HTML(html) }` ran with zero GCs, 2.2 GB RSS,

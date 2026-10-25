@@ -4,7 +4,7 @@
 //! `rb_raise` and every C function that can raise unwind with `longjmp`, which
 //! skips Rust destructors in every frame it crosses (see `glue/mod.rs`). The
 //! functions here are built on `bridge::raw`'s wrappers, each of which turns
-//! the raise into a [`crate::nupur::rb::Error`]: the caller hands it back as
+//! the raise into a [`crate::rb::Error`]: the caller hands it back as
 //! `Err`, and the method's trampoline raises it only after the Rust frames
 //! have returned normally (`bridge::rb::method::finish`).
 
@@ -13,8 +13,8 @@
 use core::ffi::c_long;
 use std::sync::OnceLock;
 
-use crate::nupur::rb::value::AsRawValue;
-use crate::nupur::rb::{prelude::*, Builtin, Error, ExceptionClass, Opaque, RString, Ruby, Value};
+use crate::rb::value::AsRawValue;
+use crate::rb::{prelude::*, Builtin, Error, ExceptionClass, Opaque, RString, Ruby, Value};
 
 /// The raw handle types, re-exported so a higher layer can name a `VALUE` or a
 /// method `ID` without reaching into `rb_sys` itself.
@@ -25,8 +25,8 @@ pub use rb_sys::ID;
 /// The `MAJOR.MINOR` of the Ruby whose headers this extension was compiled
 /// against - its ABI, since a teeny release keeps it. Published as
 /// `Makiri::NATIVE_RUBY_API_VERSION`.
-pub fn ruby_api_version() -> crate::nupur::msg::Msg {
-    crate::nupur::msg::Msg::format(format_args!(
+pub fn ruby_api_version() -> crate::msg::Msg {
+    crate::msg::Msg::format(format_args!(
         "{}.{}",
         rb_sys::RUBY_API_VERSION_MAJOR,
         rb_sys::RUBY_API_VERSION_MINOR
@@ -55,14 +55,14 @@ pub static INTERNAL_ERROR: RbConst<ExceptionClass> = RbConst::new();
 /// An internal error carrying `msg`: a broken invariant, which a bare
 /// `rescue` (StandardError) passes through - the registered class
 /// ([`INTERNAL_ERROR`]), or `RuntimeError` before one is.
-pub fn internal_error(msg: impl crate::nupur::rb::Message) -> Error {
+pub fn internal_error(msg: impl crate::rb::Message) -> Error {
     Error::new(&INTERNAL_ERROR, msg)
 }
 
 /// Is `v` an instance of the class in `klass`? `false` before `Init_makiri`,
 /// when no class of ours exists for it to be an instance of.
 #[inline]
-pub fn is_kind_of(ruby: &Ruby, v: Value, klass: &RbConst<crate::nupur::rb::RClass>) -> bool {
+pub fn is_kind_of(ruby: &Ruby, v: Value, klass: &RbConst<crate::rb::RClass>) -> bool {
     klass.get(ruby).is_some_and(|c| v.is_kind_of(c))
 }
 
@@ -77,8 +77,8 @@ pub fn string_arg(v: Value) -> Result<RString, Error> {
 
 /// `v`, which must be an Integer (a Fixnum or a Bignum). No conversion, as
 /// [`string_arg`]: a `to_int` is the caller's Ruby.
-pub fn integer_arg(v: Value) -> Result<crate::nupur::rb::Integer, Error> {
-    crate::nupur::rb::Integer::from_value(v).ok_or_else(|| wrong_type(v, "Integer", TO_I_HINT))
+pub fn integer_arg(v: Value) -> Result<crate::rb::Integer, Error> {
+    crate::rb::Integer::from_value(v).ok_or_else(|| wrong_type(v, "Integer", TO_I_HINT))
 }
 
 /// [`integer_arg`] as a `long`; one past a `long` is Ruby's `RangeError`.
@@ -96,7 +96,7 @@ pub fn long_arg(v: Value) -> Result<c_long, Error> {
 /// beginless one): `rb_range_beg_len` would otherwise convert an end with its
 /// `to_int`.
 pub fn integer_range_arg(v: Value) -> Result<Value, Error> {
-    let r = crate::nupur::rb::Range::from_value(v).ok_or_else(|| wrong_type(v, "Range", ""))?;
+    let r = crate::rb::Range::from_value(v).ok_or_else(|| wrong_type(v, "Range", ""))?;
     let (beg, end, _) = r.values()?;
     for end in [beg, end] {
         if !end.is_nil() {
@@ -116,7 +116,7 @@ pub fn name_arg(v: Value) -> Result<RString, Error> {
     if let Some(s) = RString::from_value(v) {
         return Ok(s);
     }
-    match crate::nupur::rb::Symbol::from_value(v) {
+    match crate::rb::Symbol::from_value(v) {
         Some(sym) => super::raw::sym2str(sym),
         None => Err(wrong_type(v, "String or Symbol", TO_S_HINT)),
     }
@@ -130,15 +130,15 @@ pub struct Describe(pub Value);
 impl core::fmt::Display for Describe {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let v = self.0;
-        if let Some(sym) = crate::nupur::rb::Symbol::from_value(v) {
+        if let Some(sym) = crate::rb::Symbol::from_value(v) {
             if let Ok(s) = super::raw::sym2str(sym) {
                 // SAFETY: written out at once; formatting runs no Ruby.
-                return write!(f, ":{}", crate::nupur::msg::Lossy(unsafe { s.as_slice() }));
+                return write!(f, ":{}", crate::msg::Lossy(unsafe { s.as_slice() }));
             }
         }
         if let Some(s) = RString::from_value(v) {
             // SAFETY: as above.
-            return crate::nupur::msg::Quoted(unsafe { s.as_slice() }).fmt(f);
+            return crate::msg::Quoted(unsafe { s.as_slice() }).fmt(f);
         }
         if v.is_nil() {
             return f.write_str("nil");
@@ -159,7 +159,7 @@ impl core::fmt::Display for Display {
         /* The String or the Symbol's name, read directly: `name_arg` would
          * build (and format) a whole TypeError for any other value, only for
          * it to be thrown away here. */
-        let text = match crate::nupur::rb::Symbol::from_value(v) {
+        let text = match crate::rb::Symbol::from_value(v) {
             Some(sym) => super::raw::sym2str(sym),
             None => match RString::from_value(v) {
                 Some(s) => Ok(s),
@@ -168,7 +168,7 @@ impl core::fmt::Display for Display {
         };
         if let Ok(s) = text {
             // SAFETY: written out at once; formatting runs no Ruby.
-            return crate::nupur::msg::Lossy(unsafe { s.as_slice() }).fmt(f);
+            return crate::msg::Lossy(unsafe { s.as_slice() }).fmt(f);
         }
         Describe(v).fmt(f)
     }
@@ -201,7 +201,7 @@ fn wrong_type(v: Value, expected: &str, hint: &str) -> Error {
 /// set - because the check still runs, protected. An unfrozen value, every
 /// mutator's normal case, makes no call.
 pub fn check_frozen(v: Value) -> Result<(), Error> {
-    if !crate::nupur::rb::ReprValue::is_frozen(v) {
+    if !crate::rb::ReprValue::is_frozen(v) {
         return Ok(());
     }
     super::raw::check_frozen(v)
@@ -240,43 +240,53 @@ pub fn boolean(ruby: &Ruby, b: bool) -> Value {
 }
 
 /// A `TypeError` with `msg`.
-pub fn type_error(msg: impl crate::nupur::rb::Message) -> Error {
+pub fn type_error(msg: impl crate::rb::Message) -> Error {
     Error::new(Builtin::TypeError, msg)
 }
 
 /// An `ArgumentError` with `msg`.
-pub fn arg_error(msg: impl crate::nupur::rb::Message) -> Error {
+pub fn arg_error(msg: impl crate::rb::Message) -> Error {
     Error::new(Builtin::ArgumentError, msg)
 }
 
 /// VALUE identity, for the several sites that compare two references.
 #[inline]
-pub fn same_value(a: Value, b: Value) -> bool {
+pub fn same_value(a: impl ReprValue, b: impl ReprValue) -> bool {
     a.as_raw() == b.as_raw()
 }
 
-/// Hide `v` from `ObjectSpace` (`rb_obj_hide`: its class field cleared), as
-/// a Document is until it has content. Raises nothing.
-pub fn hide(v: Value) {
-    // SAFETY: a live object of ours, by `Value`'s rule; hiding writes only its
-    // class field.
-    unsafe { rb_sys::rb_obj_hide(v.as_raw()) };
+/// VALUE identity as a word: the same for every reference to one object, and
+/// different for two live objects - a key to compare by, never a value to
+/// turn back into one.
+#[inline]
+pub fn identity_word(v: impl ReprValue) -> usize {
+    v.as_raw() as usize
 }
 
-/// Show `v` again with `klass`, the class it was made with (`rb_obj_reveal`).
-/// Raises nothing.
-pub fn reveal(v: Value, klass: crate::nupur::rb::RClass) {
-    // SAFETY: as `hide`; `klass` is a live class, by type.
-    unsafe { rb_sys::rb_obj_reveal(v.as_raw(), klass.as_raw()) };
+/// The check "is the current thread's (or Fiber's) Ruby-managed machine stack
+/// close to exhausted?" (`ruby_stack_check`), as a plain function pointer for
+/// an engine that knows nothing of Ruby to ask from its recursion counters.
+///
+/// Handed out only for a token: the function reads the current Ruby thread's
+/// bookkeeping, so it is for code that runs where the token came from - a
+/// registered method, with the GVL held - which the extension's engine calls
+/// it from (its XPath and CSS recursion checks; none in a GVL-released body).
+pub fn stack_probe(_: &Ruby) -> fn() -> bool {
+    stack_low
 }
 
-/// Tell the GC about `delta` bytes held outside its heap (negative: given
-/// back). Memory Ruby does not allocate is otherwise invisible to it, and never
-/// triggers a collection.
-pub fn report_external_bytes(delta: isize) {
-    // SAFETY: a plain counter adjustment, with the GVL held - from a method
-    // or from Ruby's free hook, where it only subtracts.
-    unsafe { rb_sys::rb_gc_adjust_memory_usage(delta as rb_sys::ssize_t) };
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        ffi_without_gvl_proof,
+        reason = "private: handed out only by `stack_probe`, for a token"
+    )
+)]
+fn stack_low() -> bool {
+    // SAFETY: `ruby_stack_check` takes no argument, raises nothing, and reads
+    // only Ruby's own per-thread stack-bounds bookkeeping, which is valid
+    // whenever Ruby is running at all.
+    unsafe { rb_sys::ruby_stack_check() != 0 }
 }
 
 /* ---- exception messages ---- */
@@ -310,7 +320,7 @@ impl core::fmt::Display for ExceptionText<'_> {
             .position(|&b| b == 0)
             .unwrap_or(bytes.len())
             .min(EXCEPTION_MESSAGE_MAX);
-        crate::nupur::msg::Lossy(&bytes[..n]).fmt(f)
+        crate::msg::Lossy(&bytes[..n]).fmt(f)
     }
 }
 
@@ -326,8 +336,14 @@ impl core::fmt::Display for ExceptionText<'_> {
 /// fallback of the reader below) rather than panicking.
 pub struct RbConst<T>(OnceLock<Opaque<T>>);
 
+impl<T: ReprValue> Default for RbConst<T> {
+    fn default() -> RbConst<T> {
+        RbConst::new()
+    }
+}
+
 impl<T: ReprValue> RbConst<T> {
-    pub(crate) const fn new() -> RbConst<T> {
+    pub const fn new() -> RbConst<T> {
         RbConst(OnceLock::new())
     }
 

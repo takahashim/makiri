@@ -34,7 +34,7 @@ use crate::xml::qname::Split;
 /* ------------------------------------------------------------------ */
 
 /// `#remove` / `#unlink` -> self.
-pub fn remove(mut this: XmlSelf) -> Result<Value, Error> {
+pub fn remove(ruby: &crate::bridge::rb::Ruby, mut this: XmlSelf) -> Result<Value, Error> {
     let rb_self = this.value;
     let kind = this.read()?.type_(this.id);
     if !dom_rules::removable(kind.map_or(NodeType::Other, NodeType::from)) {
@@ -43,7 +43,7 @@ pub fn remove(mut this: XmlSelf) -> Result<Value, Error> {
     /* An Attr leaves its element's attribute list: an attribute edit,
      * which changes no child list. */
     let attr = kind == Some(ArenaKind::Attribute);
-    let edit = begin_edit(&mut this)?;
+    let edit = begin_edit(ruby, &mut this)?;
     if attr {
         edit.with_attributes(mutate::remove)?;
     } else {
@@ -53,8 +53,8 @@ pub fn remove(mut this: XmlSelf) -> Result<Value, Error> {
 }
 
 /// The receiver cleared for an edit, which must be an element.
-fn element_for(this: &mut XmlSelf) -> Result<Editing<'_>, Error> {
-    let edit = begin_edit(this)?;
+fn element_for<'a>(ruby: &Ruby, this: &'a mut XmlSelf) -> Result<Editing<'a>, Error> {
+    let edit = begin_edit(ruby, this)?;
     if edit.read()?.type_(edit.id()) != Some(ArenaKind::Element) {
         return Err(makiri_error(
             "cannot set an attribute on a non-element node",
@@ -65,7 +65,7 @@ fn element_for(this: &mut XmlSelf) -> Result<Editing<'_>, Error> {
 
 /// `element[name] = value` -> value.
 pub fn aset(ruby: &Ruby, mut this: XmlSelf, name: Value, val: Value) -> Result<Value, Error> {
-    let edit = element_for(&mut this)?;
+    let edit = element_for(ruby, &mut this)?;
     let nv = verified_name(ruby, name, "attribute name")?;
     let vv = verified_data(ruby, val, "attribute value")?;
     let (name, value) = (nv.as_bytes(), vv.as_bytes());
@@ -83,7 +83,7 @@ pub fn set_attribute_ns(
     qname: Value,
     val: Value,
 ) -> Result<Value, Error> {
-    let edit = element_for(&mut this)?;
+    let edit = element_for(ruby, &mut this)?;
     let qv = verified_name(ruby, qname, "attribute qualified name")?;
     let vv = verified_data(ruby, val, "attribute value")?;
     let nv = namespace_arg(ruby, ns, "namespace")?;
@@ -109,7 +109,7 @@ pub fn set_loose_dom_attribute(
     name: Value,
     val: Value,
 ) -> Result<Value, Error> {
-    let edit = element_for(&mut this)?;
+    let edit = element_for(ruby, &mut this)?;
     let nv = verified_name(ruby, name, "attribute name")?;
     let vv = verified_data(ruby, val, "attribute value")?;
     let (name, value) = (nv.as_bytes(), vv.as_bytes());
@@ -129,7 +129,7 @@ pub fn remove_attribute_ns(
     local: Value,
 ) -> Result<Value, Error> {
     let rb_self = this.value;
-    let edit = begin_edit(&mut this)?;
+    let edit = begin_edit(ruby, &mut this)?;
     if edit.read()?.type_(edit.id()) != Some(ArenaKind::Element) {
         return Ok(rb_self);
     }
@@ -144,7 +144,7 @@ pub fn remove_attribute_ns(
 /// `element.delete(name)` / `#remove_attribute` -> self.
 pub fn delete(ruby: &Ruby, mut this: XmlSelf, name: Value) -> Result<Value, Error> {
     let rb_self = this.value;
-    let edit = begin_edit(&mut this)?;
+    let edit = begin_edit(ruby, &mut this)?;
     if edit.read()?.type_(edit.id()) != Some(ArenaKind::Element) {
         return Ok(rb_self);
     }
@@ -160,7 +160,7 @@ pub fn set_content(ruby: &Ruby, mut this: XmlSelf, text: Value) -> Result<Value,
      * conversion: a Text, Comment, CDATA or PI node's content is its data,
      * and an Attr's its value - neither changes a child list. */
     let kind = this.read()?.type_(this.id);
-    let edit = begin_edit(&mut this)?;
+    let edit = begin_edit(ruby, &mut this)?;
     let tv = verified_data(ruby, text, "node content")?;
     let bytes = tv.as_bytes();
     let set = |d: &mut XmlDoc, n| mutate::set_content(d, n, bytes);

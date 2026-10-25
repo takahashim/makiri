@@ -103,3 +103,7 @@ path = "fuzz_targets/stylesheet_diff.rs"
 test = false
 doc = false
 bench = false
+
+# A crate of its own, not a member of the extension's workspace (its own
+# toolchain, run from its own directory).
+[workspace]

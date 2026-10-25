@@ -7,7 +7,7 @@
 
 pub use crate::nupur::helpers::*;
 
-use crate::bridge::rb::{Error, Ruby};
+use crate::bridge::rb::Error;
 
 /// `Err(LoadError)` when the running Ruby's API `MAJOR.MINOR` is not the one
 /// this extension was compiled for.
@@ -33,12 +33,6 @@ pub fn check_running_ruby_api() -> Result<(), Error> {
             built.0, built.1, running.0, running.1
         ),
     ))
-}
-
-/// `Makiri::Error` - the one definition; the modules that each kept a private
-/// copy of this now import it.
-pub fn error_class(ruby: &Ruby) -> crate::bridge::rb::ExceptionClass {
-    crate::init::EXC_ERROR.exception(ruby)
 }
 
 /// A `Makiri::Error` carrying `msg` - the one way the extension raises its own

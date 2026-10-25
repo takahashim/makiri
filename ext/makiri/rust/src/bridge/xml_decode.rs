@@ -12,15 +12,16 @@
 //! GC point, and a borrow of the String's bytes must not be held across one.
 //! So nothing here borrows the bytes: the sniff reads a copy of the
 //! document's first bytes (`string::prefix`, `SNIFF_WINDOW` of them, all a
-//! sniff reads), and the whole-document check is the string module's own
-//! scoped read (`string::text_check_from`).
+//! sniff reads), and the decoded document is copied once, BOM stripped, into
+//! the buffer the parser reads - which is what the strict check reads too.
 
 #![forbid(unsafe_code)]
 
 use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, RString};
 
-use super::string::{prefix, text_check_from, Encoding};
+use super::string::{prefix, ruby_string_bytes_from, text_check, Encoding};
+use crate::cbuf::OwnedBuf;
 use crate::init::{EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 use crate::xml::encoding_sniff::{sniff, SNIFF_WINDOW};
 
@@ -62,7 +63,7 @@ fn effective_encoding(ruby: &Ruby, str: RString) -> Result<Encoding, Error> {
     let tag = Encoding::of(str);
     /* The sniff reads a copy of the first bytes; the name lookups - which can
      * allocate - come after. */
-    let (head, n) = prefix::<SNIFF_WINDOW>(str);
+    let (head, n) = prefix::<SNIFF_WINDOW>(ruby, str);
     let (bom, decl) = sniff(head.get(..n).unwrap_or(&[]));
     let bom = bom.and_then(|b| Encoding::find(ruby, b.name().as_bytes()));
     /* XML 1.0 §4.3.3: the name is an IANA charset name or alias, Ruby's or
@@ -105,7 +106,7 @@ fn effective_encoding(ruby: &Ruby, str: RString) -> Result<Encoding, Error> {
     if claimed {
         return Ok(tag);
     }
-    Ok(bom.or(decl).unwrap_or_else(Encoding::utf8))
+    Ok(bom.or(decl).unwrap_or_else(|| Encoding::utf8(ruby)))
 }
 
 /// The encoding an encoding declaration names: Ruby's for an IANA name or
@@ -126,17 +127,20 @@ fn syntax_error(msg: impl crate::bridge::rb::Message) -> Error {
     Error::new(&EXC_XML_SYNTAX_ERROR, msg)
 }
 
-/// Decode `str` to a validated, UTF-8-tagged, BOM-stripped String, or the
-/// error that rejects it. A `max_bytes` of `None` skips the budget check (the
-/// `__decode` test hook).
-///
-fn xml_decode_input(ruby: &Ruby, str: RString, max_bytes: Option<usize>) -> Result<RString, Error> {
+/// Decode `str` to validated, BOM-stripped UTF-8, copied into the buffer the
+/// parser reads, or the error that rejects it. A `max_bytes` of `None` skips
+/// the budget check (the `__decode` test hook).
+pub fn xml_decode_input(
+    ruby: &Ruby,
+    str: RString,
+    max_bytes: Option<usize>,
+) -> Result<OwnedBuf, Error> {
     let eff = effective_encoding(ruby, str)?;
 
     /* Phase 2: decode to UTF-8, strictly. What is read as UTF-8 bytes is
      * validated below; anything else is transcoded in a mode that raises
      * instead of substituting U+FFFD. */
-    let s = if eff.reads_as_utf8_bytes() {
+    let s = if eff.reads_as_utf8_bytes(ruby) {
         str
     } else {
         let mut input = str;
@@ -148,7 +152,7 @@ fn xml_decode_input(ruby: &Ruby, str: RString, max_bytes: Option<usize>) -> Resu
          * sequence is an `Encoding::*Error` rather than a U+FFFD - remapped to
          * `Makiri::XML::SyntaxError`. Any other failure (`NoMemoryError`, an
          * interrupt) is passed through as it is. */
-        match super::raw::str_encode(input, Encoding::utf8(), 0) {
+        match super::raw::str_encode(input, Encoding::utf8(ruby), 0) {
             Ok(out) => out,
             Err(e) if is_encoding_error(ruby, &e) => {
                 let msg = e.wording(ruby);
@@ -163,7 +167,7 @@ fn xml_decode_input(ruby: &Ruby, str: RString, max_bytes: Option<usize>) -> Resu
     /* §4.3.3: a leading BOM is the encoding signature, not document content.
      * The transcode above turns any UTF-16/32 BOM into a U+FEFF, so one rule
      * covers every input. */
-    let (head, n) = prefix::<3>(s);
+    let (head, n) = prefix::<3>(ruby, s);
     let off = if n == 3 && head == *b"\xEF\xBB\xBF" {
         3
     } else {
@@ -171,9 +175,9 @@ fn xml_decode_input(ruby: &Ruby, str: RString, max_bytes: Option<usize>) -> Resu
     };
     let len = s.len() - off;
 
-    /* Fail closed on an over-budget input BEFORE the validation scan and the
-     * caller's GVL-release copy: an input whose UTF-8 length already exceeds the
-     * arena budget can never parse. */
+    /* Fail closed on an over-budget input BEFORE the copy and the validation
+     * scan: an input whose UTF-8 length already exceeds the arena budget can
+     * never parse. */
     if max_bytes.is_some_and(|max| len > max) {
         return Err(Error::new(
             &EXC_XML_LIMIT_EXCEEDED,
@@ -181,28 +185,15 @@ fn xml_decode_input(ruby: &Ruby, str: RString, max_bytes: Option<usize>) -> Resu
         ));
     }
 
-    /* Strict validation through the shared, allocation-free core. An embedded
-     * NUL or any invalid UTF-8 is fatal; there is no U+FFFD repair here, unlike
-     * the HTML sanitize path. The whole String is consulted for its cached
-     * coderange (which covers the stripped suffix too - the BOM is one complete
-     * UTF-8 character) while the bytes validated are the suffix. */
-    let problem = text_check_from(s, off).problem();
-    if let Some(problem) = problem {
+    /* The one copy: the bytes the parser reads, with the GVL released for a
+     * document. Strict validation is of that copy, through the shared,
+     * allocation-free core. An embedded NUL or any invalid UTF-8 is fatal;
+     * there is no U+FFFD repair here, unlike the HTML sanitize path. The
+     * whole String is consulted for its cached coderange (which covers the
+     * stripped prefix too - the BOM is one complete UTF-8 character). */
+    let bytes = ruby_string_bytes_from(ruby, s, off)?;
+    if let Some(problem) = text_check(ruby, s, bytes.as_slice()).problem() {
         return Err(syntax_error(format_args!("XML input {problem}")));
     }
-
-    /* Built from the VALUE: the borrow above is over, and rb_str_subseq
-     * allocates. */
-    let u = super::raw::str_subseq(s, off, len)?;
-    super::raw::enc_associate(u, Encoding::utf8())
-}
-
-/// [`xml_decode_input`] as a safe call: `s` is a String by type, and so is
-/// the result.
-pub fn xml_decode_input_value(
-    ruby: &Ruby,
-    s: RString,
-    max_bytes: Option<usize>,
-) -> Result<RString, Error> {
-    xml_decode_input(ruby, s, max_bytes)
+    Ok(bytes)
 }

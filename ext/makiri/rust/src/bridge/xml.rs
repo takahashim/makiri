@@ -16,7 +16,6 @@
 
 #![forbid(unsafe_code)]
 
-use crate::bridge::rb::value::AsRawValue;
 use crate::bridge::rb::Ruby;
 
 use crate::bridge::rb::{prelude::*, Error, Value};
@@ -28,7 +27,7 @@ use crate::bridge::ruby::{check_frozen, is_kind_of};
 use crate::bridge::string::{ruby_verified_text, RubyText};
 use crate::bridge::wrapper::*;
 use crate::bridge::wrapper::{node_repr, DocKind, DocumentShell, NodeRepr};
-use crate::bridge::xml_decode::xml_decode_input_value;
+use crate::bridge::xml_decode::xml_decode_input;
 use crate::child_index::{ChildList, Children, TokenTree};
 use crate::html_dom::cross_import::cross_html_to_xml;
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT, EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
@@ -79,6 +78,10 @@ pub(in crate::bridge) fn wrap_xml_node_checked(
     id: NodeId,
     document: Value,
 ) -> Result<Value, Error> {
+    /* A hit was checked when it was made, as `wrap_html_node_checked`'s. */
+    if let Some(cached) = crate::bridge::wrapper::cached_node(document, id.to_token())? {
+        return Ok(cached);
+    }
     let ty = xml_read(&document)?.type_(id);
     if ty.is_none() {
         return Err(crate::bridge::ruby::internal_error(
@@ -160,7 +163,7 @@ pub fn xml_node_unwrap(ruby: &Ruby, rb_self: Value) -> Result<NodeId, Error> {
         XML_DOC_TYPE.get(&rb_self)?; /* TypeError for any other Document */
         return Ok(xml_read(&rb_self)?.doc_node());
     }
-    let nd = XML_NODE_TYPE.read(rb_self)?;
+    let nd = crate::bridge::wrapper::read_node(&XML_NODE_TYPE, rb_self)?;
     /* A wrapper's word is a real node; a null one is a broken invariant,
      * answered as `InternalError` directly rather than by a panic (which the
      * trampoline would also make one) - `XmlSelf::try_convert` reads it. */
@@ -183,7 +186,7 @@ pub fn xml_node_document(ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
     if crate::bridge::ruby::is_kind_of(ruby, rb_self, &CLASS_XML_DOCUMENT) {
         return Ok(rb_self);
     }
-    Ok(XML_NODE_TYPE.read(rb_self)?.document)
+    Ok(crate::bridge::wrapper::read_node(&XML_NODE_TYPE, rb_self)?.document)
 }
 
 /* ------------------------------------------------------------------ *
@@ -516,11 +519,11 @@ fn check_attr_owner_frozen(document: Value, id: NodeId) -> Result<(), Error> {
 
 /// The receiver cleared for an edit - not frozen, its document not under
 /// evaluation. The name index is dropped later, by [`Editing::with_arena`].
-pub fn begin_edit(this: &mut XmlSelf) -> Result<Editing<'_>, Error> {
+pub fn begin_edit<'a>(ruby: &Ruby, this: &'a mut XmlSelf) -> Result<Editing<'a>, Error> {
     check_frozen(this.value)?;
     check_attr_owner_frozen(this.document, this.id)?;
     /* Before any argument is converted: see `account_growth`. */
-    crate::bridge::wrapper::account_growth(this.document);
+    crate::bridge::wrapper::account_growth(ruby, this.document);
     Ok(Editing {
         receiver: this.value,
         document: this.document,
@@ -647,17 +650,14 @@ impl Unit {
 /// Parse XML source, releasing the GVL, and wrap the result as a Document.
 ///
 /// Runs the strict decode under the GVL first (invalid UTF-8, an undecodable
-/// byte or a NUL all raise), then copies into a private buffer BEFORE the
-/// wrapper exists, so no GC point can run between obtaining the decoded String
-/// and copying it.
+/// byte or a NUL all raise), which leaves the document in a buffer of its
+/// own: the parse reads that, and no Ruby String, with the GVL released.
 pub fn parse_xml_document(ruby: &Ruby, source: Value, limits: ParseLimits) -> Result<Value, Error> {
     let source = crate::bridge::ruby::string_arg(source)?;
-    let decoded = xml_decode_input_value(ruby, source, Some(limits.budget()))?;
-    /* The wrapper first, while nothing needs freeing (see DocumentShell): its
-     * allocation can raise, and the copy below is this frame's to free. The
-     * decoded String is a local, so the stack scan keeps it across it. */
+    let src = xml_decode_input(ruby, source, Some(limits.budget()))?;
+    /* The wrapper before the parse: its allocation can fail, and `src`, an
+     * owned copy, is dropped on the way out if it does. */
     let shell = DocumentShell::new(ruby, DocKind::Xml)?;
-    let src = crate::bridge::string::ruby_string_bytes(decoded)?;
 
     /* Ruby-free from here: only the copied bytes and the limits cross. */
     let bytes = src.as_slice();
@@ -668,7 +668,7 @@ pub fn parse_xml_document(ruby: &Ruby, source: Value, limits: ParseLimits) -> Re
     let arena = result.map_err(|status| parse_status_error(status, Unit::Document))?;
     /* `src` is gone, so the collection `install`'s GC report may trigger
      * disturbs nothing. */
-    Ok(shell.install_xml(arena))
+    Ok(shell.install_xml(ruby, arena))
 }
 
 /// `Document#root` for an XML document: the root element, or nil.
@@ -690,7 +690,7 @@ pub fn copy_xml_document(ruby: &Ruby, document: Value) -> Result<Value, Error> {
      * copy then reads `document` and runs no Ruby. */
     let shell = DocumentShell::new(ruby, DocKind::Xml)?;
     let arena = crate::xml::mutate::copy_document(&*xml_read(&document)?).map_err(xml_mut_error)?;
-    Ok(shell.install_xml(arena))
+    Ok(shell.install_xml(ruby, arena))
 }
 
 /// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.
@@ -698,7 +698,7 @@ pub fn new_empty_xml_document(ruby: &Ruby) -> Result<Value, Error> {
     let shell = DocumentShell::new(ruby, DocKind::Xml)?;
     let arena =
         XmlDoc::create(None).map_err(|_| makiri_error("out of memory allocating XML document"))?;
-    Ok(shell.install_xml(arena))
+    Ok(shell.install_xml(ruby, arena))
 }
 
 /// Strict-decode `source` and parse it as a fragment into `document`'s arena,
@@ -714,8 +714,7 @@ pub fn fragment_into(
 ) -> Result<NodeId, Error> {
     let max_bytes = xml_read(&document)?.max_bytes();
     let source = crate::bridge::ruby::string_arg(source)?;
-    let decoded = xml_decode_input_value(ruby, source, Some(max_bytes))?;
-    let src = crate::bridge::string::ruby_string_bytes(decoded)?;
+    let src = xml_decode_input(ruby, source, Some(max_bytes))?;
     let mut xdoc = arena_mut(&document)?;
     tree::parse_fragment(&mut xdoc, src.as_slice(), inherit_doc_ns)
         .map_err(|status| parse_status_error(status, Unit::Fragment))
@@ -834,7 +833,7 @@ pub fn insert(
     arg: Value,
     at: crate::xml::mutate::Place,
 ) -> Result<Value, Error> {
-    let edit = begin_edit(&mut this)?;
+    let edit = begin_edit(ruby, &mut this)?;
     let (node, adoption) = incoming_node(ruby, edit.document(), arg)?;
     /* An adoption writes the source too, so it is taken for the edit before
      * the copy is placed: a refusal then comes first, rather than after the
@@ -887,7 +886,7 @@ fn incoming_node(
     check_frozen(arg)?;
     let src = xml_node_unwrap(ruby, arg)?;
     let src_document = xml_node_document(ruby, arg)?;
-    if src_document.as_raw() == target_doc.as_raw() {
+    if crate::bridge::ruby::same_value(src_document, target_doc) {
         return Ok((src, None)); /* same arena -> move */
     }
     let (mark, copied) = {

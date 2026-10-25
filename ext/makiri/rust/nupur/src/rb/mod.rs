@@ -9,7 +9,7 @@
 //! makes that can raise is a `bridge::raw` wrapper under `rb_protect`, and
 //! nothing raises until a method's trampoline has returned from the method
 //! (`method::finish`). So the C functions Makiri trusts are the ones
-//! `bridge/raw.rs` names, and no other code stands between them and the glue.
+//! `raw.rs` names, and no other code stands between them and the glue.
 
 pub mod class;
 pub mod convert;
@@ -23,8 +23,8 @@ pub use convert::{IntoValue, ReturnValue, TryConvert};
 pub use error::{Builtin, Error, ErrorClass, Message};
 pub use ruby::Ruby;
 pub use value::{
-    Coderange, ExceptionClass, Float, HashKey, Integer, RArray, RClass, RHash, RModule, RString,
-    Range, ReprValue, Symbol, Value,
+    Coderange, ExceptionClass, Float, HashKey, Integer, NoRoom, RArray, RClass, RHash, RModule,
+    RString, Range, ReprValue, Symbol, Value,
 };
 
 /// The traits a glue module brings into scope with `use ...::prelude::*`.

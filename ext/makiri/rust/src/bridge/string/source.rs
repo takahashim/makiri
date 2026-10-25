@@ -4,7 +4,6 @@
 
 #![forbid(unsafe_code)]
 
-use crate::bridge::rb::value::AsRawValue;
 use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, RString};
 
@@ -30,13 +29,13 @@ pub struct HtmlSource {
 
 impl HtmlSource {
     /// `s` is a String by type: the caller has coerced it.
-    pub fn from_ruby(s: RString) -> Result<HtmlSource, Error> {
-        let src = ruby_to_utf8_value(s)?;
+    pub fn from_ruby(ruby: &crate::bridge::rb::Ruby, s: RString) -> Result<HtmlSource, Error> {
+        let src = ruby_to_utf8_value(ruby, s)?;
         /* A transcode replaced every invalid or unmappable byte, so its result
          * is valid UTF-8 whatever its coderange says. */
-        let transcoded = src.as_raw() != s.as_raw();
-        let known_valid = transcoded || ruby_str_known_valid_utf8(src);
-        let bytes = ruby_string_bytes(src)?;
+        let transcoded = !crate::bridge::ruby::same_value(src, s);
+        let known_valid = transcoded || ruby_str_known_valid_utf8(ruby, src);
+        let bytes = ruby_string_bytes(ruby, src)?;
         Ok(HtmlSource { bytes, known_valid })
     }
 
@@ -93,47 +92,52 @@ pub struct DocumentSource {
 
 impl DocumentSource {
     /// `s` is a String by type: the caller has coerced it.
-    pub fn from_ruby(s: RString, given: Option<GivenEncoding>) -> Result<DocumentSource, Error> {
+    pub fn from_ruby(
+        ruby: &crate::bridge::rb::Ruby,
+        s: RString,
+        given: Option<GivenEncoding>,
+    ) -> Result<DocumentSource, Error> {
         use crate::html::encoding::{transport_for, Transport, UTF_8};
         let own = Encoding::of(s);
         let enc = match given {
-            Some(GivenEncoding::Label(e)) => return Self::declared(s, own, e),
+            Some(GivenEncoding::Label(e)) => return Self::declared(ruby, s, own, e),
             Some(GivenEncoding::Ruby(e)) => e,
             None => own,
         };
-        match transport_for(enc.kind()) {
+        match transport_for(super::encoding_kind(ruby, enc)) {
             Transport::Unlabelled => {
                 /* The bytes are read as `enc`'s, whatever the String says. */
                 let s = if enc == own { s } else { enc.relabel(s)? };
                 Ok(DocumentSource {
-                    source: HtmlSource::from_ruby(s)?,
+                    source: HtmlSource::from_ruby(ruby, s)?,
                     transport: Some(UTF_8),
                 })
             }
             Transport::Sniff => Ok(DocumentSource {
                 source: HtmlSource {
-                    bytes: ruby_string_bytes(s)?,
+                    bytes: ruby_string_bytes(ruby, s)?,
                     known_valid: false,
                 },
                 transport: None,
             }),
-            Transport::Declared(e) => Self::declared(s, own, e),
+            Transport::Declared(e) => Self::declared(ruby, s, own, e),
         }
     }
 
     /// `s`'s bytes, declared to be in `e`.
     fn declared(
+        ruby: &crate::bridge::rb::Ruby,
         s: RString,
         own: Encoding,
         e: &'static crate::html::encoding::Encoding,
     ) -> Result<DocumentSource, Error> {
         /* Ruby's own verdict counts only for bytes it holds as UTF-8. */
         let known_valid = e == crate::html::encoding::UTF_8
-            && own.is_utf8_compatible()
-            && ruby_str_known_valid_utf8(s);
+            && own.is_utf8_compatible(ruby)
+            && ruby_str_known_valid_utf8(ruby, s);
         Ok(DocumentSource {
             source: HtmlSource {
-                bytes: ruby_string_bytes(s)?,
+                bytes: ruby_string_bytes(ruby, s)?,
                 known_valid,
             },
             transport: Some(e),

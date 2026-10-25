@@ -225,7 +225,7 @@ pub fn build_fragment(
     limit: ParseLimits,
 ) -> Result<Value, Error> {
     /* A String only, transcoded to UTF-8 (a Ruby allocation, which may raise). */
-    let src = HtmlSource::from_ruby(string_arg(rb_html)?)?;
+    let src = HtmlSource::from_ruby(ruby, string_arg(rb_html)?)?;
     /* The element is read now, after the conversion, as `inner_html=` reads
      * it inside its edit. */
     let context = match at {
@@ -238,7 +238,7 @@ pub fn build_fragment(
     };
     let parsed = parse(&src, &context, limit)?;
 
-    let frag = crate::bridge::html::new_node(&document, |d| {
+    let frag = crate::bridge::html::new_node(ruby, &document, |d| {
         let Some(frag) = d.create_fragment() else {
             return Err(makiri_error("failed to create document fragment"));
         };
@@ -264,5 +264,5 @@ pub fn fragment_shell_document(ruby: &Ruby) -> Result<Value, Error> {
     let Ok(parsed) = parse_html(SHELL, true, ParseLimits::DEFAULT) else {
         return Err(makiri_error("failed to create fragment document"));
     };
-    Ok(shell.install_html(parsed))
+    Ok(shell.install_html(ruby, parsed))
 }

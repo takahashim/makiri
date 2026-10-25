@@ -65,12 +65,6 @@ macro_rules! sites {
 }
 
 sites! {
-    /// `DocData`'s `Drop`, run from the free callback.
-    DropDocData => "makiri_unwinds_drop_doc_data",
-    /// `NodeSet`'s `Drop`, run from the free callback.
-    DropNodeSet => "makiri_unwinds_drop_node_set",
-    /// `XPathCtx`'s `Drop`, run from the free callback.
-    DropXPathCtx => "makiri_unwinds_drop_xpath_ctx",
     /// `xpath::ctx::Running`'s `Drop`, run as a panic in an evaluate unwinds.
     DropXPathRunning => "makiri_unwinds_drop_xpath_running",
     /// The check's own control ([`self_test`]): a body that CAN unwind, so a
