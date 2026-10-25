@@ -109,7 +109,7 @@ pub(in crate::bridge) fn wrap_html_node_checked(
     /* A wrapper in the table was made for this word, checked then - and a
      * word names one node of one document for the document's life - so a
      * hit needs no check, no type and no class. */
-    if let Some(cached) = crate::bridge::wrapper::cached_node(document, node.word())? {
+    if let Some(cached) = crate::bridge::wrapper::cached_node(document, &node)? {
         return Ok(cached);
     }
     let node_type = html_read(&document)?
@@ -136,8 +136,8 @@ fn wrap_html_node_of_type(
 }
 
 impl crate::bridge::wrapper::NodeHandleSource for RawNode {
-    fn identity(&self) -> usize {
-        self.word()
+    fn index_and_stamp(&self) -> (u32, u32) {
+        (self.index(), self.stamp())
     }
 
     fn into_handle(self, document: Value) -> NodeHandle {

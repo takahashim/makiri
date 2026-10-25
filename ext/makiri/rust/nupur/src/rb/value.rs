@@ -14,7 +14,6 @@
 
 #![allow(unsafe_code)]
 
-use core::ffi::c_long;
 use core::marker::PhantomData;
 
 use rb_sys::stable_api::{get_default, StableApiDefinition};
@@ -87,8 +86,10 @@ pub trait ReprValue: Copy {
         )
     )]
     fn write_classname(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        crate::raw::with_classname(self.as_value(), |name| {
-            core::fmt::Display::fmt(&crate::msg::Lossy(name), f)
+        crate::raw::keeping_errinfo(|| {
+            crate::raw::with_classname(self.as_value(), |name| {
+                core::fmt::Display::fmt(&crate::msg::Lossy(name), f)
+            })
         })
         .unwrap_or_else(|_| f.write_str("Object"))
     }
@@ -224,7 +225,7 @@ impl RString {
     #[inline]
     pub fn len(self) -> usize {
         // SAFETY: `self` is a live String.
-        unsafe { get_default().rstring_len(self.0 .0) as usize }
+        crate::int::len(unsafe { get_default().rstring_len(self.0 .0) })
     }
 
     /// Empty?
@@ -245,10 +246,11 @@ impl RString {
         // SAFETY: `self` is a live String; the caller's contract.
         unsafe {
             let (p, n) = (api.rstring_ptr(self.0 .0), api.rstring_len(self.0 .0));
-            if n <= 0 || p.is_null() {
+            let n = crate::int::len(n);
+            if n == 0 || p.is_null() {
                 return &[];
             }
-            core::slice::from_raw_parts(p as *const u8, n as usize)
+            core::slice::from_raw_parts(p as *const u8, n)
         }
     }
 
@@ -285,7 +287,7 @@ impl RArray {
     #[inline]
     pub fn len(self) -> usize {
         // SAFETY: `self` is a live Array.
-        unsafe { get_default().rarray_len(self.0 .0) as usize }
+        crate::int::len(unsafe { get_default().rarray_len(self.0 .0) })
     }
 
     /// Empty?
@@ -294,17 +296,11 @@ impl RArray {
         self.len() == 0
     }
 
-    /// Element `i` (negative counts from the end), `nil` past the end:
-    /// `rb_ary_entry`, which raises nothing.
+    /// Element `i`, `nil` past the end: `rb_ary_entry`, which raises
+    /// nothing.
     #[inline]
-    pub fn entry(self, i: isize) -> Result<Value, Error> {
-        /* Converted, not cut: a `long` is 32 bits on Windows, where an index
-         * past one would wrap to an element that is there. No Array has one. */
-        Ok(match c_long::try_from(i) {
-            Ok(i) => ary_entry(self, i),
-            // SAFETY: `nil`, an immediate.
-            Err(_) => unsafe { Value::from_raw(rb_sys::Qnil as VALUE) },
-        })
+    pub fn entry(self, i: usize) -> Value {
+        ary_entry(self, i)
     }
 }
 
@@ -328,13 +324,7 @@ impl RHash {
     /// which can raise - `Err`, passed on (`raw::hash_lookup`).
     #[inline]
     pub fn get(self, key: impl HashKey) -> Result<Option<Value>, Error> {
-        let key = key.as_value();
-        if !plain_key(key) {
-            return Err(crate::rb::error::type_error(
-                "a Hash key must be a Symbol or a String (not a subclass's)",
-            ));
-        }
-        crate::raw::hash_lookup(self, key)
+        crate::raw::hash_lookup(self, key.as_value())
     }
 }
 
@@ -364,10 +354,7 @@ impl RArray {
     /// The elements, read one at a time (`rb_ary_entry`), the length read
     /// afresh before each.
     pub fn each(self) -> impl Iterator<Item = Value> {
-        (0..).map_while(move |i: usize| {
-            let i = c_long::try_from(i).ok().filter(|_| i < self.len())?;
-            Some(ary_entry(self, i))
-        })
+        (0..).map_while(move |i: usize| (i < self.len()).then(|| ary_entry(self, i)))
     }
 }
 
@@ -391,7 +378,9 @@ impl Integer {
         }
         let api = get_default();
         if api.fixnum_p(self.0 .0) {
-            return Ok(api.fix2long(self.0 .0) as u64);
+            /* Not negative, checked above. */
+            return u64::try_from(i64::from(api.fix2long(self.0 .0)))
+                .map_err(|_| crate::rb::error::internal_error("a negative Fixnum"));
         }
         crate::raw::big2ull(self)
     }
@@ -401,7 +390,7 @@ impl Integer {
     pub fn to_i64(self) -> Result<i64, Error> {
         let api = get_default();
         if api.fixnum_p(self.0 .0) {
-            return Ok(api.fix2long(self.0 .0) as i64);
+            return Ok(i64::from(api.fix2long(self.0 .0)));
         }
         crate::raw::big2ll(self)
     }
@@ -421,16 +410,16 @@ impl Integer {
 
     /// As a `usize`, or `None` when it is negative or past one - and only
     /// then: any other failure of the conversion is passed on, never read as
-    /// "out of range" (for a limit, that would lift it).
-    pub fn to_usize_within(self, ruby: &Ruby) -> Result<Option<usize>, Error> {
+    /// "out of range" (for a limit, that would lift it). "Past one" is
+    /// decided from the value's size, so no `RangeError` is made and dropped.
+    pub fn to_usize_within(self, _: &Ruby) -> Result<Option<usize>, Error> {
         if self.is_negative() {
             return Ok(None);
         }
-        match self.to_u64() {
-            Ok(n) => Ok(usize::try_from(n).ok()),
-            Err(e) if e.is_kind_of(ruby, Builtin::RangeError) => Ok(None),
-            Err(e) => Err(e),
+        if !get_default().fixnum_p(self.0 .0) && !crate::raw::big_fits_u64(self) {
+            return Ok(None);
         }
+        Ok(usize::try_from(self.to_u64()?).ok())
     }
 
     /// Below zero? Reads the sign, converts nothing.
@@ -483,7 +472,7 @@ pub fn same_value(a: impl ReprValue, b: impl ReprValue) -> bool {
 /// turn back into one.
 #[inline]
 pub fn identity_word(v: impl ReprValue) -> usize {
-    v.as_raw() as usize
+    crate::int::word(v.as_raw())
 }
 
 /// An interned name - a method's, an ivar's, a constant's - as `rb_intern`
@@ -538,10 +527,15 @@ pub(crate) fn class_inherits(sub: Value, sup: Value) -> bool {
     unsafe { rb_sys::rb_class_inherited_p(sub.as_raw(), sup.as_raw()) == rb_sys::Qtrue as VALUE }
 }
 
-/// `rb_ary_entry`: element `i` (negative counts from the end), `nil` past
-/// either end. Raises nothing.
+/// `rb_ary_entry`: element `i`, `nil` past the end. Raises nothing.
 #[inline]
-pub(crate) fn ary_entry(a: RArray, i: c_long) -> Value {
+pub(crate) fn ary_entry(a: RArray, i: usize) -> Value {
+    /* Converted, not cut: a `long` is 32 bits on Windows, where an index
+     * past one would wrap to an element that is there. No Array has one. */
+    let Ok(i) = i.try_into() else {
+        // SAFETY: `nil`, an immediate.
+        return unsafe { Value::from_raw(rb_sys::Qnil as VALUE) };
+    };
     // SAFETY: `a` is a live Array; the read is bounds-checked by Ruby.
     unsafe { Value::from_raw(rb_sys::rb_ary_entry(a.as_raw(), i)) }
 }

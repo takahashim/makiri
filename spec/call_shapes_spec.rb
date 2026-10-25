@@ -163,6 +163,15 @@ RSpec.describe "argument shapes and block exits" do
       expect(catch(:k) { set.each { |n| throw :k, n.name } }).to eq("p")
     end
 
+    it "leaves no exit pending once a break or a throw is resumed" do
+      # While a break or throw out of the block is on its way, every Ruby call
+      # Makiri would make answers the same exit; once resumed, calls run again.
+      set.each { break }
+      catch(:k) { set.each { throw :k } }
+      expect(doc.css("p").map(&:name)).to eq(["p"])
+      expect(set.map(&:name)).to eq(%w[p circle])
+    end
+
     it "passes the block's own exception through, unchanged" do
       boom = Class.new(StandardError).new("boom")
       expect { set.each { raise boom } }.to raise_error { |e| expect(e).to equal(boom) }

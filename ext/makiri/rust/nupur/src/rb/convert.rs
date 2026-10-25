@@ -73,7 +73,7 @@ macro_rules! signed {
         impl IntoValue for $t {
             #[inline]
             fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
-                crate::build::int(ruby, self as i64)
+                crate::build::int(ruby, i64::from(self))
             }
         }
     )*};
@@ -85,12 +85,19 @@ macro_rules! unsigned {
         impl IntoValue for $t {
             #[inline]
             fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
-                crate::build::uint(ruby, self as u64)
+                crate::build::uint(ruby, u64::from(self))
             }
         }
     )*};
 }
-unsigned!(u32, u64, usize);
+unsigned!(u32, u64);
+
+impl IntoValue for usize {
+    #[inline]
+    fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
+        crate::build::uint(ruby, crate::int::wide(self))
+    }
+}
 
 impl IntoValue for &'static str {
     #[inline]

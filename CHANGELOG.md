@@ -31,6 +31,9 @@
 * A keywords-only call of `#xpath` / `#at_xpath` (`doc.xpath(s: uri)`, no
   expression) raises Ruby's arity error, `ArgumentError`, rather than a
   `TypeError` about the Hash, as a call with no arguments does.
+* On Windows, an index or a length (`NodeSet#[]`, `to_xml(indent:)`) takes
+  the same range as on Linux and macOS, a 64-bit integer, where one past
+  2^31 raised `RangeError`.
 * A namespace Hash's keys must be Symbols or plain Strings: a key of a
   String subclass raises `TypeError`, since hashing it would run the
   subclass's `#hash`.

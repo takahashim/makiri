@@ -75,8 +75,13 @@ pub trait Payload: Sized {
 /// reports it says in its [`Payload::reported_external`], and the free
 /// callback gives it back.
 pub fn report_external(_: &crate::rb::Ruby, delta: isize) {
+    let delta = rb_sys::ssize_t::try_from(delta).unwrap_or(if delta < 0 {
+        rb_sys::ssize_t::MIN
+    } else {
+        rb_sys::ssize_t::MAX
+    });
     // SAFETY: a plain counter adjustment, with the GVL held.
-    unsafe { rb_sys::rb_gc_adjust_memory_usage(delta as rb_sys::ssize_t) };
+    unsafe { rb_sys::rb_gc_adjust_memory_usage(delta) };
 }
 
 /// The bytes an object of payload `T` with `N` slots keeps as its data - its
@@ -141,10 +146,10 @@ unsafe extern "C" fn mark_cb<T: Payload, const N: usize>(ptr: *mut c_void) {
 )]
 fn give_back(reported: usize) {
     if reported != 0 {
-        let n = isize::try_from(reported).unwrap_or(isize::MAX);
+        let n = rb_sys::ssize_t::try_from(reported).unwrap_or(rb_sys::ssize_t::MAX);
         // SAFETY: a plain counter adjustment, from the free hook, where it
         // only subtracts - as Ruby's own `xfree` does from here.
-        unsafe { rb_sys::rb_gc_adjust_memory_usage(0isize.saturating_sub(n) as rb_sys::ssize_t) };
+        unsafe { rb_sys::rb_gc_adjust_memory_usage(n.saturating_neg()) };
     }
 }
 
@@ -186,7 +191,14 @@ unsafe extern "C" fn free_embedded_cb<T: Payload, const N: usize>(ptr: *mut c_vo
     })
 }
 
-unsafe extern "C" fn memsize_cb<T: Payload, const N: usize>(ptr: *const c_void) -> rb_sys::size_t {
+/// The bytes the object owns beyond what Ruby counts itself. For a plain
+/// type that is the whole envelope (Ruby counts its slot, not the data it
+/// points at); for an embeddable one Ruby counts the envelope - as part of
+/// the slot it is embedded in, or by the allocation's own size when it is
+/// not - so only what the payload owns beyond its struct is left.
+unsafe extern "C" fn memsize_cb<T: Payload, const N: usize, const EMBEDDABLE: bool>(
+    ptr: *const c_void,
+) -> rb_sys::size_t {
     crate::no_unwind::must_not_unwind::<crate::no_unwind::GcMemsize, _>(|| {
         if ptr.is_null() {
             return 0;
@@ -198,7 +210,14 @@ unsafe extern "C" fn memsize_cb<T: Payload, const N: usize>(ptr: *const c_void) 
         // SAFETY: as `mark_cb`.
         let data = unsafe { &(*(ptr as *const Envelope<T, N>)).data };
         let slots = core::mem::size_of::<[VALUE; N]>();
-        crate::caught::quietly(0, || data.memsize().saturating_add(slots)) as rb_sys::size_t
+        let bytes = crate::caught::quietly(0, || {
+            if EMBEDDABLE {
+                data.memsize().saturating_sub(core::mem::size_of::<T>())
+            } else {
+                data.memsize().saturating_add(slots)
+            }
+        });
+        rb_sys::size_t::try_from(bytes).unwrap_or(rb_sys::size_t::MAX)
     })
 }
 
@@ -234,7 +253,11 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
                 } else {
                     free_cb::<T, N>
                 }),
-                Some(memsize_cb::<T, N>),
+                Some(if embedded {
+                    memsize_cb::<T, N, true>
+                } else {
+                    memsize_cb::<T, N, false>
+                }),
                 embedded,
             ),
             _t: PhantomData,

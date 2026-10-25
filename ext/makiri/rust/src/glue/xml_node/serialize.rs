@@ -23,7 +23,7 @@ fn to_xml_opts(ruby: &Ruby, args: &[Value]) -> Result<(i32, Value), Error> {
         width = 2;
     }
     if let Some(iv) = kw.value(ruby, "indent")? {
-        width = i32::try_from(crate::bridge::ruby::long_arg(iv)?.max(0)).unwrap_or(i32::MAX);
+        width = i32::try_from(crate::bridge::ruby::index_arg(iv)?.max(0)).unwrap_or(i32::MAX);
     }
     let enc = kw
         .value(ruby, "encoding")?

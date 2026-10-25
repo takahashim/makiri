@@ -43,7 +43,7 @@ pub(crate) fn each_pair(
         crate::bridge::build::push(pairs, v)
     })?;
     for i in (0..pairs.len()).step_by(2) {
-        f(pairs.entry(i as isize)?, pairs.entry(i as isize + 1)?)?;
+        f(pairs.entry(i), pairs.entry(i + 1))?;
     }
     Ok(())
 }

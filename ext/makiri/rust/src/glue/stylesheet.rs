@@ -92,7 +92,7 @@ fn rules_to_ruby(ruby: &Ruby, k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
                     aset(sh, k.text, utf8_str(ruby, &s.text)?)?;
                     let sp = ary(ruby, 3)?;
                     for v in s.specificity {
-                        push(sp, int(ruby, v as i64)?)?;
+                        push(sp, int(ruby, i64::from(v))?)?;
                     }
                     aset(sh, k.specificity, sp.as_value())?;
                     push(sa, sh.as_value())?;

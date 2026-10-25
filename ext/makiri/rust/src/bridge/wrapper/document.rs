@@ -108,6 +108,10 @@ pub struct DocData {
     /// Where `child_count` / `child_at` last were ([`ChildPositionMemo`]).
     /// Allocates nothing until the first of them records.
     pub(super) child_memo: RefCell<ChildPositionMemo>,
+    /// The content's document stamp, set with it (0 before): the node table
+    /// is keyed by a node's index alone, and a lookup is for a node of this
+    /// document only when the stamp in its handle is this one.
+    stamp: Cell<u32>,
 }
 
 impl DocData {
@@ -285,6 +289,7 @@ impl DocumentShell {
                 edits: Cell::new(EditState::default()),
                 report: Cell::new(ExternalReport::default()),
                 child_memo: RefCell::new(ChildPositionMemo::default()),
+                stamp: Cell::new(0),
             },
             [nodes],
             /* Written before it is hidden, and a failure hides it all the
@@ -298,24 +303,31 @@ impl DocumentShell {
     /// Give the HTML Document its parsed document - the GC owns it from here -
     /// and report the arena's size.
     pub fn install_html(self, ruby: &crate::bridge::rb::Ruby, parsed: Box<HtmlParsed>) -> Value {
-        self.install(ruby, Body::Html(crate::doc_cell::DocCell::new(parsed)))
+        let stamp = parsed.doc().arena().stamp();
+        self.install(
+            ruby,
+            stamp,
+            Body::Html(crate::doc_cell::DocCell::new(parsed)),
+        )
     }
 
     /// Give the XML Document its arena, as [`install_html`](Self::install_html).
     pub fn install_xml(self, ruby: &crate::bridge::rb::Ruby, arena: Box<XmlDoc>) -> Value {
-        self.install(ruby, Body::Xml(crate::doc_cell::DocCell::new(arena)))
+        let stamp = arena.doc_node().stamp();
+        self.install(ruby, stamp, Body::Xml(crate::doc_cell::DocCell::new(arena)))
     }
 
     #[allow(
         clippy::panic,
         reason = "`new` makes the wrapper without content, and only `install` - which takes the shell - gives it some"
     )]
-    fn install(self, ruby: &crate::bridge::rb::Ruby, content: Body) -> Value {
+    fn install(self, ruby: &crate::bridge::rb::Ruby, stamp: u32, content: Body) -> Value {
         /* `self.obj` is a Document wrapper with no content yet, so nothing is
          * overwritten. */
         if self.obj.data().content.set(content).is_err() {
             panic!("a Document installed twice");
         }
+        self.obj.data().stamp.set(stamp);
         /* Content in place: the Document can be seen now. */
         let obj = self.obj.reveal();
         account_document(ruby, obj);
@@ -501,28 +513,48 @@ pub(in crate::bridge) fn wrap_cached(
     source: impl NodeHandleSource,
     document: Value,
 ) -> Result<Value, Error> {
-    let token = source.identity();
-    let table = node_table(document)?;
-    if let Some(cached) = table.get(token)? {
+    let Some((table, key)) = table_and_key(document, &source)? else {
+        return Err(internal_error("a node of another document"));
+    };
+    if let Some(cached) = table.get(key)? {
         return Ok(cached);
     }
     let node = source.into_handle(document);
     let fresh = ty.wrap(ruby, klass, NodeData { node }, [document])?;
     /* The table entry: a Ruby reference, which the GC marks and moves
      * itself. A failure leaves `fresh` unseen and unreferenced. */
-    table.set(token, fresh)?;
+    table.set(key, fresh)?;
     Ok(fresh)
 }
 
-/// The Document's node table (see `DocumentShell::new`).
-fn node_table(document: Value) -> Result<crate::nupur::table::IntTable, Error> {
-    crate::nupur::table::IntTable::from_value(DOC_TYPE.root_known::<0>(&document))
-        .ok_or_else(|| internal_error("a Document without its node table"))
+/// `document`'s node table and `source`'s key in it - its index - or `None`
+/// for a node of another document, whose index names another node here.
+/// One type check reads both.
+#[inline]
+fn table_and_key(
+    document: Value,
+    source: &impl NodeHandleSource,
+) -> Result<Option<(crate::nupur::table::IntTable, u32)>, Error> {
+    let (index, stamp) = source.index_and_stamp();
+    let doc = DOC_TYPE.check(document)?;
+    if doc.data().stamp.get() != stamp {
+        return Ok(None);
+    }
+    let table = crate::nupur::table::IntTable::from_value(doc.root::<0>())
+        .ok_or_else(|| internal_error("a Document without its node table"))?;
+    Ok(Some((table, index)))
 }
 
-/// The one wrapper for `token` under `rb_doc`, or None the first time.
-pub(in crate::bridge) fn cached_node(rb_doc: Value, token: usize) -> Result<Option<Value>, Error> {
-    node_table(rb_doc)?.get(token)
+/// The one wrapper for `source` under `rb_doc`, or None the first time -
+/// and for a node of another document, which has none here.
+pub(in crate::bridge) fn cached_node(
+    rb_doc: Value,
+    source: &impl NodeHandleSource,
+) -> Result<Option<Value>, Error> {
+    match table_and_key(rb_doc, source)? {
+        Some((table, key)) => table.get(key),
+        None => Ok(None),
+    }
 }
 
 /// The hidden ivars' names, interned at `Init_makiri` ([`init_ivars`]).
@@ -580,7 +612,7 @@ pub(in crate::bridge) fn check_node_frozen(
     rb_doc: Value,
     source: impl NodeHandleSource,
 ) -> Result<(), Error> {
-    match cached_node(rb_doc, source.identity())? {
+    match cached_node(rb_doc, &source)? {
         Some(wrapper) => crate::bridge::ruby::check_frozen(wrapper),
         None => Ok(()),
     }

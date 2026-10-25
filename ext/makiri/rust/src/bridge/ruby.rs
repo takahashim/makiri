@@ -5,7 +5,7 @@
 
 #![forbid(unsafe_code)]
 
-pub use crate::nupur::args::{integer_arg, integer_range_arg, long_arg, name_arg, string_arg};
+pub use crate::nupur::args::{index_arg, integer_arg, name_arg, string_arg};
 pub use crate::nupur::describe::{AsText, Describe, ExceptionText};
 pub use crate::nupur::raw::{check_frozen, range_beg_len};
 pub use crate::nupur::rb::error::{arg_error, internal_error, type_error};

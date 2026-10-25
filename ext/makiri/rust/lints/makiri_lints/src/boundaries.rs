@@ -77,7 +77,7 @@ fn is_extension(cx: &LateContext<'_>) -> bool {
 }
 
 /// The path of the module the code at `hir_id` is in, crate first.
-fn module_of(cx: &LateContext<'_>, hir_id: HirId) -> String {
+pub(crate) fn module_of(cx: &LateContext<'_>, hir_id: HirId) -> String {
     path_of(cx, cx.tcx.parent_module(hir_id).to_def_id())
 }
 
@@ -133,6 +133,7 @@ fn in_bridge(module: &str) -> bool {
 /// The modules that may spell a raw `VALUE`: the C calls, TypedData and
 /// the GC callbacks, and the `bridge::rb` files that are the typed values.
 const VALUE_HOMES: &[&str] = &[
+    "nupur::int",
     "nupur::raw",
     "nupur::typed",
     "nupur::rb::value",

@@ -5,10 +5,8 @@
 
 #![forbid(unsafe_code)]
 
-use core::ffi::c_long;
-
 use crate::describe::ClassName;
-use crate::rb::{prelude::*, Builtin, Error, RString, Value};
+use crate::rb::{Error, RString, Value};
 
 /// `v`, which must be a String (a subclass's instance included).
 ///
@@ -25,29 +23,11 @@ pub fn integer_arg(v: Value) -> Result<crate::rb::Integer, Error> {
     crate::rb::Integer::from_value(v).ok_or_else(|| wrong_type(v, "Integer", TO_I_HINT))
 }
 
-/// [`integer_arg`] as a `long`; one past a `long` is Ruby's `RangeError`.
-pub fn long_arg(v: Value) -> Result<c_long, Error> {
-    let n = integer_arg(v)?.to_i64()?;
-    c_long::try_from(n).map_err(|_| {
-        Error::new(
-            Builtin::RangeError,
-            format_args!("integer {n} too big for a long"),
-        )
-    })
-}
-
-/// A Range argument whose ends are Integers (or nil, for an endless or
-/// beginless one): `rb_range_beg_len` would otherwise convert an end with its
-/// `to_int`.
-pub fn integer_range_arg(v: Value) -> Result<Value, Error> {
-    let r = crate::rb::Range::from_value(v).ok_or_else(|| wrong_type(v, "Range", ""))?;
-    let (beg, end, _) = r.values()?;
-    for end in [beg, end] {
-        if !end.is_nil() {
-            integer_arg(end)?;
-        }
-    }
-    Ok(v)
+/// [`integer_arg`] as an index or a count: an `i64` - the same on every
+/// target, where a C `long` is 32 bits on Windows - and Ruby's `RangeError`
+/// past one.
+pub fn index_arg(v: Value) -> Result<i64, Error> {
+    integer_arg(v)?.to_i64()
 }
 
 const TO_S_HINT: &str = "; call #to_s to convert it";

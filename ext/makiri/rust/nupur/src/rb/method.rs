@@ -59,6 +59,9 @@ pub unsafe fn finish(f: impl FnOnce(&Ruby) -> Result<Value, Error>) -> Value {
         // SAFETY: only a trampoline Ruby calls runs this: its thread, the GVL
         // held. The one token a method's body sees is this one.
         let ruby = unsafe { Ruby::get_unchecked() };
+        /* A method starts with no exit pending: one a method before it made
+         * and did not pass on is not this one's. */
+        crate::raw::clear_pending_jump();
         let e = match std::panic::catch_unwind(AssertUnwindSafe(|| f(&ruby))) {
             Ok(Ok(v)) => return v,
             Ok(Err(e)) => e,
@@ -92,7 +95,7 @@ pub unsafe fn finish_cary(
         // SAFETY: Ruby passes `argc` live values at `argv` for the duration of
         // the call, and the slice does not outlive it (`f` borrows it). A
         // `CArgv` exists only as the parameter Ruby filled.
-        unsafe { core::slice::from_raw_parts(argv.0, argc as usize) }
+        unsafe { core::slice::from_raw_parts(argv.0, usize::try_from(argc).unwrap_or(0)) }
     };
     // SAFETY: the caller's contract, which is `finish`'s.
     unsafe { finish(|ruby| f(ruby, args)) }
@@ -363,37 +366,63 @@ macro_rules! __trampoline {
     }};
 }
 
-/// What the extension's `Init_` runs `init` through: an `Err` is raised once `init`
-/// has returned, and a panic is Ruby's `fatal` - the internal error (`rb::error::INTERNAL_ERROR`) may
-/// not exist yet, and an extension that stopped half-way through defining
-/// itself must not be used, which `fatal` sees to.
+/// What the extension's `Init_` runs its two phases through.
+///
+/// `check` runs first and defines nothing - a check that the binary suits
+/// the running Ruby, say - so its `Err` is raised as it is: a `LoadError`
+/// a caller may rescue, with nothing of the extension left behind. Once
+/// `init` has begun to define the extension, anything that stops it - an
+/// `Err` or a panic - is Ruby's `fatal`: an extension that stopped half-way
+/// through defining itself must not be used (its classes lack methods, and
+/// the internal error may not be registered yet), and a second `require`
+/// would only run `Init_` again over the half it left.
 ///
 /// # Safety
 /// Called only from the extension's `Init_` function, which Ruby calls on its
 /// thread with the GVL held: as [`finish`], this makes the token.
 #[doc(hidden)]
-pub unsafe fn run_init(init: fn(&Ruby) -> Result<(), Error>) {
+pub unsafe fn run_init(
+    check: fn(&Ruby) -> Result<(), Error>,
+    init: fn(&Ruby) -> Result<(), Error>,
+) {
     crate::no_unwind::must_not_unwind::<crate::no_unwind::Init, _>(|| {
         // SAFETY: Ruby calls an extension's `Init_` on its thread, with the GVL.
         let ruby = unsafe { Ruby::get_unchecked() };
-        let e = match std::panic::catch_unwind(AssertUnwindSafe(|| init(&ruby))) {
-            Ok(Ok(())) => return,
-            Ok(Err(e)) => e,
-            Err(payload) => {
-                let msg = crate::caught::quietly(crate::msg::Msg::copy("a panic"), || {
-                    crate::msg::Msg::copy(crate::caught::message(payload.as_ref()))
-                });
-                crate::caught::quietly((), || drop(payload));
-                match crate::raw::exception_new(
-                    &ruby,
-                    ruby.exception_runtime_error(),
-                    msg.as_bytes(),
-                ) {
-                    Ok(exc) => crate::raw::exc_fatal(exc),
-                    Err(e) => e,
-                }
-            }
+        let msg = match std::panic::catch_unwind(AssertUnwindSafe(|| check(&ruby))) {
+            Ok(Ok(())) => match std::panic::catch_unwind(AssertUnwindSafe(|| init(&ruby))) {
+                Ok(Ok(())) => return,
+                /* `quietly`: formatting is what the compiler cannot show
+                 * unwind-free (`rake no_unwind`). */
+                Ok(Err(e)) => crate::caught::quietly(
+                    crate::msg::Msg::copy("the extension stopped while defining itself"),
+                    || {
+                        crate::msg::Msg::format(format_args!(
+                            "the extension stopped while defining itself: {}",
+                            e.wording(&ruby)
+                        ))
+                    },
+                ),
+                Err(payload) => panic_message(payload),
+            },
+            Ok(Err(e)) => e.raise(&ruby),
+            Err(payload) => panic_message(payload),
         };
-        e.raise(&ruby)
+        match crate::raw::exception_new(&ruby, ruby.exception_runtime_error(), msg.as_bytes()) {
+            Ok(exc) => crate::raw::exc_fatal(exc),
+            Err(e) => e.raise(&ruby),
+        }
     })
+}
+
+/// A caught panic's message, the payload dropped - both `quietly`, since a
+/// payload's drop and its downcast are what the compiler cannot show
+/// unwind-free. Inlined into `run_init`, or `rake no_unwind` cannot see
+/// that its call does not unwind.
+#[inline(always)]
+fn panic_message(payload: Box<dyn core::any::Any + Send>) -> crate::msg::Msg {
+    let msg = crate::caught::quietly(crate::msg::Msg::copy("a panic"), || {
+        crate::msg::Msg::copy(crate::caught::message(payload.as_ref()))
+    });
+    crate::caught::quietly((), || drop(payload));
+    msg
 }

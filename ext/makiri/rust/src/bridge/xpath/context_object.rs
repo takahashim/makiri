@@ -156,7 +156,7 @@ impl XPathCtx {
         if added != 0 {
             self.cache_bytes
                 .set(self.cache_bytes.get().saturating_add(added));
-            crate::bridge::typed::report_external(ruby, added as isize);
+            crate::bridge::typed::report_external(ruby, crate::nupur::int::change(0, added));
         }
     }
 

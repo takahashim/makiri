@@ -131,8 +131,10 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   `ivar_get`, names without `@`, so Ruby code cannot see them): an
   XPathContext's Document and node (`#node=` is an ivar write), a Document's
   errors. The node table - one wrapper per node, so a node navigated to
-  twice is the SAME object - is a Ruby Hash from the node's token (a Fixnum)
-  to its wrapper, which the GC marks and moves itself, in place of the Rust
+  twice is the SAME object - is a Ruby Hash from the node's index in its
+  document (a Fixnum on every target, Windows' 31-bit ones included; the
+  document's stamp is checked against the node's instead of riding in the
+  key) to its wrapper, which the GC marks and moves itself, in place of the Rust
   map of movable values it replaced; its entries are written only once the
   wrapper exists, and a wrapper is handed out only once it is in the table.
   Measured against the Rust map (`notes/magnus_replacement_plan.ja.md`): the
@@ -243,9 +245,23 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   into a 500 can catch it WITHOUT a thread boundary to re-raise at (a `fatal`
   cannot be rescued in its own frame at all). Outside a registered method -
   the GC callbacks, `Init_makiri` - a panic is not this: the GC callbacks
-  abort (above), and a panic in `Init_makiri` is `fatal`, since
-  `InternalError` may not exist yet and a half-defined extension must not be
-  used (`bridge::rb::method::run_init`).
+  abort (above), and in `Init_makiri` a panic - or an `Err` - once the
+  extension has begun to define itself is `fatal`, since `InternalError` may
+  not exist yet and a half-defined extension must not be used; only the
+  check that comes first, the Ruby API one, raises an ordinary `LoadError`
+  (`bridge::rb::method::run_init(check, init)`).
+
+  **A C integer is converted in one place, `nupur::int`.** A C `long` is 32
+  bits on Windows and `i64` itself everywhere the code is built and linted,
+  so `n as c_long` truncates where no compiler warning can show it, and
+  Ruby's ranges follow the `long` (a Fixnum is 2^30 - 1 at most on Windows) -
+  each Windows bug used to be found by review. `int` writes the rules once
+  over a `Long` of either width, tested at both on any machine and held to
+  rb-sys's `FIXNUM_MAX` / `fixable`; outside it, `rake dylint`'s
+  `c_integer_outside_int` refuses an integer `as` cast and any naming of
+  `c_long` / `c_ulong` in nupur and in `bridge` / `glue` / `init` (convert
+  with `From` / `TryFrom`; a length is a `usize`, an index an `i64`), and
+  clippy's cast lints, on in nupur, see the real types on CI's Windows cell.
 
   `clippy::unwrap_used`, `clippy::expect_used` and `clippy::panic` (in `Cargo.toml`) keep a new panic
   from arriving by accident; a site that wants one carries an `#[allow]` with a
@@ -367,7 +383,10 @@ bundle exec rake dylint            # the crate's own lints (lints/makiri_lints),
                                    # let _ =), ffi_without_gvl_proof (in nupur: a
                                    # safe fn calling rb_sys:: whose signature holds
                                    # no &Ruby, Ruby value or handle made from one;
-                                   # extern "C" entries and unsafe fns exempt)
+                                   # extern "C" entries and unsafe fns exempt),
+                                   # c_integer_outside_int (an integer `as` or a
+                                   # named c_long at the Ruby boundary outside
+                                   # nupur::int)
                                    # (a sanctioned site is an allow with its reason);
                                    # then their self-test
                                    # (src/lint_probe.rs). Needs the nightly
@@ -673,6 +692,7 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            rooted globals - `raw` (the C calls that can raise),
                            `typed`, `string` (copying reads, in-place writes),
                            `table`, `build`, `args`, `describe`, `encoding`,
+                           `int` (every C-integer conversion),
                            `gvl`, `stack`, `abi`, `msg`, `caught`, and its own
                            `no_unwind` sites, under `--cfg nupur_no_unwind`).
                            Its `lib.rs` states what it guarantees and what an

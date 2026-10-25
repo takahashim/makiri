@@ -102,7 +102,7 @@ pub fn node_equals(
 /// `Nokogiri::XML::Node#pointer_id`). `a.pointer_id == b.pointer_id` iff
 /// `a.eql?(b)`.
 pub fn node_pointer_id(ruby: &Ruby, rb_self: Value) -> Result<Value, crate::bridge::rb::Error> {
-    crate::bridge::build::uint(ruby, node_identity(ruby, rb_self)? as u64)
+    crate::bridge::build::uint(ruby, crate::nupur::int::wide(node_identity(ruby, rb_self)?))
 }
 
 /// A stable hash from the node word, so `a == b` implies `a.hash == b.hash`

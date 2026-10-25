@@ -57,7 +57,7 @@ impl Msg {
     fn finish(mut self) -> Msg {
         if self.cut {
             let len = floor_char_boundary(self.bytes(), MSG_MAX - ELLIPSIS.len());
-            self.len = len as u16;
+            self.len = u16::try_from(len).unwrap_or(0);
             self.cut = false;
             self.push(ELLIPSIS);
         }
@@ -82,7 +82,7 @@ impl Msg {
                 *d = *b;
             }
             /* `len + n <= MSG_MAX`, which a u16 holds. */
-            self.len = (len.saturating_add(n)).min(MSG_MAX) as u16;
+            self.len = u16::try_from(len.saturating_add(n).min(MSG_MAX)).unwrap_or(0);
         }
     }
 
@@ -108,7 +108,7 @@ impl Msg {
 
 /// The largest index `<= max` of `s` that starts a character (or ends `s`).
 #[inline]
-fn floor_char_boundary(s: &[u8], max: usize) -> usize {
+pub(crate) fn floor_char_boundary(s: &[u8], max: usize) -> usize {
     let mut i = max.min(s.len());
     while i > 0 && s.get(i).is_some_and(|&b| (b & 0xC0) == 0x80) {
         i -= 1;
