@@ -172,7 +172,7 @@ pub fn document_quirks_mode(ruby: &Ruby, rb_doc: Value) -> Result<Value, Error> 
 /// `Document#errors`: the (currently always empty) parse-warning Array.
 pub fn document_errors(rb_doc: Value) -> Value {
     /* A Document method, so the receiver is a Document. */
-    crate::bridge::raw::ivar_get(rb_doc, crate::bridge::wrapper::ivar_errors())
+    crate::bridge::rb::value::ivar_get(rb_doc, crate::bridge::wrapper::ivar_errors())
 }
 
 /* ------------------------------------------------------------------ *

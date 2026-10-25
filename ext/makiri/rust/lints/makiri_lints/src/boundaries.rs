@@ -30,15 +30,15 @@ use clippy_utils::diagnostics::span_lint_and_help;
 use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::DefId;
 use rustc_hir::intravisit::FnKind;
-use rustc_hir::{Body, Expr, ExprKind, HirId, LetStmt, Node, PatKind, Path, QPath};
+use rustc_hir::{Body, Expr, ExprKind, HirId, LetStmt, PatKind, Path, QPath};
 use rustc_lint::LateContext;
 use rustc_span::Span;
 use rustc_span::def_id::LocalDefId;
 
 use crate::{
-    DISCARDED_RUBY_ERROR, INFALLIBLE_ALLOCATION, RAISING_CALL_OUTSIDE_PROTECT, RAW_NODE_CROSSING,
-    RAW_RUBY_OUTSIDE_BRIDGE, RUBY_IN_GVL_RELEASED_BODY, RUBY_LAYER_IN_ENGINE,
-    RUBY_SURFACE_IN_BRIDGE, RUNS_CALLERS_RUBY, UNGUARDED_NO_UNWIND_SITE,
+    DISCARDED_RUBY_ERROR, INFALLIBLE_ALLOCATION, RAW_NODE_CROSSING, RAW_RUBY_OUTSIDE_BRIDGE,
+    RUBY_IN_GVL_RELEASED_BODY, RUBY_LAYER_IN_ENGINE, RUBY_SURFACE_IN_BRIDGE, RUNS_CALLERS_RUBY,
+    UNGUARDED_NO_UNWIND_SITE,
 };
 
 /* ---- paths ---- */
@@ -69,7 +69,7 @@ pub const NUPUR: &str = "nupur";
 
 /// Whether the crate being linted is the extension or its binding layer, not
 /// a build script or a test target.
-fn is_extension(cx: &LateContext<'_>) -> bool {
+pub(crate) fn is_extension(cx: &LateContext<'_>) -> bool {
     matches!(
         cx.tcx.crate_name(rustc_span::def_id::LOCAL_CRATE).as_str(),
         "makiri" | NUPUR
@@ -250,70 +250,6 @@ const INFALLIBLE: &[&str] = &[
     "::CString::new",
 ];
 
-/// The C functions that can raise, by name.
-const RAISING: &[&str] = &[
-    "rb_raise",
-    "rb_exc_raise",
-    "rb_jump_tag",
-    "rb_check_typeddata",
-    "rb_sym2str",
-    "rb_check_frozen",
-    "rb_range_beg_len",
-    "rb_thread_check_ints",
-    "rb_intern3",
-    "rb_intern",
-    "rb_utf8_str_new",
-    "rb_enc_interned_str",
-    "rb_str_dup",
-    "rb_str_subseq",
-    "rb_enc_associate",
-    "rb_str_encode",
-    "rb_to_encoding",
-    "rb_enc_find_index",
-    "rb_data_typed_object_wrap",
-    "rb_data_typed_object_zalloc",
-    "ruby_xmalloc",
-    "ruby_xrealloc2",
-    "rb_ary_new_capa",
-    "rb_ary_push",
-    "rb_hash_new",
-    "rb_hash_aset",
-    "rb_ll2inum",
-    "rb_ull2inum",
-    "rb_float_new",
-    "rb_id2sym",
-    "rb_str_cat",
-    "rb_enumeratorize_with_size",
-    "rb_memerror",
-    "rb_hash_foreach",
-    "rb_yield",
-    "rb_define_class_under",
-    "rb_define_module_under",
-    "rb_define_module",
-    "rb_const_set",
-    "rb_const_get",
-    "rb_include_module",
-    "rb_define_method",
-    "rb_define_private_method",
-    "rb_define_singleton_method",
-    "rb_define_module_function",
-    "rb_exc_new_str",
-    "rb_exc_fatal",
-    "rb_big2ll",
-    "rb_big2ull",
-    "rb_hash_lookup2",
-    "rb_gc_register_mark_object",
-    "rb_module_new",
-    "rb_range_values",
-    "rb_funcallv",
-    "rb_ivar_set",
-    "rb_obj_classname",
-];
-
-/// The functions of `bridge::raw` that raise on purpose, outside `call`:
-/// the injected raise, and the three that end a method's trampoline.
-const RAISES_ON_PURPOSE: &[&str] = &["injected_raise", "jump_tag", "exc_raise", "exc_fatal"];
-
 pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
     if !is_extension(cx) {
         return;
@@ -348,22 +284,6 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
             None,
             "allocate through falloc (or, for an exception message, format_args! into \
              crate::msg::Msg); an allocation that can fail must fail closed",
-        );
-    }
-
-    if let Some(name) = path.strip_prefix("rb_sys::")
-        && let Some(name) = name.rsplit("::").next()
-        && RAISING.contains(&name)
-        && !inside_protect(cx, expr.hir_id)
-    {
-        span_lint_and_help(
-            cx,
-            RAISING_CALL_OUTSIDE_PROTECT,
-            expr.span.source_callsite(),
-            format!("`{name}` can raise, and is called outside `bridge::raw::call`"),
-            None,
-            "a raise is a longjmp over every Rust frame up to the nearest rb_protect; \
-             make it a bridge::raw wrapper that runs it inside call(|| ...)",
         );
     }
 
@@ -501,35 +421,6 @@ fn check_raw_node_crossing<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>)
              with its reason",
         );
     }
-}
-
-/// Whether the call at `hir_id` is inside the closure handed to
-/// `bridge::raw::call`, or in one of the functions that raise on purpose.
-fn inside_protect(cx: &LateContext<'_>, hir_id: HirId) -> bool {
-    let mut child = hir_id;
-    for (id, node) in cx.tcx.hir_parent_iter(hir_id) {
-        match node {
-            Node::Expr(e) => {
-                if let ExprKind::Call(f, args) = e.kind
-                    && args.iter().any(|a| a.hir_id == child)
-                    && let ExprKind::Path(ref qpath) = f.kind
-                    && let Res::Def(_, did) = cx.qpath_res(qpath, f.hir_id)
-                    && path_of(cx, did) == "makiri::nupur::raw::call"
-                {
-                    return true;
-                }
-            }
-            Node::Item(item) => {
-                let p = path_of(cx, item.owner_id.to_def_id());
-                return RAISES_ON_PURPOSE
-                    .iter()
-                    .any(|f| p == format!("makiri::nupur::raw::{f}"));
-            }
-            _ => {}
-        }
-        child = id;
-    }
-    false
 }
 
 /// A GVL-released body: everything it calls must be the engine's or a

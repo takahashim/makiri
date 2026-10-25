@@ -59,8 +59,8 @@ pub trait Payload: Sized {
         core::mem::size_of::<Self>()
     }
 
-    /// The bytes held outside Ruby's heap that this object has reported to
-    /// the GC ([`report_external`]) and not yet given back: the free callback
+    /// What this object has reported to the GC and not yet given back - its
+    /// [`External`]'s [`reported`](External::reported): the free callback
     /// gives exactly these back after the `Drop`. Read in the collector, so
     /// it must be a plain read.
     fn reported_external(&self) -> usize {
@@ -68,20 +68,54 @@ pub trait Payload: Sized {
     }
 }
 
-/// Tell the GC about `delta` bytes held outside its heap (negative: given
-/// back). Memory Ruby does not allocate is otherwise invisible to it and
-/// never triggers a collection. A growth may run one here, so nothing
-/// borrowed from a Ruby object may be held across the call. What an object
-/// reports it says in its [`Payload::reported_external`], and the free
-/// callback gives it back.
-pub fn report_external(_: &crate::rb::Ruby, delta: isize) {
-    let delta = rb_sys::ssize_t::try_from(delta).unwrap_or(if delta < 0 {
-        rb_sys::ssize_t::MIN
-    } else {
-        rb_sys::ssize_t::MAX
-    });
-    // SAFETY: a plain counter adjustment, with the GVL held.
-    unsafe { rb_sys::rb_gc_adjust_memory_usage(delta) };
+/// The bytes an object holds outside Ruby's heap, as reported to the GC -
+/// the one way a report is made, so what was reported is always what the
+/// free callback gives back ([`Payload::reported_external`] answers
+/// [`reported`](Self::reported)).
+///
+/// Memory Ruby does not allocate is otherwise invisible to it and never
+/// triggers a collection. A cell, so a payload read through `&T` reports.
+#[derive(Default)]
+pub struct External(core::cell::Cell<usize>);
+
+impl External {
+    pub const fn new() -> External {
+        External(core::cell::Cell::new(0))
+    }
+
+    /// What has been reported and not given back.
+    #[inline]
+    pub fn reported(&self) -> usize {
+        self.0.get()
+    }
+
+    /// The object holds `bytes` outside the heap now: the change since the
+    /// last report goes to the GC. A change Ruby could not take whole - past
+    /// an `ssize_t` - is not reported, and not recorded, so the two never
+    /// disagree. A growth may run a collection here, so nothing borrowed
+    /// from a Ruby object may be held across the call; the new figure is
+    /// recorded first, for a collection that reads it.
+    pub fn report(&self, _: &crate::rb::Ruby, bytes: usize) {
+        let then = self.0.get();
+        let delta = if bytes >= then {
+            rb_sys::ssize_t::try_from(bytes - then)
+        } else {
+            rb_sys::ssize_t::try_from(then - bytes).map(|d| -d)
+        };
+        let Ok(delta) = delta else { return };
+        if delta == 0 {
+            return;
+        }
+        self.0.set(bytes);
+        // SAFETY: a plain counter adjustment, with the GVL held (`&Ruby`).
+        unsafe { rb_sys::rb_gc_adjust_memory_usage(delta) };
+    }
+
+    /// [`report`](Self::report) `more` bytes than were.
+    #[inline]
+    pub fn grow(&self, ruby: &crate::rb::Ruby, more: usize) {
+        self.report(ruby, self.0.get().saturating_add(more));
+    }
 }
 
 /// The bytes an object of payload `T` with `N` slots keeps as its data - its

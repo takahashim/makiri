@@ -302,6 +302,12 @@ impl RArray {
     pub fn entry(self, i: usize) -> Value {
         ary_entry(self, i)
     }
+
+    /// The elements, read one at a time (`rb_ary_entry`), the length read
+    /// afresh before each.
+    pub fn each(self) -> impl Iterator<Item = Value> {
+        (0..).map_while(move |i: usize| (i < self.len()).then(|| ary_entry(self, i)))
+    }
 }
 
 impl RHash {
@@ -348,14 +354,6 @@ pub(crate) fn plain_key(k: Value) -> bool {
         // `RBasic`; `rb_cString` is a C global Ruby sets once at boot.
         unsafe { (*(s.as_raw() as *const rb_sys::RBasic)).klass == rb_sys::rb_cString }
     })
-}
-
-impl RArray {
-    /// The elements, read one at a time (`rb_ary_entry`), the length read
-    /// afresh before each.
-    pub fn each(self) -> impl Iterator<Item = Value> {
-        (0..).map_while(move |i: usize| (i < self.len()).then(|| ary_entry(self, i)))
-    }
 }
 
 impl Range {
@@ -416,10 +414,27 @@ impl Integer {
         if self.is_negative() {
             return Ok(None);
         }
-        if !get_default().fixnum_p(self.0 .0) && !crate::raw::big_fits_u64(self) {
+        if !get_default().fixnum_p(self.0 .0) && !self.magnitude_fits_u64() {
             return Ok(None);
         }
         Ok(usize::try_from(self.to_u64()?).ok())
+    }
+
+    /// Whether a Bignum's magnitude fits a `u64`: `rb_absint_size`, which
+    /// reads its digits and raises nothing - so "too large" is answered
+    /// without making the `RangeError` `rb_big2ull` would raise.
+    #[inline]
+    #[cfg_attr(
+        dylint_lib = "makiri_lints",
+        allow(
+            raising_call_outside_protect,
+            reason = "its raise is for a non-Integer, converted by `#to_int`; `self` is an Integer"
+        )
+    )]
+    fn magnitude_fits_u64(self) -> bool {
+        // SAFETY: `self` is a live Integer; the C reads its digits.
+        let bytes = unsafe { rb_sys::rb_absint_size(self.0 .0, core::ptr::null_mut()) };
+        u64::try_from(bytes).is_ok_and(|b| b <= 8)
     }
 
     /// Below zero? Reads the sign, converts nothing.
@@ -497,6 +512,25 @@ impl Id {
 /* ---- the C reads these are made of, which raise nothing (so they are not
  * `raw`'s, which holds the calls that can) ---- */
 
+/// `rb_attr_get`: a hidden ivar's value, or nil. Raises nothing and runs no
+/// Ruby code (an attribute read, not a method call).
+#[inline]
+pub fn ivar_get(obj: Value, id: Id) -> Value {
+    // SAFETY: a live object; the read raises nothing.
+    unsafe { Value::from_raw(rb_sys::rb_attr_get(obj.as_raw(), id.as_raw())) }
+}
+
+/// `rb_obj_hide`: take `v`'s class away, so `ObjectSpace` does not list it.
+///
+/// # Safety
+/// `v` is an object no Ruby code holds and none will be handed while it is
+/// hidden: a hidden object has no class, and Ruby code given one crashes.
+#[inline]
+pub(crate) unsafe fn obj_hide(v: Value) {
+    // SAFETY: a live object; hiding writes only its class field.
+    unsafe { rb_sys::rb_obj_hide(v.as_raw()) };
+}
+
 /// Whether `v` is a class or a module - what `rb_obj_is_kind_of` and
 /// `rb_class_inherited_p` require, and raise `TypeError` without.
 #[inline]
@@ -508,6 +542,13 @@ fn is_module(v: Value) -> bool {
 /// `false` when `class` is not a class or module, rather than the
 /// `TypeError` the C function raises. Runs no Ruby code.
 #[inline]
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        raising_call_outside_protect,
+        reason = "its one raise, a non-class, is ruled out above"
+    )
+)]
 pub(crate) fn obj_is_kind_of(v: Value, class: Value) -> bool {
     if !is_module(class) {
         return false;
@@ -519,6 +560,13 @@ pub(crate) fn obj_is_kind_of(v: Value, class: Value) -> bool {
 /// `rb_class_inherited_p`: is `sub` `sup` or a descendant of it? `false`
 /// when either is not a class or module. Runs no Ruby code.
 #[inline]
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        raising_call_outside_protect,
+        reason = "its one raise, a non-class, is ruled out above"
+    )
+)]
 pub(crate) fn class_inherits(sub: Value, sup: Value) -> bool {
     if !is_module(sub) || !is_module(sup) {
         return false;

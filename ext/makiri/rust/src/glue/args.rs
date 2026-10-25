@@ -86,7 +86,7 @@ impl<'a> Scanned<'a> {
 /// method's body: whether keywords were given is read from the current frame.
 pub(crate) fn scan<'a>(ruby: &Ruby, args: &'a [Value], shape: Shape) -> Result<Scanned<'a>, Error> {
     let (positional, keywords) = match args.split_last() {
-        Some((last, init)) if shape.keywords && crate::bridge::raw::keyword_given(ruby) => {
+        Some((last, init)) if shape.keywords && crate::bridge::rb::method::keyword_given(ruby) => {
             let h = RHash::from_value(*last).ok_or_else(|| {
                 crate::bridge::ruby::internal_error("keywords were given, but not as a Hash")
             })?;

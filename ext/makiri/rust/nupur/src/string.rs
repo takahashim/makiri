@@ -137,6 +137,13 @@ impl Drop for EmptyUnlessFilled {
             reason = "it guards the String `utf8_str_filled` made, with its token, and lives only in that frame"
         )
     )]
+    #[cfg_attr(
+        dylint_lib = "makiri_lints",
+        allow(
+            raising_call_outside_protect,
+            reason = "rb_str_set_len raises for a frozen String or a length past its room; this one is unfrozen, and 0 is within any"
+        )
+    )]
     fn drop(&mut self) {
         /* Run while a panic unwinds, too, where a second panic aborts. */
         crate::no_unwind::must_not_unwind::<crate::no_unwind::DropUnfilled, _>(|| {

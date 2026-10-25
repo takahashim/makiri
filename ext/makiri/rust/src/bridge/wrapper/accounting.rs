@@ -27,14 +27,10 @@ pub(super) fn account_document(ruby: &crate::bridge::rb::Ruby, rb_doc: Value) {
     let (Some(now), Some(chunks)) = (d.external_bytes(), d.arena_chunks()) else {
         return;
     };
-    let mut report = d.report.get();
-    let diff = report.update(now, chunks);
-    d.report.set(report);
-    /* After the cell is written: the report may run a collection, which
-     * reads `d` shared - as it may, now that nothing holds it `&mut`. */
-    if let Some(diff) = diff {
-        crate::bridge::typed::report_external(ruby, diff);
-    }
+    d.chunks.set(chunks);
+    /* The report may run a collection, which reads `d` shared - as it may:
+     * nothing holds it `&mut`. */
+    d.external.report(ruby, now);
 }
 
 /// Chunks an HTML document's pools must gain before [`account_growth`]

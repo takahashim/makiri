@@ -46,7 +46,7 @@ impl QueryArgs {
     /// the call's keywords (`xpath(s: uri)`, no expression) is not that call:
     /// it goes through the scan, whose arity error it is.
     pub fn scan(ruby: &Ruby, args: &[Value]) -> Result<QueryArgs, Error> {
-        if let ([text], false) = (args, crate::bridge::raw::keyword_given(ruby)) {
+        if let ([text], false) = (args, crate::bridge::rb::method::keyword_given(ruby)) {
             return Ok(QueryArgs {
                 text: *text,
                 namespaces: None,

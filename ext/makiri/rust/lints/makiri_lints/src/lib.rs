@@ -7,13 +7,16 @@
 //!   GC cannot see it.
 //! - The layer boundaries ([`boundaries`]): `ruby_layer_in_engine`,
 //!   `unguarded_no_unwind_site`, `ruby_in_gvl_released_body`,
-//!   `infallible_allocation`, `raising_call_outside_protect`,
+//!   `infallible_allocation`,
 //!   `raw_ruby_outside_bridge`, `runs_callers_ruby`, `raw_node_crossing`,
 //!   `ruby_surface_in_bridge`, `discarded_ruby_error`.
 //! - `ffi_without_gvl_proof` ([`gvl_proof`]): a call into Ruby's C API from a
 //!   binding-layer function with no proof of the GVL in its signature.
 //! - `c_integer_outside_int` ([`c_integer`]): an integer `as` cast, or a C
 //!   `long` named, at the Ruby boundary outside `nupur::int`.
+//! - `raising_call_outside_protect` and `unraising_call_in_raw`
+//!   ([`raising`]): one table of the C functions that cannot raise, every
+//!   other taken to, and what `nupur::raw` holds checked against it.
 //!
 //! (A second lint, `converted_argument`, checked that no registered method
 //! took a type magnus would convert with the caller's Ruby. Since
@@ -32,6 +35,7 @@ extern crate rustc_span;
 mod boundaries;
 mod c_integer;
 mod gvl_proof;
+mod raising;
 mod value_on_heap;
 
 use rustc_hir::def_id::{DefId, LocalDefId};
@@ -62,6 +66,7 @@ pub fn register_lints(sess: &Session, lint_store: &mut LintStore) {
         DISCARDED_RUBY_ERROR,
         FFI_WITHOUT_GVL_PROOF,
         C_INTEGER_OUTSIDE_INT,
+        UNRAISING_CALL_IN_RAW,
     ]);
     lint_store.register_late_lint_pass(Box::new(|_| Box::new(MakiriLints)));
 }
@@ -148,15 +153,30 @@ declare_lint! {
 
 declare_lint! {
     /// ### What it does
-    /// Reports a call to a C function that can raise outside the closure
-    /// given to `bridge::raw::call`.
+    /// Reports a call to a C function of rb-sys outside the closure given to
+    /// `nupur::raw`'s `call`, unless the function is in the table of those
+    /// that cannot raise ([`raising`]): an unclassified one is taken to raise.
     ///
     /// ### Why is this bad?
     /// A raise is a longjmp over every Rust frame up to the nearest
     /// `rb_protect`, which is undefined behaviour across a `Drop`.
     pub RAISING_CALL_OUTSIDE_PROTECT,
     Deny,
-    "a raising C call outside bridge::raw::call"
+    "a C call not known to raise nothing, outside raw::call"
+}
+
+declare_lint! {
+    /// ### What it does
+    /// Reports, in `nupur::raw`, a call of Ruby's C outside `call`, and
+    /// anywhere a `call` whose closure calls nothing that can raise.
+    ///
+    /// ### Why is this bad?
+    /// `raw` is the C calls made under `rb_protect`; a read that raises
+    /// nothing belongs with the values, and a protection of nothing means the
+    /// table of what raises and the code disagree.
+    pub UNRAISING_CALL_IN_RAW,
+    Deny,
+    "a call in raw outside raw::call, or a protected call of nothing that raises"
 }
 
 declare_lint! {
@@ -232,6 +252,7 @@ declare_lint_pass!(MakiriLints => [
     DISCARDED_RUBY_ERROR,
     FFI_WITHOUT_GVL_PROOF,
     C_INTEGER_OUTSIDE_INT,
+    UNRAISING_CALL_IN_RAW,
 ]);
 
 impl<'tcx> LateLintPass<'tcx> for MakiriLints {
@@ -266,6 +287,7 @@ impl<'tcx> LateLintPass<'tcx> for MakiriLints {
         boundaries::check_expr(cx, expr);
         gvl_proof::check_expr(cx, expr);
         c_integer::check_expr(cx, expr);
+        raising::check_expr(cx, expr);
     }
 }
 

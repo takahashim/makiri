@@ -387,6 +387,10 @@ task :dylint do
     end
     puts "makiri_lints: self-test reported all #{total} cases"
   end
+  # The table the raising lints read (`NON_RAISING`) against Ruby's own
+  # headers, as rb-sys's bindings carry them: an entry documented to raise,
+  # or that never returns, is wrong (script/check_non_raising.rb).
+  sh FileUtils::RUBY, "script/check_non_raising.rb"
 end
 
 # `rake spec:valgrind` - run the spec suite under Valgrind memcheck via

@@ -5,7 +5,7 @@
 #![forbid(unsafe_code)]
 
 use crate::bridge::rb::Ruby;
-use core::cell::{Cell, RefCell};
+use core::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::bridge::rb::{Error, Value};
@@ -67,7 +67,7 @@ pub struct XPathCtx {
     /// The bytes the cached ASTs hold, as reported to the GC - kept outside
     /// the `RefCell` because `memsize` reads it from the GC, which can land
     /// while the cache is borrowed.
-    cache_bytes: Cell<usize>,
+    cache_bytes: crate::bridge::typed::External,
     ctx: Cx,
 }
 
@@ -75,14 +75,14 @@ pub struct XPathCtx {
 /// context object, which the GC marks and moves itself.
 impl Payload for XPathCtx {
     fn memsize(&self) -> usize {
-        core::mem::size_of::<Self>().saturating_add(self.cache_bytes.get())
+        core::mem::size_of::<Self>().saturating_add(self.cache_bytes.reported())
     }
 
     /// The cache's report, which the free callback takes back - or the GC
     /// keeps counting freed ASTs as live, the same balance `DocData` keeps
     /// for its arena.
     fn reported_external(&self) -> usize {
-        self.cache_bytes.get()
+        self.cache_bytes.reported()
     }
 }
 
@@ -138,7 +138,7 @@ impl XPathCtxSelf {
 
     /// The keepalive Document.
     fn document(&self) -> Value {
-        crate::bridge::raw::ivar_get(self.0, crate::bridge::wrapper::ivar_document())
+        crate::bridge::rb::value::ivar_get(self.0, crate::bridge::wrapper::ivar_document())
     }
 
     /// Evaluate `expr`, parsed once and cached.
@@ -153,11 +153,7 @@ impl XPathCtx {
     /// holding up to `AST_CACHE_MAX` parsed expressions is more than the few
     /// dozen bytes of its struct, and without the report the GC never sees it.
     fn account_cache(&self, ruby: &Ruby, added: usize) {
-        if added != 0 {
-            self.cache_bytes
-                .set(self.cache_bytes.get().saturating_add(added));
-            crate::bridge::typed::report_external(ruby, crate::nupur::int::change(0, added));
-        }
+        self.cache_bytes.grow(ruby, added);
     }
 
     fn cache(&self) -> Result<core::cell::RefMut<'_, AstCache>, Error> {
@@ -198,7 +194,7 @@ impl XPathCtx {
             CLASS_XPATH_CONTEXT.defined(ruby)?,
             XPathCtx {
                 cache: RefCell::new(AstCache(HashMap::new())),
-                cache_bytes: Cell::new(0),
+                cache_bytes: crate::bridge::typed::External::new(),
                 ctx,
             },
             [],
