@@ -689,6 +689,10 @@ pub fn utf8_str_filled(
             core::slice::from_raw_parts_mut(dst, len)
         }
     };
+    /* Armed before `fill` runs, so whatever ends it early - an `Err`, or a
+     * panic unwinding through this frame to the trampoline - empties the
+     * String on the way out; disarmed only once the String is whole. */
+    let unfilled = EmptyUnlessFilled(str);
     let mut w = Unwritten { buf, at: 0 };
     let filled = fill(&mut w).and_then(|()| {
         if w.at == len {
@@ -699,17 +703,37 @@ pub fn utf8_str_filled(
             ))
         }
     });
-    if let Err(e) = filled {
-        /* The String is left to the GC, but `ObjectSpace` can still hand it
-         * to Ruby code until then: it must not carry the bytes it was never
-         * given - whatever the allocation held before. Empty, it holds none. */
-        let s = str.as_raw();
-        // SAFETY: the String just made, unfrozen and of ours; shortening it
-        // to nothing raises nothing.
-        unsafe { rb_sys::rb_str_set_len(s, 0) };
-        return Err(e);
-    }
+    filled?;
+    core::mem::forget(unfilled);
     Ok(str)
+}
+
+/// Empties, when dropped, a String [`utf8_str_filled`] has not finished
+/// filling: the String is left to the GC, but `ObjectSpace` can still hand it
+/// to Ruby code until then, so it must not carry the bytes it was never
+/// given - whatever its allocation held before. Empty, it holds none. A
+/// `Drop`, so a panic out of `fill` empties it as an `Err` does; forgotten
+/// once the String is whole.
+struct EmptyUnlessFilled(RString);
+
+impl Drop for EmptyUnlessFilled {
+    #[cfg_attr(
+        dylint_lib = "makiri_lints",
+        allow(
+            ffi_without_gvl_proof,
+            reason = "it guards the String `utf8_str_filled` made, with its token, and lives only in that frame"
+        )
+    )]
+    fn drop(&mut self) {
+        /* Run while a panic unwinds, too, where a second panic aborts. */
+        crate::no_unwind::must_not_unwind::<crate::no_unwind::DropUnfilled, _>(|| {
+            let s = self.0.as_raw();
+            // SAFETY: the String just made, unfrozen and referenced only
+            // from `utf8_str_filled`'s frame; shortening it to nothing
+            // raises nothing.
+            unsafe { rb_sys::rb_str_set_len(s, 0) };
+        })
+    }
 }
 
 /// The buffer of a String [`utf8_str_filled`] is making, written front to

@@ -235,10 +235,20 @@ fn panic_probe(ruby: &Ruby, kind: Value) -> Result<(), Error> {
              * `Makiri::InternalError`. */
             crate::html_dom::post_parse::parse_with_panicking_hook();
         }
+        7 => {
+            /* Part-way through writing a String in place
+             * (`raw::utf8_str_filled`): the panic unwinds through its frame,
+             * whose guard must empty the 12345-byte String it leaves for the
+             * GC, rather than leave its unwritten bytes for `ObjectSpace`. */
+            crate::bridge::raw::utf8_str_filled(ruby, 12345, |out| {
+                let _ = out.push(b"written");
+                panic!("Makiri.__panic(7): panic while a String is filled")
+            })?;
+        }
         _ => {
             return Err(Error::new(
                 crate::bridge::rb::Builtin::ArgumentError,
-                "__panic: kind must be 0..6",
+                "__panic: kind must be 0..7",
             ))
         }
     }

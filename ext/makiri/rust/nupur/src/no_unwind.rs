@@ -88,6 +88,9 @@ sites! {
     Method => "nupur_unwinds_method",
     /// The extension's `Init_` (`rb::method::run_init`).
     Init => "nupur_unwinds_init",
+    /// `raw::utf8_str_filled`'s guard, which empties a String a panic left
+    /// unfilled - while that panic unwinds.
+    DropUnfilled => "nupur_unwinds_drop_unfilled",
     /// The check's own control ([`self_test`]): a body that CAN unwind, so a
     /// check build that still works leaves exactly this symbol undefined.
     SelfTest => "nupur_unwinds_self_test",

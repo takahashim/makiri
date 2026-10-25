@@ -250,7 +250,10 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
 
     /// A type deriving from `parent`, which holds the same payload and
     /// slots: an object of this type is also one of `parent`'s.
-    pub const fn derived(name: &'static CStr, parent: &TypedType<T, N>) -> TypedType<T, N> {
+    ///
+    /// `parent` is `'static`: its `rb_data_type_t`'s address is kept, and
+    /// Ruby follows it for the life of the process.
+    pub const fn derived(name: &'static CStr, parent: &'static TypedType<T, N>) -> TypedType<T, N> {
         Self::with_parent(name.as_ptr(), parent.raw.as_ptr(), false)
     }
 
@@ -482,7 +485,12 @@ impl<T: Payload + Copy, const N: usize> EmbeddedType<T, N> {
     }
 
     /// A type deriving from `parent`, which holds the same payload and slots.
-    pub const fn derived(name: &'static CStr, parent: &EmbeddedType<T, N>) -> EmbeddedType<T, N> {
+    ///
+    /// `parent` is `'static`, as [`TypedType::derived`]'s.
+    pub const fn derived(
+        name: &'static CStr,
+        parent: &'static EmbeddedType<T, N>,
+    ) -> EmbeddedType<T, N> {
         const { assert!(core::mem::size_of::<Envelope<T, N>>() <= EMBED_MAX) };
         const { assert!(core::mem::align_of::<Envelope<T, N>>() <= EMBED_ALIGN) };
         EmbeddedType(TypedType::with_parent(
