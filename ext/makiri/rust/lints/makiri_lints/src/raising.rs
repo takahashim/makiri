@@ -1,11 +1,13 @@
-//! Which of Ruby's C functions can raise, decided in one table, and the two
+//! Which of Ruby's C functions can raise, decided in one place, and the two
 //! rules that follow from it.
 //!
 //! A raise is a `longjmp` over every Rust frame up to the nearest
 //! `rb_protect`, undefined behaviour across a `Drop`, so every C call that
 //! can raise runs inside the closure handed to `nupur::raw`'s `call`. The
-//! table here is of the functions that CANNOT raise, each with its reason;
-//! every other function of rb-sys is taken to raise - so a function nobody
+//! tables here are of the functions that CANNOT raise - `NON_RAISING`, which
+//! the C API raise survey finds no path to a longjmp for, and `REVIEWED`,
+//! which it does and a person has read, each with the reason; every other
+//! function of rb-sys is taken to raise - so a function nobody
 //! has classified is refused until someone does, where a list of the ones
 //! that raise let a missing entry (`rb_undef_alloc_func`, `rb_obj_freeze`)
 //! through unseen.
@@ -32,10 +34,13 @@ use crate::boundaries::{callee, is_extension, module_of, path_of};
 use crate::{RAISING_CALL_OUTSIDE_PROTECT, UNRAISING_CALL_IN_RAW};
 
 /// Ruby's C functions that raise nothing, whatever a caller of the layer
-/// hands them. `rake dylint` holds the table to Ruby's headers
-/// (`script/check_non_raising.rb`): an entry whose doc names an exception,
-/// or that never returns, fails - which is how `rb_absint_size` (it converts
-/// a non-Integer with `#to_int`) left it for an `allow` at its call site.
+/// hands them - each with NO path to a longjmp in the C API raise survey
+/// (takahashim.github.io/ruby-c-apis: every public function, over the latest
+/// patch release of each Ruby since 3.3 and HEAD, on Linux and macOS, from the
+/// call graph of the compiled C). `script/check_non_raising.rb` holds the
+/// table to the survey's vendored copy (`raise_survey.json`) and to Ruby's
+/// headers: an entry the survey finds a path for, or whose doc names an
+/// exception, or that never returns, fails `rake dylint`.
 const NON_RAISING: &[&str] = &[
     /* Reads of the thread and its current frame. */
     "rb_errinfo",
@@ -43,34 +48,57 @@ const NON_RAISING: &[&str] = &[
     "rb_keyword_given_p",
     "ruby_native_thread_p",
     "ruby_stack_check",
-    /* The `2` variant leaves a pending interrupt pending, where the plain
-     * one raises it as it returns. */
-    "rb_thread_call_without_gvl2",
-    /* The GC: marking, freeing, and a counter (which may start a
-     * collection; a collection raises nothing). */
-    "rb_gc_mark",
-    "ruby_xfree",
-    "rb_gc_adjust_memory_usage",
     /* A check: false for a value of any other type. */
     "rb_typeddata_is_kind_of",
-    /* Reads of an object: an ivar (nil when unset), an Array element (nil
-     * past the end). */
-    "rb_attr_get",
+    /* Reads of an object: an Array element (nil past the end). */
     "rb_ary_entry",
-    /* An object's class field, written: hiding and showing. */
+    /* An object's class field, written: hiding. (Showing it again,
+     * `rb_obj_reveal`, is not here: its write barrier can allocate.) */
     "rb_obj_hide",
-    "rb_obj_reveal",
-    /* Encodings: the builtin three and their indices, and lookups by index
-     * (NULL or -1 for none). */
+    /* Encodings: the builtin three and their indices, and a lookup by index
+     * (NULL for none). */
     "rb_utf8_encoding",
     "rb_usascii_encoding",
     "rb_ascii8bit_encoding",
     "rb_utf8_encindex",
     "rb_usascii_encindex",
     "rb_ascii8bit_encindex",
-    "rb_enc_get",
-    "rb_enc_get_index",
     "rb_enc_from_index",
+];
+
+/// Functions the survey finds a path for, which a person has read and finds
+/// raise nothing into the caller: each with the reason. The survey resolves a
+/// call through a function pointer to ANY address-taken function (the most
+/// conservative reading), so a path through one is no proof; a reason that
+/// names what the survey cannot see is the review. `check_non_raising.rb`
+/// fails an entry the survey no longer finds a path for (move it up) and one
+/// without a reason.
+const REVIEWED: &[(&str, &str)] = &[
+    (
+        "rb_thread_call_without_gvl2",
+        "the `2` variant passes RB_NOGVL_INTR_FAIL, which skips the interrupt check \
+         (thread.c, rb_nogvl); the survey's path is that check, and a call through a pointer",
+    ),
+    (
+        "rb_gc_mark",
+        "called only from a mark callback, inside the collector, where nothing is raised; \
+         the survey's paths are calls through pointers and the mark stack's out-of-memory, \
+         which the collector does not hand to a caller",
+    ),
+    (
+        "ruby_xfree",
+        "frees, and may start a collection; the survey's path is the collection's \
+         calls through pointers - a finalizer's error is warned and dropped, not raised",
+    ),
+    (
+        "rb_gc_adjust_memory_usage",
+        "a counter, which may start a collection as ruby_xfree does; same path, same reason",
+    ),
+    (
+        "rb_attr_get",
+        "an ivar read; the survey's path is rb_st_lookup's call of the table's hash and \
+         compare functions through pointers, which for an ivar table are the integer ones",
+    ),
 ];
 
 /// Where the protection, `$!` and the raises on purpose live.
@@ -97,7 +125,7 @@ fn rb_sys_function(path: &str) -> Option<&str> {
 }
 
 fn may_raise(name: &str) -> bool {
-    !name.is_empty() && !NON_RAISING.contains(&name)
+    !name.is_empty() && !NON_RAISING.contains(&name) && !REVIEWED.iter().any(|(n, _)| *n == name)
 }
 
 pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
@@ -124,7 +152,7 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
             None,
             "a raise is a longjmp over every Rust frame up to the nearest rb_protect; make it \
              a nupur::raw wrapper that runs it inside call(|| ...) - or, for a function that \
-             cannot raise, add it to makiri_lints' NON_RAISING with the reason",
+             cannot raise, add it to makiri_lints' NON_RAISING (the survey finds no path) or REVIEWED (with the reason)",
         );
     }
     if RAW.contains(&module.as_str()) && !inside {
@@ -172,7 +200,7 @@ fn check_protected_closure<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>)
             "a protected call of nothing that can raise",
             None,
             "a C call that cannot raise needs no rb_protect; if this one can, it is missing \
-             from makiri_lints' table the other way (NON_RAISING lists it)",
+             from makiri_lints' tables the other way (NON_RAISING or REVIEWED lists it)",
         );
     }
 }

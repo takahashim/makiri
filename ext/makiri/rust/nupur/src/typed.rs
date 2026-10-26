@@ -509,12 +509,12 @@ impl<T: Payload + 'static, const N: usize> Hidden<T, N> {
         self.ty.get_known(&self.obj)
     }
 
-    /// The object, shown again with its class (`rb_obj_reveal`).
-    pub fn reveal(self) -> Value {
-        // SAFETY: the object `wrap_hidden` hid, and `klass` the class it was
-        // made with; revealing writes only its class field.
-        unsafe { rb_sys::rb_obj_reveal(self.obj.as_raw(), self.klass.as_raw()) };
-        self.obj
+    /// The object, shown again with its class (`rb_obj_reveal`). Raises
+    /// `NoMemoryError`, and the object then stays hidden, where no Ruby code
+    /// finds it.
+    pub fn reveal(self, _: &crate::rb::Ruby) -> Result<Value, Error> {
+        crate::raw::obj_reveal(self.obj, crate::rb::ReprValue::as_value(self.klass))?;
+        Ok(self.obj)
     }
 }
 

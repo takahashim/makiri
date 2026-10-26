@@ -103,7 +103,7 @@ pub fn parse_document(
     })?;
     /* The GC learns the arena's size in `install`; `owned` is already gone, so
      * a collection that triggers has nothing of ours to invalidate. */
-    Ok(shell.install_html(ruby, parsed))
+    shell.install_html(ruby, parsed)
 }
 
 /// An empty HTML document - no children - in `compat_mode` (Lexbor's
@@ -119,7 +119,7 @@ pub fn new_empty_document(
     let mut parsed = empty_html_document(compat_mode)
         .map_err(|_| makiri_error("failed to create HTML document"))?;
     parsed.set_encoding(encoding);
-    Ok(shell.install_html(ruby, parsed))
+    shell.install_html(ruby, parsed)
 }
 
 /* ------------------------------------------------------------------ *
