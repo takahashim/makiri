@@ -668,7 +668,7 @@ pub fn parse_xml_document(ruby: &Ruby, source: Value, limits: ParseLimits) -> Re
     let arena = result.map_err(|status| parse_status_error(status, Unit::Document))?;
     /* `src` is gone, so the collection `install`'s GC report may trigger
      * disturbs nothing. */
-    Ok(shell.install_xml(ruby, arena))
+    shell.install_xml(ruby, arena)
 }
 
 /// `Document#root` for an XML document: the root element, or nil.
@@ -690,7 +690,7 @@ pub fn copy_xml_document(ruby: &Ruby, document: Value) -> Result<Value, Error> {
      * copy then reads `document` and runs no Ruby. */
     let shell = DocumentShell::new(ruby, DocKind::Xml)?;
     let arena = crate::xml::mutate::copy_document(&*xml_read(&document)?).map_err(xml_mut_error)?;
-    Ok(shell.install_xml(ruby, arena))
+    shell.install_xml(ruby, arena)
 }
 
 /// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.
@@ -698,7 +698,7 @@ pub fn new_empty_xml_document(ruby: &Ruby) -> Result<Value, Error> {
     let shell = DocumentShell::new(ruby, DocKind::Xml)?;
     let arena =
         XmlDoc::create(None).map_err(|_| makiri_error("out of memory allocating XML document"))?;
-    Ok(shell.install_xml(ruby, arena))
+    shell.install_xml(ruby, arena)
 }
 
 /// Strict-decode `source` and parse it as a fragment into `document`'s arena,

@@ -264,5 +264,5 @@ pub fn fragment_shell_document(ruby: &Ruby) -> Result<Value, Error> {
     let Ok(parsed) = parse_html(SHELL, true, ParseLimits::DEFAULT) else {
         return Err(makiri_error("failed to create fragment document"));
     };
-    Ok(shell.install_html(ruby, parsed))
+    shell.install_html(ruby, parsed)
 }

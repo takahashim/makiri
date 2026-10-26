@@ -276,7 +276,11 @@ impl DocumentShell {
 
     /// Give the HTML Document its parsed document - the GC owns it from here -
     /// and report the arena's size.
-    pub fn install_html(self, ruby: &crate::bridge::rb::Ruby, parsed: Box<HtmlParsed>) -> Value {
+    pub fn install_html(
+        self,
+        ruby: &crate::bridge::rb::Ruby,
+        parsed: Box<HtmlParsed>,
+    ) -> Result<Value, Error> {
         let stamp = parsed.doc().arena().stamp();
         self.install(
             ruby,
@@ -286,7 +290,11 @@ impl DocumentShell {
     }
 
     /// Give the XML Document its arena, as [`install_html`](Self::install_html).
-    pub fn install_xml(self, ruby: &crate::bridge::rb::Ruby, arena: Box<XmlDoc>) -> Value {
+    pub fn install_xml(
+        self,
+        ruby: &crate::bridge::rb::Ruby,
+        arena: Box<XmlDoc>,
+    ) -> Result<Value, Error> {
         let stamp = arena.doc_node().stamp();
         self.install(ruby, stamp, Body::Xml(crate::doc_cell::DocCell::new(arena)))
     }
@@ -295,7 +303,12 @@ impl DocumentShell {
         clippy::panic,
         reason = "`new` makes the wrapper without content, and only `install` - which takes the shell - gives it some"
     )]
-    fn install(self, ruby: &crate::bridge::rb::Ruby, stamp: u32, content: Body) -> Value {
+    fn install(
+        self,
+        ruby: &crate::bridge::rb::Ruby,
+        stamp: u32,
+        content: Body,
+    ) -> Result<Value, Error> {
         /* `self.obj` is a Document wrapper with no content yet, so nothing is
          * overwritten. */
         if self.obj.data().content.set(content).is_err() {
@@ -303,9 +316,9 @@ impl DocumentShell {
         }
         self.obj.data().stamp.set(stamp);
         /* Content in place: the Document can be seen now. */
-        let obj = self.obj.reveal();
+        let obj = self.obj.reveal(ruby)?;
         account_document(ruby, obj);
-        obj
+        Ok(obj)
     }
 }
 

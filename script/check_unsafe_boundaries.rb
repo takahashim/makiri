@@ -74,7 +74,7 @@ UNSAFE_ISLANDS = {
   "nupur/encoding.rs" => 9,
   "nupur/gvl.rs" => 3,
   "nupur/no_unwind.rs" => 2,
-  "nupur/raw/mod.rs" => 74,
+  "nupur/raw/mod.rs" => 75,
   "nupur/raw/protect.rs" => 14,
   "nupur/rb/class.rs" => 1,
   "nupur/rb/global.rs" => 2,
@@ -82,8 +82,8 @@ UNSAFE_ISLANDS = {
   "nupur/rb/ruby.rs" => 5,
   "nupur/rb/value.rs" => 25,
   "nupur/stack.rs" => 1,
-  "nupur/string.rs" => 8,
-  "nupur/typed.rs" => 32,
+  "nupur/string.rs" => 7,
+  "nupur/typed.rs" => 31,
   "utf8_copy.rs" => 1,
 }.freeze
 

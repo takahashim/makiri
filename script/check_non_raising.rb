@@ -1,19 +1,33 @@
 # frozen_string_literal: true
 
-# `rake dylint`'s audit of the table of Ruby's C functions that cannot raise
-# (`NON_RAISING`, ext/makiri/rust/lints/makiri_lints/src/raising.rs), against
-# what Ruby's own headers say of each: the bindings rb-sys generates keep the
-# headers' doc comments and their `noreturn`. An entry fails when
+# `rake dylint`'s audit of the tables of Ruby's C functions that cannot raise
+# (`NON_RAISING` and `REVIEWED`, ext/makiri/rust/lints/makiri_lints/src/raising.rs).
 #
-# - no function of that name is in the bindings (a typo, or one Ruby
-#   dropped),
+# Against the C API raise survey (https://takahashim.github.io/ruby-c-apis/:
+# the call graph of the compiled C, over the latest release of each Ruby since
+# 3.3 and HEAD, Linux and macOS), as vendored in raise_survey.json
+# (`script/update_raise_survey.rb` refreshes it):
+#
+# - a NON_RAISING entry fails unless the survey finds no path to a longjmp
+#   for it in any run (`no_path_all`);
+# - a REVIEWED entry fails without a reason, and when the survey finds no
+#   path for it any more (it belongs in NON_RAISING);
+# - a function the survey does not know fails either table.
+#
+# And against what Ruby's own headers say of each, as the bindings rb-sys
+# generates keep their doc comments and `noreturn`. An entry of either table
+# fails when
+#
+# - no function of that name is in the bindings (a typo, or one Ruby dropped),
 # - its doc names an exception (`@exception`), or
 # - it never returns (`-> !`): it leaves by a raise or a jump, always.
 #
-# The headers say less than the truth - an allocation's `NoMemoryError` is
-# seldom written down - so passing is not a proof that a function cannot
-# raise; failing is a proof that the table is wrong. The bindings read are
-# the ones nupur compiles against: rb-sys's OUT_DIR, as cargo reports it.
+# The headers say less than the truth, and the survey reads the call graph
+# at its most conservative: a function with a path may still raise nothing
+# (that is what REVIEWED is for), and one passing here is as sure as the call
+# graph is - the survey's own limits apply (one config per OS, no extension
+# callbacks). The bindings read are the ones nupur compiles against: rb-sys's
+# OUT_DIR, as cargo reports it.
 
 require "json"
 require "open3"
@@ -21,11 +35,16 @@ require "open3"
 RUST = File.expand_path("../ext/makiri/rust", __dir__)
 TABLE = File.join(RUST, "lints/makiri_lints/src/raising.rs")
 
-def table
+SURVEY = File.join(RUST, "lints/makiri_lints/raise_survey.json")
+
+def tables
   src = File.read(TABLE)
-  body = src[/^const NON_RAISING: &\[&str\] = &\[\n(.*?)^\];/m, 1] or
+  non_raising = src[/^const NON_RAISING: &\[&str\] = &\[\n(.*?)^\];/m, 1] or
     abort "check_non_raising: no NON_RAISING table in #{TABLE}"
-  body.scan(/^\s*"([a-z0-9_]+)",/).flatten
+  reviewed = src[/^const REVIEWED: &\[\(&str, &str\)\] = &\[\n(.*?)^\];/m, 1] or
+    abort "check_non_raising: no REVIEWED table in #{TABLE}"
+  [non_raising.scan(/^\s*"([a-z0-9_]+)",/).flatten,
+   reviewed.scan(/^    \(\n\s*"([a-z0-9_]+)",\n(.*?)^    \),/m).to_h { |n, r| [n, r.scan(/"((?:[^"\\]|\\.)*)"/m).join.strip] }]
 end
 
 def bindings_file
@@ -69,19 +88,39 @@ def functions(path)
   fns
 end
 
-names = table
+non_raising, reviewed = tables
+names = non_raising + reviewed.keys
+dups = names.tally.select { |_, n| n > 1 }.keys
+survey = JSON.parse(File.read(SURVEY))
+verdict = survey["functions"]
 path = bindings_file
 fns = functions(path)
-failures = names.filter_map do |name|
-  f = fns[name] or next "#{name}: not in the bindings"
-  next "#{name}: its doc names an exception (@exception)" if f[:doc].include?("@exception")
-  next "#{name}: it never returns (-> !)" if f[:sig].match?(/\)\s*->\s*!\s*;/)
-
-  nil
+failures = []
+failures += dups.map { |n| "#{n}: in both tables, or twice" }
+non_raising.each do |n|
+  case verdict[n]
+  when "no_path_all" then nil
+  when nil then failures << "#{n}: not in the survey"
+  else failures << "#{n}: the survey finds a path to a longjmp (#{verdict[n]}); review it and move it to REVIEWED with the reason, or take it out"
+  end
+end
+reviewed.each do |n, reason|
+  failures << "#{n}: no reason" if reason.empty?
+  case verdict[n]
+  when nil then failures << "#{n}: not in the survey"
+  when "no_path_all" then failures << "#{n}: the survey finds no path any more; move it to NON_RAISING"
+  end
+end
+names.each do |name|
+  f = fns[name] or (failures << "#{name}: not in the bindings"; next)
+  failures << "#{name}: its doc names an exception (@exception)" if f[:doc].include?("@exception") && !reviewed.key?(name)
+  failures << "#{name}: it never returns (-> !)" if f[:sig].match?(/\)\s*->\s*!\s*;/)
 end
 unless failures.empty?
-  puts "check_non_raising: NON_RAISING disagrees with Ruby's headers (#{File.basename(path)}):"
+  puts "check_non_raising: the tables disagree with the survey or Ruby's headers:"
   failures.each { |f| puts "  #{f}" }
   abort
 end
-puts "check_non_raising: #{names.size} entries, none documented to raise (#{File.basename(path)})"
+s = survey["survey"]
+puts "check_non_raising: #{non_raising.size} entries with no path in the survey, " \
+     "#{reviewed.size} reviewed (survey #{s['commit'][0, 7]}, releases #{s['releases'].join(', ')})"

@@ -285,6 +285,20 @@ pub fn obj_freeze(v: Value) -> Result<(), Error> {
     .map(|_| ())
 }
 
+/// `rb_obj_reveal`: show `obj`, hidden by `rb_obj_hide`, as an instance of
+/// `klass`. Raises `NoMemoryError`: the class is written with a write
+/// barrier, which may grow the remembered set (found by the C API raise
+/// survey, takahashim.github.io/ruby-c-apis - Ruby's header says nothing of
+/// it). On `Err` the object stays hidden.
+pub fn obj_reveal(obj: Value, klass: Value) -> Result<(), Error> {
+    let (o, k) = (obj.as_raw(), klass.as_raw());
+    call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_obj_reveal(o, k)
+    })
+    .map(|_| ())
+}
+
 /// `rb_define_method` / `_private_method` / `_singleton_method`: raise
 /// `FrozenError` on a frozen target.
 pub(crate) fn define_method(

@@ -116,8 +116,12 @@ pub fn utf8_str_filled(
     });
     filled?;
     core::mem::forget(unfilled);
-    // SAFETY: the String `rb_obj_hide` hid, whole now, shown as a String.
-    unsafe { rb_sys::rb_obj_reveal(s, rb_sys::rb_cString) };
+    /* Whole now: shown as a String. A refusal (out of memory) leaves it
+     * hidden and filled, for the GC. */
+    crate::raw::obj_reveal(
+        crate::rb::ReprValue::as_value(str),
+        crate::rb::ReprValue::as_value(ruby.class_string()),
+    )?;
     Ok(str)
 }
 

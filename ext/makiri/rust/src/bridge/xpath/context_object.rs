@@ -206,7 +206,7 @@ impl XPathCtx {
                 (crate::bridge::wrapper::ivar_node(), rb_node),
             ],
         )?;
-        Ok(obj.reveal())
+        obj.reveal(ruby)
     }
 
     /// Evaluate `expr` in `document`, parsed once and cached.

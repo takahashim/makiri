@@ -183,17 +183,30 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   wrapper hands its one C call to `raw::call`, whose `extern "C"` thunk is the
   only frame a raise crosses, and the raise comes back as `Err`. A caller may
   then own copies, hold document guards and build Ruby objects in any order.
-  Which C functions can raise is ONE table, in `lints/makiri_lints`
-  (`raising.rs`'s `NON_RAISING`: the functions that cannot, each with its
-  reason); every other rb-sys function is taken to raise, so an unclassified
-  one is refused until someone classifies it - the list of RAISING functions
-  it replaced let `rb_undef_alloc_func` and `rb_obj_freeze` through.
-  The table is held to what Ruby's headers say, as rb-sys's bindings carry
-  their doc comments: an entry documented to raise (`@exception`) or that
-  never returns fails `rake dylint` (`script/check_non_raising.rb`), which
-  took `rb_absint_size` out - it converts a non-Integer with `#to_int`. The
-  headers seldom write down an allocation's `NoMemoryError`, so passing is
-  no proof; failing is.
+  Which C functions can raise is decided in `lints/makiri_lints`
+  (`raising.rs`: `NON_RAISING`, the functions the C API raise survey finds no
+  path to a longjmp for, and `REVIEWED`, those it does and a person has read,
+  each with the reason); every other rb-sys function is taken to raise, so
+  an unclassified one is refused until someone classifies it - the list of
+  RAISING functions it replaced let `rb_undef_alloc_func` and
+  `rb_obj_freeze` through.
+  The survey (<https://takahashim.github.io/ruby-c-apis/>, github.com/
+  takahashim/ruby-c-apis) builds every public C function of the latest patch
+  release of each Ruby since 3.3 and HEAD, on Linux and macOS, to LLVM IR and
+  asks which reach a longjmp, a call through a function pointer reaching any
+  address-taken function (its most conservative reading, so a path may be a
+  false positive and a missing one cannot be). Its result is vendored in
+  `lints/makiri_lints/raise_survey.json` (`script/update_raise_survey.rb`),
+  and `rake dylint` runs `script/check_non_raising.rb`: a `NON_RAISING` entry
+  the survey finds a path for, a `REVIEWED` one it no longer does or without
+  a reason, and one that is not in the survey fail. It also holds both to
+  Ruby's headers, as rb-sys's bindings carry their doc comments: an entry
+  documented to raise (`@exception`) or that never returns fails. The survey
+  took `rb_obj_reveal` out (its write barrier can allocate, so it is a
+  protected `raw::obj_reveal`, and `Hidden::reveal` / `DocumentShell::install`
+  return `Result`) and `rb_enc_get` / `rb_enc_get_index` (a File or Symbol
+  raises: an `allow` at the String-only call sites); the headers say nothing
+  of any of them.
   `raising_call_outside_protect` fails on such a call outside the closure
   handed to `raw::call` (a function that raises only for what its caller
   rules out, `rb_obj_is_kind_of` with a non-class, is an `allow` at its
@@ -397,9 +410,9 @@ bundle exec rake dylint            # the crate's own lints (lints/makiri_lints),
                                    # unguarded_no_unwind_site, ruby_in_gvl_released_body,
                                    # infallible_allocation, raising_call_outside_protect
                                    # (any rb-sys fn not in NON_RAISING, outside
-                                   # raw::call; the table is held to Ruby's
-                                   # headers as rb-sys's bindings carry them -
-                                   # no entry documented to raise or noreturn,
+                                   # raw::call; the tables are held to the C API
+                                   # raise survey, vendored, and to Ruby's headers
+                                   # as rb-sys's bindings carry them -
                                    # script/check_non_raising.rb), unraising_call_in_raw,
                                    # raw_ruby_outside_bridge, runs_callers_ruby,
                                    # raw_node_crossing, ruby_surface_in_bridge,

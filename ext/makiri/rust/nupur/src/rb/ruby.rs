@@ -81,6 +81,7 @@ impl Ruby {
         class_object => rb_cObject,
         class_encoding => rb_cEncoding,
         class_range => rb_cRange,
+        class_string => rb_cString,
     }
 }
 

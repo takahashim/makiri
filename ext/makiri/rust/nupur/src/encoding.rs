@@ -30,6 +30,13 @@ impl Encoding {
     }
 
     /// The encoding `str` is tagged with.
+    #[cfg_attr(
+        dylint_lib = "makiri_lints",
+        allow(
+            raising_call_outside_protect,
+            reason = "rb_enc_get raises for a File (a method call) or a Symbol (a String made); `str` is a String, whose tag it reads"
+        )
+    )]
     pub fn of(str: RString) -> Encoding {
         // SAFETY: a live String, by type; reading its tag runs no Ruby.
         Encoding(unsafe { rb_sys::rb_enc_get(str.as_raw()) })
@@ -119,6 +126,13 @@ impl Encoding {
     /// with the builtin indices, looked up once. Every strict read (a
     /// selector, an attribute name or value) asks, and `rb_enc_get` +
     /// `rb_utf8_encoding` cost `Node#[]` ~13%.
+    #[cfg_attr(
+        dylint_lib = "makiri_lints",
+        allow(
+            raising_call_outside_protect,
+            reason = "rb_enc_get_index raises for a File or a Symbol, as rb_enc_get; `s` is a String, and a String's index is an ivar read when it is not inline"
+        )
+    )]
     pub fn string_reads_as_utf8_bytes(_: &crate::rb::Ruby, s: RString) -> bool {
         use rb_sys::ruby_encoding_consts::{
             RUBY_ENCODING_INLINE_MAX, RUBY_ENCODING_MASK, RUBY_ENCODING_SHIFT,
