@@ -92,8 +92,10 @@ impl External {
     /// The object holds `bytes` outside the heap now: the change since the
     /// last report goes to the GC. A change Ruby could not take whole - past
     /// an `ssize_t` - is not reported, and not recorded, so the two never
-    /// disagree. A growth may run a collection here, so nothing borrowed
-    /// from a Ruby object may be held across the call; the new figure is
+    /// disagree. The default collector only raises its malloc count here and
+    /// collects at the next allocation (`rb_gc_adjust_memory_usage` is
+    /// MEMOP_TYPE_REALLOC), but another may collect in the call, so nothing
+    /// borrowed from a Ruby object is held across it; the new figure is
     /// recorded first, for a collection that reads it.
     pub fn report(&self, _: &crate::rb::Ruby, bytes: usize) {
         let then = self.0.get();

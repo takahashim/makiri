@@ -87,12 +87,15 @@ const REVIEWED: &[(&str, &str)] = &[
     ),
     (
         "ruby_xfree",
-        "frees, and may start a collection; the survey's path is the collection's \
-         calls through pointers - a finalizer's error is warned and dropped, not raised",
+        "only frees: it counts the free as MEMOP_TYPE_FREE, and \
+         objspace_malloc_increase_body starts a collection for MEMOP_TYPE_MALLOC alone \
+         (gc.c 3.3.13, gc/default/default.c 3.4.9); the survey's path is that call, \
+         which it takes whatever the type",
     ),
     (
         "rb_gc_adjust_memory_usage",
-        "a counter, which may start a collection as ruby_xfree does; same path, same reason",
+        "a counter: it adds MEMOP_TYPE_REALLOC, which starts no collection (the next \
+         allocation sees the raised count and does); same path as ruby_xfree, same reason",
     ),
     (
         "rb_attr_get",
