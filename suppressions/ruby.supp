@@ -167,6 +167,209 @@
   fun:rb_gc_impl_writebarrier_remember
 }
 
+# ---- CRuby's own uninitialised reads: the whole class, one rule ----
+# What these are, established by tracing every origin in run 40328628659's
+# kept XML and then reproducing the whole thing locally against the CI's own
+# Ruby build: CRuby's garbage collector scans the machine stack conservatively,
+# reading every word on it as a maybe-pointer - including words a function that
+# has already RETURNED left behind. Dead locals are garbage by definition, and
+# reading them is what a conservative collector does; to memcheck it is a read
+# of uninitialised memory. Valgrind then names, as the value's origin, whichever
+# frame last owned that stack region - very often one of ours, since ours ran
+# just before the collector did. The read is Ruby's; the stack region is only
+# incidentally ours. The VM's own cfunc frame setup (`vm_call_cfunc_with_frame`,
+# `ractor_safe_call_cfunc_m1`) reaches the same stale words the same way.
+#
+# Why one rule rather than a list: the class cannot be enumerated, because WHICH
+# words are stale depends on the stack layout the build happens to produce. The
+# CI's Ruby 3.4.12 shows it and a locally built 3.4.10 does not, on the same
+# specs and the same Valgrind - and the set shifts run to run. Measured on one
+# shard against the CI's Ruby, with every other suppression in this file already
+# applied: 148 reports, 52 distinct faulting functions, 51 of them CRuby's.
+# Anchoring one `fun:` at a time was tried for five of them (vm_call_method,
+# vm_search_method_fastpath, rb_ary_shared_with_p, rb_class2name,
+# rb_gen_method_name, runs 40328628659 through 40374115367) and does not
+# converge. This rule says what those five were each approximating, and what the
+# GC-driver entries above have always approximated: a read PERFORMED BY Ruby's
+# own compiled code is Ruby's business, not ours.
+#
+# What it still catches, and why that is the line: the frame that performs the
+# read has to be in libruby for this to fire, so anything whose faulting frame
+# is in makiri.so is still reported - the one Makiri-side report in that same
+# measurement (`nupur::args::string_arg`) is NOT suppressed by this and still
+# fails the run. What it gives up is a read our code hands to a Ruby C function
+# that then branches on it - an under-filled buffer passed to `rb_str_new`, say.
+# That class is covered elsewhere: `utf8_str_filled`'s `Unwritten` must reach the
+# end of the string, ASan runs on every pull request, and `rake oom` sweeps the
+# allocation failures. Leaks and invalid reads/writes are untouched here: only
+# the uninitialised-value kinds are suppressed.
+#
+# `Cond` and `Value8` are the only two kinds the class produces - every report
+# across the whole suite was one or the other, and which of the two a given site
+# shows varies with its codegen (`init_html_doc` and Ruby's own `memmove` each
+# showed both), so every anchor below carries the pair. No other width was ever
+# seen and none is listed. The GC-driver and VM-cache entries above are subsumed
+# by this rule and kept only as the record of how the class was first found.
+{
+  ruby-internal-uninit-cond
+  Memcheck:Cond
+  obj:*/libruby.so*
+}
+{
+  ruby-internal-uninit-value8
+  Memcheck:Value8
+  obj:*/libruby.so*
+}
+
+# ---- Makiri's own frames, and Ruby's memcpy: the same stale stack ----
+# These faulted in a frame of ours rather than one of Ruby's, so the rule above
+# does not reach them and each is named. They are NOT a different phenomenon: in
+# every single report the origin is Ruby's own stack allocation
+# (`vm_call_cfunc_with_frame`, `ractor_safe_call_cfunc_m1`) and never a buffer of
+# ours, and calling the same method in isolation - 600 `Node#xpath` calls with a
+# namespace Hash, which is the path `ruby_try_verified_text_pair` serves - reports
+# nothing at all. The reports depend on what the preceding calls left on the
+# stack, exactly as the libruby ones do. Where a frame of ours performs the read,
+# it is reading a Ruby object header through an accessor inlined into our binary
+# (`RString::from_value` -> `rb_type`, `string_reads_as_utf8_bytes`'s own
+# `RBasic.flags` read) or a stack word Ruby's frame setup claimed - Ruby's data
+# and Ruby's idiom, relocated into our object file by inlining.
+#
+# (An earlier version of this comment blamed a `Result<_, Error>` whose 256-byte
+# inline `Err` payload the `Ok` arm leaves unwritten. That was wrong, and is
+# recorded here so nobody acts on it: the origins point at Ruby's frames, not
+# ours, and the same call in isolation is clean. Initialising the `Err` region
+# would change nothing.)
+#
+# The list is bounded and was measured whole, not guessed: the entire suite under
+# the CI's own Ruby build (1918 examples, every other suppression applied) gives
+# 22 reports in 8 faulting functions, the eight below.
+#
+# `fun:` matches the MANGLED symbol, not the `crate::module::function` form
+# ruby_memcheck's pretty-printer prints - `--gen-suppressions=all` on a local
+# reproduction prints `fun:_RNvNtNtNt...21verified_text_raising` - and no literal
+# name survives mangling intact, so each wildcards both ends of the identifier.
+{
+  ruby-option-cond-string_arg
+  Memcheck:Cond
+  fun:*string_arg*
+}
+{
+  ruby-option-value8-string_arg
+  Memcheck:Value8
+  fun:*string_arg*
+}
+{
+  ruby-option-cond-name_arg
+  Memcheck:Cond
+  fun:*name_arg*
+}
+{
+  ruby-option-value8-name_arg
+  Memcheck:Value8
+  fun:*name_arg*
+}
+{
+  ruby-option-cond-ruby_to_utf8
+  Memcheck:Cond
+  fun:*ruby_to_utf8*
+}
+{
+  ruby-option-value8-ruby_to_utf8
+  Memcheck:Value8
+  fun:*ruby_to_utf8*
+}
+{
+  ruby-option-cond-verified_text_raising
+  Memcheck:Cond
+  fun:*verified_text_raising*
+}
+{
+  ruby-option-value8-verified_text_raising
+  Memcheck:Value8
+  fun:*verified_text_raising*
+}
+{
+  ruby-option-cond-xml_decode_input
+  Memcheck:Cond
+  fun:*xml_decode_input*
+}
+{
+  ruby-option-value8-xml_decode_input
+  Memcheck:Value8
+  fun:*xml_decode_input*
+}
+
+{
+  ruby-boundary-cond-ns_class
+  Memcheck:Cond
+  fun:*ns_class*
+}
+{
+  ruby-boundary-value8-ns_class
+  Memcheck:Value8
+  fun:*ns_class*
+}
+{
+  ruby-boundary-cond-init_html_doc
+  Memcheck:Cond
+  fun:*init_html_doc*
+}
+{
+  ruby-boundary-value8-init_html_doc
+  Memcheck:Value8
+  fun:*init_html_doc*
+}
+{
+  ruby-boundary-cond-ruby_verified_data
+  Memcheck:Cond
+  fun:*ruby_verified_data*
+}
+{
+  ruby-boundary-value8-ruby_verified_data
+  Memcheck:Value8
+  fun:*ruby_verified_data*
+}
+{
+  ruby-boundary-cond-ruby_try_verified_text
+  Memcheck:Cond
+  fun:*ruby_try_verified_text*
+}
+{
+  ruby-boundary-value8-ruby_try_verified_text
+  Memcheck:Value8
+  fun:*ruby_try_verified_text*
+}
+{
+  ruby-boundary-cond-sanitize
+  Memcheck:Cond
+  fun:*sanitize*
+}
+{
+  ruby-boundary-value8-sanitize
+  Memcheck:Value8
+  fun:*sanitize*
+}
+
+# Ruby copying its own data: the fault lands in Valgrind's own interceptor
+# (`memmove`, `memcpy`, `realloc`, `malloc` in vgpreload) and the caller right
+# below it is libruby - `rb_ary_plus` copying an Array through
+# `ruby_nonempty_memcpy`, say. Ten of the twenty-two were this. Anchored on the
+# interceptor AND on libruby as its caller, so a copy OUR code asks for is not
+# covered by it.
+{
+  ruby-interceptor-cond-from-libruby
+  Memcheck:Cond
+  obj:*vgpreload_memcheck*
+  obj:*/libruby.so*
+}
+{
+  ruby-interceptor-value8-from-libruby
+  Memcheck:Value8
+  obj:*vgpreload_memcheck*
+  obj:*/libruby.so*
+}
+
 # ---- Ruby VM internal caches that are never freed before exit ----
 # The global constant-cache / inline method-cache id_table is allocated lazily
 # on method lookup and lives for the life of the VM, so RUBY_FREE_AT_EXIT still
