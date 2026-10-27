@@ -191,11 +191,14 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   RAISING functions it replaced let `rb_undef_alloc_func` and
   `rb_obj_freeze` through.
   The survey (<https://takahashim.github.io/ruby-c-apis/>, github.com/
-  takahashim/ruby-c-apis) builds every public C function of the latest patch
-  release of each Ruby since 3.3 and HEAD, on Linux and macOS, to LLVM IR and
-  asks which reach a longjmp, a call through a function pointer reaching any
-  address-taken function (its most conservative reading, so a path may be a
-  false positive and a missing one cannot be). Its result is vendored in
+  takahashim/ruby-c-apis) builds every public C function of the first and the
+  latest patch release of each Ruby series since 3.3 (3.3.0, 3.3.13, 3.4.0,
+  3.4.12, 4.0.0, 4.0.9) and HEAD, on Linux and macOS, to LLVM IR and asks
+  which reach a longjmp, a call through a function pointer reaching any
+  address-taken function (`any`, its most conservative reading, so a path may
+  be a false positive and a missing one cannot be; its `typed` reading, a
+  callee whose type matches the call's, drops 60 of those paths and leaves
+  direct ones, which is what `REVIEWED` reasons cite). Its result is vendored in
   `lints/makiri_lints/raise_survey.json` (`script/update_raise_survey.rb`),
   and `rake dylint` runs `script/check_non_raising.rb`: a `NON_RAISING` entry
   the survey finds a path for, a `REVIEWED` one it no longer does or without
@@ -206,7 +209,15 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   protected `raw::obj_reveal`, and `Hidden::reveal` / `DocumentShell::install`
   return `Result`) and `rb_enc_get` / `rb_enc_get_index` (a File or Symbol
   raises: an `allow` at the String-only call sites); the headers say nothing
-  of any of them.
+  of any of them. `REVIEWED` holds what the survey keeps a path for and the
+  source shows never taken, whoever calls: `rb_thread_call_without_gvl2`
+  (the path needs a flag's value, which the `2` variant fixes). A function
+  that CAN raise, but not where the extension calls it, is an `allow` at that
+  call with its reason, never a crate-wide entry: `rb_gc_mark` in the mark
+  callback (it raises only when memory runs out, and that longjmp loses
+  nothing there) and `rb_attr_get` in `ivar_get` (it raises only in a
+  non-main Ractor, which never reaches the extension: it is not declared
+  Ractor-safe, so Ruby refuses its methods there - `spec/ractor_spec.rb`).
   `raising_call_outside_protect` fails on such a call outside the closure
   handed to `raw::call` (a function that raises only for what its caller
   rules out, `rb_obj_is_kind_of` with a non-class, is an `allow` at its
