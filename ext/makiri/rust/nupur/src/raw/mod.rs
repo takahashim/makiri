@@ -494,6 +494,16 @@ pub fn range_beg_len(range: Value, count: usize) -> Result<Option<(usize, usize)
     }
 }
 
+/// `rb_thread_interrupted` of the current thread: is an interrupt waiting for
+/// it (a `Timeout` or `Thread#raise`, a signal handler, or just the time-slice
+/// timer, which sets the same flag)? Only asks: nothing is delivered. Under
+/// `call` because the C function's type check of its thread argument raises,
+/// never for `rb_thread_current`'s.
+#[inline]
+pub fn thread_interrupted(_: &Ruby) -> Result<bool, Error> {
+    call(|| unsafe { rb_sys::rb_thread_interrupted(rb_sys::rb_thread_current()) != 0 })
+}
+
 /// `rb_thread_check_ints`: raises a pending interrupt (`Interrupt`,
 /// `Thread#raise`'s exception, a `Timeout`), or ends the thread.
 #[inline]

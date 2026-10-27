@@ -185,6 +185,13 @@ struct Envelope<T, const N: usize> {
  * callback for it today, but that is its implementation, not its documented
  * contract, and one branch here means nothing rests on it. */
 
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        raising_call_outside_protect,
+        reason = "rb_gc_mark raises NoMemoryError only when the mark stack cannot grow, a longjmp this frame loses nothing to (the no_unwind guard's Drop does nothing unless unwinding) and every C extension's dmark is exposed to alike"
+    )
+)]
 unsafe extern "C" fn mark_cb<T: Payload, const N: usize>(ptr: *mut c_void) {
     crate::no_unwind::must_not_unwind::<crate::no_unwind::GcMark, _>(|| {
         if ptr.is_null() {
@@ -645,6 +652,20 @@ struct DataType(rb_sys::rb_data_type_t);
 // reads them from whichever thread holds the GVL.
 unsafe impl Sync for DataType {}
 
+/* The table of callbacks, in pointer-sized words: 5 up to Ruby 4.0 (dmark,
+ * dfree, dsize, dcompact, reserved[1]) and 12 from 4.1 (+ handle_weak_references,
+ * reserved[7]). Zero-initialising it is right for a layout whose extra words
+ * are all optional callbacks or zero-filled reserve - which only someone who
+ * has read the new header knows - so any other size stops the build here
+ * instead of shipping a table nobody has checked. */
+const FUNCTION_TABLE_WORDS: usize =
+    size_of::<rb_sys::rb_data_type_struct__bindgen_ty_1>() / size_of::<usize>();
+const _: () = assert!(
+    FUNCTION_TABLE_WORDS == 5 || FUNCTION_TABLE_WORDS == 12,
+    "rb_data_type_t's callback table has a layout nupur has not read: check Ruby's \
+     include/ruby/internal/core/rtypeddata.h, then list its size here"
+);
+
 impl DataType {
     /// `parent` is null for a base type.
     pub const fn new(
@@ -658,25 +679,30 @@ impl DataType {
         const FREE_IMMEDIATELY: VALUE =
             rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_FREE_IMMEDIATELY as VALUE;
         const EMBEDDABLE: VALUE = rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_EMBEDDABLE as VALUE;
-        DataType(rb_sys::rb_data_type_t {
-            wrap_struct_name: name,
-            function: rb_sys::rb_data_type_struct__bindgen_ty_1 {
-                dmark,
-                dfree,
-                dsize,
-                /* No compaction callback: an object's only values are its
-                 * slots, marked pinned. */
-                dcompact: None,
-                reserved: [core::ptr::null_mut(); 1],
-            },
-            parent,
-            data: core::ptr::null_mut(),
-            flags: if embedded {
-                FREE_IMMEDIATELY | EMBEDDABLE
-            } else {
-                FREE_IMMEDIATELY
-            },
-        })
+        /* Zero first, then set only the fields used: Ruby's partial-initialiser
+         * convention (`reserved` "must be filled with zeros"), and what keeps
+         * this compiling when Ruby adds a callback to the table, as 4.1 did
+         * (`handle_weak_references`, `reserved[1]` -> `reserved[7]`). The
+         * layout check above is what turns a layout nobody has read into a
+         * build failure, not a silent one. */
+        // SAFETY: `rb_data_type_t` is plain C data - pointers, options of
+        // function pointers and an integer - for which all-zero is valid, and
+        // is Ruby's own initial state for the fields not set below.
+        let mut t: rb_sys::rb_data_type_t = unsafe { core::mem::zeroed() };
+        t.wrap_struct_name = name;
+        t.function.dmark = dmark;
+        t.function.dfree = dfree;
+        t.function.dsize = dsize;
+        /* No compaction callback (`dcompact` stays None): an object's only
+         * values are its slots, marked pinned. */
+        t.parent = parent;
+        t.data = core::ptr::null_mut();
+        t.flags = if embedded {
+            FREE_IMMEDIATELY | EMBEDDABLE
+        } else {
+            FREE_IMMEDIATELY
+        };
+        DataType(t)
     }
 
     /// The raw pointer the Ruby API wants.
@@ -816,3 +842,43 @@ pub const EMBED_MAX: usize = 40;
 /// after `RTypedData`'s header, which a slot places at an 8-byte boundary
 /// only - not the 16 `wrap_built` allows for `xcalloc`'s data.
 pub const EMBED_ALIGN: usize = 8;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    unsafe extern "C" fn mark(_: *mut c_void) {}
+    unsafe extern "C" fn free(_: *mut c_void) {}
+    unsafe extern "C" fn size(_: *const c_void) -> rb_sys::size_t {
+        0
+    }
+
+    /// The table's words past the three callbacks `DataType::new` sets are
+    /// all zero - `dcompact`, the reserve (`reserved[1]` up to Ruby 4.0), and on
+    /// 4.1 `handle_weak_references` and `reserved[7]` too - since a non-zero
+    /// reserve is a callback Ruby would call.
+    #[test]
+    fn the_callback_table_leaves_what_it_does_not_set_zero() {
+        let ty = DataType::new(
+            c"nupur::test".as_ptr(),
+            core::ptr::null(),
+            Some(mark),
+            Some(free),
+            Some(size),
+            false,
+        );
+        let table = &ty.0.function;
+        assert!(table.dmark.is_some() && table.dfree.is_some() && table.dsize.is_some());
+        assert!(table.dcompact.is_none());
+        // SAFETY: the table is `FUNCTION_TABLE_WORDS` pointer-sized words of
+        // plain data, read here as such.
+        let words = unsafe {
+            core::slice::from_raw_parts(table as *const _ as *const usize, FUNCTION_TABLE_WORDS)
+        };
+        assert!(words[3..].iter().all(|&w| w == 0), "{words:?}");
+        assert_eq!(ty.0.flags, VALUE::from(FREE_IMMEDIATELY_FLAG));
+    }
+
+    const FREE_IMMEDIATELY_FLAG: u32 =
+        rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_FREE_IMMEDIATELY as u32;
+}

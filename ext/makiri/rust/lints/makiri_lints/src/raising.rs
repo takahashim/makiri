@@ -42,6 +42,11 @@ use crate::{RAISING_CALL_OUTSIDE_PROTECT, UNRAISING_CALL_IN_RAW};
 /// headers: an entry the survey finds a path for, or whose doc names an
 /// exception, or that never returns, fails `rake dylint`.
 const NON_RAISING: &[&str] = &[
+    /* Frees, and the memory counter. They may start no collection: Ruby's
+     * objspace_malloc_increase_body collects for MEMOP_TYPE_MALLOC alone, and
+     * these pass MEMOP_TYPE_FREE and MEMOP_TYPE_REALLOC. */
+    "ruby_xfree",
+    "rb_gc_adjust_memory_usage",
     /* Reads of the thread and its current frame. */
     "rb_errinfo",
     "rb_block_given_p",
@@ -67,42 +72,24 @@ const NON_RAISING: &[&str] = &[
 ];
 
 /// Functions the survey finds a path for, which a person has read and finds
-/// raise nothing into the caller: each with the reason. The survey resolves a
-/// call through a function pointer to ANY address-taken function (the most
-/// conservative reading), so a path through one is no proof; a reason that
-/// names what the survey cannot see is the review. `check_non_raising.rb`
-/// fails an entry the survey no longer finds a path for (move it up) and one
-/// without a reason.
-const REVIEWED: &[(&str, &str)] = &[
-    (
-        "rb_thread_call_without_gvl2",
-        "the `2` variant passes RB_NOGVL_INTR_FAIL, which skips the interrupt check \
-         (thread.c, rb_nogvl); the survey's path is that check, and a call through a pointer",
-    ),
-    (
-        "rb_gc_mark",
-        "called only from a mark callback, inside the collector, where nothing is raised; \
-         the survey's paths are calls through pointers and the mark stack's out-of-memory, \
-         which the collector does not hand to a caller",
-    ),
-    (
-        "ruby_xfree",
-        "only frees: it counts the free as MEMOP_TYPE_FREE, and \
-         objspace_malloc_increase_body starts a collection for MEMOP_TYPE_MALLOC alone \
-         (gc.c 3.3.13, gc/default/default.c 3.4.9); the survey's path is that call, \
-         which it takes whatever the type",
-    ),
-    (
-        "rb_gc_adjust_memory_usage",
-        "a counter: it adds MEMOP_TYPE_REALLOC, which starts no collection (the next \
-         allocation sees the raised count and does); same path as ruby_xfree, same reason",
-    ),
-    (
-        "rb_attr_get",
-        "an ivar read; the survey's path is rb_st_lookup's call of the table's hash and \
-         compare functions through pointers, which for an ivar table are the integer ones",
-    ),
-];
+/// raise nothing, whoever calls them: each with the reason. The survey
+/// resolves a call through a function pointer to ANY address-taken function
+/// (`any`), so a path through one is no proof; its `typed` reading (a callee
+/// whose type matches the call's) drops those, and what is left is a path the
+/// source shows is not taken. A function that CAN raise, but not where the
+/// extension calls it (`rb_attr_get` outside the main Ractor, `rb_gc_mark` when
+/// memory runs out), is not here: the crate-wide table would let a new call
+/// site inherit what was true of the old, so each such call carries its own
+/// `allow` and reason. `check_non_raising.rb` fails an entry the survey no
+/// longer finds a path for (move it up) and one without a reason.
+const REVIEWED: &[(&str, &str)] = &[(
+    "rb_thread_call_without_gvl2",
+    "the survey's path is rb_nogvl -> vm_check_ints_blocking -> \
+     rb_threadptr_execute_interrupts -> rb_threadptr_to_kill, which rb_nogvl takes \
+     only when (flags & RB_NOGVL_INTR_FAIL) == 0 (thread.c); the `2` variant passes \
+     that flag, so a pending interrupt stays pending, for any caller. The survey does \
+     not follow a flag's value",
+)];
 
 /// Where the protection, `$!` and the raises on purpose live.
 const PROTECT: &str = "makiri::nupur::raw::protect";

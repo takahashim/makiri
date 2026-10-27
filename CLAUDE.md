@@ -163,6 +163,12 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   which reads the types; it is why raw `VALUE`s stay in `nupur/src/raw/` and
   `nupur/src/typed.rs`, since a lint sees a `VALUE` only as an integer. What it
   cannot see is a temporary handed straight to a call (`f(vec![v])`).
+  `rb_data_type_t` is built from a zeroed value with only `dmark`, `dfree`,
+  `dsize` and the flags set (`DataType::new`), and a size assertion stops the
+  build on a callback table nobody has read: it is 5 words up to Ruby 4.0 and 12
+  from 4.1 (`handle_weak_references`, `reserved[7]`), which broke every
+  extension that named the fields (magnus #163, #189). CI's Ruby head cell is
+  where the next change shows.
   A node wrapper's `NodeData` is EMBEDDED in its object's slot
   (`bridge::typed::EmbeddedType`, `RUBY_TYPED_EMBEDDABLE`, Ruby 3.3+): one
   allocation per wrapper, and the free callback drops the data without
@@ -191,11 +197,14 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   RAISING functions it replaced let `rb_undef_alloc_func` and
   `rb_obj_freeze` through.
   The survey (<https://takahashim.github.io/ruby-c-apis/>, github.com/
-  takahashim/ruby-c-apis) builds every public C function of the latest patch
-  release of each Ruby since 3.3 and HEAD, on Linux and macOS, to LLVM IR and
-  asks which reach a longjmp, a call through a function pointer reaching any
-  address-taken function (its most conservative reading, so a path may be a
-  false positive and a missing one cannot be). Its result is vendored in
+  takahashim/ruby-c-apis) builds every public C function of the first and the
+  latest patch release of each Ruby series since 3.3 (3.3.0, 3.3.13, 3.4.0,
+  3.4.12, 4.0.0, 4.0.9) and HEAD, on Linux and macOS, to LLVM IR and asks
+  which reach a longjmp, a call through a function pointer reaching any
+  address-taken function (`any`, its most conservative reading, so a path may
+  be a false positive and a missing one cannot be; its `typed` reading, a
+  callee whose type matches the call's, drops 60 of those paths and leaves
+  direct ones, which is what `REVIEWED` reasons cite). Its result is vendored in
   `lints/makiri_lints/raise_survey.json` (`script/update_raise_survey.rb`),
   and `rake dylint` runs `script/check_non_raising.rb`: a `NON_RAISING` entry
   the survey finds a path for, a `REVIEWED` one it no longer does or without
@@ -206,7 +215,15 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   protected `raw::obj_reveal`, and `Hidden::reveal` / `DocumentShell::install`
   return `Result`) and `rb_enc_get` / `rb_enc_get_index` (a File or Symbol
   raises: an `allow` at the String-only call sites); the headers say nothing
-  of any of them.
+  of any of them. `REVIEWED` holds what the survey keeps a path for and the
+  source shows never taken, whoever calls: `rb_thread_call_without_gvl2`
+  (the path needs a flag's value, which the `2` variant fixes). A function
+  that CAN raise, but not where the extension calls it, is an `allow` at that
+  call with its reason, never a crate-wide entry: `rb_gc_mark` in the mark
+  callback (it raises only when memory runs out, and that longjmp loses
+  nothing there) and `rb_attr_get` in `ivar_get` (it raises only in a
+  non-main Ractor, which never reaches the extension: it is not declared
+  Ractor-safe, so Ruby refuses its methods there - `spec/ractor_spec.rb`).
   `raising_call_outside_protect` fails on such a call outside the closure
   handed to `raw::call` (a function that raises only for what its caller
   rules out, `rb_obj_is_kind_of` with a non-class, is an `allow` at its
@@ -1628,6 +1645,32 @@ Key decisions that got there, worth not regressing:
   (~2× on 8 cores); verify with `bench`'s threaded rows and the `GC.stress`
   `spec/threading_spec.rb` (which now also asserts shared-document XPath+mutation
   and shared-context evaluate are crash-free under the GVL).
+  **An evaluation holds the GVL, so an interrupt waits for it** - `Timeout`,
+  `Thread#raise` and a signal handler, and every other Ruby thread (about 0.3 s
+  at the 50M-op default, the worst a pathological `following::`/`preceding::`
+  nesting reached). So the budgets ask: an XPath run's op cap and a CSS query's
+  step cap are charged in chunks (`crate::interrupt::CHUNK`, 2^18), and at a
+  chunk's end the budget asks `rb_thread_interrupted` through a probe installed
+  at `Init_makiri` (`crate::interrupt`, the seam `crate::stack` is for the
+  native stack). If one waits the run STOPS (`ErrorKind::Interrupted`,
+  `MatchFailure::Interrupted`), every guard and borrow dropped as for any
+  failure; `bridge::interrupt::interruptible` then delivers it
+  (`rb_thread_check_ints`: a `Timeout` comes back as `Err`, a handler runs) with
+  nothing held and runs the query again, which only reads. It does NOT check in
+  place, for what that would change: yielding the GVL under the read guard runs
+  other threads against it (their edits refused as `Makiri::Error` where they
+  used to queue behind the GVL), and the handler's Ruby could reach what the
+  evaluation holds. Nor can it restart without bound: a time-slice timer sets the
+  same flag a `Timeout` does and cannot be told from it, so a query over a slice
+  with another thread running would restart for ever - hence `PASSES` (3), the
+  last pass not asked, which is the query as it was. The hot path is still one
+  compare against a cap (`Cell` now, a chunk lower); `limits::admit`, Verus's
+  rule, is unchanged and `chunks_leave_the_cap_exact` pins that exactly the
+  budget is admitted. Measured against the commit before: XPath unchanged, CSS
+  and `at_css` +2-3% on the micro rows. `spec/interrupt_spec.rb` sends signals
+  from a child process while a query runs. (magnus #104 is the same wait, for a
+  worker that never shut down; `rb_thread_interrupted` is in `raw` under `call`,
+  since the raise survey finds a path for it.)
 - **`//tag` is served from the element index** (`xpath/step_index.rs`): a document-rooted, predicate-free, unprefixed
   descendant name-test pushes the tag bucket instead of walking. Pure-HTML only
   (`has_foreign` guard) and each candidate is re-checked with the step's

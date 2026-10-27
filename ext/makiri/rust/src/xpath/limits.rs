@@ -65,6 +65,15 @@ pub struct Budget {
     ast_nodes: Cell<usize>,
     /// Evaluator steps charged by the current evaluate.
     eval_ops: Cell<usize>,
+    /// The cap `eval_ops` is charged against now. `limits.max_eval_ops`, or -
+    /// when this run may be stopped for an interrupt (`poll`) - the end of the
+    /// current chunk of it ([`crate::interrupt::CHUNK`]), where
+    /// [`op_refused`](Self::op_refused) asks and moves it on. Exactly
+    /// `max_eval_ops` charges are admitted either way.
+    op_cap: Cell<usize>,
+    /// May this run be stopped to deliver an interrupt: read once, when it is made
+    /// ([`crate::interrupt::armed`]).
+    poll: bool,
     /// The current evaluation (or parse) recursion depth.
     recursion_depth: Cell<usize>,
     /// The failure slot. A shared `RefCell` rather than a plain field so a sink
@@ -115,10 +124,17 @@ impl Budget {
 
     /// `limits`, nothing charged, and no error yet.
     pub fn with_limits(limits: Limits) -> Budget {
+        let poll = crate::interrupt::armed();
         Budget {
             limits,
             ast_nodes: Cell::new(0),
             eval_ops: Cell::new(0),
+            op_cap: Cell::new(if poll {
+                limits.max_eval_ops.min(crate::interrupt::CHUNK)
+            } else {
+                limits.max_eval_ops
+            }),
+            poll,
             recursion_depth: Cell::new(0),
             /* The engine's one infallible allocation, and a stated exception
              * to the falloc line: a fixed few dozen bytes per run, before any
@@ -167,10 +183,32 @@ impl Budget {
     /// query if misapplied, trading one foot-gun-free rule for a conditional one.
     #[inline]
     pub fn charge_op(&self) -> Result<(), Reported> {
-        if !take(&self.eval_ops, 1, self.limits.max_eval_ops) {
-            return Err(over_eval_ops(self.limits.max_eval_ops, self.sink()));
+        if !take(&self.eval_ops, 1, self.op_cap.get()) {
+            return self.op_refused(1);
         }
         Ok(())
+    }
+
+    /// A charge of `n` ops the current cap refused: the end of an interrupt
+    /// chunk, or the budget itself. At a chunk's end, ask for an interrupt
+    /// (stop if there is one) and otherwise open the next chunk and charge
+    /// again; at the budget's end, the limit.
+    #[cold]
+    #[inline(never)]
+    fn op_refused(&self, n: usize) -> Result<(), Reported> {
+        let max = self.limits.max_eval_ops;
+        if self.poll && self.op_cap.get() < max {
+            if crate::interrupt::pending() {
+                return Err(interrupted(self.sink()));
+            }
+            let ops = self.eval_ops.get();
+            self.op_cap
+                .set(ops.saturating_add(crate::interrupt::CHUNK.max(n)).min(max));
+            if take(&self.eval_ops, n, self.op_cap.get()) {
+                return Ok(());
+            }
+        }
+        Err(over_eval_ops(max, self.sink()))
     }
 
     /// Charge the building of `bytes` of string-value: one op per
@@ -185,12 +223,9 @@ impl Budget {
     /// priced a query by text size times nesting depth, and refused
     /// `//*[contains(., "x")]` on a 21 MB page 150 elements deep.
     pub fn charge_bytes(&self, bytes: usize) -> Result<(), Reported> {
-        if !take(
-            &self.eval_ops,
-            bytes / BYTES_PER_OP,
-            self.limits.max_eval_ops,
-        ) {
-            return Err(over_eval_ops(self.limits.max_eval_ops, self.sink()));
+        let n = bytes / BYTES_PER_OP;
+        if !take(&self.eval_ops, n, self.op_cap.get()) {
+            return self.op_refused(n);
         }
         Ok(())
     }
@@ -287,6 +322,12 @@ fn over_ast_nodes(max: usize, err: ErrSink) -> Reported {
 
 #[cold]
 #[inline(never)]
+fn interrupted(err: ErrSink) -> Reported {
+    err_setf!(err, ErrorKind::Interrupted, "evaluation interrupted")
+}
+
+#[cold]
+#[inline(never)]
 fn over_eval_ops(max: usize, err: ErrSink) -> Reported {
     err_setf!(
         err,
@@ -379,4 +420,66 @@ fn check(value: usize, max: usize, noun: &str, err: ErrSink) -> Result<(), Repor
         return Err(over_check(max, noun, err));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod interrupt_tests {
+    use super::*;
+    use crate::interrupt::{test_probe, Armed, CHUNK};
+
+    fn budget(max: usize) -> Budget {
+        Budget::with_limits(Limits {
+            max_eval_ops: max,
+            ..Limits::DEFAULT
+        })
+    }
+
+    /// Charges admitted until the first refusal, and the refusal's kind.
+    fn run_out(b: &Budget) -> (usize, ErrorKind) {
+        let mut admitted = 0;
+        while b.charge_op().is_ok() {
+            admitted += 1;
+        }
+        (admitted, b.take_error().status)
+    }
+
+    #[test]
+    fn chunks_leave_the_cap_exact() {
+        test_probe::waiting(false);
+        let max = 3 * CHUNK + 5;
+        for armed in [false, true] {
+            let _a = Armed::set(armed);
+            let (admitted, kind) = run_out(&budget(max));
+            assert_eq!((admitted, kind), (max, ErrorKind::Limit), "armed={armed}");
+        }
+    }
+
+    #[test]
+    fn an_armed_run_stops_at_the_chunk_where_an_interrupt_waits() {
+        let _a = Armed::set(true);
+        test_probe::waiting(true);
+        let (admitted, kind) = run_out(&budget(10 * CHUNK));
+        test_probe::waiting(false);
+        assert_eq!((admitted, kind), (CHUNK, ErrorKind::Interrupted));
+    }
+
+    #[test]
+    fn a_run_not_asked_ignores_a_waiting_interrupt() {
+        let _a = Armed::set(false);
+        test_probe::waiting(true);
+        let (admitted, kind) = run_out(&budget(2 * CHUNK));
+        test_probe::waiting(false);
+        assert_eq!((admitted, kind), (2 * CHUNK, ErrorKind::Limit));
+    }
+
+    #[test]
+    fn a_bulk_charge_past_the_chunk_is_admitted_when_the_budget_allows() {
+        test_probe::waiting(false);
+        let _a = Armed::set(true);
+        let b = budget(100 * CHUNK);
+        // 3 chunks' worth of ops in one go (`charge_bytes` prices by bytes).
+        assert!(b.charge_bytes(3 * CHUNK * BYTES_PER_OP).is_ok());
+        assert!(b.charge_bytes(200 * CHUNK * BYTES_PER_OP).is_err());
+        assert_eq!(b.take_error().status, ErrorKind::Limit);
+    }
 }
