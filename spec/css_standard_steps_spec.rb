@@ -59,6 +59,31 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
     expect(Makiri::Lexbor::CSS.parse_stylesheet("@-א x {}").first[:name]).to eq("-א")
     expect(Makiri::Lexbor::CSS.parse_stylesheet("@-¶ x {}").first[:type]).to eq(:bad_style)
   end
+  # C30, C31: a pseudo-element is a valid selector that matches no element
+  # (querySelectorAll), and ends the complex selector; the legacy
+  # single-colon spellings are the same; the pseudo-classes that need state a
+  # static document lacks are valid and match nothing.
+  it "accepts pseudo-elements and the state pseudo-classes, which match nothing" do
+    doc = Makiri::HTML("<div><p>t</p></div>")
+    %w[::before p::before :before p:after p:first-line p:FIRST-LETTER ::selection ::marker
+       p::before:hover p::before::after :visited :target :focus-visible :focus-within
+       :fullscreen :user-invalid].each do |sel|
+      expect(doc.css(sel)).to be_empty, sel
+    end
+    expect(doc.css("p::before, div").map(&:name)).to eq(["div"])
+  end
+
+  it "rejects what may not follow or nest a pseudo-element" do
+    doc = Makiri::HTML("<div><p>t</p></div>")
+    ["p::before b", "p::before > b", "p::before.c", "p::before:first-child",
+     "p::before:not(.x)", "p::before#i", ":not(::before)", "::inactive-selection",
+     "p:before:after"].each do |sel|
+      expect { doc.css(sel) }.to raise_error(Makiri::CSS::SyntaxError), sel
+    end
+    # Forgiving: the pseudo-element alternative is dropped, not the selector.
+    expect(Makiri::HTML("<p class=x>t</p>").css("p:is(::before, .x)").size).to eq(1)
+  end
+
   # C29: "convert a string to a number": the nearest double to the digits.
   # 11543495214036735 lies halfway between two doubles and goes to the even
   # one; Lexbor's conversion is not correctly rounded and gives ...734.

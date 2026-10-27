@@ -165,11 +165,11 @@ RSpec.describe Makiri::Lexbor::CSS do
       expect(rules[1][:selectors][0][:text]).to eq(".a")
     end
 
-    it "surfaces a pseudo-element rule as :bad_style with raw text + declarations" do
+    it "reads a pseudo-element rule as a style rule" do
       rules = parse('p::before { content: "x"; color: blue }')
       expect(rules.size).to eq(1)
-      expect(rules[0][:type]).to eq(:bad_style)
-      expect(rules[0][:selector_text].strip).to eq("p::before")
+      expect(rules[0][:type]).to eq(:style)
+      expect(rules[0][:selectors][0][:text]).to eq("p::before")
       expect(rules[0][:declarations]).to eq(
         [{ name: "content", value: '"x"', important: false },
          { name: "color", value: "blue", important: false }]
@@ -274,8 +274,8 @@ RSpec.describe Makiri::Lexbor::CSS do
     end
 
     it "trims a :bad_style prelude" do
-      expect(parse("  :focus-within  {x:y}")[0][:selector_text]).to eq(":focus-within")
-      expect(parse(" \t ::before \n {x:y}")[0][:selector_text]).to eq("::before")
+      expect(parse("  :current  {x:y}")[0][:selector_text]).to eq(":current")
+      expect(parse(" \t ::nope \n {x:y}")[0][:selector_text]).to eq("::nope")
     end
 
     # Trimming used to drop every byte up to 0x20 and an escaped space with it,

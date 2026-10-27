@@ -264,10 +264,10 @@ xml|p:-lexbor-contains(ONE) = RAISE Makiri::CSS::SyntaxError: invalid CSS select
 html|p:-lexbor-contains(ONE) = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p:-lexbor-contains(ONE)
 xml@s1|p:-lexbor-contains(ONE) = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p:-lexbor-contains(ONE)
 html@s1|p:-lexbor-contains(ONE) = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p:-lexbor-contains(ONE)
-xml|p::before = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p::before
-html|p::before = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p::before
-xml@s1|p::before = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p::before
-html@s1|p::before = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: p::before
+xml|p::before = []
+html|p::before = []
+xml@s1|p::before = []
+html@s1|p::before = []
 xml|[data-n=1 i] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: [data-n=1 i]
 html|[data-n=1 i] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: [data-n=1 i]
 xml@s1|[data-n=1 i] = RAISE Makiri::CSS::SyntaxError: invalid CSS selector: [data-n=1 i]
@@ -316,7 +316,7 @@ at_css = two
 matches = true
 ---- branch counts ----
 cap=1
-empty=53
+empty=57
 matched=203
 ns_selector=3
-raised=56
+raised=52

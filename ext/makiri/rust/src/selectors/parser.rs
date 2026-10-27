@@ -275,6 +275,10 @@ struct Selectors {
     combinator: u8,
     comb_default: u8,
     err_in_function: bool,
+    /// A pseudo-element has been read in the complex selector being parsed:
+    /// nothing but a pseudo-element or a user-action pseudo-class may follow
+    /// (C30).
+    after_element: bool,
 }
 
 /// `lxb_css_syntax_anb_t`.
@@ -447,6 +451,7 @@ impl<'a> Parser<'a> {
                 combinator: comb::DESCENDANT,
                 comb_default: comb::DESCENDANT,
                 err_in_function: false,
+                after_element: false,
             },
             ast: Ast::default(),
             budget: input.len().saturating_mul(1000).saturating_add(1 << 16),
@@ -1258,10 +1263,25 @@ impl<'a> Parser<'a> {
                         return self.fail(st);
                     };
                     token = t;
+                    /* A pseudo-element ends the complex selector (C30). */
+                    if self.sel.after_element
+                        && compat::fixed(Fix::C30)
+                        && !matches!(token.ty, T::End | T::Comma)
+                    {
+                        self.done();
+                        return self.unexpected();
+                    }
                     continue;
                 }
-                T::End | T::Comma => return self.done(),
+                T::End | T::Comma => {
+                    self.sel.after_element = false;
+                    return self.done();
+                }
                 T::Delim => {
+                    if self.sel.after_element && compat::fixed(Fix::C30) {
+                        self.done();
+                        return self.unexpected();
+                    }
                     match token.delim {
                         0x3E => self.sel.combinator = comb::CHILD,
                         0x2B => self.sel.combinator = comb::SIBLING,
@@ -1447,7 +1467,11 @@ impl<'a> Parser<'a> {
             return self.fail(st);
         };
         let status = if token.ty == T::Ident {
-            self.pseudo_class(token)
+            if compat::fixed(Fix::C30) {
+                self.pseudo_class_after_element(token)
+            } else {
+                self.pseudo_class(token)
+            }
         } else if token.ty == T::Colon {
             self.consume();
             let Some(token) = self.token() else {
@@ -1461,7 +1485,8 @@ impl<'a> Parser<'a> {
             } else {
                 return self.unexpected();
             }
-        } else if token.ty != T::Function {
+        } else if token.ty != T::Function || compat::fixed(Fix::C30) {
+            /* No functional pseudo-class follows a pseudo-element (C30). */
             return self.unexpected();
         } else {
             self.pseudo_class_function(token, St::CompoundPseudo)
@@ -1825,16 +1850,35 @@ impl<'a> Parser<'a> {
             Ok(id) => id,
             Err(st) => return st,
         };
+        /* C30: `:before`, `:after`, `:first-line` and `:first-letter` are the
+         * legacy spellings of pseudo-elements. */
+        if compat::fixed(Fix::C30) {
+            if let Some(element) = pseudo::element_by_name(self.tkz.string(token.string)) {
+                if matches!(
+                    element.id,
+                    element::AFTER | element::BEFORE | element::FIRST_LETTER | element::FIRST_LINE
+                ) {
+                    return self.legacy_pseudo_element(id, element.id);
+                }
+            }
+        }
         let Some(pseudo) = pseudo::class_by_name(self.tkz.string(token.string)) else {
             return self.unexpected_status();
         };
+        /* C31: these match nothing in a static document, and are valid. */
+        let never_matches = matches!(
+            pseudo.id,
+            class::FOCUS_VISIBLE
+                | class::FOCUS_WITHIN
+                | class::FULLSCREEN
+                | class::TARGET
+                | class::USER_INVALID
+                | class::VISITED
+        );
         if matches!(
             pseudo.id,
             class::CURRENT
                 | class::DEFAULT
-                | class::FOCUS_VISIBLE
-                | class::FOCUS_WITHIN
-                | class::FULLSCREEN
                 | class::FUTURE
                 | class::IN_RANGE
                 | class::INDETERMINATE
@@ -1843,13 +1887,11 @@ impl<'a> Parser<'a> {
                 | class::OUT_OF_RANGE
                 | class::PAST
                 | class::SCOPE
-                | class::TARGET
                 | class::TARGET_WITHIN
-                | class::USER_INVALID
                 | class::VALID
-                | class::VISITED
                 | class::WARNING
-        ) {
+        ) || (never_matches && !compat::fixed(Fix::C31))
+        {
             return self.unexpected_status();
         }
         let s = self.ast.sel_mut(id);
@@ -1930,28 +1972,71 @@ impl<'a> Parser<'a> {
         let Some(pseudo) = pseudo::element_by_name(self.tkz.string(token.string)) else {
             return self.unexpected_status();
         };
-        if matches!(
-            pseudo.id,
-            element::AFTER
-                | element::BACKDROP
-                | element::BEFORE
-                | element::FIRST_LETTER
-                | element::FIRST_LINE
-                | element::GRAMMAR_ERROR
-                | element::INACTIVE_SELECTION
-                | element::MARKER
-                | element::PLACEHOLDER
-                | element::SELECTION
-                | element::SPELLING_ERROR
-                | element::TARGET_TEXT
-        ) {
+        /* C30: a pseudo-element is valid, but not in a function's argument,
+         * and `::inactive-selection` is no browser's. */
+        let rejected = if compat::fixed(Fix::C30) {
+            self.sel.parent.is_some() || pseudo.id == element::INACTIVE_SELECTION
+        } else {
+            matches!(
+                pseudo.id,
+                element::AFTER
+                    | element::BACKDROP
+                    | element::BEFORE
+                    | element::FIRST_LETTER
+                    | element::FIRST_LINE
+                    | element::GRAMMAR_ERROR
+                    | element::INACTIVE_SELECTION
+                    | element::MARKER
+                    | element::PLACEHOLDER
+                    | element::SELECTION
+                    | element::SPELLING_ERROR
+                    | element::TARGET_TEXT
+            )
+        };
+        if rejected {
             return self.unexpected_status();
         }
         let s = self.ast.sel_mut(id);
         s.pseudo_type = pseudo.id;
         s.data = PseudoData::None;
+        self.sel.after_element = true;
         self.consume();
         Status::Ok
+    }
+
+    /// C30: `:before` and its three kin, read as the pseudo-elements they
+    /// stand for. `id` is the selector `pseudo_class` made for the name.
+    fn legacy_pseudo_element(&mut self, id: SelId, element: u32) -> Status {
+        if self.sel.parent.is_some() {
+            return self.unexpected_status();
+        }
+        let s = self.ast.sel_mut(id);
+        s.ty = sel_type::PSEUDO_ELEMENT;
+        s.pseudo_type = element;
+        s.data = PseudoData::None;
+        self.rules[self.r].state = St::CompoundPseudo;
+        self.sel.after_element = true;
+        self.consume();
+        Status::Ok
+    }
+
+    /// C30: a pseudo-class after a pseudo-element, which may only be a
+    /// user-action one.
+    fn pseudo_class_after_element(&mut self, token: Token) -> Status {
+        let user_action = pseudo::class_by_name(self.tkz.string(token.string)).is_some_and(|p| {
+            matches!(
+                p.id,
+                class::ACTIVE
+                    | class::FOCUS
+                    | class::FOCUS_VISIBLE
+                    | class::FOCUS_WITHIN
+                    | class::HOVER
+            )
+        });
+        if !user_action {
+            return self.unexpected_status();
+        }
+        self.pseudo_class(token)
     }
 
     /// `lxb_css_selectors_state_pseudo_element_function`.

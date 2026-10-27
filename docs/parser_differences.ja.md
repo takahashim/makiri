@@ -503,6 +503,23 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **移植版**：`selectors/number.rs` の `value` が、数字と指数から `"<digits>e<exp>"` を固定長の配列に組み、`str::parse::<f64>` で読む。Lexbor の変換（`selectors/strtod.rs`）は、`compat::as_lexbor` の中と参照用の機能（`lexbor-reference`）のビルドだけに残る。差分の許可は、入力に 16 桁以上の数字（と `.`）の並びがあるとき。
 - **テスト**：`spec/css_standard_steps_spec.rb`。
 
+### C30 擬似要素
+
+- **分類**：参照実装の未対応。移植版で直した。
+- **仕様**：擬似要素は有効なセレクタ要素で、`querySelectorAll` は何にも一致させない（`matches()` は偽）。複合セレクタの末尾に置き、後ろには別の擬似要素と user-action の擬似クラス（`:hover`、`:active`、`:focus`、`:focus-visible`、`:focus-within`）だけが続ける。`:is()` や `:not()` の引数の中には置けない。`:before`、`:after`、`:first-line`、`:first-letter` は、コロン一つでも書ける旧来の表記である。
+- **再現**：`p::before`、`::selection`、`p:after`、`p::before:hover`。Lexbor は擬似要素の名前を表に持つが、パーサが全部を拒むので `CSS::SyntaxError`（stylesheet は `bad_style`）になる。`p::before b` や `p::before:first-child` は仕様では無効で、Lexbor は（擬似要素を拒むので）答えが出なかった。
+- **移植版**：`selectors/parser.rs` の `pseudo_element` が、関数の引数の中と `::inactive-selection`（どのブラウザにもない）を除いて受け付け、`legacy_pseudo_element` が旧来の四つの名前を擬似要素にする。擬似要素のあとは `compound_pseudo` が user-action の擬似クラスと擬似要素だけを通し（`pseudo_class_after_element`）、`complex_end` が結合子と空白のあとの複合セレクタを拒む。matcher は擬似要素を含む選択子を何にも一致させる。差分の許可は、入力に `:` があるとき。
+- **互換性**：これまで `SyntaxError` だった `a::before` が、空の結果を返す。ブラウザに合わせた変更である。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
+### C31 状態を持たない擬似クラス
+
+- **分類**：参照実装の未対応。移植版で直した。
+- **仕様**：`:visited`、`:target`、`:focus-visible`、`:focus-within`、`:fullscreen`、`:user-invalid` は有効な擬似クラスで、状態のない静的な文書では何にも一致しない。
+- **移植版**：`selectors/parser.rs` の `pseudo_class` が拒むのをやめる。matcher はこれらを偽にする。差分の許可は、入力に `:` があるとき。
+- **対応しないもの**：`:current`、`:past`、`:future`、`:local-link`、`:target-within`、`:warning` は、ブラウザの `querySelectorAll` が受け付けないので、拒むままにする。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
 ## パーサの外の項目
 
 次の差は HTML パーサではなく、DOM の上の層（CSS マッチャ、XPath の名前照合）にある。

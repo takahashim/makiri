@@ -139,6 +139,15 @@ pub enum Fix {
     /// "convert a string to a number" has it; Lexbor's conversion is not
     /// correctly rounded.
     C29,
+    /// A pseudo-element (`::before`, and `:before` of the four legacy
+    /// names) is valid and matches no element, as `querySelectorAll` has it;
+    /// it ends a complex selector, and only the user-action pseudo-classes
+    /// and other pseudo-elements follow it in the compound.
+    C30,
+    /// `:visited`, `:target`, `:focus-visible`, `:focus-within`,
+    /// `:fullscreen` and `:user-invalid` are valid and match nothing in a
+    /// static document.
+    C31,
     /// A selector's namespace prefix is resolved against the caller's
     /// bindings (M6, M7): `p|E` is E in that namespace, `|E` E in none, an
     /// undeclared prefix invalid. Lexbor ignores every prefix. A matcher
@@ -305,6 +314,11 @@ pub fn css_explains(input: &[u8]) -> Vec<Fix> {
         .any(|w| w.iter().all(|b| b.is_ascii_digit() || *b == b'.'))
     {
         fixes.push(Fix::C29);
+    }
+    /* C30, C31: a pseudo-class or pseudo-element. */
+    if input.contains(&b':') {
+        fixes.push(Fix::C30);
+        fixes.push(Fix::C31);
     }
     /* C22: an An+B's digits run past a long. */
     if has(input, b"n-") && input.windows(19).any(|w| w.iter().all(u8::is_ascii_digit)) {
