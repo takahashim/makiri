@@ -142,6 +142,9 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
   # 11543495214036735 lies halfway between two doubles and goes to the even
   # one; Lexbor's conversion is not correctly rounded and gives ...734.
   it "reads a number as the nearest double" do
+    # An+B is kept in a C long, which is 32 bits on Windows: the value
+    # saturates there before its last bit shows.
+    skip "a C long is 32 bits here" if [1].pack("l!").bytesize < 8
     sheet = Makiri::Lexbor::CSS.parse_stylesheet(":nth-child(11543495214036735) {}")
     expect(sheet.first[:selectors].first[:text]).to eq(":nth-child(11543495214036736)")
   end
