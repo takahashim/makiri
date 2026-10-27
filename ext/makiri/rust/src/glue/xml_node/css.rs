@@ -13,13 +13,12 @@ use crate::bridge::rb::{prelude::*, Error, Ruby, Value};
 use crate::method;
 
 use super::{wrap, XmlSelf};
-use crate::bridge::interrupt::{interruptible, Pass};
+use crate::bridge::interrupt::interruptible;
 use crate::bridge::node_set::node_set_from;
 use crate::bridge::string::ruby_verified_text;
 use crate::css_cache;
 use crate::css_match;
-use crate::css_match::{MatchFailure, QueryFailure};
-use crate::glue::css::{match_error, parse_error, query_error, CssArgs};
+use crate::glue::css::{parse_error, pass_match, pass_query, CssArgs};
 use crate::init::MOD_XML_NODE_METHODS;
 use crate::xml::css::XmlNode;
 
@@ -38,18 +37,13 @@ fn css(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result<Value, 
                 css_match::select_all(scratch, XmlNode::new(&d, this.id), groups, ns)
             })
             .map_err(|e| parse_error(e, selector))?;
-            let nodes = match matched {
-                Err(QueryFailure::Match(MatchFailure::Interrupted)) => {
-                    return Ok(Pass::Interrupted)
-                }
-                other => other.map_err(|e| query_error(e, selector))?,
-            };
-            node_set_from(
-                ruby,
-                this.document,
-                nodes.into_iter().map(|n| n.id().into()),
-            )
-            .map(Pass::Done)
+            pass_query(matched, selector)?.then(|nodes| {
+                node_set_from(
+                    ruby,
+                    this.document,
+                    nodes.into_iter().map(|n| n.id().into()),
+                )
+            })
         })
     })?;
     drop(sv);
@@ -68,12 +62,7 @@ fn at_css(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result<Opti
                 css_match::select_first(scratch, XmlNode::new(&d, this.id), groups, ns)
             })
             .map_err(|e| parse_error(e, selector))?;
-            match matched {
-                Err(MatchFailure::Interrupted) => Ok(Pass::Interrupted),
-                other => Ok(Pass::Done(
-                    other.map_err(|e| match_error(e, selector))?.map(|n| n.id()),
-                )),
-            }
+            pass_match(matched, selector).map(|pass| pass.map(|n| n.map(|n| n.id())))
         })
     })??;
     drop(sv);
@@ -93,10 +82,7 @@ fn css_matches(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result
                 css_match::matches_any(scratch, groups, ns, XmlNode::new(&d, this.id))
             })
             .map_err(|e| parse_error(e, selector))?;
-            match matched {
-                Err(MatchFailure::Interrupted) => Ok(Pass::Interrupted),
-                other => other.map(Pass::Done).map_err(|e| match_error(e, selector)),
-            }
+            pass_match(matched, selector)
         })
     })?;
     drop(sv);

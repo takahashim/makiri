@@ -19,6 +19,24 @@ pub enum Pass<T> {
     Interrupted,
 }
 
+impl<T> Pass<T> {
+    /// The answer, changed by `f`; an interrupted pass stays interrupted.
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Pass<U> {
+        match self {
+            Pass::Done(answer) => Pass::Done(f(answer)),
+            Pass::Interrupted => Pass::Interrupted,
+        }
+    }
+
+    /// As [`map`](Self::map), for an `f` that can fail.
+    pub fn then<U, E>(self, f: impl FnOnce(T) -> Result<U, E>) -> Result<Pass<U>, E> {
+        match self {
+            Pass::Done(answer) => f(answer).map(Pass::Done),
+            Pass::Interrupted => Ok(Pass::Interrupted),
+        }
+    }
+}
+
 /// Run a query so that an interrupt reaches the thread: `pass` runs it with
 /// [`crate::interrupt::armed`] set, and returns [`Pass::Interrupted`] once it
 /// has stopped and let go of every guard and borrow it took. The interrupt is
