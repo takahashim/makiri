@@ -270,11 +270,13 @@ pub fn evaluate_query(
     document: Value,
     answer: Answer,
 ) -> Result<XPathValue, Error> {
-    let had_order = crate::bridge::wrapper::has_kept_order(document);
+    let had_order = crate::bridge::wrapper::has_kept_order(document)?;
     let result = ctx.run(document, ast, answer);
     /* A document-order index the evaluate built is the document's now. */
-    crate::bridge::wrapper::account_kept_order(ruby, document, had_order);
-    result?.map_err(|error| xpath_error(&error))
+    let accounted = crate::bridge::wrapper::account_kept_order(ruby, document, had_order);
+    let value = result?;
+    accounted?;
+    value.map_err(|error| xpath_error(&error))
 }
 
 /// Evaluate `ast` under `ctx` and convert the value for Ruby: every query that

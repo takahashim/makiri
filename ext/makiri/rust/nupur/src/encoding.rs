@@ -69,15 +69,13 @@ impl Encoding {
         let Some(c) = crate::rb::class::CName::new(name) else {
             return Ok(None);
         };
+        use crate::rb::Builtin::{ArgumentError, LoadError};
         match crate::raw::keeping_errinfo(|| crate::raw::enc_find(ruby, &c)) {
             Ok(found) => Ok(found),
-            Err(e)
-                if e.is_kind_of(ruby, crate::rb::Builtin::LoadError)
-                    || e.is_kind_of(ruby, crate::rb::Builtin::ArgumentError) =>
-            {
+            Err(e) => {
+                e.rescue(ruby, &[LoadError, ArgumentError])?;
                 Ok(None)
             }
-            Err(e) => Err(e),
         }
     }
 

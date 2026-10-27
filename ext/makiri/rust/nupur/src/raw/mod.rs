@@ -357,6 +357,30 @@ pub fn yield_value(_: &Ruby, v: Value) -> Result<Value, Error> {
     Ok(unsafe { Value::from_raw(out) })
 }
 
+/// [`yield_value`], and what the block's exit or exception came back as
+/// DROPPED: the suite's stand-in for a method that loses an `Err` (the
+/// extension's `Makiri.__drop_exit`), so it can check that the trampoline
+/// still resumes the exit (`spec/pending_exit_spec.rb`). Here, not in the
+/// extension, which forbids dropping one; nothing else calls it.
+#[doc(hidden)]
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        runs_callers_ruby,
+        reason = "the test hook's block, which is the point of it"
+    )
+)]
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        discarded_ruby_error,
+        reason = "dropping the block's exit is what the test hook is for"
+    )
+)]
+pub fn yield_dropping_error_for_test(ruby: &Ruby) {
+    let _ = yield_value(ruby, crate::rb::value::nil(ruby));
+}
+
 /// `rb_hash_foreach` over `h`, `visit` answering after each pair whether to
 /// go on. Raises `RuntimeError` when the Hash is changed in a way the walk
 /// cannot survive (a key added or the table rehashed).

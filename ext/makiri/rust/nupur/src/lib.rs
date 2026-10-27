@@ -82,6 +82,11 @@
  * compiling this crate as a plain dependency: there the extension's lints,
  * which the `allow`s here name, are unknown. */
 #![cfg_attr(dylint_lib = "makiri_lints", allow(unknown_lints))]
+/* An `Err` of a Ruby error is never dropped: `Error::rescue` handles the
+ * classes it names and hands every exit back. `deny` here, not `forbid` as
+ * in the extension: the layer's one drop is `describe::for_message`, a
+ * message's lookup, allowed there with its reason. */
+#![cfg_attr(dylint_lib = "makiri_lints", deny(discarded_ruby_error))]
 
 /// The lints' self-test for this crate (`rake dylint`).
 #[cfg(nupur_lint_probe)]

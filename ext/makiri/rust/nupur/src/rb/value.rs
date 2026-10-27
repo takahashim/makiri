@@ -78,20 +78,14 @@ pub trait ReprValue: Copy {
     /// The name of the value's class, for a message, written into `f` -
     /// "Object" when the name cannot be made (an anonymous class's is a fresh
     /// String, and so an allocation that can fail).
-    #[cfg_attr(
-        dylint_lib = "makiri_lints",
-        allow(
-            discarded_ruby_error,
-            reason = "a message cannot raise: a name that cannot be made is written as Object"
-        )
-    )]
     fn write_classname(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        crate::raw::keeping_errinfo(|| {
-            crate::raw::with_classname(self.as_value(), |name| {
-                core::fmt::Display::fmt(&crate::msg::Lossy(name), f)
+        let v = self.as_value();
+        crate::describe::for_message(|| {
+            crate::raw::with_classname(v, |name| {
+                core::fmt::Display::fmt(&crate::msg::Lossy(name), &mut *f)
             })
         })
-        .unwrap_or_else(|_| f.write_str("Object"))
+        .unwrap_or_else(|| f.write_str("Object"))
     }
 }
 

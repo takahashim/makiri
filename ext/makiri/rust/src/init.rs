@@ -257,29 +257,14 @@ fn panic_probe(ruby: &Ruby, kind: Value) -> Result<(), Error> {
 }
 
 /// `Makiri.__drop_exit { ... }` - yield once and drop what the block's exit
-/// came back as: what a method that reads a failed call as "no answer" does
-/// with a `throw`, a `break` or a thread kill that reached it. The exit must
-/// still be resumed - by the trampoline, as the method returns
-/// (`spec/pending_exit_spec.rb`) - rather than lost, or left pending for
-/// another method or thread to resume. Any build.
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        runs_callers_ruby,
-        reason = "the test hook's block, which is the point of it"
-    )
-)]
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        discarded_ruby_error,
-        reason = "dropping the block's exit is what the hook is for"
-    )
-)]
-fn drop_exit(ruby: &Ruby) -> Result<(), Error> {
-    let nil = crate::bridge::rb::value::nil(ruby);
-    let _ = crate::bridge::raw::yield_value(ruby, nil);
-    Ok(())
+/// or exception came back as: a method that loses an `Err`, which the lints
+/// keep out of the extension, and so made by nupur
+/// (`raw::yield_dropping_error_for_test`). A dropped `throw`, `break` or
+/// thread kill must still be resumed - by the trampoline, as the method
+/// returns (`spec/pending_exit_spec.rb`) - never lost, nor left pending for
+/// another method or thread. Any build.
+fn drop_exit(ruby: &Ruby) {
+    crate::bridge::raw::yield_dropping_error_for_test(ruby);
 }
 
 /// `Makiri::XML.__decode(str)` - the strict input decode in isolation, without

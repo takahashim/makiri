@@ -4,7 +4,29 @@
 
 #![allow(unsafe_code)]
 
-use crate::rb::{prelude::*, RString, Ruby, Value};
+use crate::rb::{prelude::*, Error, RString, Ruby, Value};
+
+/// A lookup made only to word a message - a Symbol's name, a class's name,
+/// an ID - with `$!` kept: its value, or `None` for the message to write a
+/// fallback in its place.
+///
+/// The one place the layer drops a Ruby error, and why that is safe: these
+/// calls run no Ruby code and deliver no interrupt, so what can fail is an
+/// allocation (`NoMemoryError`), which a message answers with a fallback, or
+/// the exit already pending (a `throw`, a `break`, a kill), which every
+/// protected call answers while one is and the trampoline resumes however
+/// the method ends. Anything that runs Ruby goes through `?` or
+/// [`Error::rescue`] instead.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        discarded_ruby_error,
+        reason = "a message's lookup: an allocation failure is written as a fallback, and a pending exit is the trampoline's"
+    )
+)]
+pub(crate) fn for_message<T>(f: impl FnOnce() -> Result<T, Error>) -> Option<T> {
+    crate::raw::keeping_errinfo(f).ok()
+}
 
 /// `v` for an error message, written without calling it: a Symbol as
 /// `:name`, a String quoted, anything else by its class (`#inspect` would be
@@ -12,19 +34,11 @@ use crate::rb::{prelude::*, RString, Ruby, Value};
 pub struct Describe(pub Value);
 
 impl core::fmt::Display for Describe {
-    #[cfg_attr(
-        dylint_lib = "makiri_lints",
-        allow(
-            discarded_ruby_error,
-            reason = "a message cannot raise: a Symbol whose name cannot be made is written by its class"
-        )
-    )]
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let v = self.0;
         if let Some(sym) = crate::rb::Symbol::from_value(v) {
-            /* `keeping_errinfo`: a name that cannot be made is written by
-             * the class instead, and `$!` must not be cleared for it. */
-            if let Ok(s) = crate::raw::keeping_errinfo(|| super::raw::sym2str(sym)) {
+            /* A name that cannot be made is written by the class instead. */
+            if let Some(s) = for_message(|| super::raw::sym2str(sym)) {
                 // SAFETY: written out at once; formatting runs no Ruby.
                 return write!(f, ":{}", crate::msg::Lossy(unsafe { s.as_slice() }));
             }
@@ -47,27 +61,19 @@ impl core::fmt::Display for Describe {
 pub struct AsText(pub Value);
 
 impl core::fmt::Display for AsText {
-    #[cfg_attr(
-        dylint_lib = "makiri_lints",
-        allow(
-            discarded_ruby_error,
-            reason = "a message cannot raise: a Symbol whose name cannot be made is written as Describe has it"
-        )
-    )]
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let v = self.0;
         /* The String or the Symbol's name, read directly: `name_arg` would
          * build (and format) a whole TypeError for any other value, only for
          * it to be thrown away here. */
         let text = match crate::rb::Symbol::from_value(v) {
-            /* `keeping_errinfo`, as `Describe`'s. */
-            Some(sym) => crate::raw::keeping_errinfo(|| super::raw::sym2str(sym)),
+            Some(sym) => for_message(|| super::raw::sym2str(sym)),
             None => match RString::from_value(v) {
-                Some(s) => Ok(s),
+                Some(s) => Some(s),
                 None => return Describe(v).fmt(f),
             },
         };
-        if let Ok(s) = text {
+        if let Some(s) = text {
             // SAFETY: written out at once; formatting runs no Ruby.
             return crate::msg::Lossy(unsafe { s.as_slice() }).fmt(f);
         }
@@ -95,21 +101,11 @@ const EXCEPTION_MESSAGE_MAX: usize = 255;
 pub struct ExceptionText<'a>(pub &'a Ruby, pub Value);
 
 impl core::fmt::Display for ExceptionText<'_> {
-    #[cfg_attr(
-        dylint_lib = "makiri_lints",
-        allow(
-            discarded_ruby_error,
-            reason = "a message cannot raise: a message that cannot be read is written as \"error\""
-        )
-    )]
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         /* The message is the exception's `mesg`, read as an attribute: calling
          * `#message` would run its class's Ruby. A message that is not a
          * String is answered as "error". */
-        /* `keeping_errinfo`: this words another error, and must not clear
-         * `$!` when the name cannot be made. */
-        let Ok(id) = crate::raw::keeping_errinfo(|| super::raw::intern_cstr(self.0, c"mesg"))
-        else {
+        let Some(id) = for_message(|| super::raw::intern_cstr(self.0, c"mesg")) else {
             return f.write_str("error");
         };
         /* An attribute read: it runs no Ruby and raises nothing. */
