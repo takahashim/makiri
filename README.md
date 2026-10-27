@@ -33,7 +33,9 @@ dependency.
     differential, and property-based testing vs Nokogiri (see below).
 * Bounded, fail-closed execution
   * XPath evaluation is bounded by per-evaluation limits on work, memory, and recursion.
-  * HTML parsing bounds the tree depth (`max_tree_depth:`, default 400).
+  * HTML parsing bounds the tree depth (`max_tree_depth:`, default 400) and the
+    size of the document it builds against its input (`max_amplification:`,
+    default 256 times, never less than 64 MiB).
   * Ownership and borrowing are kept explicit across layers, with owned/borrowed
     string types and verified text at engine boundaries.
   * Programmatic invalid input, limit violations, allocation failures, and unsupported constructs
@@ -79,6 +81,11 @@ Makiri::HTML(bytes, encoding: "euc-jp")
 # Nesting deeper than 400 elements raises Makiri::Error (Nokogiri's default);
 # max_tree_depth: raises the limit, and a negative value disables it
 Makiri::HTML(deep_html, max_tree_depth: 2000)
+
+# A short input cannot build an enormous document: more than 256 times the
+# input (and 64 MiB) raises Makiri::Error; max_amplification: changes the ratio,
+# and a negative value disables it
+Makiri::HTML(html, max_amplification: 1024)
 
 # Serialization
 doc.at_css("#main").to_html             # => "<div id=\"main\" ...>...</div>"
