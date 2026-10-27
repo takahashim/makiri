@@ -476,6 +476,21 @@ pub fn boolean(ruby: &Ruby, b: bool) -> Value {
     }
 }
 
+/// `RB_GC_GUARD`: keep `v` where the GC's stack scan finds it up to here.
+///
+/// A borrow of an object's data ([`crate::typed::TypedType::get`],
+/// [`crate::typed::Typed::data`]) keeps its `Value` alive to the type
+/// checker only: once the `Value` itself is no longer used, the optimizer may
+/// drop it from every register and stack slot, and the data pointer left -
+/// a non-embedded type's data is a malloc'd block - is not one the scan
+/// takes for the object. Call this after the last use of such a borrow when
+/// nothing else keeps the object (a method's receiver and arguments are kept
+/// by Ruby's own stack, and a slot's value by its owner).
+#[inline(always)]
+pub fn gc_guard(v: impl ReprValue) {
+    core::hint::black_box(&v.as_value());
+}
+
 /// VALUE identity, for the several sites that compare two references.
 #[inline]
 pub fn same_value(a: impl ReprValue, b: impl ReprValue) -> bool {

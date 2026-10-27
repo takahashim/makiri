@@ -130,10 +130,15 @@ fn discards_ruby_errors() {
     let _ = fallible(); //~
     let _ = fallible().is_ok(); //~
     let _ = fallible().unwrap_or(0); //~
+    if let Ok(_n) = fallible() {} //~
+    let Ok(_n) = fallible() else { return }; //~
 }
 
 fn passes_ruby_errors_on() -> Result<u32, crate::bridge::rb::Error> {
     let n = fallible()?;
     let _ = fallible().map(|_| ())?;
+    if let Err(e) = fallible() {
+        return Err(e);
+    }
     Ok(n)
 }

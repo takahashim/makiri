@@ -56,23 +56,29 @@ impl Encoding {
     /// `rb_enc_find` wants a C string and the name is bytes, so the NUL is
     /// added here. A name too long to fit, or holding a NUL, is not one Ruby
     /// knows, so it reads as None rather than being truncated at the NUL. So
-    /// does a lookup whose autoload failed (`LoadError`, `NoMemoryError`): the
-    /// caller then refuses the name as unknown, never reads with another.
-    #[cfg_attr(
-        dylint_lib = "makiri_lints",
-        allow(
-            discarded_ruby_error,
-            reason = "a lookup that fails is an unknown name, which the caller refuses"
-        )
-    )]
-    pub fn find(ruby: &crate::rb::Ruby, name: &[u8]) -> Option<Encoding> {
+    /// does a lookup Ruby refuses (`LoadError`, `ArgumentError`): the caller
+    /// then refuses the name as unknown, never reads with another.
+    ///
+    /// Any other `Err` is passed on: what reaches the autoload - a thread
+    /// kill, a `throw`, `NoMemoryError` - is not an answer about the name,
+    /// and read as one it would be lost (a kill's thread would run on).
+    pub fn find(ruby: &crate::rb::Ruby, name: &[u8]) -> Result<Option<Encoding>, crate::rb::Error> {
         if name.is_empty() {
-            return None;
+            return Ok(None);
         }
-        let c = crate::rb::class::CName::new(name)?;
-        crate::raw::keeping_errinfo(|| crate::raw::enc_find(ruby, &c))
-            .ok()
-            .flatten()
+        let Some(c) = crate::rb::class::CName::new(name) else {
+            return Ok(None);
+        };
+        match crate::raw::keeping_errinfo(|| crate::raw::enc_find(ruby, &c)) {
+            Ok(found) => Ok(found),
+            Err(e)
+                if e.is_kind_of(ruby, crate::rb::Builtin::LoadError)
+                    || e.is_kind_of(ruby, crate::rb::Builtin::ArgumentError) =>
+            {
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// An encoding from Ruby's pointer to it.

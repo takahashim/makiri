@@ -256,6 +256,32 @@ fn panic_probe(ruby: &Ruby, kind: Value) -> Result<(), Error> {
     Ok(())
 }
 
+/// `Makiri.__drop_exit { ... }` - yield once and drop what the block's exit
+/// came back as: what a method that reads a failed call as "no answer" does
+/// with a `throw`, a `break` or a thread kill that reached it. The exit must
+/// still be resumed - by the trampoline, as the method returns
+/// (`spec/pending_exit_spec.rb`) - rather than lost, or left pending for
+/// another method or thread to resume. Any build.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        runs_callers_ruby,
+        reason = "the test hook's block, which is the point of it"
+    )
+)]
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        discarded_ruby_error,
+        reason = "dropping the block's exit is what the hook is for"
+    )
+)]
+fn drop_exit(ruby: &Ruby) -> Result<(), Error> {
+    let nil = crate::bridge::rb::value::nil(ruby);
+    let _ = crate::bridge::raw::yield_value(ruby, nil);
+    Ok(())
+}
+
 /// `Makiri::XML.__decode(str)` - the strict input decode in isolation, without
 /// the tokenizer or the tree builder (`spec/xml_decode_spec.rb`).
 fn xml_decode(ruby: &Ruby, str: Value) -> Result<Value, Error> {
@@ -502,6 +528,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
 
     makiri.define_singleton_method("__alloc_inject?", function!(alloc_inject_p, 0))?;
     makiri.define_singleton_method("__panic", function!(panic_probe, 1))?;
+    makiri.define_singleton_method("__drop_exit", function!(drop_exit, 0))?;
     makiri.define_singleton_method("__alloc_inject", function!(alloc_inject, 1))?;
     makiri.define_singleton_method("__alloc_inject_calls", function!(alloc_inject_calls, 0))?;
     makiri.define_singleton_method("__raise_inject", function!(raise_inject, 1))?;

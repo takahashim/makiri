@@ -72,11 +72,11 @@ pub enum GivenEncoding {
 impl GivenEncoding {
     /// The encoding `name` names, or None for a name neither Ruby nor the
     /// Encoding Standard knows. May autoload a Ruby encoding - see
-    /// [`Encoding::find`].
-    pub fn resolve(ruby: &Ruby, name: &[u8]) -> Option<GivenEncoding> {
-        Encoding::find(ruby, name)
+    /// [`Encoding::find`], whose `Err` (not an unknown name) is passed on.
+    pub fn resolve(ruby: &Ruby, name: &[u8]) -> Result<Option<GivenEncoding>, Error> {
+        Ok(Encoding::find(ruby, name)?
             .map(GivenEncoding::Ruby)
-            .or_else(|| crate::html::encoding::for_label(name).map(GivenEncoding::Label))
+            .or_else(|| crate::html::encoding::for_label(name).map(GivenEncoding::Label)))
     }
 }
 

@@ -21,8 +21,10 @@
 //! - `raw_node_crossing`: a borrowed HTML node handle made a lifetime-free
 //!   `RawNode` in `bridge/`, each one allowed where it is made.
 //! - `discarded_ruby_error`: a `Result<_, bridge::rb::Error>` whose `Err` is
-//!   thrown away (`.ok()`, `.unwrap_or*`, `.is_ok()`, `let _ =`): a raise or a
-//!   `throw` in it would be lost, and the call taken as having answered.
+//!   thrown away (`.ok()`, `.unwrap_or*`, `.is_ok()`, `let _ =`, and a
+//!   pattern that matches only `Ok` - `if let Ok(..)`, `let Ok(..) else`):
+//!   a raise or a `throw` in it would be lost, and the call taken as having
+//!   answered.
 //! - `ruby_surface_in_bridge`: a Ruby method defined, or an argument list
 //!   split, in `bridge/` - the glue's work.
 
@@ -585,6 +587,24 @@ fn check_discarded_error<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
             &format!(".{}()", seg.ident.name),
         );
     }
+    /* `if let Ok(..) = r` / `while let Ok(..) = r`: the `Err` arm is the
+     * fall-through, which binds nothing. */
+    if let ExprKind::Let(let_expr) = expr.kind
+        && matches_only_ok(let_expr.pat)
+        && is_ruby_result(cx, cx.typeck_results().expr_ty(let_expr.init))
+    {
+        report_discarded(cx, expr.span.source_callsite(), "if let Ok(..)");
+    }
+}
+
+/// Whether `pat` is `Ok(..)`: a pattern on a `Result` that leaves the `Err`
+/// to an arm that cannot see it.
+fn matches_only_ok(pat: &rustc_hir::Pat<'_>) -> bool {
+    matches!(
+        pat.kind,
+        PatKind::TupleStruct(QPath::Resolved(_, path), ..)
+            if path.segments.last().is_some_and(|s| s.ident.name.as_str() == "Ok")
+    )
 }
 
 pub fn check_local<'tcx>(cx: &LateContext<'tcx>, local: &'tcx LetStmt<'tcx>) {
@@ -596,5 +616,12 @@ pub fn check_local<'tcx>(cx: &LateContext<'tcx>, local: &'tcx LetStmt<'tcx>) {
         && is_ruby_result(cx, cx.typeck_results().expr_ty(init))
     {
         report_discarded(cx, local.span.source_callsite(), "let _ =");
+    }
+    if local.els.is_some()
+        && matches_only_ok(local.pat)
+        && let Some(init) = local.init
+        && is_ruby_result(cx, cx.typeck_results().expr_ty(init))
+    {
+        report_discarded(cx, local.span.source_callsite(), "let Ok(..) else");
     }
 }

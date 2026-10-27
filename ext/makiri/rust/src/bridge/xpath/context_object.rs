@@ -189,7 +189,8 @@ impl XPathCtx {
         let document = keepalive_document(ruby, rb_node)?;
         let mut ctx = context_for(ruby, rb_node, document)?;
         ctx.set_lax(lax);
-        let obj = XPATH_CTX_TYPE.wrap_hidden(
+        /* No slot, so the root type is named. */
+        let obj = XPATH_CTX_TYPE.wrap_hidden::<Value>(
             ruby,
             CLASS_XPATH_CONTEXT.defined(ruby)?,
             XPathCtx {

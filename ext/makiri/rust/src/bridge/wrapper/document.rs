@@ -253,7 +253,7 @@ impl DocumentShell {
         /* Hidden, so no Ruby code reaches the table through `ObjectSpace` to
          * clear, freeze or fill it: its values are handed out as node
          * wrappers unchecked. */
-        let nodes = crate::nupur::table::IntTable::new_hidden(ruby)?.as_value();
+        let nodes = crate::nupur::table::IntTable::new_hidden(ruby)?;
         let obj = ty.wrap_hidden(
             ruby,
             klass,

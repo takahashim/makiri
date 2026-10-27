@@ -69,7 +69,7 @@ fn encoding_arg(ruby: &Ruby, v: Value) -> Result<Option<GivenEncoding>, Error> {
     let len = label.len();
     drop(label);
     let name = &name[..len];
-    GivenEncoding::resolve(ruby, name)
+    GivenEncoding::resolve(ruby, name)?
         .map(Some)
         .ok_or_else(|| unknown(name))
 }

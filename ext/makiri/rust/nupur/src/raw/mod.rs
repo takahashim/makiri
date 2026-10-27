@@ -51,7 +51,9 @@ mod protect;
 #[cfg(feature = "alloc-inject")]
 pub use protect::set_raise_injector;
 use protect::{call, injected_raise};
-pub(crate) use protect::{exc_fatal, exc_raise, keeping_errinfo, reset_pending_exit, resume};
+pub(crate) use protect::{
+    exc_fatal, exc_raise, keeping_errinfo, pending_exit, reset_pending_exit, resume,
+};
 
 /* ---- what the value-level wrappers share ---- */
 

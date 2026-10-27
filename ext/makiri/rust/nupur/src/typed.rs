@@ -45,6 +45,38 @@ unsafe fn value(raw: VALUE) -> Value {
     unsafe { Value::from_raw(raw) }
 }
 
+/// What an object's slot can be given ([`TypedType::wrap`]'s `roots`): any
+/// Ruby value, or a value only a slot may keep - a hidden
+/// [`IntTable`](crate::table::IntTable), which hands out no `Value` of its
+/// own, since a hidden object has no class and Ruby code given one would
+/// crash on it. Sealed: the value is read by this module alone.
+pub trait Root: Copy + sealed::Root {}
+
+impl<T: Copy + sealed::Root> Root for T {}
+
+pub(crate) mod sealed {
+    use crate::rb::{ReprValue, Value};
+
+    /// [`super::Root`]'s value, out of reach of the crate's users.
+    pub trait Root {
+        fn root_value(self) -> Value;
+    }
+
+    impl<T: ReprValue> Root for T {
+        #[inline]
+        fn root_value(self) -> Value {
+            self.as_value()
+        }
+    }
+
+    impl Root for crate::table::IntTable {
+        #[inline]
+        fn root_value(self) -> Value {
+            self.as_value()
+        }
+    }
+}
+
 /// A Rust value owned by a Ruby object: what [`TypedType`] wraps.
 ///
 /// It holds no Ruby value - those are the object's slots (`roots` in
@@ -327,7 +359,10 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
     /// The payload behind `v`, or Ruby's own `TypeError`.
     ///
     /// Borrowed for as long as the caller borrows `v`, the object that owns the
-    /// data - so the reference cannot outlive the VALUE it came from.
+    /// data - so the reference cannot outlive the VALUE it came from. That
+    /// borrow is the type checker's alone: the object must be kept alive
+    /// as well - by Ruby (a receiver, an argument, a slot's owner) or by
+    /// [`crate::rb::value::gc_guard`] after the reference's last use.
     pub fn get<'v>(&'static self, v: &'v Value) -> Result<&'v T, Error> {
         let p = typed_data(*v, &self.raw)? as *const Envelope<T, N>;
         // SAFETY: `typed_data` verified the type, and the wrapper owns the data.
@@ -380,12 +415,12 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
     /// they are on this frame through the allocation - where the GC's stack
     /// scan keeps the roots alive and in place - and both are written into
     /// the object right after it, with nothing run between ([`wrap_built`]).
-    pub fn wrap(
+    pub fn wrap<R: Root>(
         &'static self,
         _: &crate::rb::Ruby,
         klass: crate::rb::DataClass,
         data: T,
-        roots: [Value; N],
+        roots: [R; N],
     ) -> Result<Value, Error> {
         // SAFETY: under the GVL (`&Ruby`), and `ty` is this payload's own type.
         let obj = unsafe {
@@ -393,7 +428,7 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
                 klass.as_raw(),
                 self.raw.as_ptr(),
                 data,
-                roots.map(|v| v.as_raw()),
+                roots.map(|v| sealed::Root::root_value(v).as_raw()),
             )
         }?;
         // SAFETY: the object just wrapped, live on this frame.
@@ -411,7 +446,11 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
 /// freed before the object), and a non-embedded type's data, which is all
 /// this reads, is its own allocation, which compaction does not move. The `Value` is the
 /// caller's, on its stack, which keeps the object alive while the handle is
-/// used (`rake dylint`'s `ruby_value_on_heap` sees it as a Ruby value).
+/// used (`rake dylint`'s `ruby_value_on_heap` sees it as a Ruby value) - so
+/// long as the handle is still used after the data is: a [`data`](Self::data)
+/// borrow outliving the handle's last use needs the object kept by Ruby (a
+/// receiver, an argument, a slot's owner) or by
+/// [`crate::rb::value::gc_guard`], as [`TypedType::get`]'s does.
 pub struct Typed<T: Payload + 'static, const N: usize> {
     obj: Value,
     _t: PhantomData<fn() -> T>,
@@ -468,12 +507,12 @@ impl<T: Payload + 'static, const N: usize> TypedType<T, N> {
     /// a non-embedded type's data leaves an object of the class with no data,
     /// visible, which every reader refuses (`typed_data`); one never revealed
     /// stays hidden for the GC to free.
-    pub fn wrap_hidden(
+    pub fn wrap_hidden<R: Root>(
         &'static self,
         ruby: &crate::rb::Ruby,
         klass: crate::rb::DataClass,
         data: T,
-        roots: [Value; N],
+        roots: [R; N],
         ivars: &[(crate::rb::Id, Value)],
     ) -> Result<Hidden<T, N>, Error> {
         let obj = self.wrap(ruby, klass, data, roots)?;
@@ -581,12 +620,12 @@ impl<T: Payload + Copy, const N: usize> EmbeddedType<T, N> {
     }
 
     /// [`TypedType::wrap`].
-    pub fn wrap(
+    pub fn wrap<R: Root>(
         &'static self,
         ruby: &crate::rb::Ruby,
         klass: crate::rb::DataClass,
         data: T,
-        roots: [Value; N],
+        roots: [R; N],
     ) -> Result<Value, Error> {
         self.0.wrap(ruby, klass, data, roots)
     }

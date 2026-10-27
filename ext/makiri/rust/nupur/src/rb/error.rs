@@ -183,9 +183,13 @@ impl Error {
     /// Raise it. Only a method's trampoline calls this, as its last act:
     /// the raise is a `longjmp` over every frame up to Ruby's, which runs no
     /// destructor, so nothing may be owned on the way - and nothing is.
+    ///
+    /// An exit still pending ([`crate::raw::pending_exit`]) goes first,
+    /// whatever this error is: the method dropped the exit's own `Err`, and
+    /// a `throw` or a kill must not be lost for the error that followed it.
     #[inline]
     pub(crate) fn raise(self, ruby: &Ruby) -> ! {
-        let mut e = self;
+        let mut e = crate::raw::pending_exit().unwrap_or(self);
         loop {
             let exc = match e.0 {
                 Kind::Jump(state) => crate::raw::resume(state),

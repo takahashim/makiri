@@ -7,7 +7,9 @@
 //! them itself, and the owner keeps one value (the table) where its mark
 //! finds it. Its keys are Fixnums, which hash and compare in C, so no Ruby
 //! code runs on a lookup; how an integer becomes one is the layer's
-//! (`raw::table_get` / `table_set`), as is the hiding of the Hash.
+//! (`raw::table_get` / `table_set`), as is the hiding of the Hash. An
+//! owner keeps it by handing it to its wrap as a slot's root
+//! ([`crate::typed::Root`]): it is never a `Value` of its own.
 
 #![forbid(unsafe_code)]
 
@@ -32,9 +34,11 @@ impl IntTable {
         RHash::from_value(v).map(IntTable)
     }
 
-    /// The table as a value, for its owner to keep.
+    /// The table as a value. The layer's alone: a hidden object has no
+    /// class, so the table is handed out only as a slot's root
+    /// ([`crate::typed::Root`]), never as a `Value` Ruby code could be given.
     #[inline]
-    pub fn as_value(self) -> Value {
+    pub(crate) fn as_value(self) -> Value {
         self.0.as_value()
     }
 
