@@ -138,21 +138,28 @@ RSpec.describe "GC accounting of document arenas" do
 
   # The namespace and prefix tables are the document's too: a megabyte of
   # namespace URI used to leave both the memsize and the GC report unchanged.
-  it "counts and reports a document's own namespaces" do
-    doc = Makiri::HTML("")
-    before = ObjectSpace.memsize_of(doc)
-    uri = "urn:" + ("x" * 1_000_000)
-    GC.start
-    GC.disable
-    begin
-      reported = GC.stat(:malloc_increase_bytes)
+  describe "a document's own namespaces" do
+    let(:uri) { ("urn:" + ("x" * 1_000_000)).freeze }
+
+    it "are the Document's memsize" do
+      doc = Makiri::HTML("")
+      before = ObjectSpace.memsize_of(doc)
       doc.create_element_ns(uri, "p:x")
-      reported = GC.stat(:malloc_increase_bytes) - reported
-    ensure
-      GC.enable
+      expect(ObjectSpace.memsize_of(doc) - before).to be >= 1_000_000
     end
-    expect(ObjectSpace.memsize_of(doc) - before).to be >= 1_000_000
-    expect(reported).to be >= 1_000_000
+
+    # The figure the GC is given is not read back (malloc_increase_bytes is a
+    # net of every other allocation and free, and Ruby head's differs from 3.4's
+    # by a few KB), so this asks what the report is for: pressure. The one URI
+    # String is made once, so Ruby itself allocates next to nothing in the loop;
+    # only the 64 documents' reports can account for 64 MB, past
+    # malloc_limit_max (32 MB), and a collection has to follow.
+    it "let memory pressure from dropped documents trigger a collection" do
+      GC.start
+      before = GC.count
+      64.times { Makiri::HTML("").create_element_ns(uri, "p:x") }
+      expect(GC.count).to be > before
+    end
   end
 
   describe "the node cache survives compaction" do
