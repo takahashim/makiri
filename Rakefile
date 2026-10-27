@@ -437,6 +437,46 @@ begin
   require "ruby_memcheck"
   require "ruby_memcheck/rspec/rake_task"
 
+  # Valgrind 3.26.0 (Ubuntu 26.04) writes `<still_reachable>` in its XML
+  # leak summary WITHOUT the closing tag when nothing is still reachable:
+  #
+  #   <still_reachable>
+  #     <bytes>0</bytes>
+  #     <blocks>0</blocks>
+  #   <suppressed>
+  #
+  # (with a block still reachable the tag closes). ruby_memcheck 3.0.1 then
+  # cannot parse the file ("Opening and ending tag mismatch: still_reachable
+  # and leak_summary"), on every process that frees everything, after every
+  # example has passed. Close the tag before ruby_memcheck reads the file; a
+  # file Valgrind closed itself is not touched. Drop this once Valgrind or
+  # ruby_memcheck fixes it.
+  require "zlib"
+  module RepairUnclosedStillReachable
+    UNCLOSED = %r{(<still_reachable>\s*<bytes>[^<]*</bytes>\s*<blocks>[^<]*</blocks>\s*)(?=<suppressed>)}
+
+    def self.repair(xml)
+      xml.gsub(UNCLOSED) { "#{Regexp.last_match(1)}</still_reachable>\n  " }
+    end
+
+    private
+
+    def parse_valgrind_output
+      keep = ENV["VALGRIND_XML_KEEP"]
+      FileUtils.mkdir_p(keep) if keep
+      valgrind_xml_files.each do |file|
+        xml = File.read(file)
+        fixed = RepairUnclosedStillReachable.repair(xml)
+        File.write(file, fixed) unless fixed == xml
+        # ruby_memcheck deletes the XML once parsed; keep a gzipped copy to read
+        # an error's origin (VALGRIND_XML_KEEP=<dir>, set by valgrind.yml).
+        Zlib::GzipWriter.open(File.join(keep, "#{File.basename(file)}.gz")) { |gz| gz.write(fixed) } if keep
+      end
+      super
+    end
+  end
+  RubyMemcheck::TestTaskReporter.prepend(RepairUnclosedStillReachable)
+
   RubyMemcheck.config(
     binary_name: "makiri",
     filter_all_errors: true,    # apply the binary-touch filter to ALL error kinds,
@@ -466,6 +506,8 @@ begin
       # frames (PR #55).
       "--leak-check=full",
       "--show-leak-kinds=definite",
+      # Options of a manual run (valgrind.yml's `valgrind_options`).
+      *ENV.fetch("VALGRIND_EXTRA", "").split,
     ],
   )
 
