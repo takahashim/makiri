@@ -129,6 +129,8 @@ fn fallible() -> Result<u32, crate::bridge::rb::Error> {
 fn discards_ruby_errors() {
     let _ = fallible().ok(); //~
     let _ = fallible(); //~
+    let _unread = fallible(); //~
+    let _e = crate::bridge::ruby::type_error("x"); //~
     let _ = fallible().is_ok(); //~
     let _ = fallible().unwrap_or(0); //~
     let _n: Result<u32, ()> = fallible().or(Ok(0)); //~

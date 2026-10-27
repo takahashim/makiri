@@ -22,7 +22,8 @@
 //!   `RawNode` in `bridge/`, each one allowed where it is made.
 //! - `discarded_ruby_error`: a `Result<_, bridge::rb::Error>` whose `Err` is
 //!   thrown away - `.ok()`, `.unwrap_or*`, `.is_ok()`, `.or(..)`, a
-//!   `.map_err` / `.or_else` closure that ignores it, `let _ =`, a pattern
+//!   `.map_err` / `.or_else` closure that ignores it, `let _ =` or
+//!   `let _name =` (an `Error` itself too), a pattern
 //!   that leaves it unbound (`if let Ok(..)`, `let Ok(..) else`, a `match`
 //!   arm `Err(_)` or `_`), or an `Error` handed to `drop` / `mem::forget`: a
 //!   raise or a `throw` in it would be lost, and the call taken as having
@@ -691,9 +692,14 @@ pub fn check_local<'tcx>(cx: &LateContext<'tcx>, local: &'tcx LetStmt<'tcx>) {
     if !is_extension(cx) {
         return;
     }
-    if let PatKind::Wild = local.pat.kind
+    /* `let _ = r` and `let _r = r`: a name that starts with `_` says it is
+     * not read, and an `Error` bound so is as lost as a `Result`'s. */
+    if ignores(local.pat)
         && let Some(init) = local.init
-        && is_ruby_result(cx, cx.typeck_results().expr_ty(init))
+        && {
+            let ty = cx.typeck_results().expr_ty(init);
+            is_ruby_result(cx, ty) || is_ruby_error(cx, ty)
+        }
     {
         report_discarded(cx, local.span.source_callsite(), "let _ =");
     }

@@ -418,7 +418,7 @@ bundle exec rake dylint            # the crate's own lints (lints/makiri_lints),
                                    # raw_node_crossing, ruby_surface_in_bridge,
                                    # discarded_ruby_error (an Err of bridge::rb::Error
                                    # thrown away by .ok() / .unwrap_or* / .is_ok() /
-                                   # let _ = / an Ok-only or Err(_) pattern / a
+                                   # let _ = / let _name = / an Ok-only or Err(_) pattern / a
                                    # map_err(|_| ..) / drop; FORBIDDEN in the
                                    # extension, so no allow: handle with
                                    # Error::rescue, which hands every throw/break/
