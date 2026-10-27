@@ -12,8 +12,6 @@ use crate::bridge::rb::ReprValue;
 use crate::bridge::rb::{Error, RString, Value};
 use crate::bridge::ruby::makiri_error;
 
-/// The shared owned buffer.
-use crate::cbuf::OwnedBuf;
 use crate::utf8_copy::{CopyError, FillError, Utf8Copy};
 
 use super::*;
@@ -149,30 +147,6 @@ impl crate::utf8_copy::Source for StrSource<'_> {
     }
 }
 
-/// The first `N` bytes of `s` (all of them when it is shorter), copied, with
-/// how many there are: what a sniff of a document's start reads, owned.
-pub(in crate::bridge) fn prefix<const N: usize>(ruby: &Ruby, s: RString) -> ([u8; N], usize) {
-    let mut out = [0u8; N];
-    let n = s.copy_to(ruby, 0, &mut out);
-    (out, n)
-}
-
-/// A live Ruby String's bytes from `off` (none past its end), copied into an
-/// owned buffer reserved for exactly them.
-pub fn ruby_string_bytes_from(ruby: &Ruby, s: RString, off: usize) -> Result<OwnedBuf, Error> {
-    let n = s.len().saturating_sub(off);
-    /* Nothing runs between the reservation and the copy that could change
-     * the String; `append_to` checks the room again, and refuses rather than
-     * grows. */
-    OwnedBuf::reserved(n, |v| s.append_to(ruby, off, v).is_ok())
-        .ok_or_else(|| makiri_error("out of memory reading a Ruby string"))
-}
-
-/// A live Ruby String's raw bytes, copied into an owned buffer.
-pub fn ruby_string_bytes(ruby: &Ruby, s: RString) -> Result<OwnedBuf, Error> {
-    ruby_string_bytes_from(ruby, s, 0)
-}
-
 /* ---- the strict text contract ---- */
 
 /// What the strict-text check found.
@@ -203,17 +177,11 @@ pub fn text_check(
 /// Why a String in another encoding was refused ([`Refusal::Encoding`]).
 const NOT_UTF8_CONVERTIBLE: &str = "could not be converted to UTF-8 from its encoding";
 
-/// The error for a String whose transcode to UTF-8 raised `e`: an
-/// `EncodingError` is the String's own fault, worded as the contract's
-/// refusal; anything else - a `NoMemoryError`, an interrupt delivered while
-/// Ruby loaded a converter - is not about the String, and is returned as it
-/// was rather than reworded as one.
+/// The error for a String whose transcode to UTF-8 raised `e`: the String's
+/// own fault ([`is_encoding_fault`]) worded as the contract's refusal, anything
+/// else returned as it was ([`transcode_refusal`] decides).
 fn encoding_refusal(ruby: &Ruby, what: &str, e: Error) -> Error {
-    if e.is_kind_of(ruby, crate::bridge::rb::Builtin::EncodingError) {
-        text_error(what, NOT_UTF8_CONVERTIBLE)
-    } else {
-        e
-    }
+    transcode_refusal(ruby, e).into_error(|reason| text_error(what, reason))
 }
 
 /// The error for a checked view whose bytes could not be copied.
@@ -357,7 +325,7 @@ impl TextRefusal {
 /// [`TextRefusal`] for a raise in the transcode: an `EncodingError` is the
 /// String's own fault, anything else is passed on.
 fn transcode_refusal(ruby: &Ruby, e: Error) -> TextRefusal {
-    if e.is_kind_of(ruby, crate::bridge::rb::Builtin::EncodingError) {
+    if is_encoding_fault(ruby, &e) {
         TextRefusal::Invalid(NOT_UTF8_CONVERTIBLE)
     } else {
         TextRefusal::Raised(e)

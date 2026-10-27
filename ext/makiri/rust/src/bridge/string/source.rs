@@ -6,6 +6,7 @@
 
 use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, RString};
+use crate::bridge::ruby::makiri_error;
 
 /// The shared owned buffer.
 use crate::cbuf::OwnedBuf;
@@ -152,4 +153,30 @@ impl DocumentSource {
             known_valid_utf8: self.source.known_valid(),
         }
     }
+}
+
+/* ---- a String's bytes, copied out ---- */
+
+/// The first `N` bytes of `s` (all of them when it is shorter), copied, with
+/// how many there are: what a sniff of a document's start reads, owned.
+pub(in crate::bridge) fn prefix<const N: usize>(ruby: &Ruby, s: RString) -> ([u8; N], usize) {
+    let mut out = [0u8; N];
+    let n = s.copy_to(ruby, 0, &mut out);
+    (out, n)
+}
+
+/// A live Ruby String's bytes from `off` (none past its end), copied into an
+/// owned buffer reserved for exactly them.
+pub fn ruby_string_bytes_from(ruby: &Ruby, s: RString, off: usize) -> Result<OwnedBuf, Error> {
+    let n = s.len().saturating_sub(off);
+    /* Nothing runs between the reservation and the copy that could change
+     * the String; `append_to` checks the room again, and refuses rather than
+     * grows. */
+    OwnedBuf::reserved(n, |v| s.append_to(ruby, off, v).is_ok())
+        .ok_or_else(|| makiri_error("out of memory reading a Ruby string"))
+}
+
+/// A live Ruby String's raw bytes, copied into an owned buffer.
+pub fn ruby_string_bytes(ruby: &Ruby, s: RString) -> Result<OwnedBuf, Error> {
+    ruby_string_bytes_from(ruby, s, 0)
 }

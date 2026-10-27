@@ -10,6 +10,15 @@ pub use crate::nupur::encoding::Encoding;
 
 /* ---- encoding ---- */
 
+/// Is `e`, raised while reading a String as UTF-8, the String's own fault -
+/// an `EncodingError` (an undefined conversion, an invalid byte sequence, no
+/// converter)? Anything else (`NoMemoryError`, an interrupt delivered while
+/// Ruby loaded a converter) is not about the String, and its reader passes it
+/// on as it was. The one place that decides which is which.
+pub fn is_encoding_fault(ruby: &Ruby, e: &Error) -> bool {
+    e.is_kind_of(ruby, crate::bridge::rb::Builtin::EncodingError)
+}
+
 /// `v` as an encoding argument: the encoding, and the name to write for it -
 /// the String or Symbol as the caller wrote it, or an `Encoding`'s own name.
 pub fn encoding_arg(ruby: &Ruby, v: Value) -> Result<(Encoding, crate::cbuf::OwnedBuf), Error> {
