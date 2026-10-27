@@ -33,9 +33,9 @@ pub fn interruptible<T>(
     ruby: &crate::bridge::rb::Ruby,
     mut pass: impl FnMut() -> Result<Pass<T>, crate::bridge::rb::Error>,
 ) -> Result<T, crate::bridge::rb::Error> {
-    for n in 1..=crate::interrupt::PASSES {
+    for _ in 1..crate::interrupt::PASSES {
         let outcome = {
-            let _armed = crate::interrupt::Armed::set(n < crate::interrupt::PASSES);
+            let _armed = crate::interrupt::Armed::set(true);
             pass()?
         };
         match outcome {
@@ -43,7 +43,14 @@ pub fn interruptible<T>(
             Pass::Interrupted => crate::bridge::raw::thread_check_ints(ruby)?,
         }
     }
-    Err(crate::bridge::ruby::internal_error(
-        "a query that was not asked to stop was stopped",
-    ))
+    /* The last pass, asked of nothing: a query that is not armed never stops
+     * for an interrupt (its budgets do not ask), so `Interrupted` here would be
+     * a broken invariant, not a state to deliver. */
+    let _armed = crate::interrupt::Armed::set(false);
+    match pass()? {
+        Pass::Done(answer) => Ok(answer),
+        Pass::Interrupted => Err(crate::bridge::ruby::internal_error(
+            "a query that was not asked to stop was stopped",
+        )),
+    }
 }
