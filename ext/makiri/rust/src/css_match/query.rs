@@ -258,7 +258,10 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
         Ok(Query {
             compiled,
             plan: QueryPlan::new(compiled, walk_in, scratch)?,
-            budget: Budget::new(limit),
+            budget: Budget {
+                spent: std::cell::Cell::new(0),
+                limit,
+            },
             tasks: recycle(core::mem::take(&mut scratch.tasks), usize::MAX),
             at: recycle(core::mem::take(&mut scratch.at), usize::MAX),
             cursors: recycle(core::mem::take(&mut scratch.cursors), usize::MAX),

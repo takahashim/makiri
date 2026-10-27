@@ -238,10 +238,6 @@ pub enum ErrorKind {
     Oom,
     /// A budget or cap was exceeded.
     Limit,
-    /// The run was stopped so its Ruby thread could take an interrupt
-    /// (`crate::interrupt`): not a failure of the query, which the caller runs
-    /// again.
-    Interrupted,
 }
 
 impl crate::falloc::Oom for ErrorKind {

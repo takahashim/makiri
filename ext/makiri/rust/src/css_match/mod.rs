@@ -245,9 +245,7 @@ const DEFAULT_WORK_BUDGET: usize = 250 * 1000;
 /// single call needs no shared ownership.
 struct Budget {
     spent: std::cell::Cell<usize>,
-    /// What `spent` is charged against: the limit, in chunks where the query
-    /// may be stopped for an interrupt ([`crate::interrupt::Chunked`]).
-    cap: crate::interrupt::Chunked,
+    limit: usize,
 }
 
 /// Why a match/query could not be answered - propagated as a hard failure,
@@ -258,10 +256,6 @@ pub enum MatchFailure {
     /// [`Budget`] ran out: some step - most likely `:has()`'s own search -
     /// charged past its call's cap.
     WorkExceeded,
-    /// The query was stopped so its Ruby thread could take an interrupt
-    /// (`crate::interrupt`): nothing is wrong with the query, and the caller
-    /// runs it again.
-    Interrupted,
     /// A construct this port cannot evaluate at all - not "always false" the
     /// way an unimplemented-in-Lexbor-too functional pseudo-class is
     /// (`FunctionArg::Other`, `check_simple`'s doc), but one Lexbor itself
@@ -293,44 +287,16 @@ pub enum MatchFailure {
 }
 
 impl Budget {
-    /// `limit` steps, nothing spent; stoppable for an interrupt if the thread's
-    /// queries are ([`crate::interrupt::armed`], read now).
-    fn new(limit: usize) -> Budget {
-        Budget {
-            spent: std::cell::Cell::new(0),
-            cap: crate::interrupt::Chunked::new(limit),
-        }
-    }
-
     /// Charge one step. `Err` once the limit is reached - the caller must
     /// stop and propagate it, not answer as if this step had simply failed
     /// to match.
     #[inline]
     fn charge(&self) -> Result<(), MatchFailure> {
-        let Some(n) = crate::limits::admit(self.spent.get(), 1, self.cap.cap()) else {
-            return self.refused();
+        let Some(n) = crate::limits::admit(self.spent.get(), 1, self.limit) else {
+            return Err(MatchFailure::WorkExceeded);
         };
         self.spent.set(n);
         Ok(())
-    }
-
-    /// A step the current cap refused (see [`crate::interrupt::Chunked::refused`]).
-    #[cold]
-    #[inline(never)]
-    fn refused(&self) -> Result<(), MatchFailure> {
-        use crate::interrupt::Refusal;
-        let spent = self.spent.get();
-        match self.cap.refused(spent, 1) {
-            Refusal::Interrupted => Err(MatchFailure::Interrupted),
-            Refusal::Open => match crate::limits::admit(spent, 1, self.cap.cap()) {
-                Some(n) => {
-                    self.spent.set(n);
-                    Ok(())
-                }
-                None => Err(MatchFailure::WorkExceeded),
-            },
-            Refusal::Limit => Err(MatchFailure::WorkExceeded),
-        }
     }
 }
 
@@ -571,54 +537,5 @@ impl<'d, N: CssNode<'d>> Iterator for Candidates<'d, N> {
             }
             Candidates::Index(bucket, _) => bucket.next(),
         }
-    }
-}
-
-#[cfg(test)]
-mod interrupt_tests {
-    use super::*;
-    use crate::interrupt::{test_probe, Armed, CHUNK};
-
-    fn run_out(b: &Budget) -> (usize, MatchFailure) {
-        let mut admitted = 0;
-        loop {
-            match b.charge() {
-                Ok(()) => admitted += 1,
-                Err(e) => return (admitted, e),
-            }
-        }
-    }
-
-    #[test]
-    fn chunks_leave_the_limit_exact() {
-        test_probe::waiting(false);
-        let limit = 3 * CHUNK + 5;
-        for armed in [false, true] {
-            let _a = Armed::set(armed);
-            let (admitted, e) = run_out(&Budget::new(limit));
-            assert_eq!(
-                (admitted, e),
-                (limit, MatchFailure::WorkExceeded),
-                "armed={armed}"
-            );
-        }
-    }
-
-    #[test]
-    fn an_armed_query_stops_at_the_chunk_where_an_interrupt_waits() {
-        let _a = Armed::set(true);
-        test_probe::waiting(true);
-        let (admitted, e) = run_out(&Budget::new(10 * CHUNK));
-        test_probe::waiting(false);
-        assert_eq!((admitted, e), (CHUNK, MatchFailure::Interrupted));
-    }
-
-    #[test]
-    fn a_query_not_asked_ignores_a_waiting_interrupt() {
-        let _a = Armed::set(false);
-        test_probe::waiting(true);
-        let (admitted, e) = run_out(&Budget::new(2 * CHUNK));
-        test_probe::waiting(false);
-        assert_eq!((admitted, e), (2 * CHUNK, MatchFailure::WorkExceeded));
     }
 }

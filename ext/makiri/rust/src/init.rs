@@ -511,9 +511,6 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
      * Ruby exists; see crate::stack for why a depth count alone does not
      * bound the native stack. */
     crate::stack::install(crate::bridge::stack::probe(ruby));
-    /* An XPath or CSS evaluation asks this at the end of each chunk of its
-     * budget; see crate::interrupt for what it does with the answer. */
-    crate::interrupt::install(crate::bridge::interrupt::probe(ruby));
 
     makiri.define_singleton_method("__alloc_inject?", function!(alloc_inject_p, 0))?;
     makiri.define_singleton_method("__panic", function!(panic_probe, 1))?;

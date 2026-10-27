@@ -110,9 +110,12 @@ impl Utf8Copy {
         let len = src.byte_len();
         let bytes = if len <= INLINE {
             let mut buf = [0u8; INLINE];
-            let n = src
-                .copy_into(buf.get_mut(..len).unwrap_or_default())
-                .min(len);
+            let n = src.copy_into(buf.get_mut(..len).unwrap_or_default());
+            /* A short copy is a failed one, as on the heap path below: a
+             * truncated text must never pass for the whole. */
+            if n != len {
+                return Err(FillError::Copy(CopyError::Oom));
+            }
             Bytes::Inline { len: n as u8, buf }
         } else {
             Bytes::Heap(
@@ -194,6 +197,26 @@ mod tests {
             }
             fn copy_into(&self, _: &mut [u8]) -> usize {
                 0
+            }
+            fn append_into(&self, _: &mut Vec<u8>) -> bool {
+                false
+            }
+        }
+        let got = Utf8Copy::from_source(&Short, |_| None::<()>);
+        assert_eq!(got.err(), Some(FillError::Copy(CopyError::Oom)));
+    }
+
+    /// The same, inline: a source that copies fewer bytes than it reported is
+    /// refused, not truncated.
+    #[test]
+    fn a_source_that_copies_short_inline_is_refused() {
+        struct Short;
+        impl Source for Short {
+            fn byte_len(&self) -> usize {
+                INLINE
+            }
+            fn copy_into(&self, _: &mut [u8]) -> usize {
+                INLINE - 1
             }
             fn append_into(&self, _: &mut Vec<u8>) -> bool {
                 false

@@ -40,10 +40,6 @@ pub use crate::nupur::gvl;
 /// engine's recursion checks can consult it without depending on Ruby.
 pub mod stack;
 
-/// The Ruby pending-interrupt check (`nupur::interrupt::interrupt_probe`), installed
-/// into `crate::interrupt` at `Init_makiri` so the engine's budgets can ask it.
-pub mod interrupt;
-
 /// The node and Document wrappers, their TypedData types, and the
 /// representation-agnostic accessors.
 #[cfg(feature = "html-dom")]

@@ -63,7 +63,18 @@ RSpec.describe "node wrapper identity" do
       doc = Makiri::HTML("<ul>#{'<li>x</li>' * 200}</ul>")
       doc.css("li").each_with_index { |li, i| li.instance_variable_set(:@i, i) }
       ids = doc.css("li").map(&:object_id)
-      GC.verify_compaction_references(expand_heap: true, toward: :empty)
+      # Not under GC.stress (GC_COMPACT_STRESS turns it on for every example):
+      # Ruby 3.4.9's verify_compaction_references(expand_heap: true) raises
+      # "malloc: possible integer overflow" with it on once the heap is large
+      # and fragmented - reproducible with no extension loaded - and the call
+      # is the compaction stress here already.
+      stress = GC.stress
+      GC.stress = false
+      begin
+        GC.verify_compaction_references(expand_heap: true, toward: :empty)
+      ensure
+        GC.stress = stress
+      end
       lis = doc.css("li")
       expect(lis.map(&:object_id)).to eq(ids)
       expect(lis.map { |li| li.instance_variable_get(:@i) }).to eq((0...200).to_a)
