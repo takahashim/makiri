@@ -59,11 +59,17 @@ pub unsafe fn finish(f: impl FnOnce(&Ruby) -> Result<Value, Error>) -> Value {
         // SAFETY: only a trampoline Ruby calls runs this: its thread, the GVL
         // held. The one token a method's body sees is this one.
         let ruby = unsafe { Ruby::get_unchecked() };
-        /* A method starts with no exit pending: one a method before it made
-         * and did not pass on is not this one's. */
+        /* A method starts with no exit pending: every trampoline resumes its
+         * own before it returns (below, and `Error::raise`), so this only
+         * makes sure. */
         crate::raw::reset_pending_exit();
         let e = match std::panic::catch_unwind(AssertUnwindSafe(|| f(&ruby))) {
-            Ok(Ok(v)) => return v,
+            /* An exit the method caught and dropped is resumed, not lost:
+             * a `throw`'s catcher is waiting, a killed thread must end. */
+            Ok(Ok(v)) => match crate::raw::pending_exit() {
+                None => return v,
+                Some(exit) => exit,
+            },
             Ok(Err(e)) => e,
             Err(payload) => {
                 let msg = crate::caught::quietly(crate::msg::Msg::copy("a panic"), || {

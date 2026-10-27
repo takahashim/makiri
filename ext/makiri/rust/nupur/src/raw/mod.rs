@@ -51,7 +51,9 @@ mod protect;
 #[cfg(feature = "alloc-inject")]
 pub use protect::set_raise_injector;
 use protect::{call, injected_raise};
-pub(crate) use protect::{exc_fatal, exc_raise, keeping_errinfo, reset_pending_exit, resume};
+pub(crate) use protect::{
+    exc_fatal, exc_raise, keeping_errinfo, pending_exit, reset_pending_exit, resume,
+};
 
 /* ---- what the value-level wrappers share ---- */
 
@@ -353,6 +355,30 @@ pub fn yield_value(_: &Ruby, v: Value) -> Result<Value, Error> {
     let out = call(|| unsafe { rb_sys::rb_yield(v) })?;
     // SAFETY: what the block returned, live on this frame.
     Ok(unsafe { Value::from_raw(out) })
+}
+
+/// [`yield_value`], and what the block's exit or exception came back as
+/// DROPPED: the suite's stand-in for a method that loses an `Err` (the
+/// extension's `Makiri.__drop_exit`), so it can check that the trampoline
+/// still resumes the exit (`spec/pending_exit_spec.rb`). Here, not in the
+/// extension, which forbids dropping one; nothing else calls it.
+#[doc(hidden)]
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        runs_callers_ruby,
+        reason = "the test hook's block, which is the point of it"
+    )
+)]
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        discarded_ruby_error,
+        reason = "dropping the block's exit is what the test hook is for"
+    )
+)]
+pub fn yield_dropping_error_for_test(ruby: &Ruby) {
+    let _ = yield_value(ruby, crate::rb::value::nil(ruby));
 }
 
 /// `rb_hash_foreach` over `h`, `visit` answering after each pair whether to

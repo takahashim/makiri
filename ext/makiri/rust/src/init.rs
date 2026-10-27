@@ -256,6 +256,17 @@ fn panic_probe(ruby: &Ruby, kind: Value) -> Result<(), Error> {
     Ok(())
 }
 
+/// `Makiri.__drop_exit { ... }` - yield once and drop what the block's exit
+/// or exception came back as: a method that loses an `Err`, which the lints
+/// keep out of the extension, and so made by nupur
+/// (`raw::yield_dropping_error_for_test`). A dropped `throw`, `break` or
+/// thread kill must still be resumed - by the trampoline, as the method
+/// returns (`spec/pending_exit_spec.rb`) - never lost, nor left pending for
+/// another method or thread. Any build.
+fn drop_exit(ruby: &Ruby) {
+    crate::bridge::raw::yield_dropping_error_for_test(ruby);
+}
+
 /// `Makiri::XML.__decode(str)` - the strict input decode in isolation, without
 /// the tokenizer or the tree builder (`spec/xml_decode_spec.rb`).
 fn xml_decode(ruby: &Ruby, str: Value) -> Result<Value, Error> {
@@ -505,6 +516,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
 
     makiri.define_singleton_method("__alloc_inject?", function!(alloc_inject_p, 0))?;
     makiri.define_singleton_method("__panic", function!(panic_probe, 1))?;
+    makiri.define_singleton_method("__drop_exit", function!(drop_exit, 0))?;
     makiri.define_singleton_method("__alloc_inject", function!(alloc_inject, 1))?;
     makiri.define_singleton_method("__alloc_inject_calls", function!(alloc_inject_calls, 0))?;
     makiri.define_singleton_method("__raise_inject", function!(raise_inject, 1))?;

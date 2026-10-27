@@ -42,10 +42,17 @@ use core::ffi::c_void;
 /// - It did not run: the interrupt is delivered HERE, under `protect`, so it
 ///   comes back as `Err` through ordinary Rust returns. If delivering it raised
 ///   nothing (a trap handler that returned), the call is simply made again.
+///
+/// A non-local exit already pending (`raw`'s `PENDING_JUMP`) is answered
+/// at once, the body not run: releasing the GVL would let another thread's
+/// method see it, or forget it, before this one's trampoline resumes it.
 pub fn without_gvl<F: FnOnce() -> R + Send, R>(
     ruby: &crate::rb::Ruby,
     f: F,
 ) -> Result<R, crate::rb::Error> {
+    if let Some(exit) = crate::raw::pending_exit() {
+        return Err(exit);
+    }
     struct Slot<F, R> {
         f: Option<F>,
         out: Option<R>,

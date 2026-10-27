@@ -21,7 +21,7 @@ pub mod value;
 
 pub use class::{freeze, Class, DataClass, Module, Object};
 pub use convert::{IntoValue, ReturnValue, TryConvert};
-pub use error::{Builtin, Error, ErrorClass, Message};
+pub use error::{Builtin, Error, ErrorClass, Message, Rescued};
 pub use global::{Opaque, RbConst};
 pub use ruby::Ruby;
 pub use value::{

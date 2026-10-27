@@ -63,12 +63,11 @@ pub fn account_growth(ruby: &crate::bridge::rb::Ruby, rb_doc: Value) {
 }
 
 /// Whether `rb_doc` is an HTML Document whose kept document-order index is
-/// built - read before an evaluate, for [`account_kept_order`] after it.
-pub fn has_kept_order(rb_doc: Value) -> bool {
-    matches!(
-        with_html_parsed_if(rb_doc, |p| p.has_doc_order()),
-        Ok(Some(true))
-    )
+/// built - read before an evaluate, for [`account_kept_order`] after it. A
+/// document that cannot be read now (an edit holds it) is the `Err` the
+/// evaluate would meet too, passed on rather than read as "no index".
+pub fn has_kept_order(rb_doc: Value) -> Result<bool, crate::bridge::rb::Error> {
+    Ok(with_html_parsed_if(rb_doc, |p| p.has_doc_order())? == Some(true))
 }
 
 /// Tell the GC about the document-order index an evaluate on `rb_doc` built,
@@ -79,8 +78,13 @@ pub fn has_kept_order(rb_doc: Value) -> bool {
 /// Called once the evaluate's walk is over, since
 /// the report may run a collection: like [`account_document`], with `rb_doc`
 /// on the caller's stack and no borrowed Ruby String held.
-pub fn account_kept_order(ruby: &crate::bridge::rb::Ruby, rb_doc: Value, had: bool) {
-    if !had && has_kept_order(rb_doc) {
+pub fn account_kept_order(
+    ruby: &crate::bridge::rb::Ruby,
+    rb_doc: Value,
+    had: bool,
+) -> Result<(), crate::bridge::rb::Error> {
+    if !had && has_kept_order(rb_doc)? {
         account_document(ruby, rb_doc);
     }
+    Ok(())
 }

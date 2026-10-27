@@ -65,13 +65,16 @@ fn effective_encoding(ruby: &Ruby, str: RString) -> Result<Encoding, Error> {
      * allocate - come after. */
     let (head, n) = prefix::<SNIFF_WINDOW>(ruby, str);
     let (bom, decl) = sniff(head.get(..n).unwrap_or(&[]));
-    let bom = bom.and_then(|b| Encoding::find(ruby, b.name().as_bytes()));
+    let bom = match bom {
+        Some(b) => Encoding::find(ruby, b.name().as_bytes())?,
+        None => None,
+    };
     /* XML 1.0 §4.3.3: the name is an IANA charset name or alias, Ruby's or
      * one `encoding_names` maps to Ruby's; an entity in an encoding the
      * processor cannot process is a fatal error - never read as another. */
     let decl = match decl {
         None => None,
-        Some(d) => Some(declared_encoding(ruby, d.as_bytes()).ok_or_else(|| {
+        Some(d) => Some(declared_encoding(ruby, d.as_bytes())?.ok_or_else(|| {
             syntax_error(format_args!(
                 "XML encoding declaration names an unknown encoding: {}",
                 crate::msg::Lossy(d.as_bytes())
@@ -112,14 +115,19 @@ fn effective_encoding(ruby: &Ruby, str: RString) -> Result<Encoding, Error> {
 /// The encoding an encoding declaration names: Ruby's for an IANA name or
 /// alias (`encoding_names` supplying the aliases Ruby lacks). Ruby's own
 /// names for the process's encodings (`locale`, `external`, ...) name no
-/// charset, so a document cannot reach them.
-fn declared_encoding(ruby: &Ruby, name: &[u8]) -> Option<Encoding> {
+/// charset, so a document cannot reach them. An `Err` is
+/// [`Encoding::find`]'s, passed on.
+fn declared_encoding(ruby: &Ruby, name: &[u8]) -> Result<Option<Encoding>, Error> {
     if crate::xml::encoding_names::is_ruby_special(name) {
-        return None;
+        return Ok(None);
     }
-    Encoding::find(ruby, name).or_else(|| {
-        crate::xml::encoding_names::ruby_name(name).and_then(|n| Encoding::find(ruby, n))
-    })
+    if let Some(e) = Encoding::find(ruby, name)? {
+        return Ok(Some(e));
+    }
+    match crate::xml::encoding_names::ruby_name(name) {
+        Some(n) => Encoding::find(ruby, n),
+        None => Ok(None),
+    }
 }
 
 /// A `Makiri::XML::SyntaxError` carrying `msg`.

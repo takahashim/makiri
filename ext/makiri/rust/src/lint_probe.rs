@@ -125,15 +125,47 @@ fn fallible() -> Result<u32, crate::bridge::rb::Error> {
     Ok(1)
 }
 
+#[rustfmt::skip] // keeps each marker on the line reported
 fn discards_ruby_errors() {
     let _ = fallible().ok(); //~
     let _ = fallible(); //~
+    let _unread = fallible(); //~
+    let _e = crate::bridge::ruby::type_error("x"); //~
     let _ = fallible().is_ok(); //~
     let _ = fallible().unwrap_or(0); //~
+    let _n: Result<u32, ()> = fallible().or(Ok(0)); //~
+    let _n = fallible().map_err(|_| crate::bridge::ruby::type_error("x")); //~
+    let _n = fallible().or_else(|_e| fallible()); //~
+    if let Ok(_n) = fallible() {} //~
+    if let Err(_) = fallible() {} //~
+    let Ok(_n) = fallible() else { return }; //~
+    match fallible() {
+        Ok(_n) => {}
+        Err(_) => {} //~
+    }
+    match fallible() {
+        Ok(_n) => {}
+        _ => {} //~
+    }
+    if let Err(e) = fallible() {
+        drop(e); //~
+    }
+    core::mem::forget(fallible()); //~
 }
 
-fn passes_ruby_errors_on() -> Result<u32, crate::bridge::rb::Error> {
+fn passes_ruby_errors_on(ruby: &crate::bridge::rb::Ruby) -> Result<u32, crate::bridge::rb::Error> {
     let n = fallible()?;
     let _ = fallible().map(|_| ())?;
+    if let Err(e) = fallible() {
+        return Err(e);
+    }
+    /* Handled by naming what is handled; an exit comes back as `Err`. */
+    match fallible() {
+        Ok(_n) => {}
+        Err(e) => {
+            e.rescue(ruby, &[crate::bridge::rb::Builtin::ArgumentError])?;
+        }
+    }
+    let _ = fallible().map_err(|e| e)?;
     Ok(n)
 }

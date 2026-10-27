@@ -78,20 +78,14 @@ pub trait ReprValue: Copy {
     /// The name of the value's class, for a message, written into `f` -
     /// "Object" when the name cannot be made (an anonymous class's is a fresh
     /// String, and so an allocation that can fail).
-    #[cfg_attr(
-        dylint_lib = "makiri_lints",
-        allow(
-            discarded_ruby_error,
-            reason = "a message cannot raise: a name that cannot be made is written as Object"
-        )
-    )]
     fn write_classname(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        crate::raw::keeping_errinfo(|| {
-            crate::raw::with_classname(self.as_value(), |name| {
-                core::fmt::Display::fmt(&crate::msg::Lossy(name), f)
+        let v = self.as_value();
+        crate::describe::for_message(|| {
+            crate::raw::with_classname(v, |name| {
+                core::fmt::Display::fmt(&crate::msg::Lossy(name), &mut *f)
             })
         })
-        .unwrap_or_else(|_| f.write_str("Object"))
+        .unwrap_or_else(|| f.write_str("Object"))
     }
 }
 
@@ -474,6 +468,21 @@ pub fn boolean(ruby: &Ruby, b: bool) -> Value {
     } else {
         ruby.qfalse().as_value()
     }
+}
+
+/// `RB_GC_GUARD`: keep `v` where the GC's stack scan finds it up to here.
+///
+/// A borrow of an object's data ([`crate::typed::TypedType::get`],
+/// [`crate::typed::Typed::data`]) keeps its `Value` alive to the type
+/// checker only: once the `Value` itself is no longer used, the optimizer may
+/// drop it from every register and stack slot, and the data pointer left -
+/// a non-embedded type's data is a malloc'd block - is not one the scan
+/// takes for the object. Call this after the last use of such a borrow when
+/// nothing else keeps the object (a method's receiver and arguments are kept
+/// by Ruby's own stack, and a slot's value by its owner).
+#[inline(always)]
+pub fn gc_guard(v: impl ReprValue) {
+    core::hint::black_box(&v.as_value());
 }
 
 /// VALUE identity, for the several sites that compare two references.

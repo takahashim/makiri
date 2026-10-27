@@ -173,6 +173,28 @@ impl Error {
         }
     }
 
+    /// Handle this error, if it is an exception of one of `classes` (or of
+    /// a class deriving from one): `Ok` with a [`Rescued`], which can be
+    /// dropped. Anything else comes back as the `Err` it was - another
+    /// exception, and every non-local exit (a `throw`, a `break`, a thread
+    /// kill), which no class names - to be passed on with `?`.
+    ///
+    /// The way an `Err` becomes "no answer" (`rake dylint`'s
+    /// `discarded_ruby_error` refuses the others; the one exception is
+    /// [`crate::describe`]'s wording of a message), so a handler names what
+    /// it handles, and an exit cannot be handled by mistake.
+    pub fn rescue<C: Into<ErrorClass> + Copy>(
+        self,
+        ruby: &Ruby,
+        classes: &[C],
+    ) -> Result<Rescued, Error> {
+        if classes.iter().any(|&c| self.is_kind_of(ruby, c)) {
+            Ok(Rescued(()))
+        } else {
+            Err(self)
+        }
+    }
+
     /// The message, for wording another error with it - "error" for an exit
     /// that carries none. Reads an exception's message without calling it,
     /// as it is written out.
@@ -183,9 +205,13 @@ impl Error {
     /// Raise it. Only a method's trampoline calls this, as its last act:
     /// the raise is a `longjmp` over every frame up to Ruby's, which runs no
     /// destructor, so nothing may be owned on the way - and nothing is.
+    ///
+    /// An exit still pending ([`crate::raw::pending_exit`]) goes first,
+    /// whatever this error is: the method dropped the exit's own `Err`, and
+    /// a `throw` or a kill must not be lost for the error that followed it.
     #[inline]
     pub(crate) fn raise(self, ruby: &Ruby) -> ! {
-        let mut e = self;
+        let mut e = crate::raw::pending_exit().unwrap_or(self);
         loop {
             let exc = match e.0 {
                 Kind::Jump(state) => crate::raw::resume(state),
@@ -216,6 +242,11 @@ impl Error {
         }
     }
 }
+
+/// An exception [`Error::rescue`] handled: proof that what was dropped was
+/// one of the classes its handler named, never a non-local exit. Carries
+/// nothing; dropping it is the point.
+pub struct Rescued(());
 
 /// An [`Error`]'s message, as [`Error::wording`] writes it.
 pub struct Wording<'a>(&'a Error, &'a Ruby);

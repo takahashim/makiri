@@ -435,7 +435,12 @@ bundle exec rake dylint            # the crate's own lints (lints/makiri_lints),
                                    # raw_node_crossing, ruby_surface_in_bridge,
                                    # discarded_ruby_error (an Err of bridge::rb::Error
                                    # thrown away by .ok() / .unwrap_or* / .is_ok() /
-                                   # let _ =), ffi_without_gvl_proof (in nupur: a
+                                   # let _ = / let _name = / an Ok-only or Err(_) pattern / a
+                                   # map_err(|_| ..) / drop; FORBIDDEN in the
+                                   # extension, so no allow: handle with
+                                   # Error::rescue, which hands every throw/break/
+                                   # kill back; nupur denies it, its one drop being
+                                   # describe::for_message), ffi_without_gvl_proof (in nupur: a
                                    # safe fn calling rb_sys:: whose signature holds
                                    # no &Ruby, Ruby value or handle made from one;
                                    # extern "C" entries and unsafe fns exempt),

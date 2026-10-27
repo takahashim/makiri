@@ -50,19 +50,33 @@ pub fn set_raise_injector(armed: fn() -> bool) {
 /// the trampoline: its `rb_protect` state, 0 for none.
 ///
 /// Ruby resumes such an exit (`rb_jump_tag`) from what it left in the
-/// thread's error info - the throw data - and every raise overwrites that.
-/// So once one is pending, no protected call runs C at all: each answers
-/// the same exit, until the trampoline resumes it ([`Error::raise`]) or the
-/// next method starts. A global, not a thread's: nothing between the exit
+/// thread's error info - the throw data, a kill's marker - and every raise
+/// overwrites that. So once one is pending, no protected call runs C at
+/// all, each answering the same exit, [`keeping_errinfo`] puts nothing back,
+/// and the GVL is not released ([`crate::gvl::without_gvl`] answers the exit
+/// too). The trampoline resumes it however the method ends - an `Err` of
+/// another kind, or an `Ok` from a method that dropped the exit's `Err` -
+/// so it is resumed on the thread that caught it, and none is left behind
+/// for the next method. A global, not a thread's: nothing between the exit
 /// and its resumption can release the GVL (only a C call can, and none
 /// runs), so no other Ruby thread reads it meanwhile.
 static PENDING_JUMP: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
 
-/// Forget a pending exit: a new method starts, and one a method before it
-/// made and did not pass on is not this one's.
+/// Forget a pending exit: a new method starts. The trampoline resumes every
+/// exit before its method returns, so none is pending here; this is the
+/// belt to that brace.
 #[inline]
 pub(crate) fn reset_pending_exit() {
     PENDING_JUMP.store(0, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// The exit pending, as the `Err` that resumes it, or `None`.
+#[inline]
+pub(crate) fn pending_exit() -> Option<Error> {
+    match PENDING_JUMP.load(core::sync::atomic::Ordering::Relaxed) {
+        0 => None,
+        state => Some(Error::jump(state)),
+    }
 }
 
 /// Resume the non-local exit `state` stands for, which a protected call
@@ -107,9 +121,8 @@ pub(super) fn call<T: Copy, F: FnOnce() -> T + Copy>(f: F) -> Result<T, Error> {
             rb_sys::Qnil as VALUE
         })
     }
-    let pending = PENDING_JUMP.load(core::sync::atomic::Ordering::Relaxed);
-    if pending != 0 {
-        return Err(Error::jump(pending));
+    if let Some(exit) = pending_exit() {
+        return Err(exit);
     }
     let mut slot = Slot { f, out: None };
     let mut state: c_int = 0;
@@ -137,6 +150,9 @@ pub(super) fn call<T: Copy, F: FnOnce() -> T + Copy>(f: F) -> Result<T, Error> {
 /// clears it ([`take_errinfo`]), and a handled one must not clear the
 /// caller's. Not every call does this: the read costs a call into libruby,
 /// and an error that is raised replaces `$!` anyway.
+///
+/// Nothing is put back once an exit is pending: Ruby resumes it from the
+/// error info the exit left there, which `before` would overwrite.
 #[inline]
 #[cfg_attr(
     dylint_lib = "makiri_lints",
@@ -149,7 +165,9 @@ pub(crate) fn keeping_errinfo<T>(f: impl FnOnce() -> T) -> T {
     // SAFETY: under the GVL, as every caller's proof says; a read.
     let before = unsafe { rb_sys::rb_errinfo() };
     let out = f();
-    restore_errinfo(before);
+    if pending_exit().is_none() {
+        restore_errinfo(before);
+    }
     out
 }
 
