@@ -20,6 +20,11 @@ on:
   schedule:
     - cron: "0 2 * * *"
   workflow_dispatch:
+    inputs:
+      valgrind_options:
+        description: "Extra Valgrind options, e.g. --expensive-definedness-checks=yes"
+        required: false
+        default: ""
 
 # A new push to a pull request supersedes the run on its previous head. The
 # event is in the group so a pull request never replaces a nightly run.
@@ -92,7 +97,49 @@ jobs:
       # the running Ruby), so there is no longer a ruby.supp to fetch from
       # ruby/ruby - that path was removed upstream and the fetch step 404'd.
       - name: Run spec suite under Valgrind (ruby_memcheck)
+        env:
+          # Gzipped copies of Valgrind's XML, uploaded when the job fails: it
+          # holds each error's origin, which ruby_memcheck's report does not.
+          VALGRIND_XML_KEEP: ${{ github.workspace }}/valgrind-xml
+          # A manual run's extra options (see `on.workflow_dispatch`).
+          VALGRIND_EXTRA: ${{ github.event.inputs.valgrind_options }}
         run: bundle exec rake spec:valgrind
+
+      # On ubuntu-26.04 (Valgrind 3.26.0) ruby_memcheck 3.0.1 failed on every
+      # shard reading Valgrind's XML, after all the examples had passed:
+      # "Opening and ending tag mismatch: still_reachable ... and leak_summary".
+      # ruby_memcheck deletes the XML only once it has parsed it, so a failure
+      # leaves it in /tmp. Show where each file is malformed, and keep those
+      # files (gzipped), to see what Valgrind wrote.
+      - name: Show the Valgrind XML that did not parse
+        if: failure()
+        run: |
+          sudo apt-get install -y libxml2-utils >/dev/null
+          valgrind --version
+          mkdir -p valgrind-xml
+          for f in /tmp/d*/*.xml; do
+            [ -f "$f" ] || continue
+            if ! out=$(xmllint --noout --huge "$f" 2>&1); then
+              echo "::group::$f"
+              echo "$out" | head -5
+              line=$(echo "$out" | sed -n 's/^[^:]*:\([0-9]*\): parser error.*/\1/p' | head -1)
+              if [ -n "$line" ]; then
+                start=$((line > 40 ? line - 40 : 1))
+                sed -n "${start},$((line + 10))p" "$f"
+              fi
+              echo "::endgroup::"
+              gzip -c "$f" > "valgrind-xml/$(basename "$f").gz"
+            fi
+          done
+          ls -la valgrind-xml
+
+      - name: Upload the malformed Valgrind XML
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: valgrind-xml-${{ matrix.ruby }}-shard-${{ matrix.shard }}
+          path: valgrind-xml
+          if-no-files-found: ignore
 
   # GC.auto_compact + GC.stress over the GC-sensitive examples.  This
   # structurally tests the borrowed-pointer discipline under the condition that
