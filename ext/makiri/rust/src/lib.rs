@@ -139,12 +139,6 @@ pub mod limits;
 /// stack.
 pub mod stack;
 
-/// The seam through which a query's budget asks whether its Ruby thread has an
-/// interrupt waiting, installed by `bridge::interrupt` at `Init_makiri`:
-/// the query stops, the glue delivers it and runs the query again. Unconditional
-/// and Ruby-free.
-pub mod interrupt;
-
 /// The engine error vocabulary - the kind, the message buffer and the sink -
 /// shared by XPath and the CSS lowering that feeds it. Unconditional and
 /// Ruby-free.

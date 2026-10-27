@@ -10,7 +10,6 @@
 
 #![forbid(unsafe_code)]
 
-use crate::bridge::interrupt::Pass;
 use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, Value};
 
@@ -55,8 +54,7 @@ pub fn xpath_error(err: &XPathError) -> Error {
         | ErrorKind::Type
         | ErrorKind::Runtime
         | ErrorKind::Internal
-        | ErrorKind::Oom
-        | ErrorKind::Interrupted => &EXC_ERROR,
+        | ErrorKind::Oom => &EXC_ERROR,
     };
     Error::new(
         class,
@@ -273,12 +271,7 @@ pub fn evaluate_query(
     answer: Answer,
 ) -> Result<XPathValue, Error> {
     let had_order = crate::bridge::wrapper::has_kept_order(document)?;
-    let result = crate::bridge::interrupt::interruptible(ruby, || {
-        Ok(match ctx.run(document, ast, answer)? {
-            Err(e) if e.status == ErrorKind::Interrupted => Pass::Interrupted,
-            done => Pass::Done(done),
-        })
-    });
+    let result = ctx.run(document, ast, answer);
     /* A document-order index the evaluate built is the document's now. */
     let accounted = crate::bridge::wrapper::account_kept_order(ruby, document, had_order);
     let value = result?;

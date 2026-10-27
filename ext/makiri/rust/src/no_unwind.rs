@@ -67,8 +67,6 @@ macro_rules! sites {
 sites! {
     /// `xpath::ctx::Running`'s `Drop`, run as a panic in an evaluate unwinds.
     DropXPathRunning => "makiri_unwinds_drop_xpath_running",
-    /// `interrupt::Armed`'s `Drop`, run as a panic in a query unwinds.
-    DropInterruptArmed => "makiri_unwinds_drop_interrupt_armed",
     /// The check's own control ([`self_test`]): a body that CAN unwind, so a
     /// check build that still works leaves exactly this symbol undefined.
     SelfTest => "makiri_unwinds_self_test",

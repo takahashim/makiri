@@ -9,7 +9,6 @@
 
 #![forbid(unsafe_code)]
 
-use crate::bridge::interrupt::Pass;
 use crate::bridge::rb::{prelude::*, Error, RHash, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
@@ -110,27 +109,6 @@ pub fn query_error(err: QueryFailure, selector: Value) -> Error {
     }
 }
 
-/// What a matcher entry point came to, as a [`Pass`] of `interruptible`: its
-/// answer, "stopped for an interrupt" (which is no failure, and is what every
-/// CSS entry point must say for it - one that forgot would raise it at the
-/// caller), or the exception its failure maps to.
-pub fn pass_match<T>(result: Result<T, MatchFailure>, selector: Value) -> Result<Pass<T>, Error> {
-    match result {
-        Ok(answer) => Ok(Pass::Done(answer)),
-        Err(MatchFailure::Interrupted) => Ok(Pass::Interrupted),
-        Err(e) => Err(match_error(e, selector)),
-    }
-}
-
-/// [`pass_match`] for the whole-query entry point ([`css_match::select_all`]).
-pub fn pass_query<T>(result: Result<T, QueryFailure>, selector: Value) -> Result<Pass<T>, Error> {
-    match result {
-        Ok(answer) => Ok(Pass::Done(answer)),
-        Err(QueryFailure::Match(MatchFailure::Interrupted)) => Ok(Pass::Interrupted),
-        Err(e) => Err(query_error(e, selector)),
-    }
-}
-
 /// As [`query_error`], for the entry points that cannot overflow the result
 /// set ([`css_match::select_first`], [`css_match::matches_any`] -
 /// one node each, never a `Vec`) and so only ever fail the other way.
@@ -145,9 +123,6 @@ pub fn match_error(err: MatchFailure, selector: Value) -> Error {
             syntax_error(selector, Some("undeclared namespace prefix"))
         }
         MatchFailure::WorkExceeded => makiri_error("CSS query exceeded its work budget"),
-        /* `bridge::interrupt::interruptible` turns this into another pass; one
-         * that reaches here was not asked to stop. */
-        MatchFailure::Interrupted => makiri_error("CSS query was interrupted"),
         /* A construct the matcher does not run (`||`, `:current()`) is a
          * selector error, as a browser's SyntaxError is. */
         MatchFailure::Unsupported => syntax_error(selector, Some("CSS selector could not be run")),
