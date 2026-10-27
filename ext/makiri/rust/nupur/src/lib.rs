@@ -128,6 +128,9 @@ pub mod abi;
 /// The native-stack check, for a token.
 pub mod stack;
 
+/// The pending-interrupt check, for a token.
+pub mod interrupt;
+
 /// `Msg`: an exception message written into a fixed buffer on the stack,
 /// so an error path allocates nothing.
 pub mod msg;
