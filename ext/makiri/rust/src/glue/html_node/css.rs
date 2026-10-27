@@ -15,10 +15,11 @@ use crate::method;
 
 use super::HtmlSelf;
 use crate::bridge::html::wrap_html_node;
+use crate::bridge::interrupt::{interruptible, Pass};
 use crate::bridge::node_set::node_set_from;
 use crate::bridge::string::{ruby_verified_text, RubyText};
 use crate::css_cache;
-use crate::css_match;
+use crate::css_match::{self, MatchFailure, QueryFailure};
 use crate::glue::css::{match_error, parse_error, query_error, CssArgs};
 use crate::html_dom::html::RawNode;
 use crate::init::MOD_HTML_NODE_METHODS;
@@ -38,17 +39,27 @@ fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
      * held while the set is built (`node_set_from`): the matched nodes
      * borrow it. */
     let found = args.with_namespaces(|ns| {
-        let view = this.read()?;
-        let matched = css_cache::with_compiled(sv.as_bytes(), |groups, scratch| {
-            css_match::select_all(scratch, view.node(), groups, ns)
+        /* One pass per attempt: the read is taken and dropped inside it, so an
+         * interrupt is delivered with none held. */
+        interruptible(ruby, || {
+            let view = this.read()?;
+            let matched = css_cache::with_compiled(sv.as_bytes(), |groups, scratch| {
+                css_match::select_all(scratch, view.node(), groups, ns)
+            })
+            .map_err(|e| parse_error(e, selector))?;
+            let nodes = match matched {
+                Err(QueryFailure::Match(MatchFailure::Interrupted)) => {
+                    return Ok(Pass::Interrupted)
+                }
+                other => other.map_err(|e| query_error(e, selector))?,
+            };
+            node_set_from(
+                ruby,
+                this.document,
+                nodes.into_iter().map(|n| RawNode::from(n).into()),
+            )
+            .map(Pass::Done)
         })
-        .map_err(|e| parse_error(e, selector))?;
-        let nodes = matched.map_err(|e| query_error(e, selector))?;
-        node_set_from(
-            ruby,
-            this.document,
-            nodes.into_iter().map(|n| RawNode::from(n).into()),
-        )
     })?;
     drop(sv);
     found
@@ -63,16 +74,21 @@ fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, 
     let selector = args.selector;
     let sv = selector_text(ruby, selector)?;
     let found = args.with_namespaces(|ns| {
-        let view = this.read()?;
-        let matched = css_cache::with_compiled(sv.as_bytes(), |groups, scratch| {
-            css_match::select_first(scratch, view.node(), groups, ns)
+        interruptible(ruby, || {
+            let view = this.read()?;
+            let matched = css_cache::with_compiled(sv.as_bytes(), |groups, scratch| {
+                css_match::select_first(scratch, view.node(), groups, ns)
+            })
+            .map_err(|e| parse_error(e, selector))?;
+            match matched {
+                Err(MatchFailure::Interrupted) => Ok(Pass::Interrupted),
+                other => Ok(Pass::Done(
+                    other
+                        .map_err(|e| match_error(e, selector))?
+                        .map(RawNode::from),
+                )),
+            }
         })
-        .map_err(|e| parse_error(e, selector))?;
-        Ok::<_, Error>(
-            matched
-                .map_err(|e| match_error(e, selector))?
-                .map(RawNode::from),
-        )
     })??;
     drop(sv);
     found
@@ -91,12 +107,17 @@ fn matches(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<bool, Error> {
     let selector = args.selector;
     let sv = selector_text(ruby, selector)?;
     let matched = args.with_namespaces(|ns| {
-        let view = this.read()?;
-        let matched = css_cache::with_compiled(sv.as_bytes(), |groups, scratch| {
-            css_match::matches_any(scratch, groups, ns, view.node())
+        interruptible(ruby, || {
+            let view = this.read()?;
+            let matched = css_cache::with_compiled(sv.as_bytes(), |groups, scratch| {
+                css_match::matches_any(scratch, groups, ns, view.node())
+            })
+            .map_err(|e| parse_error(e, selector))?;
+            match matched {
+                Err(MatchFailure::Interrupted) => Ok(Pass::Interrupted),
+                other => other.map(Pass::Done).map_err(|e| match_error(e, selector)),
+            }
         })
-        .map_err(|e| parse_error(e, selector))?;
-        matched.map_err(|e| match_error(e, selector))
     })?;
     drop(sv);
     matched

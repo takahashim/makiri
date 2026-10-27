@@ -123,6 +123,9 @@ pub fn match_error(err: MatchFailure, selector: Value) -> Error {
             syntax_error(selector, Some("undeclared namespace prefix"))
         }
         MatchFailure::WorkExceeded => makiri_error("CSS query exceeded its work budget"),
+        /* `bridge::interrupt::interruptible` turns this into another pass; one
+         * that reaches here was not asked to stop. */
+        MatchFailure::Interrupted => makiri_error("CSS query was interrupted"),
         /* A construct the matcher does not run (`||`, `:current()`) is a
          * selector error, as a browser's SyntaxError is. */
         MatchFailure::Unsupported => syntax_error(selector, Some("CSS selector could not be run")),

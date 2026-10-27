@@ -1640,21 +1640,32 @@ Key decisions that got there, worth not regressing:
   (~2× on 8 cores); verify with `bench`'s threaded rows and the `GC.stress`
   `spec/threading_spec.rb` (which now also asserts shared-document XPath+mutation
   and shared-context evaluate are crash-free under the GVL).
-  **The price is that an evaluation does not see interrupts**: `Timeout`,
-  `Thread#raise` and a signal handler wait for it to return, and so does every
-  other Ruby thread (`rb_thread_check_ints` runs only on the GVL-released parse
-  path's retry). Bounded by the op budget - about 0.3 s at the 50M default, the
-  worst a pathological `following::`/`preceding::` nesting reached; CSS finished
-  instantly on the same documents. **A check inside the engine was weighed and
-  not done**, for what it would change: a check that yields the GVL runs other
-  threads while the evaluation holds its read guard, so their edits are refused
-  as `Makiri::Error` where today they queue behind the GVL; one that restarts
-  the evaluation instead is set off by the time-slice timer (`rb_thread_check_ints`
-  cannot tell it from a `Timeout`), so an evaluation over ~100 ms with another
-  thread running would never finish; and the poll itself,
-  `rb_thread_interrupted`, has a path to a longjmp in the raise survey.
-  (magnus #104 is the same wait, for a worker that never shut down.) If the
-  window ever matters, the lever is a smaller budget, not a poll.
+  **An evaluation holds the GVL, so an interrupt waits for it** - `Timeout`,
+  `Thread#raise` and a signal handler, and every other Ruby thread (about 0.3 s
+  at the 50M-op default, the worst a pathological `following::`/`preceding::`
+  nesting reached). So the budgets ask: an XPath run's op cap and a CSS query's
+  step cap are charged in chunks (`crate::interrupt::CHUNK`, 2^18), and at a
+  chunk's end the budget asks `rb_thread_interrupted` through a probe installed
+  at `Init_makiri` (`crate::interrupt`, the seam `crate::stack` is for the
+  native stack). If one waits the run STOPS (`ErrorKind::Interrupted`,
+  `MatchFailure::Interrupted`), every guard and borrow dropped as for any
+  failure; `bridge::interrupt::interruptible` then delivers it
+  (`rb_thread_check_ints`: a `Timeout` comes back as `Err`, a handler runs) with
+  nothing held and runs the query again, which only reads. It does NOT check in
+  place, for what that would change: yielding the GVL under the read guard runs
+  other threads against it (their edits refused as `Makiri::Error` where they
+  used to queue behind the GVL), and the handler's Ruby could reach what the
+  evaluation holds. Nor can it restart without bound: a time-slice timer sets the
+  same flag a `Timeout` does and cannot be told from it, so a query over a slice
+  with another thread running would restart for ever - hence `PASSES` (3), the
+  last pass not asked, which is the query as it was. The hot path is still one
+  compare against a cap (`Cell` now, a chunk lower); `limits::admit`, Verus's
+  rule, is unchanged and `chunks_leave_the_cap_exact` pins that exactly the
+  budget is admitted. Measured against the commit before: XPath unchanged, CSS
+  and `at_css` +2-3% on the micro rows. `spec/interrupt_spec.rb` sends signals
+  from a child process while a query runs. (magnus #104 is the same wait, for a
+  worker that never shut down; `rb_thread_interrupted` is in `raw` under `call`,
+  since the raise survey finds a path for it.)
 - **`//tag` is served from the element index** (`xpath/step_index.rs`): a document-rooted, predicate-free, unprefixed
   descendant name-test pushes the tag bucket instead of walking. Pure-HTML only
   (`has_foreign` guard) and each candidate is re-checked with the step's
