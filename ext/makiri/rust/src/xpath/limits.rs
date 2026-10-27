@@ -65,15 +65,10 @@ pub struct Budget {
     ast_nodes: Cell<usize>,
     /// Evaluator steps charged by the current evaluate.
     eval_ops: Cell<usize>,
-    /// The cap `eval_ops` is charged against now. `limits.max_eval_ops`, or -
-    /// when this run may be stopped for an interrupt (`poll`) - the end of the
-    /// current chunk of it ([`crate::interrupt::CHUNK`]), where
-    /// [`op_refused`](Self::op_refused) asks and moves it on. Exactly
-    /// `max_eval_ops` charges are admitted either way.
-    op_cap: Cell<usize>,
-    /// May this run be stopped to deliver an interrupt: read once, when it is made
-    /// ([`crate::interrupt::armed`]).
-    poll: bool,
+    /// What `eval_ops` is charged against: `limits.max_eval_ops`, in chunks
+    /// where this run may be stopped for an interrupt
+    /// ([`crate::interrupt::Chunked`]).
+    op_cap: crate::interrupt::Chunked,
     /// The current evaluation (or parse) recursion depth.
     recursion_depth: Cell<usize>,
     /// The failure slot. A shared `RefCell` rather than a plain field so a sink
@@ -124,17 +119,11 @@ impl Budget {
 
     /// `limits`, nothing charged, and no error yet.
     pub fn with_limits(limits: Limits) -> Budget {
-        let poll = crate::interrupt::armed();
         Budget {
             limits,
             ast_nodes: Cell::new(0),
             eval_ops: Cell::new(0),
-            op_cap: Cell::new(if poll {
-                limits.max_eval_ops.min(crate::interrupt::CHUNK)
-            } else {
-                limits.max_eval_ops
-            }),
-            poll,
+            op_cap: crate::interrupt::Chunked::new(limits.max_eval_ops),
             recursion_depth: Cell::new(0),
             /* The engine's one infallible allocation, and a stated exception
              * to the falloc line: a fixed few dozen bytes per run, before any
@@ -183,7 +172,7 @@ impl Budget {
     /// query if misapplied, trading one foot-gun-free rule for a conditional one.
     #[inline]
     pub fn charge_op(&self) -> Result<(), Reported> {
-        if !take(&self.eval_ops, 1, self.op_cap.get()) {
+        if !take(&self.eval_ops, 1, self.op_cap.cap()) {
             return self.op_refused(1);
         }
         Ok(())
@@ -196,19 +185,14 @@ impl Budget {
     #[cold]
     #[inline(never)]
     fn op_refused(&self, n: usize) -> Result<(), Reported> {
-        let max = self.limits.max_eval_ops;
-        if self.poll && self.op_cap.get() < max {
-            if crate::interrupt::pending() {
-                return Err(interrupted(self.sink()));
-            }
-            let ops = self.eval_ops.get();
-            self.op_cap
-                .set(ops.saturating_add(crate::interrupt::CHUNK.max(n)).min(max));
-            if take(&self.eval_ops, n, self.op_cap.get()) {
-                return Ok(());
+        use crate::interrupt::Refusal;
+        match self.op_cap.refused(self.eval_ops.get(), n) {
+            Refusal::Interrupted => Err(interrupted(self.sink())),
+            Refusal::Open if take(&self.eval_ops, n, self.op_cap.cap()) => Ok(()),
+            Refusal::Open | Refusal::Limit => {
+                Err(over_eval_ops(self.limits.max_eval_ops, self.sink()))
             }
         }
-        Err(over_eval_ops(max, self.sink()))
     }
 
     /// Charge the building of `bytes` of string-value: one op per
@@ -224,7 +208,7 @@ impl Budget {
     /// `//*[contains(., "x")]` on a 21 MB page 150 elements deep.
     pub fn charge_bytes(&self, bytes: usize) -> Result<(), Reported> {
         let n = bytes / BYTES_PER_OP;
-        if !take(&self.eval_ops, n, self.op_cap.get()) {
+        if !take(&self.eval_ops, n, self.op_cap.cap()) {
             return self.op_refused(n);
         }
         Ok(())
