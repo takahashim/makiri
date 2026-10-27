@@ -90,6 +90,23 @@ pub fn exception_new(ruby: &Ruby, class: ExceptionClass, msg: &[u8]) -> Result<V
     Ok(unsafe { Value::from_raw(exc) })
 }
 
+/// Does [`call`] still tell a raise from a `throw` or a `break`? It does by
+/// `rb_protect`'s state, `TAG_RAISE`, a number Ruby does not document
+/// (`protect`'s own doc), so the extension asks once as it loads: a raise is
+/// made under `call` and must come back as an exception. `Ok(false)` is a Ruby
+/// whose numbering this was not written for - the exit it left pending is
+/// forgotten here, and the caller refuses to load.
+pub fn raise_is_recognised(ruby: &Ruby) -> Result<bool, Error> {
+    let exc = exception_new(ruby, ruby.exception_runtime_error(), b"raise self-check")?.as_raw();
+    match call::<(), _>(|| unsafe { rb_sys::rb_exc_raise(exc) }) {
+        Err(e) if e.is_kind_of(ruby, crate::rb::Builtin::RuntimeError) => Ok(true),
+        _ => {
+            reset_pending_exit();
+            Ok(false)
+        }
+    }
+}
+
 /// The longest class name [`with_classname`] hands on; a longer one is cut.
 const CLASSNAME_MAX: usize = 128;
 

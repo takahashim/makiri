@@ -12,7 +12,7 @@ pub use crate::nupur::rb::error::{arg_error, internal_error, type_error};
 pub use crate::nupur::rb::global::is_kind_of;
 pub use crate::nupur::rb::value::{boolean, identity_word, nil, same_value};
 
-use crate::bridge::rb::Error;
+use crate::bridge::rb::{Error, Ruby};
 
 /// `Err(LoadError)` when the running Ruby's API `MAJOR.MINOR` is not the one
 /// this extension was compiled for.
@@ -37,6 +37,21 @@ pub fn check_running_ruby_api() -> Result<(), Error> {
              rebuild it (`bundle exec rake clean compile` in a checkout, or reinstall the gem)",
             built.0, built.1, running.0, running.1
         ),
+    ))
+}
+
+/// After the API check: a raise made under `bridge::raw`'s protection must
+/// come back as an exception, not as some other exit (`raw::raise_is_recognised`,
+/// which says why that is not a given). Refused as a `LoadError`, with nothing
+/// defined yet.
+pub fn check_raise_state(ruby: &Ruby) -> Result<(), Error> {
+    if crate::bridge::raw::raise_is_recognised(ruby)? {
+        return Ok(());
+    }
+    Err(Error::new(
+        crate::bridge::rb::Builtin::LoadError,
+        "this Ruby reports a raise by a state the extension does not know \
+         (`rb_protect`'s TAG_RAISE changed); it cannot tell an exception from a throw",
     ))
 }
 
