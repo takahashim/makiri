@@ -41,10 +41,13 @@ def tables
   src = File.read(TABLE)
   non_raising = src[/^const NON_RAISING: &\[&str\] = &\[\n(.*?)^\];/m, 1] or
     abort "check_non_raising: no NON_RAISING table in #{TABLE}"
-  reviewed = src[/^const REVIEWED: &\[\(&str, &str\)\] = &\[\n(.*?)^\];/m, 1] or
+  reviewed = src[/^const REVIEWED: &\[\(&str, &str\)\] = &\[(.*?)^\)?\];/m, 1] or
     abort "check_non_raising: no REVIEWED table in #{TABLE}"
+  # Each entry is `("name", "reason")`, laid out however rustfmt likes; a reason
+  # may continue over lines with a trailing backslash.
+  entries = reviewed.scan(/\(\s*"([a-z0-9_]+)",\s*((?:"(?:[^"\\]|\\.)*"\s*)+)/m)
   [non_raising.scan(/^\s*"([a-z0-9_]+)",/).flatten,
-   reviewed.scan(/^    \(\n\s*"([a-z0-9_]+)",\n(.*?)^    \),/m).to_h { |n, r| [n, r.scan(/"((?:[^"\\]|\\.)*)"/m).join.strip] }]
+   entries.to_h { |n, r| [n, r.scan(/"((?:[^"\\]|\\.)*)"/m).join.strip] }]
 end
 
 def bindings_file

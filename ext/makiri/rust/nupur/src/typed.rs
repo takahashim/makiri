@@ -153,6 +153,13 @@ struct Envelope<T, const N: usize> {
  * callback for it today, but that is its implementation, not its documented
  * contract, and one branch here means nothing rests on it. */
 
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        raising_call_outside_protect,
+        reason = "rb_gc_mark raises NoMemoryError only when the mark stack cannot grow, a longjmp this frame loses nothing to (the no_unwind guard's Drop does nothing unless unwinding) and every C extension's dmark is exposed to alike"
+    )
+)]
 unsafe extern "C" fn mark_cb<T: Payload, const N: usize>(ptr: *mut c_void) {
     crate::no_unwind::must_not_unwind::<crate::no_unwind::GcMark, _>(|| {
         if ptr.is_null() {
