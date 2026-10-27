@@ -83,7 +83,7 @@ UNSAFE_ISLANDS = {
   "nupur/rb/value.rs" => 25,
   "nupur/stack.rs" => 1,
   "nupur/string.rs" => 7,
-  "nupur/typed.rs" => 31,
+  "nupur/typed.rs" => 36,
   "utf8_copy.rs" => 1,
 }.freeze
 

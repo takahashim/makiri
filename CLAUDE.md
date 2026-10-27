@@ -163,6 +163,12 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   which reads the types; it is why raw `VALUE`s stay in `nupur/src/raw/` and
   `nupur/src/typed.rs`, since a lint sees a `VALUE` only as an integer. What it
   cannot see is a temporary handed straight to a call (`f(vec![v])`).
+  `rb_data_type_t` is built from a zeroed value with only `dmark`, `dfree`,
+  `dsize` and the flags set (`DataType::new`), and a size assertion stops the
+  build on a callback table nobody has read: it is 5 words up to Ruby 4.0 and 12
+  from 4.1 (`handle_weak_references`, `reserved[7]`), which broke every
+  extension that named the fields (magnus #163, #189). CI's Ruby head cell is
+  where the next change shows.
   A node wrapper's `NodeData` is EMBEDDED in its object's slot
   (`bridge::typed::EmbeddedType`, `RUBY_TYPED_EMBEDDABLE`, Ruby 3.3+): one
   allocation per wrapper, and the free callback drops the data without
@@ -1634,6 +1640,21 @@ Key decisions that got there, worth not regressing:
   (~2× on 8 cores); verify with `bench`'s threaded rows and the `GC.stress`
   `spec/threading_spec.rb` (which now also asserts shared-document XPath+mutation
   and shared-context evaluate are crash-free under the GVL).
+  **The price is that an evaluation does not see interrupts**: `Timeout`,
+  `Thread#raise` and a signal handler wait for it to return, and so does every
+  other Ruby thread (`rb_thread_check_ints` runs only on the GVL-released parse
+  path's retry). Bounded by the op budget - about 0.3 s at the 50M default, the
+  worst a pathological `following::`/`preceding::` nesting reached; CSS finished
+  instantly on the same documents. **A check inside the engine was weighed and
+  not done**, for what it would change: a check that yields the GVL runs other
+  threads while the evaluation holds its read guard, so their edits are refused
+  as `Makiri::Error` where today they queue behind the GVL; one that restarts
+  the evaluation instead is set off by the time-slice timer (`rb_thread_check_ints`
+  cannot tell it from a `Timeout`), so an evaluation over ~100 ms with another
+  thread running would never finish; and the poll itself,
+  `rb_thread_interrupted`, has a path to a longjmp in the raise survey.
+  (magnus #104 is the same wait, for a worker that never shut down.) If the
+  window ever matters, the lever is a smaller budget, not a poll.
 - **`//tag` is served from the element index** (`xpath/step_index.rs`): a document-rooted, predicate-free, unprefixed
   descendant name-test pushes the tag bucket instead of walking. Pure-HTML only
   (`has_foreign` guard) and each candidate is re-checked with the step's

@@ -16,11 +16,20 @@ jobs:
   test:
     name: Ruby ${{ matrix.ruby }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    # Ruby head is allowed to fail: it is there to see what the NEXT Ruby
+    # changes before it is released. rb_data_type_t's callback table grew in 4.1
+    # (handle_weak_references, reserved[1] -> reserved[7]) and broke every
+    # extension that wrote it field by field; this is where that shows.
+    continue-on-error: ${{ matrix.experimental == true }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         ruby: ["3.3", "3.4", "4.0"]
+        include:
+          - os: ubuntu-latest
+            ruby: head
+            experimental: true
 
     steps:
       - name: Checkout (with vendored Lexbor submodule)
