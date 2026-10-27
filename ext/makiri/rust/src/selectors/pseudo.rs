@@ -56,6 +56,8 @@ pub mod class {
     pub const VALID: u32 = 39;
     pub const VISITED: u32 = 40;
     pub const WARNING: u32 = 41;
+    /// Not Lexbor's: it has no `:defined` (C33).
+    pub const DEFINED: u32 = 42;
 }
 
 /// `lxb_css_selector_pseudo_class_function_id_t`.
@@ -169,6 +171,7 @@ pub static CLASSES: &[Data] = data![
     b"valid" => class::VALID,
     b"visited" => class::VISITED,
     b"warning" => class::WARNING,
+    b"defined" => class::DEFINED,
 ];
 
 /// `lxb_css_selectors_pseudo_data_pseudo_element`, `#undef` included.

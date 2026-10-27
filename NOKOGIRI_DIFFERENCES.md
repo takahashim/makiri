@@ -306,8 +306,10 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   `div`, since the selector is matched against the whole tree and only the
   results are kept to descendants. `Nokogiri::HTML5` and `Nokogiri::XML` scope
   the selector to the node (`#c` cannot be the `div`), and so did
-  `Makiri::XML` up to 0.16. There is no `:scope`; for a scoped match, use XPath
-  from the node (`xpath(".//div//p")`).
+  `Makiri::XML` up to 0.16. `:scope` is the node the query is made from, as in
+  a browser (`at_css("#c").css(":scope > p")`, and the document element when
+  the query is made from a document), for a match scoped to it; XPath from the
+  node (`xpath(".//div//p")`) is the other way.
 * The attribute case modifiers (`[a="x" i]`, `[a="x" s]`) are supported on
   both representations. Nokogiri refuses both on either.
 * The form-state and link pseudo-classes (`:checked`, `:disabled`,

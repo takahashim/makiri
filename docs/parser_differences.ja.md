@@ -520,6 +520,21 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **対応しないもの**：`:current`、`:past`、`:future`、`:local-link`、`:target-within`、`:warning` は、ブラウザの `querySelectorAll` が受け付けないので、拒むままにする。
 - **テスト**：`spec/css_standard_steps_spec.rb`。
 
+### C32 `:scope`
+
+- **分類**：参照実装の未対応。移植版で直した。
+- **仕様**：`:scope` は、セレクタを照合する範囲の根の要素である。`element.querySelectorAll(":scope > p")` では element、`element.matches(":scope")` では element 自身、文書から呼ぶ（`document.querySelectorAll`）と文書要素になる。
+- **再現**：`div.css(":scope > p")`。Lexbor は `:scope` を拒むので `CSS::SyntaxError` になる。
+- **移植版**：`selectors/parser.rs` の `pseudo_class` が拒むのをやめ、`css_match` の query が範囲の根（`scope_of`）を持つ。文書は最初の要素の子、DocumentFragment は根なし（何にも一致しない）。`:is()`、`:not()`、`:has()` の中の `:scope` も同じ根を指す。specificity は擬似クラスの一つ。差分の許可は、入力に `:` があるとき。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
+### C33 `:defined`
+
+- **分類**：参照実装の未対応。移植版で直した。Lexbor の表にない名前なので、`pseudo::class::DEFINED`（42）を足した。
+- **仕様**：HTML Standard の `:defined` は、custom element の状態が "uncustomized" か "custom" の要素に一致する。
+- **移植版**：文書に custom element の登録簿がないので、HTML の名前空間で valid custom element name（小文字の英字で始まり、ハイフンを含み、PCENChar だけで、予約された八つの名前でない）の要素を未定義（偽）、それ以外の要素（SVG の `font-face` など、HTML 以外の名前空間の要素を含む）を定義済み（真）とする。`is` 属性の customized built-in element は扱わない。差分の許可は、入力に `:` があるとき。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
 ## パーサの外の項目
 
 次の差は HTML パーサではなく、DOM の上の層（CSS マッチャ、XPath の名前照合）にある。

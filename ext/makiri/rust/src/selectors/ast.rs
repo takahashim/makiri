@@ -277,6 +277,8 @@ pub enum PseudoClass {
     Focus,
     Hover,
     PlaceholderShown,
+    Scope,
+    Defined,
     Other,
 }
 
@@ -428,6 +430,8 @@ impl<'p> Selector<'p> {
             pc::FOCUS => PseudoClass::Focus,
             pc::HOVER => PseudoClass::Hover,
             pc::PLACEHOLDER_SHOWN => PseudoClass::PlaceholderShown,
+            pc::SCOPE => PseudoClass::Scope,
+            pc::DEFINED => PseudoClass::Defined,
             _ => PseudoClass::Other,
         }
     }

@@ -104,15 +104,14 @@ RSpec.describe "Makiri CSS" do
     end
   end
 
-  # Lexbor's matcher has no `:scope` (NOKOGIRI_DIFFERENCES.md). Pin the exact
-  # failure so a change of matcher decides, rather than discovers, whether to
-  # keep rejecting it or to implement it.
+  # `:scope` is the node the query is made from (NOKOGIRI_DIFFERENCES.md;
+  # C32 in docs/parser_differences.ja.md).
   describe ":scope" do
-    it "is rejected as an unsupported CSS selector" do
+    it "is the context node, which a descendant search leaves out" do
       c = doc.at_css("#main")
-      expect { c.css(":scope p") }.to raise_error(Makiri::CSS::SyntaxError)
-      expect { c.at_css(":scope") }.to raise_error(Makiri::CSS::SyntaxError)
-      expect { c.matches?(":scope") }.to raise_error(Makiri::CSS::SyntaxError)
+      expect(c.css(":scope p").map(&:text)).to eq(%w[one two])
+      expect(c.at_css(":scope")).to be_nil
+      expect(c.matches?(":scope")).to be(true)
     end
   end
 

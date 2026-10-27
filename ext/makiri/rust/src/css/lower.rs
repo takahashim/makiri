@@ -347,6 +347,8 @@ fn lower_pseudo_simple(b: &Build, pc: PseudoClass) -> Built {
         | PseudoClass::Active
         | PseudoClass::Focus
         | PseudoClass::Hover
+        | PseudoClass::Scope
+        | PseudoClass::Defined
         | PseudoClass::PlaceholderShown
         | PseudoClass::Other => Err(b.fail(ErrorKind::Syntax, "unsupported CSS pseudo-class")),
     }

@@ -165,6 +165,57 @@ fn attribute_matches<'d, N: CssNode<'d>>(
     }
 }
 
+/// `:scope` and `:defined`, out of line: they are rare, and with their code in
+/// `plain_pseudo_matches` the hot scan loops it is inlined into got 3-5%
+/// slower (`ul > li.item > a`, `:is()` / `:not()`).
+#[inline(never)]
+#[cold]
+fn rare_pseudo_matches<'d, N: CssNode<'d>>(pc: PseudoClass, node: N, budget: &Budget) -> bool {
+    match pc {
+        PseudoClass::Scope => budget.scope() == Some(node.table_key()),
+        _ => is_defined(node),
+    }
+}
+
+/// `:defined`: false for an HTML element whose name is a valid custom
+/// element name - the document has no registry, so none is ever defined - and
+/// true for every other element.
+fn is_defined<'d, N: CssNode<'d>>(node: N) -> bool {
+    node.element()
+        .is_some_and(|el| !(node.is_html() && is_custom_element_name(el.dom_local_name())))
+}
+
+/// HTML's "valid custom element name": a lower-case ASCII letter first, a
+/// hyphen somewhere, only PCENChars, and not one of the eight names the
+/// SVG and MathML vocabularies reserve.
+fn is_custom_element_name(name: &[u8]) -> bool {
+    const RESERVED: [&[u8]; 8] = [
+        b"annotation-xml",
+        b"color-profile",
+        b"font-face",
+        b"font-face-src",
+        b"font-face-uri",
+        b"font-face-format",
+        b"font-face-name",
+        b"missing-glyph",
+    ];
+    let Ok(text) = core::str::from_utf8(name) else {
+        return false;
+    };
+    let pcen = |c: char| {
+        matches!(c,
+            '-' | '.' | '0'..='9' | '_' | 'a'..='z' | '\u{B7}'
+            | '\u{C0}'..='\u{D6}' | '\u{D8}'..='\u{F6}' | '\u{F8}'..='\u{37D}'
+            | '\u{37F}'..='\u{1FFF}' | '\u{200C}'..='\u{200D}' | '\u{203F}'..='\u{2040}'
+            | '\u{2070}'..='\u{218F}' | '\u{2C00}'..='\u{2FEF}' | '\u{3001}'..='\u{D7FF}'
+            | '\u{F900}'..='\u{FDCF}' | '\u{FDF0}'..='\u{FFFD}' | '\u{10000}'..='\u{EFFFF}')
+    };
+    text.starts_with(|c: char| c.is_ascii_lowercase())
+        && text.contains('-')
+        && text.chars().all(pcen)
+        && !RESERVED.contains(&name)
+}
+
 fn plain_pseudo_matches<'d, N: CssNode<'d>>(
     pc: PseudoClass,
     node: N,
@@ -203,6 +254,7 @@ fn plain_pseudo_matches<'d, N: CssNode<'d>>(
         PseudoClass::Focus => has_state_attr(node, b"focus"),
         PseudoClass::Hover => has_state_attr(node, b"hover"),
         PseudoClass::PlaceholderShown => is_placeholder_shown(node),
+        PseudoClass::Scope | PseudoClass::Defined => rare_pseudo_matches(pc, node, budget),
         PseudoClass::Other => false,
     })
 }

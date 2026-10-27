@@ -246,6 +246,10 @@ const DEFAULT_WORK_BUDGET: usize = 250 * 1000;
 struct Budget {
     spent: std::cell::Cell<usize>,
     limit: usize,
+    /// What `:scope` is: the element the query was made from. Kept here, with
+    /// the other per-query state `check_simple` already takes, so a compound's
+    /// test takes no further argument (a scan row read 3-5% slower with one).
+    scope: Option<crate::ptr_table::NodeKey>,
 }
 
 /// Why a match/query could not be answered - propagated as a hard failure,
@@ -298,6 +302,11 @@ impl Budget {
         self.spent.set(n);
         Ok(())
     }
+
+    #[inline]
+    fn scope(&self) -> Option<crate::ptr_table::NodeKey> {
+        self.scope
+    }
 }
 
 impl crate::falloc::Oom for MatchFailure {
@@ -324,12 +333,41 @@ pub fn matches_any<'d, N: CssNode<'d>>(
     ns: &Namespaces<'_>,
     node: N,
 ) -> Result<bool, MatchFailure> {
-    with_query(scratch, groups, ns, None, DEFAULT_WORK_BUDGET, |query| {
-        if node.element().is_none() {
-            return Ok(false);
+    with_query(
+        scratch,
+        groups,
+        ns,
+        None,
+        Some(node),
+        DEFAULT_WORK_BUDGET,
+        |query| {
+            if node.element().is_none() {
+                return Ok(false);
+            }
+            query.matches_top(node)
+        },
+    )
+}
+
+/// What `:scope` is for a query made from `root`: `root` itself when it is
+/// an element, the document element when it is a document (as
+/// `document.querySelectorAll(':scope')` has it), and nothing for any other
+/// node.
+fn scope_of<'d, N: CssNode<'d>>(root: N) -> Option<N> {
+    if root.element().is_some() {
+        return Some(root);
+    }
+    if root.node_type() != crate::node_type::NodeType::Document {
+        return None;
+    }
+    let mut child = root.first_child();
+    while let Some(c) = child {
+        if c.element().is_some() {
+            return Some(c);
         }
-        query.matches_top(node)
-    })
+        child = c.next();
+    }
+    None
 }
 
 /// Compile `groups` ([`compile`]: a selector it refuses is refused before
@@ -342,11 +380,12 @@ fn with_query<'d, N: CssNode<'d>, R, E: From<MatchFailure>>(
     groups: Lists<'_>,
     ns: &Namespaces<'_>,
     walk_in: Option<N::Doc>,
+    scope: Option<N>,
     limit: usize,
     f: impl FnOnce(&mut Query<'_, '_, 'd, N>) -> Result<R, E>,
 ) -> Result<R, E> {
     let compiled = compile(&mut scratch.tables, groups, ns)?;
-    let answer = match Query::new(&compiled, walk_in, limit, scratch) {
+    let answer = match Query::new(&compiled, walk_in, scope, limit, scratch) {
         Ok(mut query) => {
             let answer = f(&mut query);
             query.finish(scratch);
@@ -408,22 +447,30 @@ fn select_all_with_limit<'d, N: CssNode<'d>>(
     limit: usize,
 ) -> Result<Vec<N>, QueryFailure> {
     let walk_in = Some(root.owner_document());
-    with_query(scratch, groups, ns, walk_in, limit, |query| {
-        let mut out = Vec::new();
-        let stopped = each_match(query, root, |n| {
-            if out.len() >= NODE_SET_MAX {
-                return ControlFlow::Break(QueryFailure::Overflow);
+    with_query(
+        scratch,
+        groups,
+        ns,
+        walk_in,
+        scope_of(root),
+        limit,
+        |query| {
+            let mut out = Vec::new();
+            let stopped = each_match(query, root, |n| {
+                if out.len() >= NODE_SET_MAX {
+                    return ControlFlow::Break(QueryFailure::Overflow);
+                }
+                match out.falloc_push(n) {
+                    Ok(()) => ControlFlow::Continue(()),
+                    Err(()) => ControlFlow::Break(QueryFailure::Match(MatchFailure::Oom)),
+                }
+            })?;
+            match stopped {
+                Some(failure) => Err(failure),
+                None => Ok(out),
             }
-            match out.falloc_push(n) {
-                Ok(()) => ControlFlow::Continue(()),
-                Err(()) => ControlFlow::Break(QueryFailure::Match(MatchFailure::Oom)),
-            }
-        })?;
-        match stopped {
-            Some(failure) => Err(failure),
-            None => Ok(out),
-        }
-    })
+        },
+    )
 }
 
 /// Test-only: [`select_all`] with a caller-chosen work-budget limit instead
@@ -451,9 +498,15 @@ pub fn select_first<'d, N: CssNode<'d>>(
     ns: &Namespaces<'_>,
 ) -> Result<Option<N>, MatchFailure> {
     let walk_in = Some(root.owner_document());
-    with_query(scratch, groups, ns, walk_in, DEFAULT_WORK_BUDGET, |query| {
-        each_match(query, root, ControlFlow::Break)
-    })
+    with_query(
+        scratch,
+        groups,
+        ns,
+        walk_in,
+        scope_of(root),
+        DEFAULT_WORK_BUDGET,
+        |query| each_match(query, root, ControlFlow::Break),
+    )
 }
 
 /// Run `f` on each descendant of `root` the walking `query` matches, in

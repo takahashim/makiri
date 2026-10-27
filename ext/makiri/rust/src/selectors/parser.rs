@@ -1886,11 +1886,12 @@ impl<'a> Parser<'a> {
                 | class::LOCAL_LINK
                 | class::OUT_OF_RANGE
                 | class::PAST
-                | class::SCOPE
                 | class::TARGET_WITHIN
                 | class::VALID
                 | class::WARNING
         ) || (never_matches && !compat::fixed(Fix::C31))
+            || (pseudo.id == class::SCOPE && !compat::fixed(Fix::C32))
+            || (pseudo.id == class::DEFINED && !compat::fixed(Fix::C33))
         {
             return self.unexpected_status();
         }

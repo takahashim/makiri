@@ -84,6 +84,33 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
     expect(Makiri::HTML("<p class=x>t</p>").css("p:is(::before, .x)").size).to eq(1)
   end
 
+  # C32: `:scope` is the element the query was made from; for a document,
+  # its root element.
+  it "reads :scope as the element the query starts from" do
+    doc = Makiri::HTML("<div id=a><p id=p1><i>x</i></p><p id=p2>y</p></div>")
+    div = doc.at_css("#a")
+    expect(div.css(":scope > p").map { |n| n["id"] }).to eq(%w[p1 p2])
+    expect(div.css(":scope").to_a).to be_empty # descendants only
+    expect(div.matches?(":scope")).to be(true)
+    expect(div.at_css("p").matches?(":scope")).to be(true) # its own scope
+    expect(doc.css(":scope").map(&:name)).to eq(["html"])
+    expect(doc.css(":scope > body").map(&:name)).to eq(["body"])
+    expect(div.css("p:not(:scope)").size).to eq(2)
+    xml = Makiri::XML("<r><a><b/></a></r>")
+    expect(xml.root.css(":scope > a").map(&:name)).to eq(["a"])
+  end
+
+  # C33: HTML's "defined": an HTML element with a valid custom element name is
+  # undefined here (no registry); every other element is defined.
+  it "reads :defined by the custom element name" do
+    doc = Makiri::HTML("<div></div><my-el id=m></my-el><x-a.b id=x></x-a.b>" \
+                       "<svg><font-face id=ff></font-face></svg><annotation-xml id=ax></annotation-xml>")
+    undefined = doc.css(":not(:defined)").map { |n| n["id"] || n.name }
+    expect(undefined).to eq(%w[m x])
+    expect(doc.css("div:defined").size).to eq(1)
+    expect(doc.css("#ff:defined, #ax:defined").size).to eq(2)
+  end
+
   # C29: "convert a string to a number": the nearest double to the digits.
   # 11543495214036735 lies halfway between two doubles and goes to the even
   # one; Lexbor's conversion is not correctly rounded and gives ...734.
