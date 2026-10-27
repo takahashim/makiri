@@ -263,7 +263,7 @@ pub static CLASS_FUNCTIONS: &[FuncData] = &[
         b"lang",
         class_function::LANG,
         comb::CLOSE,
-        St::PseudoClassFunctionUnsupported,
+        St::PseudoLangBegin,
         EndCb::FunctionEnd,
         false,
         false,

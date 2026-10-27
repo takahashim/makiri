@@ -74,6 +74,8 @@ pub enum PseudoData {
     List(ListId),
     /// The argument of the `:nth-*` family.
     AnbOf(AnbOf),
+    /// The language ranges of `:lang()`, joined by NUL bytes (C34).
+    Lang(Span),
 }
 
 /// `lxb_css_selector_list_t`.
@@ -315,7 +317,19 @@ pub enum FunctionArg<'p> {
     /// `:lexbor-contains()`: never produced, the port does not know the name.
     Contains,
     Current(Lists<'p>),
+    /// `:lang()`'s language ranges.
+    Lang(LangRanges<'p>),
     Other,
+}
+
+/// The language ranges of a `:lang()`, in the order written.
+#[derive(Clone, Copy)]
+pub struct LangRanges<'p>(&'p [u8]);
+
+impl<'p> LangRanges<'p> {
+    pub fn iter(self) -> impl Iterator<Item = &'p [u8]> {
+        self.0.split(|&b| b == 0)
+    }
 }
 
 /// What a simple selector is, with the parts its kind carries.
@@ -471,6 +485,10 @@ impl<'p> Selector<'p> {
             pf::HAS => selectors(ListPseudo::Has),
             pf::LEXBOR_CONTAINS => FunctionArg::Contains,
             pf::CURRENT => FunctionArg::Current(lists()),
+            pf::LANG => match n.data {
+                PseudoData::Lang(span) => FunctionArg::Lang(LangRanges(ast.str(span))),
+                _ => FunctionArg::Other,
+            },
             _ => FunctionArg::Other,
         }
     }

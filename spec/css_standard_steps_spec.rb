@@ -111,6 +111,33 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
     expect(doc.css("#ff:defined, #ax:defined").size).to eq(2)
   end
 
+  # C34: `:lang()` takes language ranges (identifiers or strings) and matches by
+  # extended filtering over the nearest `lang` (`xml:lang` in XML).
+  it "matches :lang() by the nearest lang, with extended filtering" do
+    doc = Makiri::HTML('<div id=a lang="en-US"><p id=p1>x</p><p id=p2 lang="fr">y</p>' \
+                       '<p id=p3 lang="">z</p><i id=s lang="zh-Hant-TW">w</i></div><p id=p4>n</p>')
+    ids = ->(sel) { doc.css(sel).map { |n| n["id"] } }
+    expect(ids.(":lang(en)")).to eq(%w[a p1])
+    expect(ids.(":lang(EN-us)")).to eq(%w[a p1])
+    expect(ids.(":lang(en, fr)")).to eq(%w[a p1 p2])
+    expect(ids.(':lang("*-US")')).to eq(%w[a p1])
+    expect(ids.(":lang(zh-TW)")).to eq(%w[s])
+    expect(ids.(':lang("")')).to eq(%w[p3])
+    expect(ids.(":lang(e)")).to be_empty
+    expect(ids.(":lang(de)")).to be_empty
+    [":lang()", ":lang(en,)", ":lang(,en)", ":lang(1)", ":lang(en fr)"].each do |sel|
+      expect { doc.css(sel) }.to raise_error(Makiri::CSS::SyntaxError), sel
+    end
+    xml = Makiri::XML('<r xml:lang="en"><a/><b xml:lang="fr"/></r>')
+    expect(xml.css(":lang(en)").map(&:name)).to eq(%w[r a])
+    expect(xml.css(":lang(fr)").map(&:name)).to eq(%w[b])
+  end
+
+  it "writes :lang()'s ranges back" do
+    sheet = Makiri::Lexbor::CSS.parse_stylesheet(':lang(en, "fr-*") {}')
+    expect(sheet.first[:selectors].first[:text]).to eq(':lang(en, "fr-*")')
+  end
+
   # C29: "convert a string to a number": the nearest double to the digits.
   # 11543495214036735 lies halfway between two doubles and goes to the even
   # one; Lexbor's conversion is not correctly rounded and gives ...734.

@@ -411,7 +411,10 @@ fn lower_pseudo_func(b: &Build, arg: FunctionArg<'_>) -> Built {
             ),
         },
 
-        FunctionArg::Contains | FunctionArg::Current(_) | FunctionArg::Other => {
+        FunctionArg::Contains
+        | FunctionArg::Current(_)
+        | FunctionArg::Lang(_)
+        | FunctionArg::Other => {
             Err(b.fail(ErrorKind::Syntax, "unsupported functional CSS pseudo-class"))
         }
     }

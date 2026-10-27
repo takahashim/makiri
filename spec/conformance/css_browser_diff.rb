@@ -45,7 +45,7 @@ end.parse!(ARGV)
 HTML_DOCS = %w[html-basic html-form html-foreign].freeze
 XML_DOCS = %w[xml-plain xml-ns xml-xhtml].freeze
 ALL_DOCS = HTML_DOCS + XML_DOCS
-UNIMPLEMENTED = [":default", ":indeterminate", ":lang(en)", ":lang(fr)", ":dir(ltr)"].freeze
+UNIMPLEMENTED = [":default", ":indeterminate", ":dir(ltr)"].freeze
 RULES = [
   # Pseudo-classes the matcher does not implement.
   ["unimplemented", ALL_DOCS, UNIMPLEMENTED],

@@ -535,6 +535,15 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **移植版**：文書に custom element の登録簿がないので、HTML の名前空間で valid custom element name（小文字の英字で始まり、ハイフンを含み、PCENChar だけで、予約された八つの名前でない）の要素を未定義（偽）、それ以外の要素（SVG の `font-face` など、HTML 以外の名前空間の要素を含む）を定義済み（真）とする。`is` 属性の customized built-in element は扱わない。差分の許可は、入力に `:` があるとき。
 - **テスト**：`spec/css_standard_steps_spec.rb`。
 
+### C34 `:lang()`
+
+- **分類**：参照実装の未対応。移植版で直した。
+- **仕様**：`:lang()` の引数は、識別子か文字列の language range をコンマで並べたもの。要素の言語（自分か祖先の最も近い `lang`。XML は `xml:lang`）が、どれかの range に RFC 4647 の extended filtering で一致すれば真。大文字小文字は区別しない。`*` は任意の subtag に一致し、range の subtag は、tag の中に順に見つかればよい（一文字の subtag を越えては探さない）。`lang=""` はその要素の言語が不明であることを示し、祖先の値を継がない。
+- **再現**：`:lang(en)`、`:lang("*-US")`、`:lang(zh-TW)`（`zh-Hant-TW` に一致する）。Lexbor は `:lang()` を拒むので `CSS::SyntaxError` になる。
+- **移植版**：`selectors/parser.rs` の `pseudo_lang_begin` が range を AST の文字列に NUL 区切りで置き、`css_match/simple.rs` の `lang_matches` が `extended_filter` で照合する。HTML は `lang`、XML は `xml:lang` に続けて XHTML 要素の `lang` を見る。差分の許可は、入力に `:` があるとき。
+- **対応しないもの**：`<meta http-equiv="content-language">` による文書の既定の言語（`lang` が祖先のどこにもない要素は、何にも一致しない）。`:dir()` も同じ理由（向きの継承と `auto` の判定が要る）で、拒むままにする。
+- **テスト**：`spec/css_standard_steps_spec.rb`、`css_match::simple::lang_tests`。
+
 ## パーサの外の項目
 
 次の差は HTML パーサではなく、DOM の上の層（CSS マッチャ、XPath の名前照合）にある。

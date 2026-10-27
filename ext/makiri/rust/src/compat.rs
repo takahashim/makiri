@@ -154,6 +154,9 @@ pub enum Fix {
     /// `:defined` is false for an HTML element with a valid custom element
     /// name, true for any other element.
     C33,
+    /// `:lang()` takes language ranges (identifiers or strings) and matches
+    /// an element whose language they match by extended filtering.
+    C34,
     /// A selector's namespace prefix is resolved against the caller's
     /// bindings (M6, M7): `p|E` is E in that namespace, `|E` E in none, an
     /// undeclared prefix invalid. Lexbor ignores every prefix. A matcher
@@ -327,6 +330,7 @@ pub fn css_explains(input: &[u8]) -> Vec<Fix> {
         fixes.push(Fix::C31);
         fixes.push(Fix::C32);
         fixes.push(Fix::C33);
+        fixes.push(Fix::C34);
     }
     /* C22: an An+B's digits run past a long. */
     if has(input, b"n-") && input.windows(19).any(|w| w.iter().all(u8::is_ascii_digit)) {

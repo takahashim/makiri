@@ -75,6 +75,8 @@ pub enum St {
     /// `lxb_css_selectors_state_pseudo_anb_begin` (the `:nth-*` without
     /// `of S`).
     PseudoAnbBegin,
+    /// `:lang()`'s language ranges (C34).
+    PseudoLangBegin,
     /// `lxb_css_selectors_state_pseudo_of_begin`.
     PseudoOfBegin,
     /// `lxb_css_selectors_state_pseudo_of_back`.
@@ -929,6 +931,7 @@ impl<'a> Parser<'a> {
             St::PseudoClassFunctionList => self.pseudo_function_list(St::ComplexList),
             St::PseudoClassFunctionHas => self.pseudo_function_list(St::RelativeList),
             St::PseudoAnbBegin => self.pseudo_anb_begin(token),
+            St::PseudoLangBegin => self.pseudo_lang_begin(token),
             St::PseudoOfBegin => self.pseudo_of_begin(token),
             St::PseudoOfBack => self.pseudo_of_back(),
             St::PseudoElementFunctionUndef => true,
@@ -1912,6 +1915,7 @@ impl<'a> Parser<'a> {
             return self.unexpected_status();
         };
         match func.id {
+            class_function::LANG if compat::fixed(Fix::C34) => {}
             class_function::DIR
             | class_function::LANG
             | class_function::NTH_COL
@@ -2307,6 +2311,83 @@ impl<'a> Parser<'a> {
         }
         self.sel.list = None;
         self.success()
+    }
+
+    /// C34: `:lang()`'s argument, one or more language ranges - identifiers
+    /// or strings - separated by commas, kept in the last selector.
+    fn pseudo_lang_begin(&mut self, token: Token) -> bool {
+        let start = u32::try_from(self.ast.strings.len()).ok();
+        self.status = match start {
+            Some(start) => self.lang_ranges(token, start),
+            None => Status::ErrorMemoryAllocation,
+        };
+        if self.status != Status::Ok {
+            self.sel.list = None;
+            self.sel.list_last = None;
+            return self.failed();
+        }
+        self.sel.list = None;
+        self.success()
+    }
+
+    /// The ranges, appended to the AST's strings from `start` on, NUL between.
+    fn lang_ranges(&mut self, mut token: Token, start: u32) -> Status {
+        let mut first = true;
+        loop {
+            while token.ty == T::Whitespace {
+                self.consume();
+                let Some(t) = self.token() else {
+                    return self.status;
+                };
+                token = t;
+            }
+            if token.ty != T::Ident && token.ty != T::String {
+                return Status::ErrorUnexpectedData;
+            }
+            if !first && self.ast.strings.falloc_extend_from_slice(&[0]).is_err() {
+                return self.oom_status();
+            }
+            let range = self.tkz.string(token.string);
+            if self.ast.strings.falloc_extend_from_slice(range).is_err() {
+                return self.oom_status();
+            }
+            self.consume();
+            let Some(mut t) = self.token() else {
+                return self.status;
+            };
+            while t.ty == T::Whitespace {
+                self.consume();
+                let Some(n) = self.token() else {
+                    return self.status;
+                };
+                t = n;
+            }
+            if t.ty != T::Comma {
+                /* The list ends at the function's `)` (or the input's end). */
+                if t.ty != T::RParenthesis && t.ty != T::End {
+                    return Status::ErrorUnexpectedData;
+                }
+                break;
+            }
+            self.consume();
+            let Some(n) = self.token() else {
+                return self.status;
+            };
+            token = n;
+            first = false;
+        }
+        let Some(len) = u32::try_from(self.ast.strings.len())
+            .ok()
+            .and_then(|end| end.checked_sub(start))
+        else {
+            return Status::ErrorMemoryAllocation;
+        };
+        if let Some(list) = self.sel.list_last {
+            if let Some(last) = self.ast.list(list).last {
+                self.ast.sel_mut(last).data = PseudoData::Lang(Span { start, len });
+            }
+        }
+        Status::Ok
     }
 
     /// `lxb_css_selectors_state_pseudo_of_begin`.

@@ -204,6 +204,18 @@ fn simple<'p>(out: &mut Vec<u8>, s: Selector<'p>) -> Result<Option<Lists<'p>>, F
                 FunctionArg::Nth { anb: None, .. } => return Err(Fail::Lossy),
                 FunctionArg::Contains => return Err(Fail::Lossy),
                 FunctionArg::Current(lists) => return Ok(Some(lists)),
+                FunctionArg::Lang(ranges) => {
+                    for (i, range) in ranges.iter().enumerate() {
+                        if i > 0 {
+                            put(out, b", ")?;
+                        }
+                        if is_plain_ident(range) {
+                            ident(out, range)?;
+                        } else {
+                            string(out, range)?;
+                        }
+                    }
+                }
                 FunctionArg::Other => return Err(Fail::Lossy),
             }
             put(out, b")")?;
@@ -218,6 +230,14 @@ fn simple<'p>(out: &mut Vec<u8>, s: Selector<'p>) -> Result<Option<Lists<'p>>, F
         Simple::Other => return Err(Fail::Lossy),
     }
     Ok(None)
+}
+
+/// A language range that reads back as the identifier it was written as.
+fn is_plain_ident(range: &[u8]) -> bool {
+    range.first().is_some_and(u8::is_ascii_alphabetic)
+        && range
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || *b == b'-')
 }
 
 /// A pseudo-class or pseudo-element name, in the lower case Lexbor's own name

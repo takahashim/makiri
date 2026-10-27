@@ -65,7 +65,9 @@ macro_rules! dumper {
                                 $name(lists, out);
                                 out.push(')');
                             }
-                            v::FunctionArg::Other => out.push_str("F?"),
+                            /* `Other`, and the port's `:lang()` (C34), which Lexbor
+                             * never parses. */
+                            _ => out.push_str("F?"),
                         },
                         v::Simple::PseudoElement => {
                             out.push_str(&format!("E({})", s.is_pseudo_element_function()))
