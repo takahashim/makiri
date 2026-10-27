@@ -16,7 +16,7 @@
 //!   list, which holds the tokens read ahead and not yet consumed.
 //! - The parse-error list is not kept: nothing reads it.
 
-use super::strtod::strtod_internal;
+use super::number::value;
 use super::token::{Span, Token, TokenType};
 use super::Status;
 use crate::compat::{self, Fix};
@@ -842,7 +842,7 @@ impl<'a> Tokenizer<'a> {
         };
         token.ty = TokenType::Number;
         token.is_float = is_float;
-        token.num = strtod_internal(digits, exponent);
+        token.num = value(digits, exponent);
     }
 
     /// `lxb_css_syntax_state_consume_numeric`.

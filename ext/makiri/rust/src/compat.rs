@@ -135,6 +135,10 @@ pub enum Fix {
     /// A type or universal selector written with a namespace prefix (`|E`,
     /// `ns|*`) may only begin a compound: `|E|*` and `.x|a` are invalid.
     C28,
+    /// A number's value is the nearest double to its digits, as CSS Syntax's
+    /// "convert a string to a number" has it; Lexbor's conversion is not
+    /// correctly rounded.
+    C29,
     /// A selector's namespace prefix is resolved against the caller's
     /// bindings (M6, M7): `p|E` is E in that namespace, `|E` E in none, an
     /// undeclared prefix invalid. Lexbor ignores every prefix. A matcher
@@ -293,6 +297,14 @@ pub fn css_explains(input: &[u8]) -> Vec<Fix> {
     if has(input, b"has(") {
         fixes.push(Fix::C19);
         fixes.push(Fix::C20);
+    }
+    /* C29: a number of 16 digits or more, whose last bit Lexbor's
+     * conversion may round the other way. */
+    if input
+        .windows(16)
+        .any(|w| w.iter().all(|b| b.is_ascii_digit() || *b == b'.'))
+    {
+        fixes.push(Fix::C29);
     }
     /* C22: an An+B's digits run past a long. */
     if has(input, b"n-") && input.windows(19).any(|w| w.iter().all(u8::is_ascii_digit)) {

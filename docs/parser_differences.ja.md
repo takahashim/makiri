@@ -494,6 +494,15 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **再現**：`[*|a]` は `Makiri::CSS::SyntaxError` になる。
 - **理由**：Lexbor も受け付けず、移植版は同じ答えを保つ。HTML では名前空間を持つ属性は SVG の `xlink:href` などに限られ、ほとんどの用途は `[a]` で足りる。対応には AST の表現、HTML の matcher、XML の XPath への変換の三か所の変更が要る。
 
+### C29 数値の値は最も近い double
+
+- **分類**：参照実装の誤り。移植版で直した。
+- **仕様**：consume a number は、数字の並びが表す値を「convert a string to a number」で数値にする。値は、数字の正確な値に最も近い double である。
+- **再現**：`:nth-child(11543495214036735)`。この整数は隣り合う二つの double（...734 と ...736）のちょうど中間にあり、偶数側の `11543495214036736` になる。Lexbor の変換（`core/strtod.c`、DiyFp）は正しく丸める保証がなく、`11543495214036734` を返す。
+- **範囲**：差が出るのは、有効数字が 16 桁以上の数だけである。無作為の 200 万件の測定（`selectors::number` の `how_often_lexbors_value_differs`）では、整数の 0.5%、小数と指数の組の 0.4% で最後の bit が異なった。`An+B` が読む整数に切り詰めたとき、値が約 9×10^15 より小さくて差が出た入力は 94 件で、どれも 17 桁以上だった。通常の `nth-child(2n+1)` の値は変わらない。
+- **移植版**：`selectors/number.rs` の `value` が、数字と指数から `"<digits>e<exp>"` を固定長の配列に組み、`str::parse::<f64>` で読む。Lexbor の変換（`selectors/strtod.rs`）は、`compat::as_lexbor` の中と参照用の機能（`lexbor-reference`）のビルドだけに残る。差分の許可は、入力に 16 桁以上の数字（と `.`）の並びがあるとき。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
 ## パーサの外の項目
 
 次の差は HTML パーサではなく、DOM の上の層（CSS マッチャ、XPath の名前照合）にある。

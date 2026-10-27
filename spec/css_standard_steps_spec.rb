@@ -59,6 +59,14 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
     expect(Makiri::Lexbor::CSS.parse_stylesheet("@-א x {}").first[:name]).to eq("-א")
     expect(Makiri::Lexbor::CSS.parse_stylesheet("@-¶ x {}").first[:type]).to eq(:bad_style)
   end
+  # C29: "convert a string to a number": the nearest double to the digits.
+  # 11543495214036735 lies halfway between two doubles and goes to the even
+  # one; Lexbor's conversion is not correctly rounded and gives ...734.
+  it "reads a number as the nearest double" do
+    sheet = Makiri::Lexbor::CSS.parse_stylesheet(":nth-child(11543495214036735) {}")
+    expect(sheet.first[:selectors].first[:text]).to eq(":nth-child(11543495214036736)")
+  end
+
   # C6: consume a number, step 6: the value is the whole digit run's.
   it "keeps the value of a number with more than 128 integer digits" do
     doc = Makiri::HTML("<ul><li>a<li>b</ul>")
