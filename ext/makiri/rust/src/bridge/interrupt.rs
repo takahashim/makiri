@@ -19,6 +19,24 @@ pub enum Pass<T> {
     Interrupted,
 }
 
+impl<T> Pass<T> {
+    /// The answer, changed by `f`; an interrupted pass stays interrupted.
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Pass<U> {
+        match self {
+            Pass::Done(answer) => Pass::Done(f(answer)),
+            Pass::Interrupted => Pass::Interrupted,
+        }
+    }
+
+    /// As [`map`](Self::map), for an `f` that can fail.
+    pub fn then<U, E>(self, f: impl FnOnce(T) -> Result<U, E>) -> Result<Pass<U>, E> {
+        match self {
+            Pass::Done(answer) => f(answer).map(Pass::Done),
+            Pass::Interrupted => Ok(Pass::Interrupted),
+        }
+    }
+}
+
 /// Run a query so that an interrupt reaches the thread: `pass` runs it with
 /// [`crate::interrupt::armed`] set, and returns [`Pass::Interrupted`] once it
 /// has stopped and let go of every guard and borrow it took. The interrupt is
@@ -33,9 +51,9 @@ pub fn interruptible<T>(
     ruby: &crate::bridge::rb::Ruby,
     mut pass: impl FnMut() -> Result<Pass<T>, crate::bridge::rb::Error>,
 ) -> Result<T, crate::bridge::rb::Error> {
-    for n in 1..=crate::interrupt::PASSES {
+    for _ in 1..crate::interrupt::PASSES {
         let outcome = {
-            let _armed = crate::interrupt::Armed::set(n < crate::interrupt::PASSES);
+            let _armed = crate::interrupt::Armed::set(true);
             pass()?
         };
         match outcome {
@@ -43,7 +61,14 @@ pub fn interruptible<T>(
             Pass::Interrupted => crate::bridge::raw::thread_check_ints(ruby)?,
         }
     }
-    Err(crate::bridge::ruby::internal_error(
-        "a query that was not asked to stop was stopped",
-    ))
+    /* The last pass, asked of nothing: a query that is not armed never stops
+     * for an interrupt (its budgets do not ask), so `Interrupted` here would be
+     * a broken invariant, not a state to deliver. */
+    let _armed = crate::interrupt::Armed::set(false);
+    match pass()? {
+        Pass::Done(answer) => Ok(answer),
+        Pass::Interrupted => Err(crate::bridge::ruby::internal_error(
+            "a query that was not asked to stop was stopped",
+        )),
+    }
 }

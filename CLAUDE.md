@@ -408,6 +408,9 @@ at all, once no reference runs Lexbor's parser.
 
 ## Build / test
 
+The rake tasks are in `rakelib/*.rake`, grouped by what they check (Rake loads
+them after `Rakefile`, which keeps `GEMSPEC`, `ROOT` and the extension task).
+
 ```bash
 git submodule update --init        # fresh clone only; the reference Lexbor
 bundle install
@@ -480,7 +483,7 @@ bundle exec rake fuzz:libfuzzer    # cargo-fuzz harnesses (needs cargo-fuzz + ni
                                    # TARGETS=css,html_xpath narrows, FUZZ_TIME per
                                    # target or FUZZ_BUDGET total. ASan on Linux only:
                                    # an ASan harness deadlocks in dyld on macOS, so
-                                   # macOS runs `-s none` (see the Rakefile)
+                                   # macOS runs `-s none` (see rakelib/fuzz.rake)
 bundle exec rake leaks             # macOS malloc-leak gate (ASan runs detect_leaks=0,
                                    # so this and Linux Valgrind (`spec:valgrind`, any
                                    # "definitely lost" through the ext; CI runs it
@@ -507,7 +510,7 @@ bundle exec rake verus             # Verus proofs (ext/makiri/rust/verus/): fall
                                    # fail-closed) with copy_small, and limits::admit,
                                    # the one rule every work budget charges through, copied and checked against the source
                                    # (`verus:sync`) - unbounded.
-                                   # VERUS=path/to/verus (Rakefile's VERUS_VERSION); CI:
+                                   # VERUS=path/to/verus (rakelib/verus.rake's VERUS_VERSION); CI:
                                    # verify.yml. Heavy tools stay in CI, like Miri and Kani.
                                    # Vacuity is checked by what must FAIL: an
                                    # assert(false) at each `// [canary]` mark, one
@@ -519,7 +522,7 @@ bundle exec rake kani              # Kani proofs over the Ruby-free core (needs 
                                    # The successor to the C-era CBMC harnesses: the
                                    # allocator, cbuf, UTF-8 validate/decode.
                                    # KANI_GROUPS=alloc,utf8,xml,xpath picks groups
-                                   # (Rakefile's KANI_GROUPS, with the code each
+                                   # (rakelib/rust.rake's KANI_GROUPS, with the code each
                                    # depends on); CI runs only the groups whose
                                    # code changed (`rake kani:groups`), and all of
                                    # them weekly. KANI_JOBS=N runs N in parallel.
@@ -589,7 +592,7 @@ preload `dlopen` fails outright - `undefined symbol: __asan_handle_no_return` -
 and no `ASAN_OPTIONS` value helps, because the flags govern checks, not symbol
 resolution. So Linux keeps `LD_PRELOAD` of GCC's `libasan`, which exports the
 same `_v8` ABI rustc asks for (Apple's runtime is the odd one out, not
-`libasan`). `Rakefile`'s `asan_preload_env` is the single place that decides,
+`libasan`). `rakelib/sanitize.rake`'s `asan_preload_env` is the single place that decides,
 and it returns `{}` on macOS by construction.
 
 Verified on macOS (arm64): `rake sanitize` builds and completes the suite, 1000

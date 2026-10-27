@@ -9,6 +9,7 @@
 
 #![forbid(unsafe_code)]
 
+use crate::bridge::interrupt::Pass;
 use crate::bridge::rb::{prelude::*, Error, RHash, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
@@ -106,6 +107,27 @@ pub fn query_error(err: QueryFailure, selector: Value) -> Error {
             "CSS result set exceeded the node limit ({NODE_SET_MAX})"
         )),
         QueryFailure::Match(e) => match_error(e, selector),
+    }
+}
+
+/// What a matcher entry point came to, as a [`Pass`] of `interruptible`: its
+/// answer, "stopped for an interrupt" (which is no failure, and is what every
+/// CSS entry point must say for it - one that forgot would raise it at the
+/// caller), or the exception its failure maps to.
+pub fn pass_match<T>(result: Result<T, MatchFailure>, selector: Value) -> Result<Pass<T>, Error> {
+    match result {
+        Ok(answer) => Ok(Pass::Done(answer)),
+        Err(MatchFailure::Interrupted) => Ok(Pass::Interrupted),
+        Err(e) => Err(match_error(e, selector)),
+    }
+}
+
+/// [`pass_match`] for the whole-query entry point ([`css_match::select_all`]).
+pub fn pass_query<T>(result: Result<T, QueryFailure>, selector: Value) -> Result<Pass<T>, Error> {
+    match result {
+        Ok(answer) => Ok(Pass::Done(answer)),
+        Err(QueryFailure::Match(MatchFailure::Interrupted)) => Ok(Pass::Interrupted),
+        Err(e) => Err(query_error(e, selector)),
     }
 }
 

@@ -20,16 +20,10 @@
 use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, RString};
 
-use super::string::{prefix, ruby_string_bytes_from, text_check, Encoding};
+use super::string::{is_encoding_fault, prefix, ruby_string_bytes_from, text_check, Encoding};
 use crate::cbuf::OwnedBuf;
 use crate::init::{EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 use crate::xml::encoding_sniff::{sniff, SNIFF_WINDOW};
-
-/// Whether `e` is an `EncodingError` (an undefined conversion, an invalid
-/// byte sequence, no converter).
-fn is_encoding_error(ruby: &Ruby, e: &Error) -> bool {
-    e.is_kind_of(ruby, crate::bridge::rb::Builtin::EncodingError)
-}
 
 /// Two encodings agree, for conflict purposes, when identical or when either is
 /// US-ASCII (a subset of UTF-8 and of the single-byte encodings).
@@ -135,6 +129,46 @@ fn syntax_error(msg: impl crate::bridge::rb::Message) -> Error {
     Error::new(&EXC_XML_SYNTAX_ERROR, msg)
 }
 
+/// Phase 2: `str` as UTF-8 text. What is read as UTF-8 bytes is `str` itself
+/// (validated by the caller); anything else is transcoded in a mode that
+/// raises instead of substituting U+FFFD, so an undefined conversion or an
+/// invalid byte sequence is an `Encoding::*Error` - remapped to
+/// `Makiri::XML::SyntaxError`. Any other failure (`NoMemoryError`, an
+/// interrupt) is passed through as it is.
+fn strict_utf8(ruby: &Ruby, str: RString, eff: Encoding) -> Result<RString, Error> {
+    if eff.reads_as_utf8_bytes(ruby) {
+        return Ok(str);
+    }
+    let mut input = str;
+    if Encoding::of(str) != eff {
+        input = super::raw::str_dup(input)?;
+        super::raw::enc_associate(input, eff)?;
+    }
+    match super::raw::str_encode(input, Encoding::utf8(ruby), 0) {
+        Ok(out) => Ok(out),
+        Err(e) if is_encoding_fault(ruby, &e) => {
+            let msg = e.wording(ruby);
+            Err(syntax_error(format_args!(
+                "XML input could not be decoded to UTF-8: {msg}"
+            )))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// How many bytes of a leading BOM `s` (UTF-8 by now) starts with, 0 for
+/// none. §4.3.3: a BOM is the encoding signature, not document content; the
+/// transcode turns any UTF-16/32 BOM into a U+FEFF, so one rule covers every
+/// input.
+fn bom_len(ruby: &Ruby, s: RString) -> usize {
+    let (head, n) = prefix::<3>(ruby, s);
+    if n == 3 && head == *b"\xEF\xBB\xBF" {
+        3
+    } else {
+        0
+    }
+}
+
 /// Decode `str` to validated, BOM-stripped UTF-8, copied into the buffer the
 /// parser reads, or the error that rejects it. A `max_bytes` of `None` skips
 /// the budget check (the `__decode` test hook).
@@ -144,43 +178,8 @@ pub fn xml_decode_input(
     max_bytes: Option<usize>,
 ) -> Result<OwnedBuf, Error> {
     let eff = effective_encoding(ruby, str)?;
-
-    /* Phase 2: decode to UTF-8, strictly. What is read as UTF-8 bytes is
-     * validated below; anything else is transcoded in a mode that raises
-     * instead of substituting U+FFFD. */
-    let s = if eff.reads_as_utf8_bytes(ruby) {
-        str
-    } else {
-        let mut input = str;
-        if Encoding::of(str) != eff {
-            input = super::raw::str_dup(input)?;
-            super::raw::enc_associate(input, eff)?;
-        }
-        /* No replacement flags, so an undefined conversion or an invalid byte
-         * sequence is an `Encoding::*Error` rather than a U+FFFD - remapped to
-         * `Makiri::XML::SyntaxError`. Any other failure (`NoMemoryError`, an
-         * interrupt) is passed through as it is. */
-        match super::raw::str_encode(input, Encoding::utf8(ruby), 0) {
-            Ok(out) => out,
-            Err(e) if is_encoding_error(ruby, &e) => {
-                let msg = e.wording(ruby);
-                return Err(syntax_error(format_args!(
-                    "XML input could not be decoded to UTF-8: {msg}"
-                )));
-            }
-            Err(e) => return Err(e),
-        }
-    };
-
-    /* §4.3.3: a leading BOM is the encoding signature, not document content.
-     * The transcode above turns any UTF-16/32 BOM into a U+FEFF, so one rule
-     * covers every input. */
-    let (head, n) = prefix::<3>(ruby, s);
-    let off = if n == 3 && head == *b"\xEF\xBB\xBF" {
-        3
-    } else {
-        0
-    };
+    let s = strict_utf8(ruby, str, eff)?;
+    let off = bom_len(ruby, s);
     let len = s.len() - off;
 
     /* Fail closed on an over-budget input BEFORE the copy and the validation

@@ -22,11 +22,12 @@ on:
       - "ext/makiri/rust/Cargo.toml"
       - "ext/makiri/rust/Cargo.lock"
       - "Rakefile"
+      - "rakelib/**"
       - ".github/workflows/verify.yml"
   pull_request:
     paths: *kani-paths
   # Every group, whatever changed: the safety net for a dependency the groups
-  # in the Rakefile (KANI_GROUPS) missed.
+  # in rakelib/rust.rake (KANI_GROUPS) missed.
   schedule:
     - cron: "0 4 * * 0"
   workflow_dispatch:
@@ -141,7 +142,7 @@ jobs:
   # `ptr_table`, `cbuf::Buf` and `limits::admit` (copied, and checked against the source by
   # `rake verus:sync`), unbounded where Kani is bounded, each with canaries
   # that must fail. Verus is a pinned release
-  # (Rakefile's VERUS_VERSION) and brings the Rust toolchain it names.
+  # (rakelib/verus.rake's VERUS_VERSION) and brings the Rust toolchain it names.
   verus:
     name: Verus proofs
     runs-on: ubuntu-24.04

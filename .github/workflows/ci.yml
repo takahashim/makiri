@@ -291,7 +291,7 @@ jobs:
       # no public API can build and
       # ran under `rake sanitize` while they were a Ruby hook. `--target` keeps
       # the build scripts uninstrumented. Linux only: on macOS an ASan test
-      # binary deadlocks in dyld before main (see the Rakefile's cargo-fuzz note).
+      # binary deadlocks in dyld before main (see the cargo-fuzz note in rakelib/fuzz.rake).
       - name: Build the reference Lexbor
         run: bundle exec rake lexbor
 

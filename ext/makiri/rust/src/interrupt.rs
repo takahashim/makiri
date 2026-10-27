@@ -81,6 +81,69 @@ impl Drop for Armed {
     }
 }
 
+/// What a budget does with a charge its current cap refused.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Refusal {
+    /// An interrupt waits: stop the query ([`Pass::Interrupted`] to its caller).
+    ///
+    /// [`Pass::Interrupted`]: crate::bridge::interrupt::Pass
+    Interrupted,
+    /// The cap was the end of a chunk and the next is open: charge again.
+    Open,
+    /// The budget itself is spent.
+    Limit,
+}
+
+/// A budget's limit charged in chunks, so a run that may be stopped
+/// ([`armed`]) asks [`pending`] once per [`CHUNK`] units of its work and the
+/// charge itself stays one comparison against [`cap`](Self::cap). Exactly
+/// `limit` units are admitted either way: the chunks only cut the road short
+/// of it. A budget keeps its own counter and charges through
+/// `crate::limits::admit`; this holds what it charges AGAINST.
+pub struct Chunked {
+    cap: Cell<usize>,
+    limit: usize,
+    poll: bool,
+}
+
+impl Chunked {
+    /// A limit of `limit` units, chunked if the thread's queries are
+    /// [`armed`] (read now).
+    pub fn new(limit: usize) -> Chunked {
+        let poll = armed();
+        Chunked {
+            cap: Cell::new(if poll { limit.min(CHUNK) } else { limit }),
+            limit,
+            poll,
+        }
+    }
+
+    /// The cap to charge against now: the end of this chunk, or the limit.
+    #[inline]
+    pub fn cap(&self) -> usize {
+        self.cap.get()
+    }
+
+    /// The charge of `n` units after `spent` was refused by [`cap`](Self::cap).
+    /// At a chunk's end: [`Refusal::Interrupted`] if an interrupt waits,
+    /// otherwise the next chunk (at least `n` long) is opened and the caller
+    /// charges again - [`Refusal::Limit`] if that is refused too. At the limit:
+    /// [`Refusal::Limit`].
+    #[cold]
+    #[inline(never)]
+    pub fn refused(&self, spent: usize, n: usize) -> Refusal {
+        if !(self.poll && self.cap.get() < self.limit) {
+            return Refusal::Limit;
+        }
+        if pending() {
+            return Refusal::Interrupted;
+        }
+        self.cap
+            .set(spent.saturating_add(CHUNK.max(n)).min(self.limit));
+        Refusal::Open
+    }
+}
+
 /// A probe the engine's own tests drive: installed once per process, it answers
 /// the calling thread's flag, so a test sets what is "waiting" without Ruby.
 #[cfg(test)]
@@ -119,5 +182,39 @@ mod tests {
     #[test]
     fn nothing_is_pending_without_a_probe() {
         assert!(!pending());
+    }
+
+    #[test]
+    fn chunked_admits_exactly_the_limit_armed_or_not() {
+        test_probe::waiting(false);
+        let limit = 3 * CHUNK + 5;
+        for on in [false, true] {
+            let _a = Armed::set(on);
+            let c = Chunked::new(limit);
+            let mut spent = 0;
+            let end = loop {
+                match crate::limits::admit(spent, 1, c.cap()) {
+                    Some(n) => spent = n,
+                    None => match c.refused(spent, 1) {
+                        Refusal::Open => continue,
+                        other => break other,
+                    },
+                }
+            };
+            assert_eq!((spent, end), (limit, Refusal::Limit), "armed={on}");
+        }
+    }
+
+    #[test]
+    fn chunked_stops_at_a_chunk_end_only_if_armed() {
+        // Armed, the first cap is a chunk's end; unarmed it is the limit itself.
+        for (on, want) in [(true, Refusal::Interrupted), (false, Refusal::Limit)] {
+            let _a = Armed::set(on);
+            test_probe::waiting(true);
+            let c = Chunked::new(2 * CHUNK);
+            let got = c.refused(c.cap(), 1);
+            test_probe::waiting(false);
+            assert_eq!(got, want, "armed={on}");
+        }
     }
 }

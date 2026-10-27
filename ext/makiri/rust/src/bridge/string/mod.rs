@@ -13,11 +13,12 @@
 //! the engine through this module are control strings - an XPath expression,
 //! a selector, a name, an attribute value - and the one large input, the
 //! HTML source, was copied out anyway before the GVL was released. So every
-//! String is copied, in one place ([`copy_bytes`]), with no Ruby between the
-//! read and the copy. A checked view ([`RubyText`], [`RubyData`]) then owns
-//! its bytes: nothing can change them, so its `Deref` to `str` is plain. A
-//! short copy stays on the stack ([`Bytes::Inline`]), so the hot paths - a
-//! selector, an expression - allocate nothing.
+//! String is copied, with no Ruby between the read and the copy, and in one
+//! of two places: a checked view ([`RubyText`], [`RubyData`]) owns a
+//! [`Utf8Copy`](crate::utf8_copy::Utf8Copy) of its String's bytes, checked as
+//! UTF-8, so its `Deref` to `str` is plain and a short one stays inline (the
+//! hot paths - a selector, an expression - allocate nothing); and the parser
+//! inputs own the raw bytes ([`ruby_string_bytes`]).
 //!
 //! Nothing here borrows a String's bytes: `nupur` reads a String only by
 //! copying out of it (`RString::copy_to` into a caller's buffer, `append_to`

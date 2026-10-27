@@ -326,8 +326,9 @@ pub extern "C" fn Init_makiri() {
 /// another Ruby misreads them (`check_running_ruby_api`). Its refusal is a
 /// `LoadError`, with nothing defined yet; anything that stops `init` after
 /// it is `fatal` (`run_init`).
-fn check(_: &Ruby) -> Result<(), Error> {
-    crate::bridge::ruby::check_running_ruby_api()
+fn check(ruby: &Ruby) -> Result<(), Error> {
+    crate::bridge::ruby::check_running_ruby_api()?;
+    crate::bridge::ruby::check_raise_state(ruby)
 }
 
 fn init(ruby: &Ruby) -> Result<(), Error> {

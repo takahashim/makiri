@@ -1,0 +1,165 @@
+# frozen_string_literal: true
+
+# Verus over what Kani proves bounded (ext/makiri/rust/verus/): the growth
+# arithmetic, copied from falloc, the pointer tables, the byte buffer and the
+# work budgets' one rule. The copies are checked
+# against the source first - every line only Verus needs ends in `// [verus]`,
+# and the rest of the body must be the source's, token for token - so a
+# change to `grow_capacity` fails here until the proof is redone. VERUS names
+# the binary (else `verus` on PATH); CI: verify.yml, at VERUS_VERSION.
+VERUS_VERSION = "0.2026.10.04.426d8b0"
+VERUS_COPIES = [
+  *%w[capacity_for probe lookup PtrTable::with_keys PtrTable::insert PtrTable::get
+      PtrMap::clear PtrMap::get PtrMap::insert PtrMap::set PtrMap::grow].map do |name|
+    ["ext/makiri/rust/src/ptr_table.rs", "ext/makiri/rust/verus/ptr_table.rs", name]
+  end,
+  ["ext/makiri/rust/src/falloc/mod.rs", "ext/makiri/rust/verus/cbuf.rs", "grow_capacity"],
+  ["ext/makiri/rust/src/limits.rs", "ext/makiri/rust/verus/limits.rs", "admit"],
+  ["ext/makiri/rust/src/cbuf.rs", "ext/makiri/rust/verus/cbuf.rs", "copy_small"],
+  # nupur's copy of it, which writes a String in place (`utf8_str_filled`).
+  ["ext/makiri/rust/nupur/src/string.rs", "ext/makiri/rust/verus/cbuf.rs", "copy_small"],
+  *%w[as_slice append append_growing raise_limit reserve steal content_limit
+      content_limit_for grow_to].map do |name|
+    ["ext/makiri/rust/src/cbuf.rs", "ext/makiri/rust/verus/cbuf.rs", "Buf::#{name}"]
+  end
+].freeze
+# The files `rake verus` verifies.
+VERUS_PROOFS = %w[ptr_table.rs cbuf.rs limits.rs].freeze
+
+# The body of `fn name` in `src` - `Type::name` for the one in `impl ... Type`
+# - as tokens: lines marked `// [verus]` and
+# comments (line and block) dropped, from the brace that opens the body to the one closing it,
+# and a trailing comma before a closing bracket dropped too - `cargo fmt`
+# adds one when it breaks a call across lines, and it changes nothing.
+def verus_body_tokens(src, name)
+  text = src.lines.reject { |l| l.rstrip.end_with?("// [verus]") }
+            .map { |l| l.sub(%r{//.*$}, "") }.join.gsub(%r{/\*.*?\*/}m, " ")
+  type, name = name.include?("::") ? name.split("::", 2) : [nil, name]
+  from = type ? (text.index(/^impl\b[^{]*\b#{Regexp.escape(type)}\b\s*[<{]/) or return nil) : 0
+  at = text.index(/\bfn\s+#{Regexp.escape(name)}\b/, from) or return nil
+  open = text.index("{", at) or return nil
+  depth = 0
+  close = (open...text.length).find do |i|
+    depth += 1 if text[i] == "{"
+    depth -= 1 if text[i] == "}"
+    depth.zero?
+  end
+  return nil unless close
+
+  toks = text[open..close].scan(/\w+|[^\s\w]/)
+  toks.each_index.reject { |i| toks[i] == "," && ")]}".include?(toks[i + 1].to_s) }.map { |i| toks[i] }
+end
+
+namespace :verus do
+  desc "Check that the Verus copies match the source they were copied from"
+  task :sync do
+    VERUS_COPIES.each do |source, copy, name|
+      want = verus_body_tokens(File.read(source), name) or abort "verus: no fn #{name} in #{source}"
+      got = verus_body_tokens(File.read(copy), name) or abort "verus: no fn #{name} in #{copy}"
+      next if want == got
+
+      abort "verus: #{copy}'s #{name} is not #{source}'s - redo the copy and its proof"
+    end
+    puts "verus: the copies match their sources"
+  end
+end
+
+# What each proof takes on trust, pinned: a `#[verifier::external_body]` (a
+# body Verus does not read, its spec assumed), an `assume_specification`
+# (std's spec assumed), an `assume(` or `admit(`. Each one is named in its
+# file's module doc; a new one is a new axiom, and this count moves with it on
+# purpose. The canaries may hold none.
+VERUS_TRUSTED = { "ptr_table.rs" => 4, "cbuf.rs" => 4, "limits.rs" => 0 }.freeze
+# Verus's `admit()` takes no argument, which tells it from a function named
+# `admit` (`limits.rs`).
+VERUS_TRUST = /#\[verifier::external(?:_body)?\]|\bassume_specification\b|\bassume\(|\badmit\(\s*\)/
+
+def verus_trusted_count(src)
+  src.gsub(%r{/\*.*?\*/}m, "").lines.map { |l| l.sub(%r{//.*$}, "") }.join.scan(VERUS_TRUST).length
+end
+
+# A proof is vacuous when what it assumes - an axiom, a precondition, a fact
+# met along the way - contradicts itself: then every claim after it verifies.
+# Verus has no `cover`, so `rake verus` checks the same way the dylint
+# self-test does, by a check that must FAIL:
+#
+# - each `// [canary]` line of a proof marks a point the proved code reaches;
+#   for each, the proof is verified again with an `assert(false)` there, which
+#   must be the one thing that fails. (One variant per mark: a failed assert is
+#   assumed after, so two in one run would hide the second.) This is what sees
+#   a contradiction inside a body, which the body's callers cannot - they see
+#   only its `ensures`;
+# - verus/canaries/<proof> adds `canary_` functions that call the proved code
+#   from outside and `assert(false)` on each outcome, so a precondition no
+#   caller can meet, or `ensures` that contradict, is caught too.
+def verus_assertions_failing(verus, path)
+  out, = Open3.capture2e(verus, path)
+  lines = out.scan(/^error: assertion failed\s*\n\s*--> [^\n]*:(\d+):/).flatten.map(&:to_i)
+  errors = out[/verification results:: \d+ verified, (\d+) errors?/, 1]
+  [lines, errors&.to_i, out]
+end
+
+def verus_canaries(verus, proof)
+  dir = File.join(ROOT, "tmp/verus_canaries")
+  FileUtils.mkdir_p(dir)
+  src = File.read(proof)
+  lines = src.lines
+  marks = lines.each_index.select { |i| lines[i].strip == "// [canary]" }
+  abort "verus: #{proof} has no `// [canary]` marks" if marks.empty?
+
+  jobs = marks.map do |i|
+    variant = lines.dup
+    variant[i] = lines[i].sub("// [canary]", "assert(false); // [canary]")
+    path = File.join(dir, "#{File.basename(proof, '.rs')}_mark#{i + 1}.rs")
+    File.write(path, variant.join)
+    [path, [i + 1]]
+  end
+
+  canary = File.read("canaries/#{proof}")
+  at = src.rindex("} // verus!") or abort "verus: #{proof} has no `} // verus!` to put the canaries before"
+  first = src[0...at].count("\n") + 1
+  outside = File.join(dir, proof)
+  File.write(outside, src[0...at] + canary + src[at..])
+  want = (canary.lines.each_index.select { |i| canary.lines[i].include?("assert(false)") }).map { |i| first + i }
+  jobs << [outside, want]
+
+  queue = Queue.new
+  jobs.each { |j| queue << j }
+  failures = Queue.new
+  Array.new(4) do
+    Thread.new do
+      while (job = (queue.pop(true) rescue nil))
+        path, expected = job
+        got, errors, out = verus_assertions_failing(verus, path)
+        failures << [path, expected, got, out] unless got.sort == expected.sort && errors == expected.length
+      end
+    end
+  end.each(&:join)
+  return puts("verus: #{proof}: #{marks.length} marks and #{want.length} canaries, each failing where it must") if failures.empty?
+
+  failures.size.times do
+    path, expected, got, out = failures.pop
+    puts out
+    puts "verus: #{path}: expected assert(false) to fail at lines #{expected}, failed at #{got}"
+  end
+  abort "verus: #{proof}: a canary verified - an assumption the proof rests on proves anything there"
+end
+
+desc "Verify the Verus proofs (ext/makiri/rust/verus/; needs Verus #{VERUS_VERSION})"
+task verus: "verus:sync" do
+  require "open3"
+  verus = ENV.fetch("VERUS", "verus")
+  Dir.chdir("ext/makiri/rust/verus") do
+    trusted = VERUS_PROOFS.to_h { |f| [f, verus_trusted_count(File.read(f))] }
+    abort "verus: what the proofs take on trust changed: #{trusted} (recorded #{VERUS_TRUSTED})" \
+      unless trusted == VERUS_TRUSTED
+    untrusting = VERUS_PROOFS.reject { |f| verus_trusted_count(File.read("canaries/#{f}")).zero? }
+    abort "verus: canaries may assume nothing: #{untrusting}" unless untrusting.empty?
+
+    VERUS_PROOFS.each do |f|
+      sh verus, f
+      verus_canaries(verus, f)
+    end
+  end
+  puts "verus: every proof verified, its canaries failed as they must; trusted #{VERUS_TRUSTED}"
+end

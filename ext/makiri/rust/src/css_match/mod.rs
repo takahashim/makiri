@@ -245,13 +245,9 @@ const DEFAULT_WORK_BUDGET: usize = 250 * 1000;
 /// single call needs no shared ownership.
 struct Budget {
     spent: std::cell::Cell<usize>,
-    limit: usize,
-    /// What `spent` is charged against now: `limit`, or - when the query may
-    /// be stopped for an interrupt (`poll`) - the end of the current chunk of
-    /// it, where [`refused`](Self::refused) asks and moves it on
-    /// ([`crate::interrupt`]). Exactly `limit` steps are admitted either way.
-    cap: std::cell::Cell<usize>,
-    poll: bool,
+    /// What `spent` is charged against: the limit, in chunks where the query
+    /// may be stopped for an interrupt ([`crate::interrupt::Chunked`]).
+    cap: crate::interrupt::Chunked,
 }
 
 /// Why a match/query could not be answered - propagated as a hard failure,
@@ -300,16 +296,9 @@ impl Budget {
     /// `limit` steps, nothing spent; stoppable for an interrupt if the thread's
     /// queries are ([`crate::interrupt::armed`], read now).
     fn new(limit: usize) -> Budget {
-        let poll = crate::interrupt::armed();
         Budget {
             spent: std::cell::Cell::new(0),
-            limit,
-            cap: std::cell::Cell::new(if poll {
-                limit.min(crate::interrupt::CHUNK)
-            } else {
-                limit
-            }),
-            poll,
+            cap: crate::interrupt::Chunked::new(limit),
         }
     }
 
@@ -318,35 +307,30 @@ impl Budget {
     /// to match.
     #[inline]
     fn charge(&self) -> Result<(), MatchFailure> {
-        let Some(n) = crate::limits::admit(self.spent.get(), 1, self.cap.get()) else {
+        let Some(n) = crate::limits::admit(self.spent.get(), 1, self.cap.cap()) else {
             return self.refused();
         };
         self.spent.set(n);
         Ok(())
     }
 
-    /// A step the current cap refused: the end of an interrupt chunk, or the
-    /// limit. At a chunk's end, stop if an interrupt is waiting, and otherwise
-    /// open the next chunk and charge again.
+    /// A step the current cap refused (see [`crate::interrupt::Chunked::refused`]).
     #[cold]
     #[inline(never)]
     fn refused(&self) -> Result<(), MatchFailure> {
-        if self.poll && self.cap.get() < self.limit {
-            if crate::interrupt::pending() {
-                return Err(MatchFailure::Interrupted);
-            }
-            let spent = self.spent.get();
-            self.cap.set(
-                spent
-                    .saturating_add(crate::interrupt::CHUNK)
-                    .min(self.limit),
-            );
-            if let Some(n) = crate::limits::admit(spent, 1, self.cap.get()) {
-                self.spent.set(n);
-                return Ok(());
-            }
+        use crate::interrupt::Refusal;
+        let spent = self.spent.get();
+        match self.cap.refused(spent, 1) {
+            Refusal::Interrupted => Err(MatchFailure::Interrupted),
+            Refusal::Open => match crate::limits::admit(spent, 1, self.cap.cap()) {
+                Some(n) => {
+                    self.spent.set(n);
+                    Ok(())
+                }
+                None => Err(MatchFailure::WorkExceeded),
+            },
+            Refusal::Limit => Err(MatchFailure::WorkExceeded),
         }
-        Err(MatchFailure::WorkExceeded)
     }
 }
 
