@@ -976,6 +976,7 @@ impl<'a> Parser<'a> {
             combinator: comb::DESCENDANT,
             comb_default: comb::DESCENDANT,
             err_in_function: false,
+            after_element: false,
         };
         let r = self.r;
         self.rules[r].state = St::ComplexList;

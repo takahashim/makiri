@@ -129,8 +129,9 @@ RSpec.describe "CSS Selectors conformance" do
       end
     end
 
-    it "rejects pseudo-elements (they select no element nodes)" do
-      expect { doc.css("p::before") }.to raise_error(Makiri::CSS::SyntaxError)
+    it "accepts pseudo-elements, which select no element nodes" do
+      expect(doc.css("p::before")).to be_empty
+      expect(doc.at_css("p").matches?("p::before")).to be(false)
     end
   end
 

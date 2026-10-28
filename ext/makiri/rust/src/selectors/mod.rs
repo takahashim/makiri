@@ -10,10 +10,12 @@
 #![forbid(unsafe_code)]
 
 pub mod ast;
+mod number;
 pub mod parser;
 pub mod pseudo;
 pub mod rules;
 mod specificity;
+#[cfg(any(test, feature = "lexbor-reference"))]
 mod strtod;
 /// `parse_stylesheet`'s reader: the stylesheet parse walked into owned values.
 pub mod stylesheet;

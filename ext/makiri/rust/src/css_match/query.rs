@@ -252,6 +252,7 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
     pub(super) fn new(
         compiled: &'c Compiled<'p>,
         walk_in: Option<N::Doc>,
+        scope: Option<N>,
         limit: usize,
         scratch: &mut Scratch<N::Host>,
     ) -> Result<Self, MatchFailure> {
@@ -261,6 +262,7 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
             budget: Budget {
                 spent: std::cell::Cell::new(0),
                 limit,
+                scope: scope.map(CssNode::table_key),
             },
             tasks: recycle(core::mem::take(&mut scratch.tasks), usize::MAX),
             at: recycle(core::mem::take(&mut scratch.at), usize::MAX),

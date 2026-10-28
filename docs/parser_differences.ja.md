@@ -494,6 +494,56 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **再現**：`[*|a]` は `Makiri::CSS::SyntaxError` になる。
 - **理由**：Lexbor も受け付けず、移植版は同じ答えを保つ。HTML では名前空間を持つ属性は SVG の `xlink:href` などに限られ、ほとんどの用途は `[a]` で足りる。対応には AST の表現、HTML の matcher、XML の XPath への変換の三か所の変更が要る。
 
+### C29 数値の値は最も近い double
+
+- **分類**：参照実装の誤り。移植版で直した。
+- **仕様**：consume a number は、数字の並びが表す値を「convert a string to a number」で数値にする。値は、数字の正確な値に最も近い double である。
+- **再現**：`:nth-child(11543495214036735)`。この整数は隣り合う二つの double（...734 と ...736）のちょうど中間にあり、偶数側の `11543495214036736` になる。Lexbor の変換（`core/strtod.c`、DiyFp）は正しく丸める保証がなく、`11543495214036734` を返す。
+- **範囲**：差が出るのは、有効数字が 16 桁以上の数だけである。無作為の 200 万件の測定（`selectors::number` の `how_often_lexbors_value_differs`）では、整数の 0.5%、小数と指数の組の 0.4% で最後の bit が異なった。`An+B` が読む整数に切り詰めたとき、値が約 9×10^15 より小さくて差が出た入力は 94 件で、どれも 17 桁以上だった。通常の `nth-child(2n+1)` の値は変わらない。
+- **移植版**：`selectors/number.rs` の `value` が、数字と指数から `"<digits>e<exp>"` を固定長の配列に組み、`str::parse::<f64>` で読む。Lexbor の変換（`selectors/strtod.rs`）は、`compat::as_lexbor` の中と参照用の機能（`lexbor-reference`）のビルドだけに残る。差分の許可は、入力に 16 桁以上の数字（と `.`）の並びがあるとき。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
+### C30 擬似要素
+
+- **分類**：参照実装の未対応。移植版で直した。
+- **仕様**：擬似要素は有効なセレクタ要素で、`querySelectorAll` は何にも一致させない（`matches()` は偽）。複合セレクタの末尾に置き、後ろには別の擬似要素と user-action の擬似クラス（`:hover`、`:active`、`:focus`、`:focus-visible`、`:focus-within`）だけが続ける。`:is()` や `:not()` の引数の中には置けない。`:before`、`:after`、`:first-line`、`:first-letter` は、コロン一つでも書ける旧来の表記である。
+- **再現**：`p::before`、`::selection`、`p:after`、`p::before:hover`。Lexbor は擬似要素の名前を表に持つが、パーサが全部を拒むので `CSS::SyntaxError`（stylesheet は `bad_style`）になる。`p::before b` や `p::before:first-child` は仕様では無効で、Lexbor は（擬似要素を拒むので）答えが出なかった。
+- **移植版**：`selectors/parser.rs` の `pseudo_element` が、関数の引数の中と `::inactive-selection`（どのブラウザにもない）を除いて受け付け、`legacy_pseudo_element` が旧来の四つの名前を擬似要素にする。擬似要素のあとは `compound_pseudo` が user-action の擬似クラスと擬似要素だけを通し（`pseudo_class_after_element`）、`complex_end` が結合子と空白のあとの複合セレクタを拒む。matcher は擬似要素を含む選択子を何にも一致させる。差分の許可は、入力に `:` があるとき。
+- **互換性**：これまで `SyntaxError` だった `a::before` が、空の結果を返す。ブラウザに合わせた変更である。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
+### C31 状態を持たない擬似クラス
+
+- **分類**：参照実装の未対応。移植版で直した。
+- **仕様**：`:visited`、`:target`、`:focus-visible`、`:focus-within`、`:fullscreen`、`:user-invalid` は有効な擬似クラスで、状態のない静的な文書では何にも一致しない。
+- **移植版**：`selectors/parser.rs` の `pseudo_class` が拒むのをやめる。matcher はこれらを偽にする。差分の許可は、入力に `:` があるとき。
+- **対応しないもの**：`:current`、`:past`、`:future`、`:local-link`、`:target-within`、`:warning` は、ブラウザの `querySelectorAll` が受け付けないので、拒むままにする。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
+### C32 `:scope`
+
+- **分類**：参照実装の未対応。移植版で直した。
+- **仕様**：`:scope` は、セレクタを照合する範囲の根の要素である。`element.querySelectorAll(":scope > p")` では element、`element.matches(":scope")` では element 自身、文書から呼ぶ（`document.querySelectorAll`）と文書要素になる。
+- **再現**：`div.css(":scope > p")`。Lexbor は `:scope` を拒むので `CSS::SyntaxError` になる。
+- **移植版**：`selectors/parser.rs` の `pseudo_class` が拒むのをやめ、`css_match` の query が範囲の根（`scope_of`）を持つ。文書は最初の要素の子、DocumentFragment は根なし（何にも一致しない）。`:is()`、`:not()`、`:has()` の中の `:scope` も同じ根を指す。specificity は擬似クラスの一つ。差分の許可は、入力に `:` があるとき。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
+### C33 `:defined`
+
+- **分類**：参照実装の未対応。移植版で直した。Lexbor の表にない名前なので、`pseudo::class::DEFINED`（42）を足した。
+- **仕様**：HTML Standard の `:defined` は、custom element の状態が "uncustomized" か "custom" の要素に一致する。
+- **移植版**：文書に custom element の登録簿がないので、HTML の名前空間で valid custom element name（小文字の英字で始まり、ハイフンを含み、PCENChar だけで、予約された八つの名前でない）の要素を未定義（偽）、それ以外の要素（SVG の `font-face` など、HTML 以外の名前空間の要素を含む）を定義済み（真）とする。`is` 属性の customized built-in element は扱わない。差分の許可は、入力に `:` があるとき。
+- **テスト**：`spec/css_standard_steps_spec.rb`。
+
+### C34 `:lang()`
+
+- **分類**：参照実装の未対応。移植版で直した。
+- **仕様**：`:lang()` の引数は、識別子か文字列の language range をコンマで並べたもの。要素の言語（自分か祖先の最も近い `lang`。XML は `xml:lang`）が、どれかの range に RFC 4647 の extended filtering で一致すれば真。大文字小文字は区別しない。`*` は任意の subtag に一致し、range の subtag は、tag の中に順に見つかればよい（一文字の subtag を越えては探さない）。`lang=""` はその要素の言語が不明であることを示し、祖先の値を継がない。
+- **再現**：`:lang(en)`、`:lang("*-US")`、`:lang(zh-TW)`（`zh-Hant-TW` に一致する）。Lexbor は `:lang()` を拒むので `CSS::SyntaxError` になる。
+- **移植版**：`selectors/parser.rs` の `pseudo_lang_begin` が range を AST の文字列に NUL 区切りで置き、`css_match/simple.rs` の `lang_matches` が `extended_filter` で照合する。HTML は `lang`、XML は `xml:lang` に続けて XHTML 要素の `lang` を見る。差分の許可は、入力に `:` があるとき。
+- **対応しないもの**：`<meta http-equiv="content-language">` による文書の既定の言語（`lang` が祖先のどこにもない要素は、何にも一致しない）。`:dir()` も同じ理由（向きの継承と `auto` の判定が要る）で、拒むままにする。
+- **テスト**：`spec/css_standard_steps_spec.rb`、`css_match::simple::lang_tests`。
+
 ## パーサの外の項目
 
 次の差は HTML パーサではなく、DOM の上の層（CSS マッチャ、XPath の名前照合）にある。

@@ -263,7 +263,9 @@ impl Shape {
                 | PseudoClass::Disabled
                 | PseudoClass::Enabled
                 | PseudoClass::ReadOnly
-                | PseudoClass::ReadWrite,
+                | PseudoClass::ReadWrite
+                | PseudoClass::Scope
+                | PseudoClass::Defined,
             ) => self.departs = true,
             Simple::PseudoClassFunction(arg) => match arg {
                 FunctionArg::Nth { anb, .. } => {
@@ -283,8 +285,11 @@ impl Shape {
                     }
                     work.push((lists, in_has || has));
                 }
-                // Both raised by the port and matched by Lexbor.
-                FunctionArg::Contains | FunctionArg::Current(_) => self.departs = true,
+                // Both raised by the port and matched by Lexbor; `:lang()`
+                // is the port's alone (C34).
+                FunctionArg::Contains | FunctionArg::Current(_) | FunctionArg::Lang(_) => {
+                    self.departs = true
+                }
                 FunctionArg::Other => {}
             },
             _ => {}

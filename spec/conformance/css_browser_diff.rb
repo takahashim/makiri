@@ -45,15 +45,10 @@ end.parse!(ARGV)
 HTML_DOCS = %w[html-basic html-form html-foreign].freeze
 XML_DOCS = %w[xml-plain xml-ns xml-xhtml].freeze
 ALL_DOCS = HTML_DOCS + XML_DOCS
-UNIMPLEMENTED = [":visited", ":target", ":default", ":indeterminate", ":lang(en)", ":lang(fr)",
-                 ":dir(ltr)", ":scope", ":scope > *", ":defined"].freeze
+UNIMPLEMENTED = [":default", ":indeterminate", ":dir(ltr)"].freeze
 RULES = [
-  # Pseudo-classes the matcher does not implement, and pseudo-elements, which
-  # a browser accepts and never matches.
+  # Pseudo-classes the matcher does not implement.
   ["unimplemented", ALL_DOCS, UNIMPLEMENTED],
-  ["unimplemented", %w[html-basic], [":scope > p"], "#d"],
-  ["unimplemented", %w[xml-plain], [":scope > p"], "div"],
-  ["pseudo-element", ALL_DOCS, ["::before", "p::before"]],
   ["C27", ALL_DOCS, ["[*|href]"]]
 ].freeze
 KNOWN = RULES.each_with_object({}) do |(tag, docs, sels, where), h|

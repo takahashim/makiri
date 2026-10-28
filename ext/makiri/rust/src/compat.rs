@@ -135,6 +135,28 @@ pub enum Fix {
     /// A type or universal selector written with a namespace prefix (`|E`,
     /// `ns|*`) may only begin a compound: `|E|*` and `.x|a` are invalid.
     C28,
+    /// A number's value is the nearest double to its digits, as CSS Syntax's
+    /// "convert a string to a number" has it; Lexbor's conversion is not
+    /// correctly rounded.
+    C29,
+    /// A pseudo-element (`::before`, and `:before` of the four legacy
+    /// names) is valid and matches no element, as `querySelectorAll` has it;
+    /// it ends a complex selector, and only the user-action pseudo-classes
+    /// and other pseudo-elements follow it in the compound.
+    C30,
+    /// `:visited`, `:target`, `:focus-visible`, `:focus-within`,
+    /// `:fullscreen` and `:user-invalid` are valid and match nothing in a
+    /// static document.
+    C31,
+    /// `:scope` is the element a query was made from (the root element for
+    /// a document), as in `querySelectorAll` and `matches()`.
+    C32,
+    /// `:defined` is false for an HTML element with a valid custom element
+    /// name, true for any other element.
+    C33,
+    /// `:lang()` takes language ranges (identifiers or strings) and matches
+    /// an element whose language they match by extended filtering.
+    C34,
     /// A selector's namespace prefix is resolved against the caller's
     /// bindings (M6, M7): `p|E` is E in that namespace, `|E` E in none, an
     /// undeclared prefix invalid. Lexbor ignores every prefix. A matcher
@@ -293,6 +315,22 @@ pub fn css_explains(input: &[u8]) -> Vec<Fix> {
     if has(input, b"has(") {
         fixes.push(Fix::C19);
         fixes.push(Fix::C20);
+    }
+    /* C29: a number of 16 digits or more, whose last bit Lexbor's
+     * conversion may round the other way. */
+    if input
+        .windows(16)
+        .any(|w| w.iter().all(|b| b.is_ascii_digit() || *b == b'.'))
+    {
+        fixes.push(Fix::C29);
+    }
+    /* C30, C31: a pseudo-class or pseudo-element. */
+    if input.contains(&b':') {
+        fixes.push(Fix::C30);
+        fixes.push(Fix::C31);
+        fixes.push(Fix::C32);
+        fixes.push(Fix::C33);
+        fixes.push(Fix::C34);
     }
     /* C22: an An+B's digits run past a long. */
     if has(input, b"n-") && input.windows(19).any(|w| w.iter().all(u8::is_ascii_digit)) {

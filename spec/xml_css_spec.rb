@@ -228,7 +228,7 @@ RSpec.describe "Makiri::XML CSS selectors" do
     end
 
     it "raises CSS::SyntaxError on an unsupported construct" do
-      expect { doc.css("a::before") }.to raise_error(Makiri::CSS::SyntaxError)
+      expect { doc.css("a:current") }.to raise_error(Makiri::CSS::SyntaxError)
     end
 
     it "refuses the column combinator instead of reading it as a descendant" do

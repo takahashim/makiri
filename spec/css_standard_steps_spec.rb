@@ -59,6 +59,96 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
     expect(Makiri::Lexbor::CSS.parse_stylesheet("@-א x {}").first[:name]).to eq("-א")
     expect(Makiri::Lexbor::CSS.parse_stylesheet("@-¶ x {}").first[:type]).to eq(:bad_style)
   end
+  # C30, C31: a pseudo-element is a valid selector that matches no element
+  # (querySelectorAll), and ends the complex selector; the legacy
+  # single-colon spellings are the same; the pseudo-classes that need state a
+  # static document lacks are valid and match nothing.
+  it "accepts pseudo-elements and the state pseudo-classes, which match nothing" do
+    doc = Makiri::HTML("<div><p>t</p></div>")
+    %w[::before p::before :before p:after p:first-line p:FIRST-LETTER ::selection ::marker
+       p::before:hover p::before::after :visited :target :focus-visible :focus-within
+       :fullscreen :user-invalid].each do |sel|
+      expect(doc.css(sel)).to be_empty, sel
+    end
+    expect(doc.css("p::before, div").map(&:name)).to eq(["div"])
+  end
+
+  it "rejects what may not follow or nest a pseudo-element" do
+    doc = Makiri::HTML("<div><p>t</p></div>")
+    ["p::before b", "p::before > b", "p::before.c", "p::before:first-child",
+     "p::before:not(.x)", "p::before#i", ":not(::before)", "::inactive-selection",
+     "p:before:after"].each do |sel|
+      expect { doc.css(sel) }.to raise_error(Makiri::CSS::SyntaxError), sel
+    end
+    # Forgiving: the pseudo-element alternative is dropped, not the selector.
+    expect(Makiri::HTML("<p class=x>t</p>").css("p:is(::before, .x)").size).to eq(1)
+  end
+
+  # C32: `:scope` is the element the query was made from; for a document,
+  # its root element.
+  it "reads :scope as the element the query starts from" do
+    doc = Makiri::HTML("<div id=a><p id=p1><i>x</i></p><p id=p2>y</p></div>")
+    div = doc.at_css("#a")
+    expect(div.css(":scope > p").map { |n| n["id"] }).to eq(%w[p1 p2])
+    expect(div.css(":scope").to_a).to be_empty # descendants only
+    expect(div.matches?(":scope")).to be(true)
+    expect(div.at_css("p").matches?(":scope")).to be(true) # its own scope
+    expect(doc.css(":scope").map(&:name)).to eq(["html"])
+    expect(doc.css(":scope > body").map(&:name)).to eq(["body"])
+    expect(div.css("p:not(:scope)").size).to eq(2)
+    xml = Makiri::XML("<r><a><b/></a></r>")
+    expect(xml.root.css(":scope > a").map(&:name)).to eq(["a"])
+  end
+
+  # C33: HTML's "defined": an HTML element with a valid custom element name is
+  # undefined here (no registry); every other element is defined.
+  it "reads :defined by the custom element name" do
+    doc = Makiri::HTML("<div></div><my-el id=m></my-el><x-a.b id=x></x-a.b>" \
+                       "<svg><font-face id=ff></font-face></svg><annotation-xml id=ax></annotation-xml>")
+    undefined = doc.css(":not(:defined)").map { |n| n["id"] || n.name }
+    expect(undefined).to eq(%w[m x])
+    expect(doc.css("div:defined").size).to eq(1)
+    expect(doc.css("#ff:defined, #ax:defined").size).to eq(2)
+  end
+
+  # C34: `:lang()` takes language ranges (identifiers or strings) and matches by
+  # extended filtering over the nearest `lang` (`xml:lang` in XML).
+  it "matches :lang() by the nearest lang, with extended filtering" do
+    doc = Makiri::HTML('<div id=a lang="en-US"><p id=p1>x</p><p id=p2 lang="fr">y</p>' \
+                       '<p id=p3 lang="">z</p><i id=s lang="zh-Hant-TW">w</i></div><p id=p4>n</p>')
+    ids = ->(sel) { doc.css(sel).map { |n| n["id"] } }
+    expect(ids.(":lang(en)")).to eq(%w[a p1])
+    expect(ids.(":lang(EN-us)")).to eq(%w[a p1])
+    expect(ids.(":lang(en, fr)")).to eq(%w[a p1 p2])
+    expect(ids.(':lang("*-US")')).to eq(%w[a p1])
+    expect(ids.(":lang(zh-TW)")).to eq(%w[s])
+    expect(ids.(':lang("")')).to eq(%w[p3])
+    expect(ids.(":lang(e)")).to be_empty
+    expect(ids.(":lang(de)")).to be_empty
+    [":lang()", ":lang(en,)", ":lang(,en)", ":lang(1)", ":lang(en fr)"].each do |sel|
+      expect { doc.css(sel) }.to raise_error(Makiri::CSS::SyntaxError), sel
+    end
+    xml = Makiri::XML('<r xml:lang="en"><a/><b xml:lang="fr"/></r>')
+    expect(xml.css(":lang(en)").map(&:name)).to eq(%w[r a])
+    expect(xml.css(":lang(fr)").map(&:name)).to eq(%w[b])
+  end
+
+  it "writes :lang()'s ranges back" do
+    sheet = Makiri::Lexbor::CSS.parse_stylesheet(':lang(en, "fr-*") {}')
+    expect(sheet.first[:selectors].first[:text]).to eq(':lang(en, "fr-*")')
+  end
+
+  # C29: "convert a string to a number": the nearest double to the digits.
+  # 11543495214036735 lies halfway between two doubles and goes to the even
+  # one; Lexbor's conversion is not correctly rounded and gives ...734.
+  it "reads a number as the nearest double" do
+    # An+B is kept in a C long, which is 32 bits on Windows: the value
+    # saturates there before its last bit shows.
+    skip "a C long is 32 bits here" if [1].pack("l!").bytesize < 8
+    sheet = Makiri::Lexbor::CSS.parse_stylesheet(":nth-child(11543495214036735) {}")
+    expect(sheet.first[:selectors].first[:text]).to eq(":nth-child(11543495214036736)")
+  end
+
   # C6: consume a number, step 6: the value is the whole digit run's.
   it "keeps the value of a number with more than 128 integer digits" do
     doc = Makiri::HTML("<ul><li>a<li>b</ul>")
