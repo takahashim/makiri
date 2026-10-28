@@ -23,7 +23,8 @@ fn pack([a, b, c]: [u32; 3]) -> u32 {
     (a.min(MAX) << 18) | (b.min(MAX) << 9) | c.min(MAX)
 }
 
-fn unpack(sp: u32) -> [u32; 3] {
+/// `[a, b, c]` out of a packed value (a at 18, b at 9, c at 0, nine bits each).
+pub(super) fn unpack(sp: u32) -> [u32; 3] {
     [(sp >> 18) & MAX, (sp >> 9) & MAX, sp & MAX]
 }
 

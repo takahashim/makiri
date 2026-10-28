@@ -51,7 +51,8 @@ pub struct Span {
 pub struct Token {
     pub ty: TokenType,
     /// `token->offset`: where the token starts, counting from the start of
-    /// the input but not counting the comments the tokenizer dropped.
+    /// the input. A comment the tokenizer drops still counts, so this is
+    /// `begin` for the tokenizer that read the whole input.
     pub offset: usize,
     /// `base.begin`, an index into the input.
     pub begin: usize,

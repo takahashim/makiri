@@ -46,6 +46,7 @@ use crate::compat::{self, Fix};
 use crate::falloc::{self, OomOption, OomResult, Reserve, VecGrow};
 use crate::selectors::ast::ListId;
 use crate::selectors::rules::{AtKind, Item, ItemId};
+use crate::selectors::specificity::unpack;
 use crate::selectors::text;
 use crate::selectors::token::TokenType;
 use crate::selectors::tokenizer::Tokenizer;
@@ -100,13 +101,6 @@ impl crate::falloc::Oom for Fail {
     fn oom() -> Self {
         Fail::Oom
     }
-}
-
-/// `[a, b, c]` out of the packed specificity: a at 18, b at 9, c at 0, nine
-/// bits each.
-fn specificity(sp: u32) -> [u32; 3] {
-    const C: u32 = 0x1FF;
-    [(sp >> 18) & C, (sp >> 9) & C, sp & C]
 }
 
 struct Conv<'a> {
@@ -232,7 +226,7 @@ fn selectors(c: &Conv, first: Option<ListId>) -> Result<Option<Vec<Selector>>, F
         }
         out.falloc_push(Selector {
             text,
-            specificity: specificity(list.specificity()),
+            specificity: unpack(list.specificity()),
         })
         .or_oom()?;
     }

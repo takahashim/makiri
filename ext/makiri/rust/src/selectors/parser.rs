@@ -1931,17 +1931,15 @@ impl<'a> Parser<'a> {
 
     /// Whether the selector being parsed is in the argument of a `:has()`,
     /// directly or through other functional pseudo-classes: `:has()` cannot
-    /// be nested (C20).
+    /// be nested (C20). Each function selector records the answer for itself
+    /// (`SelNode::in_has`, in `start_function`), so this is one step and not
+    /// a walk up through every function around it.
     fn inside_has(&self) -> bool {
-        let mut at = self.sel.parent;
-        while let Some(s) = at {
-            let n = self.ast.sel(s);
-            if n.ty == sel_type::PSEUDO_CLASS_FUNCTION && n.pseudo_type == class_function::HAS {
-                return true;
-            }
-            at = self.ast.list(n.list).parent;
-        }
-        false
+        self.sel.parent.is_some_and(|p| {
+            let n = self.ast.sel(p);
+            n.in_has
+                || (n.ty == sel_type::PSEUDO_CLASS_FUNCTION && n.pseudo_type == class_function::HAS)
+        })
     }
 
     /// The common tail of `lxb_css_selectors_state_pseudo_class_function` and
@@ -1953,9 +1951,12 @@ impl<'a> Parser<'a> {
         token: Token,
         success: St,
     ) -> Status {
+        let (in_has, outer_first) = (self.inside_has(), self.sel.list);
         let s = self.ast.sel_mut(id);
         s.pseudo_type = func.id;
         s.data = PseudoData::None;
+        s.in_has = in_has;
+        s.outer_first = outer_first;
         self.sel.combinator = func.combinator;
         self.sel.comb_default = func.combinator;
         self.sel.parent = Some(id);
@@ -2093,7 +2094,14 @@ impl<'a> Parser<'a> {
             }
         }
         self.sel.list_last = Some(last);
-        let mut first = last;
+        /* The head of the chain `last` is in: recorded when the function began
+         * (`start_function`), and walked back to only if that was not it. */
+        let mut first = self
+            .ast
+            .list(last)
+            .last
+            .and_then(|f| self.ast.sel(f).outer_first)
+            .unwrap_or(last);
         while let Some(prev) = self.ast.list(first).prev {
             first = prev;
         }

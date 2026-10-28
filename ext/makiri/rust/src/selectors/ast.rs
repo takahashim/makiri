@@ -106,6 +106,15 @@ pub struct SelNode {
     pub next: Option<SelId>,
     pub prev: Option<SelId>,
     pub list: ListId,
+    /// A functional pseudo-class's own bookkeeping, not Lexbor's: the first
+    /// list of the chain it sits in, as the parse stood when its argument
+    /// began, so that the end of the argument finds the chain's head without
+    /// walking back through every comma alternative before it.
+    pub outer_first: Option<ListId>,
+    /// Not Lexbor's either: the selector is inside the argument of a
+    /// `:has()` (not counting itself), so `:has()` inside `:has()` is found
+    /// without walking up through every function that holds it.
+    pub in_has: bool,
 }
 
 /// The arena one parse builds.

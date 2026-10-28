@@ -271,6 +271,14 @@ impl<'a> Tokenizer<'a> {
             };
             others += 1;
             last = [last[1], comp];
+            /* The answer is settled: only a trailing `! important` takes
+             * components off (two at most), so three beside a block leave
+             * one. Reading on to the end of the value costs a rule written
+             * `a:b{}` the rest of its block each, which is quadratic in
+             * a block of such rules. */
+            if block && others > 2 {
+                return Ok(false);
+            }
         }
         if last == [Comp::Bang, Comp::Important] {
             others -= 2;
