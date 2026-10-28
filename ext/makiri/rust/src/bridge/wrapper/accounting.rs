@@ -49,13 +49,17 @@ pub(super) const GROWTH_MIN_BYTES: usize = 512 * 1024;
 /// costly for every edit, so an O(1) chunk count decides when; growth by a
 /// fraction also keeps the measurements logarithmic in the final size.
 ///
-/// Called where an edit begins (`bridge::html::edit`, `bridge::xml::
-/// begin_edit`): the growth it sees is the previous edits', and a document's
-/// last edit is reported at its next one or not at all - an under-report, the
-/// safe direction, as it was before this existed. It may run a collection,
-/// so, like [`account_document`], it must be called with `rb_doc` on the
-/// caller's stack and no borrowed Ruby String held - which is so at the start
-/// of an edit, before any argument is converted.
+/// Called in two places. Where an edit begins (`bridge::html::edit`,
+/// `bridge::xml::begin_edit`): the growth it sees is the previous edits', and
+/// a document's last edit is reported at its next one or not at all - an
+/// under-report, the safe direction. And AFTER a growth no edit follows - a
+/// factory's node, an imported copy, a parsed fragment, an adoption's copy
+/// (`bridge::html::lend_document` and `insert`, `bridge::xml::fragment_into`,
+/// `import_copy` and `insert`) - once the document's loan is over. It may run
+/// a collection, so, like [`account_document`], it must be called with
+/// `rb_doc` on the caller's stack and no borrowed Ruby String held - which is
+/// so at the start of an edit, before any argument is converted, and after a
+/// loan, whose arguments were copies.
 pub fn account_growth(ruby: &crate::bridge::rb::Ruby, rb_doc: Value) {
     if doc_data_known(&rb_doc).grown_enough() {
         account_document(ruby, rb_doc);

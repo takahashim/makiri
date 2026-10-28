@@ -88,7 +88,6 @@ struct NodeVec {
 #[derive(Clone, Copy)]
 pub enum PushError {
     SizeLimit,
-    CapacityOverflow,
     /// Ruby's allocator raised `NoMemoryError`, which this answers again.
     NoMemory,
     /// The set is borrowed elsewhere - a push from inside its own iteration.
@@ -101,7 +100,6 @@ impl From<PushError> for Error {
             PushError::SizeLimit => makiri_error(format_args!(
                 "node set size limit exceeded ({NODE_SET_MAX} nodes)"
             )),
-            PushError::CapacityOverflow => makiri_error("node set capacity overflow"),
             PushError::NoMemory => Error::new(
                 crate::bridge::rb::Builtin::NoMemoryError,
                 "failed to allocate memory",
@@ -233,8 +231,7 @@ impl NodeVec {
         Ok(())
     }
 
-    /// Append one node: `Err` for the size cap, a capacity overflow or a
-    /// failed allocation.
+    /// Append one node: `Err` for the size cap or a failed allocation.
     #[inline]
     fn push(&mut self, ruby: &crate::bridge::rb::Ruby, node: NodeWord) -> Result<(), PushError> {
         if self.spilled() {
@@ -357,7 +354,7 @@ impl NodeSet {
     }
 
     /// Append a node to a set this module built or checked; see [`Fill`]. `Err`
-    /// only for the fail-closed refusals (size cap, capacity overflow, busy).
+    /// only for the fail-closed refusals (size cap, busy) and a failed growth.
     #[inline]
     fn try_push(&self, ruby: &crate::bridge::rb::Ruby, node: NodeWord) -> Result<(), PushError> {
         let Ok(mut nodes) = self.nodes.try_borrow_mut() else {

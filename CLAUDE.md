@@ -1785,7 +1785,11 @@ Key decisions that got there, worth not regressing:
   mutation is re-reported where an edit begins (`account_growth`, from
   `bridge::html::edit` / `bridge::xml::begin_edit`) once it reaches an eighth
   of the last report (and a floor): for HTML an O(1) measure decides
-  (`HtmlParsed::arena_chunks`) before the bytes are measured again. A document's last edit may go unreported
+  (`HtmlParsed::arena_chunks`) before the bytes are measured again. A growth
+  no edit follows - a factory's node, an imported copy, a parsed fragment, an
+  adoption's copy into the receiver's document - is reported right after its
+  loan instead (`lend_document`, `fragment_into`, `import_copy`, both
+  `insert`s). A document's last edit may go unreported
   (under-reporting, the safe direction). Without it, 60 documents grown by
   `inner_html=` ran with zero GCs to ~700 MB RSS; with it, ~200 MB.
 - Tree-walk speed was structurally capped by Lexbor's 96-byte node; the arena

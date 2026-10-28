@@ -167,12 +167,14 @@ pub fn xml_node_unwrap(ruby: &Ruby, rb_self: Value) -> Result<NodeId, Error> {
     /* A wrapper's word is a real node; a null one is a broken invariant,
      * answered as `InternalError` directly rather than by a panic (which the
      * trampoline would also make one) - `XmlSelf::try_convert` reads it. */
-    nd.node.xml().ok_or_else(|| {
-        Error::new(
-            &crate::init::EXC_INTERNAL_ERROR,
-            "an XML node wrapper without its node",
-        )
-    })
+    nd.node.xml().ok_or_else(wrapper_without_node)
+}
+
+fn wrapper_without_node() -> Error {
+    Error::new(
+        &crate::init::EXC_INTERNAL_ERROR,
+        "an XML node wrapper without its node",
+    )
 }
 
 /// `Err(TypeError)` unless `rb_doc` is an XML Document.
@@ -205,12 +207,22 @@ pub struct XmlSelf {
 
 impl crate::bridge::rb::TryConvert for XmlSelf {
     fn try_convert(ruby: &Ruby, value: Value) -> Result<Self, Error> {
-        let id = xml_node_unwrap(ruby, value)?;
-        let document = xml_node_document(ruby, value)?;
+        /* One class test and one read of the wrapper: the node and its
+         * Document come from the same place ([`xml_node_unwrap`] and
+         * [`xml_node_document`] each ask, for the callers that need one). */
+        if crate::bridge::ruby::is_kind_of(ruby, value, &CLASS_XML_DOCUMENT) {
+            XML_DOC_TYPE.get(&value)?; /* TypeError for any other Document */
+            return Ok(XmlSelf {
+                value,
+                id: xml_read(&value)?.doc_node(),
+                document: value,
+            });
+        }
+        let nd = crate::bridge::wrapper::read_node(&XML_NODE_TYPE, value)?;
         Ok(XmlSelf {
             value,
-            id,
-            document,
+            id: nd.node.xml().ok_or_else(wrapper_without_node)?,
+            document: nd.document,
         })
     }
 }
@@ -715,9 +727,17 @@ pub fn fragment_into(
     let max_bytes = xml_read(&document)?.max_bytes();
     let source = crate::bridge::ruby::string_arg(source)?;
     let src = xml_decode_input(ruby, source, Some(max_bytes))?;
-    let mut xdoc = arena_mut(&document)?;
-    tree::parse_fragment(&mut xdoc, src.as_slice(), inherit_doc_ns)
-        .map_err(|status| parse_status_error(status, Unit::Fragment))
+    let parsed = {
+        let mut xdoc = arena_mut(&document)?;
+        tree::parse_fragment(&mut xdoc, src.as_slice(), inherit_doc_ns)
+    };
+    let frag = parsed.map_err(|status| parse_status_error(status, Unit::Fragment))?;
+    /* The fragment grew the arena with no edit after it (a failed parse
+     * rewound what it took), so it reports here, after the loan, as
+     * `bridge::html`'s factories do (it may run a collection; the fragment
+     * is a bare node of the arena, which `document` keeps). */
+    crate::bridge::wrapper::account_growth(ruby, document);
+    Ok(frag)
 }
 
 /* ------------------------------------------------------------------ */
@@ -772,13 +792,18 @@ pub fn find_attribute_ns(
  * which `with_arena_for_new_node`'s one-at-a-time lending cannot express. */
 
 /// A node copied in from another document, still to be taken out of it: the
-/// second half of the move `appendChild` performs across arenas. It carries
-/// the source Document and node [`incoming_node`] already resolved, and
-/// [`insert`] takes the source for writing before the copy is placed, so
-/// finishing cannot fail: there is nothing left to look up or to be refused.
-struct Adoption {
-    /// The source's Document: the arena the original is taken out of, and
-    /// whose tree version the removal bumps.
+/// second half of the move `appendChild` performs across arenas. It holds the
+/// source's WRITE, which [`insert`] takes before the copy is made, so
+/// finishing cannot fail and cannot be skipped: there is nothing left to look
+/// up or to be refused, and the write and the copy are one value rather than
+/// two that must agree.
+struct Adoption<'a> {
+    /// The source's arena, written: the original is taken out of it, and its
+    /// name index goes with it. Taken BEFORE the copy, so a refusal (a read
+    /// of the source still held) comes while there is nothing to take back,
+    /// rather than after the copy is in the target arena.
+    sdoc: XmlWrite<'a>,
+    /// The source's Document, whose tree version the removal bumps.
     src_document: Value,
     src: NodeId,
     /// The target arena's high-water mark from before the copy, so a copy
@@ -790,7 +815,7 @@ struct Adoption {
     _keep: Value,
 }
 
-impl Adoption {
+impl Adoption<'_> {
     /// The placement refused the copy: take it back out of `target`, the
     /// arena it was imported into. A refused placement wrote nothing (`place`
     /// validates and resolves before it links), so the copy is still
@@ -801,9 +826,10 @@ impl Adoption {
     }
 
     /// The placement took the copy: empty the original out of its old
-    /// document - `sdoc`, the source's write taken before the placement -
-    /// whose name index goes with it.
-    fn finish(self, sdoc: &mut XmlDoc) {
+    /// document, whose name index goes with it. The source's write ends
+    /// with this.
+    fn finish(mut self) {
+        let sdoc = &mut *self.sdoc;
         /* Invalidated and recorded before the removal (`record_edit`). */
         sdoc.invalidate_name_index();
         record_edit(self.src_document, EditKind::ChildList);
@@ -834,15 +860,33 @@ pub fn insert(
     at: crate::xml::mutate::Place,
 ) -> Result<Value, Error> {
     let edit = begin_edit(ruby, &mut this)?;
-    let (node, adoption) = incoming_node(ruby, edit.document(), arg)?;
-    /* An adoption writes the source too, so it is taken for the edit before
-     * the copy is placed: a refusal then comes first, rather than after the
-     * placement, which would leave the copy in and the original where it
-     * was. Nothing between here and the release runs Ruby. */
-    let src_document = adoption.as_ref().map(|a| a.src_document);
-    let mut source = match &src_document {
-        Some(d) => Some(xml_write(d)?),
-        None => None,
+    let target_doc = edit.document();
+    let (src, src_document) = incoming_ref(ruby, arg)?;
+    let (node, adoption) = if crate::bridge::ruby::same_value(src_document, target_doc) {
+        /* The same arena: a move. */
+        (src, None)
+    } else {
+        /* An adoption writes the source too, so it is taken for the edit
+         * BEFORE the copy is made ([`Adoption::sdoc`]). Nothing between here
+         * and the release runs Ruby. */
+        let sdoc = xml_write(&src_document)?;
+        let (mark, copied) = {
+            /* Two distinct arenas (the documents differ): the target
+             * written, the source read through its own write. */
+            let mut dst = arena_mut(&target_doc)?;
+            (dst.mark(), import_subtree(&mut dst, &sdoc, src))
+        };
+        let copy = xml_mut_result(copied)?;
+        (
+            copy,
+            Some(Adoption {
+                sdoc,
+                src_document,
+                src,
+                mark,
+                _keep: arg,
+            }),
+        )
     };
     xml_mut_result(edit.with_insertion(node, |d, target| {
         let placed = crate::xml::mutate::place(d, target, node, at);
@@ -851,28 +895,27 @@ pub fn insert(
         }
         placed
     })?)?;
-    if let (Some(a), Some(sdoc)) = (adoption, source.as_mut()) {
-        a.finish(sdoc);
+    if let Some(a) = adoption {
+        a.finish(); /* the source's write ends with it */
+        /* The receiver's document grew by the copy. */
+        crate::bridge::wrapper::account_growth(ruby, target_doc);
     }
-    drop(source);
     wrap_xml_node(ruby, node, this.document)
 }
 
-/// `arg` as a node of `target_doc`'s arena: itself when it already lives there
-/// (a move), or a copy imported from its own document plus the [`Adoption`]
-/// that takes it out of there once it is placed.
-fn incoming_node(
-    ruby: &Ruby,
-    target_doc: Value,
-    arg: Value,
-) -> Result<(NodeId, Option<Adoption>), Error> {
-    if !is_kind_of(ruby, arg, &CLASS_NODE)
-        || !is_kind_of(ruby, xml_node_document(ruby, arg)?, &CLASS_XML_DOCUMENT)
-    {
+/// `arg` as the node an insertion takes in, and the Document it lives in: a
+/// node of an XML document, not frozen. The copy of one from another document
+/// is [`insert`]'s to make, once it holds that document's write.
+fn incoming_ref(ruby: &Ruby, arg: Value) -> Result<(NodeId, Value), Error> {
+    if !is_kind_of(ruby, arg, &CLASS_NODE) {
         return Err(crate::bridge::ruby::type_error(
             "expected a Makiri::XML node",
         ));
     }
+    /* One read of the wrapper, as a receiver's: `TypeError` for an HTML node
+     * or Document, as `xml_node_unwrap` raises. */
+    let XmlSelf { id, document, .. } =
+        <XmlSelf as crate::bridge::rb::TryConvert>::try_convert(ruby, arg)?;
     /* Inserting `arg` relinks IT - its parent, prev and next all change, and an
      * adoption takes it out of its own document - so a frozen argument is a
      * frozen node being modified, which the receiver check alone let through:
@@ -884,28 +927,7 @@ fn incoming_node(
      * CLAUDE.md on why a per-node wrapper cache was rejected). A child the caller
      * never named is out of reach by construction, not by choice. */
     check_frozen(arg)?;
-    let src = xml_node_unwrap(ruby, arg)?;
-    let src_document = xml_node_document(ruby, arg)?;
-    if crate::bridge::ruby::same_value(src_document, target_doc) {
-        return Ok((src, None)); /* same arena -> move */
-    }
-    let (mark, copied) = {
-        /* Two distinct arenas (the documents differ): the target written,
-         * the source only read here. */
-        let mut dst = arena_mut(&target_doc)?;
-        let src_doc = xml_read(&src_document)?;
-        (dst.mark(), import_subtree(&mut dst, &src_doc, src))
-    };
-    let copy = xml_mut_result(copied)?;
-    Ok((
-        copy,
-        Some(Adoption {
-            src_document,
-            src,
-            mark,
-            _keep: arg,
-        }),
-    ))
+    Ok((id, document))
 }
 
 /// `Document#import_node`'s copy: `node_v` - XML from any document, or HTML -
@@ -945,5 +967,8 @@ pub fn import_copy(
             ))
         }
     };
+    /* A copy grows the arena with no edit after it: reported after the loan
+     * (it may run a collection; the copy is a bare node of the arena). */
+    crate::bridge::wrapper::account_growth(ruby, rb_self);
     Ok(copy)
 }

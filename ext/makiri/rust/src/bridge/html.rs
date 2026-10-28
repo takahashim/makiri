@@ -805,7 +805,9 @@ pub fn insert(
     record_edit(incoming_doc, EditKind::ChildList);
     release_from_tree(&mut source.edit(), incoming);
     drop(source);
-    crate::bridge::wrapper::account_growth(ruby, incoming_doc);
+    /* The document that grew is the receiver's, by the copy; the original's
+     * only lost a link. */
+    crate::bridge::wrapper::account_growth(ruby, document);
     wrap_html_node(ruby, placed, document)
 }
 
