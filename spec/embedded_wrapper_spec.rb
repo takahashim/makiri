@@ -11,16 +11,19 @@ RSpec.describe "node wrappers across compaction", :gc_compact do
     GC.compact
   end
 
+  # Under GC_COMPACT_STRESS every allocation is a compacting GC, so the work
+  # grows with the square of the count: 60 wrappers still move, as 300 do.
   it "keeps each HTML and XML wrapper naming its node" do
-    html = Makiri.HTML("<ul>#{(1..300).map { |i| "<li id='i#{i}'>#{i}</li>" }.join}</ul>")
-    xml = Makiri::XML("<r>#{(1..300).map { |i| "<i n='#{i}'>#{i}</i>" }.join}</r>")
+    count = gc_churn_iters(300, 60)
+    html = Makiri.HTML("<ul>#{(1..count).map { |i| "<li id='i#{i}'>#{i}</li>" }.join}</ul>")
+    xml = Makiri::XML("<r>#{(1..count).map { |i| "<i n='#{i}'>#{i}</i>" }.join}</r>")
     lis = html.css("li").to_a
     is = xml.root.element_children.to_a
     ids = lis.map(&:object_id)
     3.times do
       compact!
-      expect(lis.map { |n| n["id"] }).to eq((1..300).map { |i| "i#{i}" })
-      expect(is.map { |n| n["n"] }).to eq((1..300).map(&:to_s))
+      expect(lis.map { |n| n["id"] }).to eq((1..count).map { |i| "i#{i}" })
+      expect(is.map { |n| n["n"] }).to eq((1..count).map(&:to_s))
       expect(lis.map(&:document).uniq).to eq([html])
       expect(html.css("li").map(&:object_id)).to eq(ids)
       expect(lis.first.parent.name).to eq("ul")
@@ -28,10 +31,11 @@ RSpec.describe "node wrappers across compaction", :gc_compact do
   end
 
   it "frees wrappers that nothing holds" do
-    doc = Makiri.HTML("<p>x</p>" * 500)
+    count = gc_churn_iters(500, 100)
+    doc = Makiri.HTML("<p>x</p>" * count)
     5.times { doc.css("p").each(&:name) }
     GC.start
     compact!
-    expect(doc.css("p").size).to eq(500)
+    expect(doc.css("p").size).to eq(count)
   end
 end

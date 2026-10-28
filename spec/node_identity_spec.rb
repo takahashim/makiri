@@ -131,7 +131,9 @@ RSpec.describe "node wrapper identity" do
 
         GC.stress = true
         begin
-          200.times do |i|
+          # Enough new nodes to grow and move the arena under the held
+          # wrappers; under GC_COMPACT_STRESS each one is a compacting GC.
+          gc_churn_iters(200, 50).times do |i|
             churned = doc.create_element("n#{i}")
             churned["data-i"] = i.to_s
           end

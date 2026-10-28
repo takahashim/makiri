@@ -157,7 +157,9 @@ jobs:
   # (parse/drop cycles) scale their iteration count down under stress
   # (`gc_churn_iters` / `GC_COMPACT_ITERS`) because each stressed iteration is
   # orders of magnitude heavier; `GC_COMPACT_ITERS` below tunes the total runtime
-  # (~14.5 min on CI at 200 in one job, hence the shards below).  An
+  # (~14.5 min on CI at 200 in one job, hence the shards below; 100 now,
+  # with the compaction examples scaled the same way - the `rest` shard went
+  # from ~5.7 to ~3 min locally, and CI's runners vary by 2x either way).  An
   # earlier version forced GC.stress onto the *entire* suite (~800 examples): it ran 1h40m+ and never finished, while
   # testing borrowed-pointer discipline on hundreds of examples that have none.
   # The rest of the suite still runs in ci.yml.
@@ -177,7 +179,7 @@ jobs:
       # the churn loops run this many iterations (vs their normal 200-1000). Tunes
       # the job's runtime; raise for more coverage, lower if it approaches the
       # timeout.
-      GC_COMPACT_ITERS: "200"
+      GC_COMPACT_ITERS: "100"
     strategy:
       fail-fast: false
       matrix:
