@@ -148,15 +148,6 @@ pub trait Object: ReprValue {
     }
 }
 
-/// What only a class has: an allocator.
-pub trait Class: ReprValue {
-    /// Take the allocator away, so `.new` on the class raises: its objects
-    /// are made only from Rust, wrapping something.
-    fn undef_default_alloc_func(self) -> Result<(), Error> {
-        crate::raw::undef_alloc_func(RClass::from_known(self.as_value()))
-    }
-}
-
 /// A class made by [`Module::define_data_class`]: one whose instances the
 /// layer makes, wrapping a payload ([`crate::typed`] takes no other class).
 ///
@@ -168,14 +159,6 @@ pub trait Class: ReprValue {
 #[repr(transparent)]
 pub struct DataClass(RClass);
 
-impl DataClass {
-    /// The class, as a class.
-    #[inline]
-    pub fn as_class(self) -> RClass {
-        self.0
-    }
-}
-
 impl ReprValue for DataClass {
     #[inline]
     fn as_value(self) -> Value {
@@ -185,7 +168,6 @@ impl ReprValue for DataClass {
 
 impl Module for DataClass {}
 impl Object for DataClass {}
-impl Class for DataClass {}
 
 /// How a method is defined.
 #[derive(Clone, Copy)]
@@ -200,7 +182,6 @@ impl Module for RClass {}
 impl Module for RModule {}
 impl Object for RClass {}
 impl Object for RModule {}
-impl Class for RClass {}
 
 /// Freeze `v` (`rb_obj_freeze`); a failed allocation of its frozen shape is
 /// `Err` (`NoMemoryError`).

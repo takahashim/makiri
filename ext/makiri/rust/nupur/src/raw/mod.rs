@@ -52,7 +52,7 @@ mod protect;
 pub use protect::set_raise_injector;
 use protect::{call, injected_raise};
 pub(crate) use protect::{
-    exc_fatal, exc_raise, keeping_errinfo, pending_exit, reset_pending_exit, resume,
+    exc_fatal, exc_raise, forget_errinfo, keeping_errinfo, pending_exit, reset_pending_exit, resume,
 };
 
 /* ---- what the value-level wrappers share ---- */
@@ -105,6 +105,7 @@ pub fn raise_is_recognised(ruby: &Ruby) -> Result<bool, Error> {
     );
     if !recognised {
         reset_pending_exit();
+        forget_errinfo(ruby);
     }
     Ok(recognised)
 }

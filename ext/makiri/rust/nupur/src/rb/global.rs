@@ -19,9 +19,9 @@ pub struct Opaque<T>(T);
 
 // SAFETY: an `Opaque` is read only through `Opaque::get`, which takes the
 // GVL's proof; the value itself is pinned and rooted by `register`.
-unsafe impl<T> Send for Opaque<T> {}
+unsafe impl<T: ReprValue> Send for Opaque<T> {}
 // SAFETY: as `Send`.
-unsafe impl<T> Sync for Opaque<T> {}
+unsafe impl<T: ReprValue> Sync for Opaque<T> {}
 
 impl<T: ReprValue> Opaque<T> {
     /// `v`, rooted with the GC for the rest of the process.

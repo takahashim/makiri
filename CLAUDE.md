@@ -121,8 +121,8 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   so there is no per-type trace to forget, and "store a VALUE into a struct
   only after its wrapper exists" - the `DocData.errors` crash - has no step
   to happen in. A slot is read back by `root_known::<I>()` (`I < N` checked
-  when it compiles; no runtime check, since the hot path reads a node's
-  Document) or with an embedded payload by `read`. Nothing re-points a slot
+  when it compiles; the object's type is asserted at run time, one
+  `rb_typeddata_is_kind_of`, and a mismatch is a panic) or with an embedded payload by `read`. Nothing re-points a slot
   and none is movable, so there is no compaction callback.
   **Three objects have a slot, each one**: a node wrapper (its Document,
   `NodeWrapperType`), a Document (its node table, `DocType`), a NodeSet (its

@@ -16,7 +16,7 @@
 use core::ffi::c_int;
 
 use crate::rb::value::AsRawValue;
-use crate::rb::{Error, Value};
+use crate::rb::{Error, Ruby, Value};
 use rb_sys::VALUE;
 
 /// The raise sweep's hook (`script/check_raise_injection.rb`): in an
@@ -182,20 +182,16 @@ pub(crate) fn keeping_errinfo<T>(f: impl FnOnce() -> T) -> T {
     )
 )]
 fn restore_errinfo(before: VALUE) {
-    use rb_sys::stable_api::{get_default, StableApiDefinition};
     if before == rb_sys::Qnil as VALUE {
         // SAFETY: nil, which it always takes.
         unsafe { rb_sys::rb_set_errinfo(before) };
         return;
     }
     // SAFETY: `before` was the thread's error info a moment ago, kept on
-    // this frame's stack since: a live value; `rb_type` reads its header.
-    let is_object =
-        unsafe { get_default().rb_type(before) } == rb_sys::ruby_value_type::RUBY_T_OBJECT;
-    // SAFETY: a live object, and `rb_eException` a C global Ruby set at boot.
-    if is_object
-        && unsafe { rb_sys::rb_obj_is_kind_of(before, rb_sys::rb_eException) }
-            == rb_sys::Qtrue as VALUE
+    // this frame's stack since: a live value; `rb_eException` a C global Ruby
+    // set at boot. `rb_obj_is_kind_of` raises only for a non-class second
+    // argument.
+    if unsafe { rb_sys::rb_obj_is_kind_of(before, rb_sys::rb_eException) } == rb_sys::Qtrue as VALUE
     {
         // SAFETY: an exception, which `rb_set_errinfo` takes without raising.
         unsafe { rb_sys::rb_set_errinfo(before) };
@@ -226,6 +222,15 @@ fn take_errinfo() -> Value {
         rb_sys::rb_set_errinfo(rb_sys::Qnil as VALUE);
         Value::from_raw(exc)
     }
+}
+
+/// Clear the error info a protected call left behind: [`caught`] takes it only
+/// for a raise it recognises, so an exit it did not (the load-time self-check
+/// under a Ruby that numbers its states otherwise) leaves the exception there,
+/// to become the `cause` of whatever is raised next.
+#[inline]
+pub(crate) fn forget_errinfo(_: &Ruby) {
+    let _ = take_errinfo();
 }
 
 /// `rb_jump_tag`: resume the non-local exit `state` stands for. Raises, by

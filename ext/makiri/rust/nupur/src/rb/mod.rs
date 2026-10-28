@@ -19,7 +19,7 @@ pub mod method;
 pub mod ruby;
 pub mod value;
 
-pub use class::{freeze, Class, DataClass, Module, Object};
+pub use class::{freeze, DataClass, Module, Object};
 pub use convert::{IntoValue, ReturnValue, TryConvert};
 pub use error::{Builtin, Error, ErrorClass, Message, Rescued};
 pub use global::{Opaque, RbConst};
@@ -31,5 +31,5 @@ pub use value::{
 
 /// The traits a method's module brings into scope with `use ...::prelude::*`.
 pub mod prelude {
-    pub use super::{Class, Module, Object, ReprValue, TryConvert};
+    pub use super::{Module, Object, ReprValue, TryConvert};
 }
