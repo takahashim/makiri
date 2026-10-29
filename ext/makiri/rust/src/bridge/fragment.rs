@@ -18,7 +18,7 @@ use crate::bridge::ruby::makiri_error;
 use crate::bridge::html::{html_node_key, with_html_node, wrap_html_node};
 use crate::bridge::ruby::{is_kind_of, string_arg};
 use crate::bridge::string::{ruby_verified_text, HtmlSource};
-use crate::bridge::wrapper::{html_doc_check, html_read, new_html_document};
+use crate::bridge::wrapper::{html_doc_check, html_read, new_html_document, DocHandle};
 pub use crate::html_dom::fragment::FragmentTag;
 use crate::html_dom::fragment::{FragmentContext, FragmentError, TransientFragment};
 use crate::html_dom::html::{HtmlDoc, HtmlDocMut, HtmlNode, HtmlNodeKey, Place, RawNode};
@@ -256,8 +256,9 @@ pub fn build_fragment(
 }
 
 /// The standalone fragment's backing document: a throwaway
-/// `<html><body></body></html>` shell, owned by the fragment's wrapper.
-pub fn fragment_shell_document(ruby: &Ruby) -> Result<Value, Error> {
+/// `<html><body></body></html>` shell, owned by the fragment's wrapper once
+/// that is made; until then, by the handle returned here.
+pub fn fragment_shell_document(ruby: &Ruby) -> Result<DocHandle, Error> {
     const SHELL: &[u8] = b"<html><body></body></html>";
     new_html_document(ruby, || {
         parse_html(SHELL, true, ParseLimits::DEFAULT)

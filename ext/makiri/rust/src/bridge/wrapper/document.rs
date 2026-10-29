@@ -167,6 +167,11 @@ impl Payload for DocData {
 /// Nokogiri's: a wrapper lives as long as its document.
 pub type DocType = TypedType<DocData, 1>;
 
+/// A Document held while it is used ([`crate::bridge::typed::Typed`]):
+/// what [`new_html_document`] / [`new_xml_document`] return, so a caller that
+/// works on the new Document before handing it to Ruby keeps it meanwhile.
+pub type DocHandle = crate::bridge::typed::Typed<DocData, 1>;
+
 /// The base type: the kind-agnostic accessors (`doc_content`, `#errors`) accept
 /// either representation.
 pub static DOC_TYPE: DocType = TypedType::base(c"Makiri::Document");
@@ -215,7 +220,7 @@ impl From<DocKind> for Kind {
 pub fn new_html_document(
     ruby: &Ruby,
     make: impl FnOnce() -> Result<Box<HtmlParsed>, Error>,
-) -> Result<Value, Error> {
+) -> Result<DocHandle, Error> {
     new_document(ruby, DocKind::Html, || {
         let parsed = make()?;
         let stamp = parsed.doc().arena().stamp();
@@ -228,7 +233,7 @@ pub fn new_html_document(
 pub fn new_xml_document(
     ruby: &Ruby,
     make: impl FnOnce() -> Result<Box<XmlDoc>, Error>,
-) -> Result<Value, Error> {
+) -> Result<DocHandle, Error> {
     new_document(ruby, DocKind::Xml, || {
         let arena = make()?;
         let stamp = arena.doc_node().stamp();
@@ -257,7 +262,7 @@ fn new_document(
     ruby: &Ruby,
     kind: DocKind,
     make: impl FnOnce() -> Result<(u32, Body), Error>,
-) -> Result<Value, Error> {
+) -> Result<DocHandle, Error> {
     let (klass, ty) = match kind {
         DocKind::Html => (
             crate::init::CLASS_HTML_DOCUMENT.defined(ruby)?,

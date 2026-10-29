@@ -80,9 +80,10 @@
 //!   handed straight to a call (`f(vec![v])`) is beyond it.
 //! - **A payload is borrowed through its handle.** A [`typed::Typed`]'s
 //!   `data`, not `TypedType::get` / `get_known` over a copy of a `Value`
-//!   (those keep nothing, and serve only a value Ruby keeps for the whole
-//!   borrow - a receiver, an argument, a slot's value), and the handle is not
-//!   `mem::forget`ed. Checked by review.
+//!   (those keep nothing, and serve only a value kept for the whole borrow -
+//!   by Ruby, as a receiver, an argument or a slot's value is, or by a handle
+//!   the caller holds across the call), and the handle is not `mem::forget`ed.
+//!   Checked by review.
 //! - **A GVL-released body runs no Ruby.** [`gvl::without_gvl`]'s `Send`
 //!   bound keeps a token and a value out of it, but not a call of a layer
 //!   function that needs neither (making an [`rb::Error`], say) - harmless
