@@ -157,6 +157,9 @@ fn parse_stylesheet(ruby: &Ruby, text: Value) -> Result<RArray, Error> {
                 format_args!("CSS at-rule nesting too deep (max {MAX_DEPTH})"),
             ))
         }
+        Err(Fail::StackLow) => {
+            return Err(err("CSS at-rule nesting too deep for this thread's stack"))
+        }
         Err(Fail::Parse) => return Err(err("failed to parse CSS stylesheet")),
     };
 

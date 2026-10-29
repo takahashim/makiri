@@ -22,7 +22,8 @@
 use super::out::{put, put_comment, put_pi, writable_chars, W, XML};
 use super::Failure;
 use crate::cbuf::Buf;
-use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId, MAX_DEPTH};
+use crate::stack::Depth;
+use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 use crate::xml::XML_NS_URI;
 
 use super::bindings::{Bindings, Prefix, PREFIX_CAP};
@@ -324,7 +325,7 @@ impl<'d, 'b> Writer<'d, 'b> {
 
     /// Write `n`. `depth` is both the nesting level the indentation uses and the
     /// recursion guard - they were two arguments carrying the same number.
-    fn node(&mut self, n: NodeId, depth: u32, binds: &mut Bindings<'d>) -> W {
+    fn node(&mut self, n: NodeId, depth: Depth, binds: &mut Bindings<'d>) -> W {
         let doc = self.doc;
         match doc.type_(n) {
             Some(ArenaKind::DocumentType) => self.doctype(n),
@@ -373,19 +374,24 @@ impl<'d, 'b> Writer<'d, 'b> {
         self.put(quote)
     }
 
-    fn element(&mut self, n: NodeId, depth: u32, binds: &mut Bindings<'d>) -> W {
-        if depth as usize >= MAX_DEPTH {
-            return Err(Failure::TooDeep);
-        }
+    fn element(&mut self, n: NodeId, depth: Depth, binds: &mut Bindings<'d>) -> W {
+        let inner = depth.enter().map_err(super::too_deep)?;
         let base = binds.len();
-        let r = self.element_in_scope(n, depth, binds);
+        let r = self.element_in_scope(n, depth, inner, binds);
         binds.truncate(base);
         r
     }
 
     /// The element's own bindings are pushed for the duration; [`element`] owns
     /// popping them, so an early `?` cannot leave the scope stack unbalanced.
-    fn element_in_scope(&mut self, n: NodeId, depth: u32, binds: &mut Bindings<'d>) -> W {
+    /// `depth` is the element's own level, `inner` its children's.
+    fn element_in_scope(
+        &mut self,
+        n: NodeId,
+        depth: Depth,
+        inner: Depth,
+        binds: &mut Bindings<'d>,
+    ) -> W {
         let doc = self.doc;
         let dropped = crate::xml::ns_scope::ignored_default_decl(doc, n);
 
@@ -425,12 +431,12 @@ impl<'d, 'b> Writer<'d, 'b> {
         let block = self.width > 0 && !has_chardata(doc, n);
         for cid in doc.children(n) {
             if block {
-                self.indent(depth + 1)?;
+                self.indent(inner.level())?;
             }
-            self.node(cid, depth + 1, binds)?;
+            self.node(cid, inner, binds)?;
         }
         if block {
-            self.indent(depth)?;
+            self.indent(depth.level())?;
         }
         self.put(b"</")?;
         self.name(n, &el)?;
@@ -466,13 +472,13 @@ pub(super) fn write(
     let mut binds = Bindings::new();
     let mut w = Writer::new(b, doc, indent);
     if doc.type_(n) != Some(ArenaKind::Document) {
-        return w.node(n, 0, &mut binds);
+        return w.node(n, super::TOP, &mut binds);
     }
     /* The Document node gives the declaration, then each top-level child on
      * its own line. */
     w.declaration(encoding)?;
     for cid in doc.children(n) {
-        w.node(cid, 0, &mut binds)?;
+        w.node(cid, super::TOP, &mut binds)?;
         w.newline()?;
     }
     Ok(())

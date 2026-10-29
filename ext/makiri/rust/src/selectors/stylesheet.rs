@@ -51,6 +51,7 @@ use crate::selectors::text;
 use crate::selectors::token::TokenType;
 use crate::selectors::tokenizer::Tokenizer;
 use crate::selectors::{Sheet, Status};
+use crate::stack::{Depth, TooDeep};
 
 /// Bound on rule nesting in the walk: fail closed rather than recurse without
 /// limit on a pathologically nested stylesheet.
@@ -92,6 +93,8 @@ pub enum Rule {
 pub enum Fail {
     Oom,
     TooDeep,
+    /// The native stack ran low before [`MAX_DEPTH`] ([`crate::stack::Depth`]).
+    StackLow,
     /// The parser stopped (a state Lexbor's parser stops the whole parse in).
     Parse,
 }
@@ -277,10 +280,11 @@ fn escapes_next(before: &[u8]) -> bool {
     before.iter().rev().take_while(|&&b| b == b'\\').count() % 2 == 1
 }
 
-fn rules(c: &Conv, list: Option<ItemId>, depth: u32) -> Result<Vec<Rule>, Fail> {
-    if depth > MAX_DEPTH {
-        return Err(Fail::TooDeep);
-    }
+fn rules(c: &Conv, list: Option<ItemId>, depth: Depth) -> Result<Vec<Rule>, Fail> {
+    let inner = depth.enter().map_err(|t| match t {
+        TooDeep::Limit => Fail::TooDeep,
+        TooDeep::StackLow => Fail::StackLow,
+    })?;
     let mut out = Vec::new();
     for (_, item) in c.sheet.rules.children(list) {
         let entry = match *item {
@@ -335,7 +339,7 @@ fn rules(c: &Conv, list: Option<ItemId>, depth: u32) -> Result<Vec<Rule>, Fail> 
                 Some(Rule::At {
                     name,
                     prelude: slice_trim(c.css, prelude_begin, prelude_end)?,
-                    rules: rules(c, block, depth + 1)?,
+                    rules: rules(c, block, inner)?,
                     declarations: block_declarations(c, block)?,
                 })
             }
@@ -369,5 +373,10 @@ pub fn parse(css: &[u8]) -> Result<Vec<Rule>, Fail> {
         Status::ErrorMemoryAllocation => Fail::Oom,
         _ => Fail::Parse,
     })?;
-    rules(&Conv { css, sheet: &sheet }, Some(sheet.root), 0)
+    /* Levels 0..=MAX_DEPTH, as `depth > MAX_DEPTH` refused before. */
+    rules(
+        &Conv { css, sheet: &sheet },
+        Some(sheet.root),
+        Depth::top(MAX_DEPTH + 1),
+    )
 }

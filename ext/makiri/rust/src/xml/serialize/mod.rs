@@ -32,6 +32,22 @@ mod xml;
 use crate::cbuf::Buf;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
+/// The top of the writers' recursion: one level per element, bounded by
+/// the parse's own [`crate::xml::model::MAX_DEPTH`] and by the stack
+/// ([`crate::stack::Depth`]).
+pub(super) const TOP: crate::stack::Depth = {
+    const _: () = assert!(crate::xml::model::MAX_DEPTH <= u32::MAX as usize);
+    crate::stack::Depth::top(crate::xml::model::MAX_DEPTH as u32)
+};
+
+/// A refused [`crate::stack::Depth::enter`], as the writers' failure.
+pub(super) fn too_deep(t: crate::stack::TooDeep) -> Failure {
+    match t {
+        crate::stack::TooDeep::Limit => Failure::TooDeep,
+        crate::stack::TooDeep::StackLow => Failure::StackLow,
+    }
+}
+
 /// Why serialization produced no output.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Failure {
@@ -74,6 +90,11 @@ pub enum Failure {
     /// The tree nests deeper than [`crate::xml::model::MAX_DEPTH`], the bound
     /// on the writers' recursion.
     TooDeep,
+    /// The thread's native stack ran low before that bound - a small `Fiber`
+    /// (`crate::stack::exhausted`). The writers recurse once per element, so
+    /// a count alone would let them overflow the real stack, which kills the
+    /// process instead of raising.
+    StackLow,
     /// Every prefix the writer can invent (`ns0` .. `ns99999`) is already bound
     /// in scope, so a namespace that needs a declaration cannot get one.
     PrefixSpace,

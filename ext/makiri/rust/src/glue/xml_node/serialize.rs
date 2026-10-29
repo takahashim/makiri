@@ -79,6 +79,9 @@ outside XML's, -- in a comment, or ?> in a processing instruction)"
             "failed to {verb} XML: the tree nests deeper than {} levels",
             crate::xml::model::MAX_DEPTH
         ),
+        Failure::StackLow => {
+            format_args!("failed to {verb} XML: the tree nests too deep for this thread's stack")
+        }
         Failure::PrefixSpace => {
             format_args!("failed to {verb} XML: ran out of namespace prefixes to declare")
         }

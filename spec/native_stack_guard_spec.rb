@@ -82,6 +82,30 @@ RSpec.describe "native stack guard" do
     end
   end
 
+  # The XML writers (`to_xml`, `canonicalize`) recurse once per element, up
+  # to the parse's 1024 levels. Bounded by that count alone, a document 500
+  # deep overflowed a 128 KiB Fiber's stack and killed the process with a
+  # `[BUG] Bus Error`; the writers now ask `stack::exhausted()` as well, so
+  # it raises, and the same document still serializes on a full stack.
+  describe "XML serialization, inside a small Fiber" do
+    it "raises instead of overflowing the stack, and the document stays usable" do
+      status, out, err = run_isolated({ "RUBY_FIBER_MACHINE_STACK_SIZE" => "131072" }, <<~RUBY)
+        doc = Makiri::XML("<a>" * 1000 + "x" + "</a>" * 1000)
+        [:to_xml, :canonicalize].each do |m|
+          begin
+            Fiber.new { doc.public_send(m) }.resume
+            print "no_error;"
+          rescue => e
+            print "\#{e.class}:\#{e.message[/stack/]};"
+          end
+        end
+        print "after=\#{doc.to_xml.bytesize}"
+      RUBY
+      expect(status).to be_success, err
+      expect(out).to eq("Makiri::Error:stack;Makiri::Error:stack;after=7024"), err
+    end
+  end
+
   # HTML matching needs no guard at all: `css_match` keeps every
   # nesting level (`:is`/`:where`/`:not`, and `:has()` since it moved to
   # `Frame::HasStep`, `of S` since `Frame::NthOfStep`) on its own heap stack.
