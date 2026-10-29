@@ -34,12 +34,7 @@ pub fn check_frozen(v: Value) -> Result<(), Error> {
 /// not Integers or nil is a `TypeError`, checked here: the C would convert
 /// such an end with its `to_int`.
 #[inline]
-pub fn range_beg_len(range: Value, count: usize) -> Result<Option<(usize, usize)>, Error> {
-    let Some(r) = crate::rb::Range::from_value(range) else {
-        return Err(crate::rb::error::type_error(
-            "a Range whose ends are Integers (or nil) was expected",
-        ));
-    };
+pub fn range_beg_len(r: Range, count: usize) -> Result<Option<(usize, usize)>, Error> {
     /* Checked here, not left to the caller: an end of any other kind would
      * have its `to_int` run by the C, the caller's Ruby. */
     let (beg, end, _) = range_values(r)?;
@@ -56,7 +51,7 @@ pub fn range_beg_len(range: Value, count: usize) -> Result<Option<(usize, usize)
         .map_err(|_| crate::rb::error::arg_error("a collection too large for a long"))?;
     let (mut beg, mut len) = (0, 0);
     let (b, l) = (core::ptr::addr_of_mut!(beg), core::ptr::addr_of_mut!(len));
-    let r = range.as_raw();
+    let r = r.as_raw();
     let answer = call(|| unsafe { rb_sys::rb_range_beg_len(r, b, l, count, 0) })?;
     if answer != rb_sys::Qtrue as VALUE {
         return Ok(None);

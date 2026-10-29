@@ -12,7 +12,7 @@ use crate::bridge::rb::{prelude::*, Error, RArray, Ruby, Value};
 use crate::{function, method};
 
 use crate::bridge::node_set::{node_set_of_nodes, Membership, NodeSetSelf};
-use crate::bridge::ruby::{is_kind_of, range_beg_len};
+use crate::bridge::ruby::is_kind_of;
 use crate::bridge::wrapper::keepalive_document;
 use crate::init::{CLASS_DOCUMENT, CLASS_NODE, CLASS_NODE_SET};
 
@@ -37,12 +37,12 @@ fn aref(ruby: &Ruby, s: NodeSetSelf, args: &[Value]) -> Result<Option<Value>, Er
         }
     };
     match args {
-        [range] if range.is_kind_of(ruby.class_range()) => {
+        [range] if let Some(range) = crate::bridge::rb::Range::from_value(*range) => {
             /* A start outside the set is nil; a bound too large for a `long`
              * raises, as `Array#[]` does. The ends must be Integers or nil,
-             * which `range_beg_len` checks: one that is not would be
-             * converted by its `to_int`. */
-            match range_beg_len(*range, count)? {
+             * which `beg_len` checks: one that is not would be converted by
+             * its `to_int`. */
+            match range.beg_len(count)? {
                 Some((beg, len)) => s.slice(ruby, beg, len),
                 None => Ok(None),
             }

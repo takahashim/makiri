@@ -23,7 +23,7 @@ use crate::bridge::ruby::makiri_error;
 
 use crate::bridge::dom::{XmlRead, XmlWrite};
 use crate::bridge::html::with_arg_node;
-use crate::bridge::ruby::{check_frozen, is_kind_of};
+use crate::bridge::ruby::is_kind_of;
 use crate::bridge::string::{ruby_verified_text, RubyText};
 use crate::bridge::wrapper::*;
 use crate::bridge::wrapper::{new_xml_document, node_repr, DocHandle, NodeRepr};
@@ -496,7 +496,7 @@ impl Editing<'_> {
         f: impl FnOnce(&mut XmlDoc, NodeId) -> R,
     ) -> Result<R, Error> {
         let id = self.id;
-        check_frozen(self.receiver)?;
+        self.receiver.check_frozen()?;
         check_attr_owner_frozen(self.document, id)?;
         /* Recorded once both refusals are past and BEFORE the change, with no
          * Ruby run in between (`record_edit`): an edit that then fails, or a
@@ -532,7 +532,7 @@ fn check_attr_owner_frozen(document: Value, id: NodeId) -> Result<(), Error> {
 /// The receiver cleared for an edit - not frozen, its document not under
 /// evaluation. The name index is dropped later, by [`Editing::with_arena`].
 pub fn begin_edit<'a>(ruby: &Ruby, this: &'a mut XmlSelf) -> Result<Editing<'a>, Error> {
-    check_frozen(this.value)?;
+    this.value.check_frozen()?;
     check_attr_owner_frozen(this.document, this.id)?;
     /* Before any argument is converted: see `account_growth`. */
     crate::bridge::wrapper::account_growth(ruby, this.document);
@@ -927,7 +927,7 @@ fn incoming_ref(ruby: &Ruby, arg: Value) -> Result<(NodeId, Value), Error> {
      * object and the arena has no map from a node back to its wrapper (see
      * CLAUDE.md on why a per-node wrapper cache was rejected). A child the caller
      * never named is out of reach by construction, not by choice. */
-    check_frozen(arg)?;
+    arg.check_frozen()?;
     Ok((id, document))
 }
 

@@ -590,7 +590,7 @@ pub(in crate::bridge) fn check_node_frozen(
     source: impl NodeHandleSource,
 ) -> Result<(), Error> {
     match cached_node(rb_doc, &source)? {
-        Some(wrapper) => crate::bridge::ruby::check_frozen(wrapper),
+        Some(wrapper) => crate::bridge::rb::ReprValue::check_frozen(wrapper),
         None => Ok(()),
     }
 }

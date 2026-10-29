@@ -68,6 +68,14 @@ pub trait ReprValue: Copy {
         api.special_const_p(v) || unsafe { api.frozen_p(v) }
     }
 
+    /// `Ok` unfrozen, and Ruby's own `FrozenError` frozen - the message
+    /// naming the receiver, `#receiver` set - returned, not raised. The
+    /// normal case, an unfrozen value, makes no call.
+    #[inline]
+    fn check_frozen(self) -> Result<(), Error> {
+        crate::raw::check_frozen(self.as_value())
+    }
+
     /// An instance of `class` or of a class deriving from it? Reads the
     /// ancestry, runs no Ruby (`rb_obj_is_kind_of`).
     #[inline]
@@ -355,6 +363,16 @@ impl Range {
     #[inline]
     pub fn values(self) -> Result<(Value, Value, bool), Error> {
         crate::raw::range_values(self)
+    }
+
+    /// The part of a collection of `count` elements this Range selects, as
+    /// `Array#[]` reads one (`rb_range_beg_len`): the start and the length,
+    /// `None` for a start outside the collection, `RangeError` for a bound
+    /// too large, and a `TypeError` for an end that is not an Integer or
+    /// nil - whose `to_int` the C would run.
+    #[inline]
+    pub fn beg_len(self, count: usize) -> Result<Option<(usize, usize)>, Error> {
+        crate::raw::range_beg_len(self, count)
     }
 }
 
@@ -645,14 +663,6 @@ pub fn ivar_get(obj: Value, id: Id) -> Value {
 #[inline]
 pub fn ivar_set(obj: Value, id: Id, v: impl ReprValue) -> Result<(), Error> {
     crate::raw::ivar_set(obj, id, v.as_value())
-}
-
-/// `Ok` for an unfrozen `v`, and Ruby's own `FrozenError` for a frozen one -
-/// the message naming the receiver, `#receiver` set - returned, not raised.
-/// The normal case, an unfrozen value, makes no call.
-#[inline]
-pub fn check_frozen(v: impl ReprValue) -> Result<(), Error> {
-    crate::raw::check_frozen(v.as_value())
 }
 
 /// `rb_obj_hide`: take `v`'s class away, so `ObjectSpace` does not list it.
