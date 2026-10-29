@@ -119,6 +119,10 @@ mod bridge {
     fn surface(m: crate::bridge::rb::RModule, f: crate::bridge::rb::method::Func) {
         let _ = crate::bridge::rb::Module::define_method(m, "x", f); //~
     }
+
+    fn splits_arguments() -> crate::bridge::args::Kwargs {
+        crate::bridge::args::Kwargs::from_scan(None) //~
+    }
 }
 
 fn fallible() -> Result<u32, crate::bridge::rb::Error> {
