@@ -415,22 +415,26 @@ pub fn node_set_new(ruby: &Ruby, document: Value) -> Result<Value, Error> {
 /// it rooted - and the owner every borrow of its data is tied to: a [`Fill`]
 /// ([`fill`](Self::fill)) or a write ([`with_room`](Self::with_room)) cannot
 /// outlive it.
-pub struct FreshSet(Value);
+///
+/// Nothing but this frame refers to the set until it is returned, so it is
+/// held in a [`Kept`](crate::bridge::rb::value::Kept): the [`Fill`]'s borrow of
+/// its data keeps the object where the GC sees it.
+pub struct FreshSet(crate::bridge::rb::value::Kept);
 
 impl FreshSet {
     /// An empty NodeSet over `document`.
     pub fn new(ruby: &Ruby, document: Value) -> Result<FreshSet, Error> {
-        node_set_new(ruby, document).map(FreshSet)
+        node_set_new(ruby, document).map(|set| FreshSet(crate::bridge::rb::value::Kept::new(set)))
     }
 
     /// The NodeSet itself, for returning to Ruby.
     pub fn value(&self) -> Value {
-        self.0
+        *self.0.value()
     }
 
     fn set(&self) -> &NodeSet {
         /* Built as a NodeSet by `new`. */
-        NODE_SET_TYPE.get_known(&self.0)
+        NODE_SET_TYPE.get_known(self.0.value())
     }
 
     /// A handle to append through, borrowing the set.

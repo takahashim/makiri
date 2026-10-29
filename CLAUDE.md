@@ -157,6 +157,15 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   until `reveal`; a
   Document's node table is a `table::IntTable`, made hidden and never shown. There is
   no bare `hide` / `reveal`.
+  **A borrow of a payload (`get`, `get_known`, `Typed::data`) keeps its
+  object alive to the type checker only**: a non-embedded payload is its own
+  malloc'd block, which the stack scan does not take for the object. A
+  receiver, an argument or a slot's value is kept by Ruby; an object only
+  this frame refers to - a `Hidden`, a fresh NodeSet (`FreshSet`) - is held
+  in an `rb::value::Kept`, whose `Drop` hands it to `keep_alive` (an empty
+  `asm!` with the VALUE as an input operand; the premises that make that
+  enough are stated there) after the last borrow taken through it.
+  `black_box` (the old `gc_guard`) is best-effort and is not used.
   The other half - no Ruby value kept where the GC's stack scan cannot
   see it (a `Vec`, a `Box`, a static or `thread_local!`, a `Payload` type's
   own field) - is `rake dylint`'s `ruby_value_on_heap`,

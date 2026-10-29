@@ -368,8 +368,9 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
     /// Borrowed for as long as the caller borrows `v`, the object that owns the
     /// data - so the reference cannot outlive the VALUE it came from. That
     /// borrow is the type checker's alone: the object must be kept alive
-    /// as well - by Ruby (a receiver, an argument, a slot's owner) or by
-    /// [`crate::rb::value::gc_guard`] after the reference's last use.
+    /// as well - by Ruby (a receiver, an argument, a slot's owner) or, for an
+    /// object this frame alone refers to, by a [`crate::rb::value::Kept`]
+    /// the `Value` is borrowed from.
     pub fn get<'v>(&'static self, v: &'v Value) -> Result<&'v T, Error> {
         let p = typed_data(*v, &self.raw)? as *const Envelope<T, N>;
         // SAFETY: `typed_data` verified the type, and the wrapper owns the data.
@@ -456,8 +457,8 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
 /// used (`rake dylint`'s `ruby_value_on_heap` sees it as a Ruby value) - so
 /// long as the handle is still used after the data is: a [`data`](Self::data)
 /// borrow outliving the handle's last use needs the object kept by Ruby (a
-/// receiver, an argument, a slot's owner) or by
-/// [`crate::rb::value::gc_guard`], as [`TypedType::get`]'s does.
+/// receiver, an argument, a slot's owner) or by a
+/// [`crate::rb::value::Kept`], as [`TypedType::get`]'s does.
 pub struct Typed<T: Payload + 'static, const N: usize> {
     obj: Value,
     _t: PhantomData<fn() -> T>,
@@ -531,7 +532,7 @@ impl<T: Payload + 'static, const N: usize> TypedType<T, N> {
         unsafe { rb_sys::rb_obj_hide(obj.as_raw()) };
         written?;
         Ok(Hidden {
-            obj,
+            obj: crate::rb::value::Kept::new(obj),
             klass,
             ty: self,
         })
@@ -545,8 +546,11 @@ impl<T: Payload + 'static, const N: usize> TypedType<T, N> {
 /// does with it is reach its data ([`data`](Self::data)) and
 /// [`reveal`](Self::reveal) it, which gives the object back as the class it
 /// was made with.
+///
+/// Nothing but its maker refers to the object until it is revealed, so it is
+/// held in a [`Kept`](crate::rb::value::Kept) its data is borrowed through.
 pub struct Hidden<T: Payload + 'static, const N: usize> {
-    obj: Value,
+    obj: crate::rb::value::Kept,
     klass: crate::rb::DataClass,
     ty: &'static TypedType<T, N>,
 }
@@ -554,15 +558,16 @@ pub struct Hidden<T: Payload + 'static, const N: usize> {
 impl<T: Payload + 'static, const N: usize> Hidden<T, N> {
     /// The payload, borrowed from the object.
     pub fn data(&self) -> &T {
-        self.ty.get_known(&self.obj)
+        self.ty.get_known(self.obj.value())
     }
 
     /// The object, shown again with its class (`rb_obj_reveal`). Raises
     /// `NoMemoryError`, and the object then stays hidden, where no Ruby code
     /// finds it.
     pub fn reveal(self, _: &crate::rb::Ruby) -> Result<Value, Error> {
-        crate::raw::obj_reveal(self.obj, crate::rb::ReprValue::as_value(self.klass))?;
-        Ok(self.obj)
+        let obj = *self.obj.value();
+        crate::raw::obj_reveal(obj, crate::rb::ReprValue::as_value(self.klass))?;
+        Ok(obj)
     }
 }
 

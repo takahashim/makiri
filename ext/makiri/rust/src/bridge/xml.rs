@@ -810,9 +810,10 @@ struct Adoption<'a> {
     /// the placement refuses is taken back out rather than left in the
     /// arena, holding its bytes and node budget, for every refused call.
     mark: crate::xml::arena::Mark,
-    /// The source node's wrapper, which keeps its document alive until the
-    /// adoption is finished.
-    _keep: Value,
+    /* No field keeps the source's Document: the node is the method's
+     * argument, which Ruby's stack keeps, and the node's slot keeps its
+     * Document. (A `Value` field that is never read kept nothing - the
+     * optimizer may drop it.) */
 }
 
 impl Adoption<'_> {
@@ -884,7 +885,6 @@ pub fn insert(
                 src_document,
                 src,
                 mark,
-                _keep: arg,
             }),
         )
     };

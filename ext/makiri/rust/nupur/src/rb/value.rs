@@ -470,20 +470,96 @@ pub fn boolean(ruby: &Ruby, b: bool) -> Value {
     }
 }
 
-/// `RB_GC_GUARD`: keep `v` where the GC's stack scan finds it up to here.
+/// A Ruby value this frame alone keeps alive - an object just made, not yet
+/// referenced by a receiver, an argument or an owner's slot - held where the
+/// GC's scan finds it until this is dropped.
 ///
 /// A borrow of an object's data ([`crate::typed::TypedType::get`],
-/// [`crate::typed::Typed::data`]) keeps its `Value` alive to the type
-/// checker only: once the `Value` itself is no longer used, the optimizer may
-/// drop it from every register and stack slot, and the data pointer left -
-/// a non-embedded type's data is a malloc'd block - is not one the scan
-/// takes for the object. Call this after the last use of such a borrow when
-/// nothing else keeps the object (a method's receiver and arguments are kept
-/// by Ruby's own stack, and a slot's value by its owner).
-#[inline(always)]
-pub fn gc_guard(v: impl ReprValue) {
-    core::hint::black_box(&v.as_value());
+/// [`crate::typed::Typed::data`]) keeps its `Value` alive to the type checker
+/// only: once the `Value` is no longer used, the optimizer may drop it from
+/// every register and stack slot, and the data pointer left - a non-embedded
+/// type's data is its own malloc'd block - is not one the scan takes for the
+/// object. A receiver or an argument is kept by Ruby's own stack, and a
+/// slot's value by its owner; an object nothing else refers to yet is held
+/// in a `Kept` for as long as its data is borrowed (`typed::Hidden`, the
+/// extension's fresh NodeSet). Its `Drop` hands the value to [`keep_alive`],
+/// so do not `mem::forget` one.
+pub struct Kept(Value);
+
+impl Kept {
+    /// Hold `v`.
+    #[inline]
+    pub fn new(v: impl ReprValue) -> Kept {
+        Kept(v.as_value())
+    }
+
+    /// The value, borrowed from the holder: a borrow of the object's data
+    /// taken through it cannot outlive the `Kept`.
+    #[inline]
+    pub fn value(&self) -> &Value {
+        &self.0
+    }
 }
+
+impl Drop for Kept {
+    #[inline]
+    fn drop(&mut self) {
+        let v = self.0;
+        crate::no_unwind::must_not_unwind::<crate::no_unwind::DropKept, _>(|| keep_alive(v))
+    }
+}
+
+/// Hand `v` to an empty inline assembly block as an input operand, so it is
+/// in a register at this point.
+///
+/// The contract relied on is the Rust Reference's for `asm!`, and only this
+/// much of it: an input operand is in its register when the block runs, and
+/// a block without `pure` is taken to have side effects and is not removed.
+/// Without `nomem` or `readonly` the block may read and write memory, as may
+/// the libruby calls that can collect, so the two stay in program order.
+/// (`core::hint::black_box`, which this replaced, is documented as
+/// best-effort, not to be relied on.)
+///
+/// That `v` is ALSO where the scan finds it at each collection before this
+/// point follows from premises, not from the block: a collection runs only
+/// inside a call into libruby, with the GVL held; those calls are opaque to
+/// the optimizer (libruby is linked dynamically, with no LTO across it), so
+/// a value used after one is kept across it in a callee-saved register or a
+/// stack slot; and CRuby's mark saves the registers with `setjmp` and scans
+/// the machine stack, which finds either.
+#[cfg(any(
+    target_arch = "x86",
+    target_arch = "x86_64",
+    target_arch = "arm",
+    target_arch = "aarch64",
+    target_arch = "arm64ec",
+    target_arch = "riscv32",
+    target_arch = "riscv64",
+    target_arch = "loongarch64",
+    target_arch = "s390x"
+))]
+#[inline(always)]
+fn keep_alive(v: Value) {
+    let raw: VALUE = v.as_raw();
+    // SAFETY: the template is a comment: no instruction, no register or
+    // memory written, the stack untouched (`nostack`) and the flags kept.
+    unsafe {
+        core::arch::asm!("/* keep {0} */", in(reg) raw, options(nostack, preserves_flags));
+    }
+}
+
+#[cfg(not(any(
+    target_arch = "x86",
+    target_arch = "x86_64",
+    target_arch = "arm",
+    target_arch = "aarch64",
+    target_arch = "arm64ec",
+    target_arch = "riscv32",
+    target_arch = "riscv64",
+    target_arch = "loongarch64",
+    target_arch = "s390x"
+)))]
+compile_error!("nupur::rb::value::keep_alive has no stable asm! on this target");
 
 /// VALUE identity, for the several sites that compare two references.
 #[inline]
