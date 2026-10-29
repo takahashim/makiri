@@ -17,9 +17,12 @@ use super::*;
 /// difference since the last call, so it is safe to call again after the
 /// document grows.
 ///
-/// May run a collection right here, so `rb_doc` must be reachable from the
-/// caller's frame (a local VALUE is), and nothing borrowed from a Ruby String
-/// may be held across the call.
+/// May run a collection right here, with `rb_doc`'s data borrowed across it,
+/// so `rb_doc` must be a Document Ruby keeps for the call - a method's
+/// receiver, or a node's slot value - and not one only this frame refers to,
+/// which a local `Value` does not keep (a new Document is reported through
+/// its handle, [`account_data`]); nothing borrowed from a Ruby String may be
+/// held across the call.
 pub(super) fn account_document(ruby: &crate::bridge::rb::Ruby, rb_doc: Value) {
     account_data(ruby, DOC_TYPE.get_known(&rb_doc));
 }

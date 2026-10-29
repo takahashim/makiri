@@ -190,25 +190,27 @@ impl XPathCtx {
         let mut ctx = context_for(ruby, rb_node, document)?;
         ctx.set_lax(lax);
         /* No slot, so the root type is named. */
-        XPATH_CTX_TYPE.wrap_hidden::<Value>(
-            ruby,
-            CLASS_XPATH_CONTEXT.defined(ruby)?,
-            XPathCtx {
-                cache: RefCell::new(AstCache(HashMap::new())),
-                cache_bytes: crate::bridge::typed::External::new(),
-                ctx,
-            },
-            [],
-            /* The Document and the context node, as hidden ivars: ordinary
-             * Ruby references. A write that raises leaves the context hidden,
-             * where no Ruby code can find it without them. */
-            &[
-                (crate::bridge::wrapper::ivar_document(), document),
-                (crate::bridge::wrapper::ivar_node(), rb_node),
-            ],
-            /* Complete once its ivars are in: nothing to fill. */
-            |_| Ok(()),
-        )
+        XPATH_CTX_TYPE
+            .wrap_hidden::<Value>(
+                ruby,
+                CLASS_XPATH_CONTEXT.defined(ruby)?,
+                XPathCtx {
+                    cache: RefCell::new(AstCache(HashMap::new())),
+                    cache_bytes: crate::bridge::typed::External::new(),
+                    ctx,
+                },
+                [],
+                /* The Document and the context node, as hidden ivars: ordinary
+                 * Ruby references. A write that raises leaves the context hidden,
+                 * where no Ruby code can find it without them. */
+                &[
+                    (crate::bridge::wrapper::ivar_document(), document),
+                    (crate::bridge::wrapper::ivar_node(), rb_node),
+                ],
+                /* Complete once its ivars are in: nothing to fill. */
+                |_| Ok(()),
+            )
+            .map(|ctx| ctx.value())
     }
 
     /// Evaluate `expr` in `document`, parsed once and cached.

@@ -126,9 +126,12 @@ impl External {
     /// an `ssize_t` - is not reported, and not recorded, so the two never
     /// disagree. The default collector only raises its malloc count here and
     /// collects at the next allocation (`rb_gc_adjust_memory_usage` is
-    /// MEMOP_TYPE_REALLOC), but another may collect in the call, so nothing
-    /// borrowed from a Ruby object is held across it; the new figure is
-    /// recorded first, for a collection that reads it.
+    /// MEMOP_TYPE_REALLOC), but another may collect in the call, so what is
+    /// borrowed across it must be what a collection neither frees nor moves:
+    /// this payload, whose object its caller keeps (a receiver, a slot's
+    /// value, a [`Typed`] handle) and which compaction does not move - never
+    /// a String's bytes. The new figure is recorded first, for a collection
+    /// that reads it.
     pub fn report(&self, _: &crate::rb::Ruby, bytes: usize) {
         let then = self.0.get();
         let delta = if bytes >= then {
@@ -363,11 +366,12 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
         unsafe { rb_sys::rb_typeddata_is_kind_of(v.as_raw(), self.raw.as_ptr()) != 0 }
     }
 
-    /// The payload behind `v`, or Ruby's own `TypeError`, for a `v` Ruby
-    /// keeps for the whole borrow (a receiver, an argument, a slot's value);
-    /// anything else - an object just made, a value read from somewhere this
-    /// frame may change - is borrowed from a handle ([`check`](Self::check)'s
-    /// [`Typed`]), which keeps the object.
+    /// The payload behind `v`, or Ruby's own `TypeError`, for a `v` kept for
+    /// the whole borrow - by Ruby (a receiver, an argument, a slot's value),
+    /// or by a [`Typed`] handle the caller holds across it; anything else - an
+    /// object just made, a value read from somewhere this frame may change -
+    /// is borrowed from a handle ([`check`](Self::check)'s, or `wrap`'s),
+    /// which keeps the object.
     ///
     /// Borrowed for as long as the caller borrows `v`, the object that owns the
     /// data - so the reference cannot outlive the VALUE it came from. That
@@ -466,7 +470,10 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
 /// handle holds it where the GC sees it until the handle is dropped, which
 /// is after the last borrow of [`data`](Self::data): borrow from the handle,
 /// not from a copy of its [`value`](Self::value), and do not `mem::forget`
-/// it.
+/// it. A handle the caller keeps to the end of a call also keeps the object
+/// through every borrow made inside the call, by whatever means - so code
+/// written over a `Value` (a reader's guard taken with `get_known`) is safe
+/// on an object just made while its handle outlives the call.
 ///
 /// A hot path that reads an object's data and slots several times - a
 /// collection's elements and its owner, per element - pays for the check
@@ -526,7 +533,9 @@ impl<T: Payload + 'static, const N: usize> TypedType<T, N> {
     /// would crash on it. `fill` sees only the data, and may run anything
     /// (a GVL-released parse included), since nothing can reach the object.
     /// An `Err` from `fill`, or a failure to show the object, leaves it
-    /// hidden for the GC to free, and is returned.
+    /// hidden for the GC to free, and is returned. The object comes back as
+    /// the [`Typed`] handle that held it through `fill`, so a caller that
+    /// goes on using it before handing it to Ruby still holds it.
     ///
     /// It is not hidden from birth. `ivars`, its hidden ivars (names without
     /// `@`), are written first, while it still has its class - generic ivar
@@ -548,7 +557,7 @@ impl<T: Payload + 'static, const N: usize> TypedType<T, N> {
         roots: [R; N],
         ivars: &[(crate::rb::Id, Value)],
         fill: impl FnOnce(&T) -> Result<(), Error>,
-    ) -> Result<Value, Error> {
+    ) -> Result<Typed<T, N>, Error> {
         let made = self.wrap(ruby, klass, data, roots)?;
         let obj = made.value();
         let written = ivars
@@ -560,7 +569,7 @@ impl<T: Payload + 'static, const N: usize> TypedType<T, N> {
         written?;
         fill(made.data())?;
         crate::raw::obj_reveal(obj, crate::rb::ReprValue::as_value(klass))?;
-        Ok(obj)
+        Ok(made)
     }
 }
 

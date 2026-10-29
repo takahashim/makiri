@@ -103,6 +103,7 @@ pub fn parse_document(
             HtmlParseError::Failed => makiri_error("failed to parse HTML document"),
         })
     })
+    .map(|doc| doc.value())
 }
 
 /// An empty HTML document - no children - in `compat_mode` (Lexbor's
@@ -119,6 +120,7 @@ pub fn new_empty_document(
         parsed.set_encoding(encoding);
         Ok(parsed)
     })
+    .map(|doc| doc.value())
 }
 
 /* ------------------------------------------------------------------ *

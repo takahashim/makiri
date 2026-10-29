@@ -128,7 +128,9 @@ fn doc_errors(_ruby: &Ruby, self_: Value) -> Result<Value, Error> {
 /// `context` defaults to `<body>`, the limits to `ParseLimits::DEFAULT` (see
 /// `glue::kwargs::parse_limits`).
 fn doc_fragment(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, Error> {
-    fragment_from_args(ruby, args, |_| Ok(self_))
+    fragment_from_args(ruby, args, |_| {
+        crate::bridge::wrapper::HTML_DOC_TYPE.check(self_)
+    })
 }
 
 /// `(html, context:, max_tree_depth:, max_amplification:)` from the argument list, parsed as a
@@ -137,7 +139,7 @@ fn doc_fragment(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, Erro
 fn fragment_from_args(
     ruby: &Ruby,
     args: &[Value],
-    document: impl FnOnce(&Ruby) -> Result<Value, Error>,
+    document: impl FnOnce(&Ruby) -> Result<crate::bridge::wrapper::DocHandle, Error>,
 ) -> Result<Value, Error> {
     let a = crate::bridge::args::scan(ruby, args, crate::bridge::args::Shape::with_keywords(1, 0))?;
     let kw = crate::bridge::args::Kwargs::from_scan(a.keywords());
@@ -148,7 +150,10 @@ fn fragment_from_args(
         kw.value(ruby, "max_tree_depth")?,
         kw.value(ruby, "max_amplification")?,
     )?;
-    let document = document(ruby)?;
+    /* Held to the end: a new backing document is this frame's alone until
+     * the fragment's wrapper keeps it, and everything below reads it. */
+    let held = document(ruby)?;
+    let document = held.value();
     let at = fragment::resolve_fragment_context(ruby, document, context)?;
     fragment::build_fragment(ruby, document, a.required(0), at, limit)
 }

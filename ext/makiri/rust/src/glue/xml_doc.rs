@@ -103,7 +103,7 @@ fn doc_internal_subset(ruby: &Ruby, rb_self: Value) -> Result<Option<Value>, Err
 /// Any arguments (Nokogiri accepts a version and encoding) are accepted and
 /// ignored.
 fn document_s_new(ruby: &Ruby, _args: &[Value]) -> Result<Value, Error> {
-    crate::bridge::xml::new_empty_xml_document(ruby)
+    crate::bridge::xml::new_empty_xml_document(ruby).map(|doc| doc.value())
 }
 
 /// `Makiri::XML::DocumentFragment.parse(source)` - a standalone fragment with
@@ -111,7 +111,10 @@ fn document_s_new(ruby: &Ruby, _args: &[Value]) -> Result<Value, Error> {
 /// its namespace within the fragment itself. Use `Document#fragment` to parse
 /// against an existing document's in-scope namespaces instead.
 fn fragment_s_parse(ruby: &Ruby, _klass: Value, source: Value) -> Result<Value, Error> {
-    let doc_obj = crate::bridge::xml::new_empty_xml_document(ruby)?;
+    /* Held to the end: the new document is this frame's alone until the
+     * fragment's wrapper keeps it. */
+    let held = crate::bridge::xml::new_empty_xml_document(ruby)?;
+    let doc_obj = held.value();
     let frag = crate::bridge::xml::fragment_into(ruby, doc_obj, source, false)?;
     wrap(ruby, frag, doc_obj)
 }

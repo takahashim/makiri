@@ -26,7 +26,7 @@ use crate::bridge::html::with_arg_node;
 use crate::bridge::ruby::{check_frozen, is_kind_of};
 use crate::bridge::string::{ruby_verified_text, RubyText};
 use crate::bridge::wrapper::*;
-use crate::bridge::wrapper::{new_xml_document, node_repr, NodeRepr};
+use crate::bridge::wrapper::{new_xml_document, node_repr, DocHandle, NodeRepr};
 use crate::bridge::xml_decode::xml_decode_input;
 use crate::child_index::{ChildList, Children, TokenTree};
 use crate::html_dom::cross_import::cross_html_to_xml;
@@ -679,6 +679,7 @@ pub fn parse_xml_document(ruby: &Ruby, source: Value, limits: ParseLimits) -> Re
         drop(src);
         result.map_err(|status| parse_status_error(status, Unit::Document))
     })
+    .map(|doc| doc.value())
 }
 
 /// `Document#root` for an XML document: the root element, or nil.
@@ -701,10 +702,13 @@ pub fn copy_xml_document(ruby: &Ruby, document: Value) -> Result<Value, Error> {
     new_xml_document(ruby, || {
         crate::xml::mutate::copy_document(&*xml_read(&document)?).map_err(xml_mut_error)
     })
+    .map(|doc| doc.value())
 }
 
 /// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.
-pub fn new_empty_xml_document(ruby: &Ruby) -> Result<Value, Error> {
+/// The handle holds it for a caller that fills it before handing it out
+/// (`DocumentFragment.parse`).
+pub fn new_empty_xml_document(ruby: &Ruby) -> Result<DocHandle, Error> {
     new_xml_document(ruby, || {
         XmlDoc::create(None).map_err(|_| makiri_error("out of memory allocating XML document"))
     })

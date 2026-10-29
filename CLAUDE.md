@@ -169,8 +169,11 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   without a stable `asm!`, a weaker contract and unchecked there; the
   premises that make either enough are stated there) after the last borrow. Borrow from the handle, never through
   a copy of its `Value`; `get` / `get_known` hold nothing and serve only a
-  value Ruby keeps for the whole borrow (a receiver, an argument, a slot's
-  value - `html_read` and its kin, over a node's Document).
+  value kept for the whole borrow - by Ruby (a receiver, an argument, a
+  slot's value: `html_read` and its kin, over a node's Document), or by a
+  `Typed` handle the caller holds across the call (`new_html_document` /
+  `new_xml_document` return one, which `DocumentFragment.parse` holds while
+  it reads and fills its new backing Document).
   `black_box` (the old `gc_guard`) is best-effort and is not used.
   The other half - no Ruby value kept where the GC's stack scan cannot
   see it (a `Vec`, a `Box`, a static or `thread_local!`, a `Payload` type's
