@@ -32,6 +32,16 @@ mod xml;
 use crate::cbuf::Buf;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
+/// How many nesting levels the writers go between asks of the stack
+/// (`crate::stack::exhausted`). The stack grows with the nesting alone - a
+/// sibling's frames are gone before the next one's - and Ruby's check
+/// (`ruby_stack_check`) reports low while a reserve for C frames is still
+/// left, so a few levels between asks fit in that reserve: eight levels of
+/// the writers' frames come to about 2 KiB (a 128 KiB Fiber overflowed some
+/// 500 levels deep), and `spec/native_stack_guard_spec.rb` holds it in such
+/// a Fiber. Asking at every element cost `to_xml` and `canonicalize` 13-18%.
+pub(super) const STACK_CHECK_EVERY: u32 = 8;
+
 /// Why serialization produced no output.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Failure {
@@ -74,6 +84,11 @@ pub enum Failure {
     /// The tree nests deeper than [`crate::xml::model::MAX_DEPTH`], the bound
     /// on the writers' recursion.
     TooDeep,
+    /// The thread's native stack ran low before that bound - a small `Fiber`
+    /// (`crate::stack::exhausted`). The writers recurse once per element, so
+    /// a count alone would let them overflow the real stack, which kills the
+    /// process instead of raising.
+    StackLow,
     /// Every prefix the writer can invent (`ns0` .. `ns99999`) is already bound
     /// in scope, so a namespace that needs a declaration cannot get one.
     PrefixSpace,

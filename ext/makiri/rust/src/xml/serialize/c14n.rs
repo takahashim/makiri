@@ -12,6 +12,7 @@
 use super::bindings::{Bindings, Prefix};
 use super::out::{put, put_comment, put_pi, C14N, W};
 use super::Failure;
+use super::STACK_CHECK_EVERY;
 use crate::cbuf::Buf;
 use crate::falloc::{OomResult, VecGrow};
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId, MAX_DEPTH};
@@ -257,6 +258,11 @@ impl<'d> Writer<'d, '_> {
     fn element(&mut self, n: NodeId, is_apex: bool, depth: u32) -> W {
         if depth as usize >= MAX_DEPTH {
             return Err(Failure::TooDeep);
+        }
+        /* Asked every `STACK_CHECK_EVERY` levels, not per element: the
+         * stack grows with the nesting alone (see there). */
+        if depth % STACK_CHECK_EVERY == 0 && crate::stack::exhausted() {
+            return Err(Failure::StackLow);
         }
         let base = self.binds.len();
         if is_apex {

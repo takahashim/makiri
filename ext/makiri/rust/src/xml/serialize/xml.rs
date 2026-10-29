@@ -21,6 +21,7 @@
 
 use super::out::{put, put_comment, put_pi, writable_chars, W, XML};
 use super::Failure;
+use super::STACK_CHECK_EVERY;
 use crate::cbuf::Buf;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId, MAX_DEPTH};
 use crate::xml::XML_NS_URI;
@@ -376,6 +377,11 @@ impl<'d, 'b> Writer<'d, 'b> {
     fn element(&mut self, n: NodeId, depth: u32, binds: &mut Bindings<'d>) -> W {
         if depth as usize >= MAX_DEPTH {
             return Err(Failure::TooDeep);
+        }
+        /* Asked every `STACK_CHECK_EVERY` levels, not per element: the
+         * stack grows with the nesting alone (see there). */
+        if depth % STACK_CHECK_EVERY == 0 && crate::stack::exhausted() {
+            return Err(Failure::StackLow);
         }
         let base = binds.len();
         let r = self.element_in_scope(n, depth, binds);
