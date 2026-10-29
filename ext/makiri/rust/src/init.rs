@@ -339,12 +339,13 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     crate::no_unwind::self_test();
     #[cfg(nupur_no_unwind)]
     crate::nupur::no_unwind::self_test();
-    /* The raise sweep's answer, for `nupur::raw`'s allocating calls. */
+    /* The OOM sweep's answers, for `nupur::raw`'s allocating calls and a
+     * checked copy's heap allocation. */
     #[cfg(feature = "alloc-inject")]
-    crate::nupur::raw::set_raise_injector(crate::falloc::raise_inject_should_raise);
-    /* The OOM sweep's answer, for a checked copy's heap allocation. */
-    #[cfg(feature = "alloc-inject")]
-    crate::nupur::utf8_copy::set_alloc_injector(crate::falloc::allocation_should_fail);
+    crate::nupur::inject::install(crate::nupur::inject::Injectors {
+        raise: crate::falloc::raise_inject_should_raise,
+        alloc: crate::falloc::allocation_should_fail,
+    });
     let makiri = ruby.define_module("Makiri")?;
     crate::bridge::wrapper::init_ivars(ruby)?;
 

@@ -21,10 +21,10 @@
 #[cfg(feature = "alloc-inject")]
 static ALLOC_INJECTOR: std::sync::OnceLock<fn() -> bool> = std::sync::OnceLock::new();
 
-/// Register the OOM sweep's answer, once, before any copy is made (the
-/// extension's `Init_`); a second registration is ignored.
+/// Register the OOM sweep's answer, once (nupur's `inject::install`, which
+/// registers the raise half with it); a second registration is ignored.
 #[cfg(feature = "alloc-inject")]
-pub fn set_alloc_injector(fails: fn() -> bool) {
+pub(crate) fn set_alloc_injector(fails: fn() -> bool) {
     let _ = ALLOC_INJECTOR.set(fails);
 }
 
@@ -47,7 +47,8 @@ fn reserve_exact(v: &mut Vec<u8>, len: usize) -> bool {
 pub const INLINE: usize = 64;
 
 enum Bytes {
-    Inline { len: u8, buf: [u8; INLINE] },
+    /* A `usize` length, so no conversion stands between `INLINE` and it. */
+    Inline { len: usize, buf: [u8; INLINE] },
     Heap(Vec<u8>),
 }
 
@@ -145,11 +146,7 @@ impl Utf8Copy {
             if n != len {
                 return Err(FillError::Copy(CopyError::Oom));
             }
-            /* `n <= INLINE`, so it fits; a failure is the short copy's. */
-            let Ok(len) = u8::try_from(n) else {
-                return Err(FillError::Copy(CopyError::Oom));
-            };
-            Bytes::Inline { len, buf }
+            Bytes::Inline { len: n, buf }
         } else {
             let mut v = Vec::new();
             if !reserve_exact(&mut v, len) || !src.append_into(&mut v) {
@@ -172,7 +169,7 @@ impl Utf8Copy {
     /// The bytes.
     pub fn as_bytes(&self) -> &[u8] {
         match &self.0 {
-            Bytes::Inline { len, buf } => buf.get(..usize::from(*len)).unwrap_or(&[]),
+            Bytes::Inline { len, buf } => buf.get(..*len).unwrap_or(&[]),
             Bytes::Heap(b) => b,
         }
     }

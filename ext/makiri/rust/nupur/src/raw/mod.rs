@@ -49,7 +49,7 @@ use crate::encoding::Encoding;
 
 mod protect;
 #[cfg(feature = "alloc-inject")]
-pub use protect::set_raise_injector;
+pub(crate) use protect::set_raise_injector;
 use protect::{call, injected_raise};
 pub(crate) use protect::{
     exc_fatal, exc_raise, forget_errinfo, keeping_errinfo, pending_exit, reset_pending_exit, resume,

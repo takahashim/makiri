@@ -13,9 +13,9 @@ path = "src/lib.rs"
 workspace = true
 
 [features]
-# The raise half of `rake oom`: the extension registers a hook
-# (`raw::set_raise_injector`) that makes the armed allocating call raise.
-# Off, the check is gone. The extension's own `alloc-inject` turns this on.
+# The hooks of `rake oom`: the extension installs both (`inject::install`) -
+# one makes the armed allocating call raise, the other fails a checked
+# copy's heap buffer. Off, the checks are gone. The extension's own `alloc-inject` turns this on.
 alloc-inject = []
 
 [dependencies]

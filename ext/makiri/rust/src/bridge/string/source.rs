@@ -14,7 +14,7 @@ use crate::cbuf::OwnedBuf;
 use super::*;
 
 /// A Ruby String as HTML parser input, under the text-input contract: its
-/// encoding honoured ([`ruby_to_utf8_value`]), its bytes copied out, and
+/// encoding honoured ([`to_utf8_replacing`]), its bytes copied out, and
 /// whether they are already known to be valid UTF-8, so the parser can skip
 /// its sanitisation.
 ///
@@ -31,11 +31,11 @@ pub struct HtmlSource {
 impl HtmlSource {
     /// `s` is a String by type: the caller has coerced it.
     pub fn from_ruby(ruby: &crate::bridge::rb::Ruby, s: RString) -> Result<HtmlSource, Error> {
-        let src = ruby_to_utf8_value(ruby, s)?;
+        let src = to_utf8_replacing(ruby, s)?;
         /* A transcode replaced every invalid or unmappable byte, so its result
          * is valid UTF-8 whatever its coderange says. */
         let transcoded = !crate::bridge::ruby::same_value(src, s);
-        let known_valid = transcoded || ruby_str_known_valid_utf8(ruby, src);
+        let known_valid = transcoded || known_utf8(ruby, src);
         let bytes = ruby_string_bytes(ruby, src)?;
         Ok(HtmlSource { bytes, known_valid })
     }
@@ -135,7 +135,7 @@ impl DocumentSource {
         /* Ruby's own verdict counts only for bytes it holds as UTF-8. */
         let known_valid = e == crate::html::encoding::UTF_8
             && own.is_utf8_compatible(ruby)
-            && ruby_str_known_valid_utf8(ruby, s);
+            && known_utf8(ruby, s);
         Ok(DocumentSource {
             source: HtmlSource {
                 bytes: ruby_string_bytes(ruby, s)?,

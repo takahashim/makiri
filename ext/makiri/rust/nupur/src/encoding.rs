@@ -188,15 +188,6 @@ impl Encoding {
 
 /* ---- reading a String as UTF-8 ---- */
 
-/// Is `e`, raised while reading a String as UTF-8, the String's own fault -
-/// an `EncodingError` (an undefined conversion, an invalid byte sequence, no
-/// converter)? Anything else (`NoMemoryError`, an interrupt delivered while
-/// Ruby loaded a converter) is not about the String, and its reader passes
-/// it on as it was.
-pub fn is_encoding_fault(ruby: &crate::rb::Ruby, e: &Error) -> bool {
-    e.is_kind_of(ruby, crate::rb::Builtin::EncodingError)
-}
-
 /// `s` as a UTF-8 String, transcoded by Ruby with `ecflags` unless its bytes
 /// are read as UTF-8 already ([`Encoding::string_reads_as_utf8_bytes`] -
 /// UTF-8, US-ASCII, ASCII-8BIT), which costs one encoding comparison: no

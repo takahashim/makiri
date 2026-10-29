@@ -20,7 +20,7 @@
 use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, RString};
 
-use super::string::{is_encoding_fault, prefix, ruby_string_bytes_from, text_check, Encoding};
+use super::string::{prefix, ruby_string_bytes_from, text_check, Encoding};
 use crate::cbuf::OwnedBuf;
 use crate::init::{EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 use crate::xml::encoding_sniff::{sniff, SNIFF_WINDOW};
@@ -144,16 +144,16 @@ fn strict_utf8(ruby: &Ruby, str: RString, eff: Encoding) -> Result<RString, Erro
         input = super::raw::str_dup(input)?;
         super::raw::enc_associate(input, eff)?;
     }
-    match super::raw::str_encode(input, Encoding::utf8(ruby), 0) {
-        Ok(out) => Ok(out),
-        Err(e) if is_encoding_fault(ruby, &e) => {
-            let msg = e.wording(ruby);
-            Err(syntax_error(format_args!(
-                "XML input could not be decoded to UTF-8: {msg}"
-            )))
-        }
-        Err(e) => Err(e),
-    }
+    super::raw::str_encode(input, Encoding::utf8(ruby), 0).or_else(|e| {
+        /* Worded first, as the message is the raise's own; the error is then
+         * handled only if it is an `EncodingError`, and passed on otherwise. */
+        let refusal = syntax_error(format_args!(
+            "XML input could not be decoded to UTF-8: {}",
+            e.wording(ruby)
+        ));
+        e.rescue(ruby, &[crate::bridge::rb::Builtin::EncodingError])?;
+        Err(refusal)
+    })
 }
 
 /// How many bytes of a leading BOM `s` (UTF-8 by now) starts with, 0 for

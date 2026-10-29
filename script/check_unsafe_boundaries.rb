@@ -219,7 +219,7 @@ TEXT_CHECKED = %w[lexbor/].freeze
 # and a real OOM there is Ruby's `NoMemoryError` rather than an abort.
 INFALLIBLE_ALLOC = /\.to_owned\(\)|\.to_vec\(\)|String::from\(|\bformat!\(|\.to_string\(\)|from_utf8_lossy|\.into_owned\(\)|\bvec!\[|CString::new/
 # Where the gate looks: the engine, and the Ruby layer over it.
-INFALLIBLE_ALLOC_DIRS = (ENGINE_DIRS + %w[bridge/ nupur/ glue/ init.rs lib.rs caught.rs css_cache.rs utf8_copy.rs
+INFALLIBLE_ALLOC_DIRS = (ENGINE_DIRS + %w[bridge/ nupur/ glue/ init.rs lib.rs caught.rs css_cache.rs
                                           compat.rs doc_cell.rs engine_error.rs gvl.rs source_lines.rs
                                           stack.rs]).freeze
 INFALLIBLE_ALLOC_COUNTS = {}.freeze

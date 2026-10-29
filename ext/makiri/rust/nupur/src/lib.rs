@@ -4,9 +4,9 @@
 //!
 //! It knows nothing of the extension it serves - a crate of its own, which
 //! does not depend on the extension - and what it needs of the extension
-//! (the exception a broken invariant raises, the raise sweep's hook) is
+//! (the exception a broken invariant raises, the OOM sweep's hooks) is
 //! registered at `Init_` ([`rb::error::INTERNAL_ERROR`],
-//! `raw::set_raise_injector`). Every `unsafe` the extension needs to talk to
+//! `inject::install`). Every `unsafe` the extension needs to talk to
 //! Ruby is here, each with its contract stated. The crate denies
 //! `unsafe_code`, and the files that need it carry an `allow` each.
 //!
@@ -158,6 +158,10 @@ pub mod string;
 
 /// Owned bytes checked to be UTF-8 (`Utf8Copy`), std alone.
 pub mod utf8_copy;
+
+/// The OOM sweep's hooks, installed together (`rake oom`).
+#[cfg(feature = "alloc-inject")]
+pub mod inject;
 
 /// A private table from small integers to values ([`table::IntTable`]).
 pub mod table;

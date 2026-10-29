@@ -109,7 +109,9 @@ const ENGINE: &[&str] = &[
     "text",
     "token",
     "utf8_input",
-    "utf8_copy",
+    /* nupur's one Ruby-free module, read as `makiri::nupur::...` (`path_of`):
+     * the checked copy, which Miri runs without a Ruby. */
+    "nupur::utf8_copy",
     "css_match",
 ];
 
@@ -152,9 +154,10 @@ const VALUE_HOMES: &[&str] = &[
 /// and Ruby's C API.
 fn ruby_layer(path: &str) -> bool {
     path.starts_with("rb_sys::")
-        || ["bridge", "glue", "init", "nupur"]
+        || (["bridge", "glue", "init", "nupur"]
             .iter()
             .any(|m| path == format!("makiri::{m}") || path.starts_with(&format!("makiri::{m}::")))
+            && !in_engine(path))
 }
 
 /// The function an expression calls, when it can be named: a path call or

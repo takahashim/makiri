@@ -269,12 +269,14 @@ pub fn interned_utf8(ruby: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
     reason = "an Error holds its message inline (`crate::msg::Msg`), so it is never boxed"
 )]
 pub enum ReadError<P> {
-    /// The caller's own check turned the bytes down (a NUL, a length).
+    /// The caller's own check turned the bytes down (a NUL).
     Refused(P),
+    /// The UTF-8 is longer than the reader's cap ([`read_utf8_within`]).
+    TooLong,
     /// The bytes are not UTF-8.
     NotUtf8,
     /// The String's encoding has no UTF-8 form for it: Ruby's transcode
-    /// raised an `EncodingError` ([`crate::encoding::is_encoding_fault`]).
+    /// raised an `EncodingError`.
     NoUtf8Form,
     /// The copy could not be allocated.
     Oom,
@@ -295,17 +297,41 @@ pub fn read_utf8<P>(
     s: RString,
     check: impl FnOnce(&[u8]) -> Option<P>,
 ) -> Result<crate::utf8_copy::Utf8Copy, ReadError<P>> {
+    read_utf8_within(ruby, s, usize::MAX, check)
+}
+
+/// [`read_utf8`] under a cap of `max_bytes` on the UTF-8 the String becomes
+/// (a UTF-16 String is about twice its UTF-8 length, so the cap is measured
+/// after the transcode). An over-long String is refused before it is copied,
+/// and the copy is held to the cap again, ahead of `check`.
+pub fn read_utf8_within<P>(
+    ruby: &Ruby,
+    s: RString,
+    max_bytes: usize,
+    check: impl FnOnce(&[u8]) -> Option<P>,
+) -> Result<crate::utf8_copy::Utf8Copy, ReadError<P>> {
     use crate::utf8_copy::{CopyError, FillError, Utf8Copy};
-    /* The transcode is a fresh String on this frame, so the GC keeps it. */
+    /* The transcode is a fresh String on this frame, so the GC keeps it. An
+     * `EncodingError` is the String's own fault; anything else - every exit
+     * included, which no class names - is passed on. */
     let s = crate::encoding::to_utf8_strict(ruby, s).map_err(|e| {
-        if crate::encoding::is_encoding_fault(ruby, &e) {
-            ReadError::NoUtf8Form
-        } else {
-            ReadError::Raised(e)
+        match e.rescue(ruby, &[crate::rb::Builtin::EncodingError]) {
+            Ok(_handled) => ReadError::NoUtf8Form,
+            Err(e) => ReadError::Raised(e),
         }
     })?;
-    Utf8Copy::from_source(&StrSource(ruby, s), check).map_err(|e| match e {
-        FillError::Refused(p) => ReadError::Refused(p),
+    if s.len() > max_bytes {
+        return Err(ReadError::TooLong);
+    }
+    let checks = |b: &[u8]| {
+        if b.len() > max_bytes {
+            Some(ReadError::TooLong)
+        } else {
+            check(b).map(ReadError::Refused)
+        }
+    };
+    Utf8Copy::from_source(&StrSource(ruby, s), checks).map_err(|e| match e {
+        FillError::Refused(r) => r,
         FillError::Copy(CopyError::NotUtf8) => ReadError::NotUtf8,
         FillError::Copy(CopyError::Oom) => ReadError::Oom,
     })

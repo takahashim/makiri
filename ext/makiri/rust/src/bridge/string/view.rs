@@ -10,7 +10,7 @@ use crate::bridge::rb::ReprValue;
 use crate::bridge::rb::{Error, RString, Value};
 use crate::bridge::ruby::makiri_error;
 
-use crate::nupur::string::{read_utf8, ReadError};
+use crate::nupur::string::{read_utf8_within, ReadError};
 use crate::nupur::utf8_copy::Utf8Copy;
 
 use super::*;
@@ -58,17 +58,18 @@ pub type RubyText = RubyStr<TextContract>;
 pub type RubyData = RubyStr<DataContract>;
 
 impl<C: Checked> RubyStr<C> {
-    /// A checked view of `s` (`nupur::string::read_utf8`): read in its own
-    /// encoding, its copy put to `check` (the contract's own rules: a NUL, a
-    /// length) and then checked to be UTF-8. The order is the error's: a NUL
-    /// is reported before invalid UTF-8.
+    /// A checked view of `s` (`nupur::string::read_utf8_within`): read in
+    /// its own encoding, held to `max_bytes`, its copy put to `check` (the
+    /// contract's own rule: a NUL) and then checked to be UTF-8. The order is
+    /// the error's: a NUL is reported before invalid UTF-8.
     fn acquire<P>(
         ruby: &Ruby,
         s: RString,
+        max_bytes: usize,
         check: impl FnOnce(&[u8]) -> Option<P>,
     ) -> Result<Self, ReadError<P>> {
         Ok(RubyStr {
-            bytes: read_utf8(ruby, s, check)?,
+            bytes: read_utf8_within(ruby, s, max_bytes, check)?,
             contract: core::marker::PhantomData,
         })
     }
@@ -114,7 +115,7 @@ pub fn text_check(
     bytes: &[u8],
 ) -> TextVerdict {
     /* The cached coderange reads flags; it never scans and never allocates. */
-    crate::cutf8::text_verdict(bytes, ruby_str_known_valid_utf8(ruby, coderange_str))
+    crate::cutf8::text_verdict(bytes, known_utf8(ruby, coderange_str))
 }
 
 /// Why a String in another encoding was refused ([`ReadError::NoUtf8Form`]).
@@ -129,6 +130,29 @@ fn oom_reading() -> Error {
 fn text_error(what: &str, problem: &str) -> Error {
     makiri_error(format_args!("{what} {problem}"))
 }
+
+/// The error for a checked view [`read_utf8_within`] refused: what each
+/// reader words its own way - its check's refusal, invalid UTF-8 - by
+/// `refused` and `not_utf8`, and the rest alike. With no cap (`usize::MAX`)
+/// `TooLong` cannot come back.
+fn read_error<P>(
+    r: ReadError<P>,
+    what: &str,
+    refused: impl FnOnce(P) -> Error,
+    not_utf8: &str,
+) -> Error {
+    match r {
+        ReadError::Refused(p) => refused(p),
+        ReadError::NotUtf8 => text_error(what, not_utf8),
+        ReadError::TooLong => text_error(what, TOO_LONG),
+        ReadError::NoUtf8Form => text_error(what, NOT_UTF8_CONVERTIBLE),
+        ReadError::Oom => oom_reading(),
+        ReadError::Raised(e) => e,
+    }
+}
+
+/// Why a String over a reader's cap was refused ([`ReadError::TooLong`]).
+const TOO_LONG: &str = "string exceeds the maximum length";
 
 /// [`ruby_verified_text`] for an optional argument: `nil` is `None`.
 pub fn ruby_verified_text_opt(
@@ -178,18 +202,16 @@ fn verified_text_raising(
 ) -> Result<RubyText, Error> {
     use crate::cutf8::TextVerdict;
     let s = name_arg(in_)?;
-    RubyText::acquire(ruby, s, |b| b.contains(&0).then_some(TextVerdict::HasNul)).map_err(|r| {
-        match r {
-            ReadError::Refused(v) => {
-                on_nul(format_args!("{what} {}", v.problem().unwrap_or_default()))
-            }
-            ReadError::NotUtf8 => {
-                text_error(what, TextVerdict::InvalidUtf8.problem().unwrap_or_default())
-            }
-            ReadError::NoUtf8Form => text_error(what, NOT_UTF8_CONVERTIBLE),
-            ReadError::Oom => oom_reading(),
-            ReadError::Raised(e) => e,
-        }
+    RubyText::acquire(ruby, s, usize::MAX, |b| {
+        b.contains(&0).then_some(TextVerdict::HasNul)
+    })
+    .map_err(|r| {
+        read_error(
+            r,
+            what,
+            |v| on_nul(format_args!("{what} {}", v.problem().unwrap_or_default())),
+            TextVerdict::InvalidUtf8.problem().unwrap_or_default(),
+        )
     })
 }
 
@@ -200,35 +222,14 @@ fn verified_text_raising(
 /// lets NUL through - in place of the text one.
 pub fn ruby_verified_data(ruby: &Ruby, in_: Value, what: &str) -> Result<RubyData, Error> {
     let s = string_arg(in_)?;
-    RubyData::acquire(ruby, s, |_| None::<core::convert::Infallible>).map_err(|r| match r {
-        ReadError::Refused(never) => match never {},
-        ReadError::NotUtf8 => text_error(
+    RubyData::acquire(ruby, s, usize::MAX, |_| None::<core::convert::Infallible>).map_err(|r| {
+        read_error(
+            r,
             what,
+            |never| match never {},
             TextVerdict::InvalidUtf8.data_problem().unwrap_or_default(),
-        ),
-        ReadError::NoUtf8Form => text_error(what, NOT_UTF8_CONVERTIBLE),
-        ReadError::Oom => oom_reading(),
-        ReadError::Raised(e) => e,
+        )
     })
-}
-
-/// Whether Ruby ALREADY knows the String is valid UTF-8.
-///
-/// This reads the cached classification from the object's flags; it does not
-/// scan (a scan would cost as much as running our own validator), so it only
-/// wins when Ruby has the answer already. UNKNOWN or BROKEN returns false and
-/// the caller validates or sanitises.
-///
-/// Only a hint for what stays safe code whatever it says - the HTML parse
-/// (`HtmlSource`, which skips the sanitiser) and the XML input check. The
-/// checked views no longer read it: a `&str` rests on `Utf8Copy`'s own check
-/// of the copy, since a wrong coderange (another C extension's, or a Ruby bug
-/// an attacker can reach) would otherwise be undefined behaviour here.
-pub(in crate::bridge) fn ruby_str_known_valid_utf8(
-    ruby: &crate::bridge::rb::Ruby,
-    str: RString,
-) -> bool {
-    crate::nupur::encoding::known_utf8(ruby, str)
 }
 
 /// Why [`ruby_try_verified_text`] gave no view: the String broke the
@@ -256,16 +257,6 @@ impl TextRefusal {
     }
 }
 
-/// [`TextRefusal`] for a raise in the transcode: an `EncodingError` is the
-/// String's own fault, anything else is passed on.
-fn transcode_refusal(ruby: &Ruby, e: Error) -> TextRefusal {
-    if is_encoding_fault(ruby, &e) {
-        TextRefusal::Invalid(NOT_UTF8_CONVERTIBLE)
-    } else {
-        TextRefusal::Raised(e)
-    }
-}
-
 /// [`ruby_try_verified_text`] for two Strings at once (a `{prefix => uri}`
 /// pair): both are live Strings.
 pub fn ruby_try_verified_text_pair(
@@ -286,25 +277,13 @@ pub fn ruby_try_verified_text(
     sv: RString,
     max_bytes: usize,
 ) -> Result<RubyText, TextRefusal> {
-    const TOO_LONG: &str = "string exceeds the maximum length";
-    /* The cap is on the UTF-8 the String becomes, so it is measured after the
-     * transcode: a UTF-16 String is twice its UTF-8 length. Refused before
-     * the copy, so an over-long String is not copied whole only to be
-     * refused; the check on the copy below stays authoritative. (`acquire`'s
-     * own transcode is then a no-op on a String that is UTF-8 already.) */
-    let sv = utf8_strict(ruby, sv).map_err(|e| transcode_refusal(ruby, e))?;
-    if sv.len() > max_bytes {
-        return Err(TextRefusal::Invalid(TOO_LONG));
-    }
-    RubyText::acquire(ruby, sv, |b| {
-        if b.len() > max_bytes {
-            return Some(TOO_LONG);
-        }
+    RubyText::acquire(ruby, sv, max_bytes, |b| {
         b.contains(&0)
             .then(|| TextVerdict::HasNul.reason().unwrap_or_default())
     })
     .map_err(|r| match r {
         ReadError::Refused(reason) => TextRefusal::Invalid(reason),
+        ReadError::TooLong => TextRefusal::Invalid(TOO_LONG),
         ReadError::NotUtf8 => {
             TextRefusal::Invalid(TextVerdict::InvalidUtf8.reason().unwrap_or_default())
         }

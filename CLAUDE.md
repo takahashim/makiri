@@ -788,7 +788,8 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            extension (no dependency), which names it as
                            `crate::nupur` (`extern crate`); what it needs of
                            Makiri is registered at Init_ (`INTERNAL_ERROR`,
-                           `set_raise_injector`). `bridge` re-exports its
+                           and the OOM sweep's two hooks together,
+                           `inject::install`). `bridge` re-exports its
                            modules, so `bridge::raw` etc. still resolve. The
                            macros' helpers (`finish`, `finish_cary`,
                            `run_init`) are `unsafe fn`: only the macros'
@@ -1007,7 +1008,7 @@ document), and the Encoding Standard's decoders (`encoding_rs`, into a
 encoding the Standard has no label for (UTF-32, CP51932) is transcoded by
 Ruby as before (`DocumentSource`, over `html::encoding::transport_for`). Fragment parsing takes text, so
 it has no sniffing: there the input String's encoding is honoured
-(`ruby_to_utf8_value`, i.e. `nupur::encoding::to_utf8_replacing`): UTF-8 / US-ASCII /
+(`nupur::encoding::to_utf8_replacing`): UTF-8 / US-ASCII /
 ASCII-8BIT pass through untouched (the UTF-8 common case is one read of the
 encoding index from the String's flags - no call, no transcode, no copy), any
 other encoding (Shift_JIS, EUC-JP, ISO-8859-1, ...) is
@@ -1022,7 +1023,7 @@ bad bytes and the DOM is always valid UTF-8. The validation is a dedicated
 validate-only scan (Unicode well-formed table + word-at-a-time ASCII); it is
 skipped entirely when the String's cached coderange (read via `ENC_CODERANGE`,
 no forced scan) already proves it valid - `parse_html`'s `assume_valid` and
-`ruby_str_known_valid_utf8`. The **programmatic APIs are strict**:
+`nupur::encoding::known_utf8`. The **programmatic APIs are strict**:
 `ruby_verified_text` (`bridge/string/view.rs`) raises `Makiri::Error` for **invalid
 UTF-8 everywhere** at the XPath/CSS/mutation boundaries (expr, selector,
 attribute name/value, `content=`, `create_*`, variable/namespace) -
@@ -1046,7 +1047,8 @@ String not in UTF-8 / US-ASCII / ASCII-8BIT is
 transcoded to UTF-8 first, with NO replacement - a character or byte it
 cannot convert is `Makiri::Error` ("could not be converted to UTF-8"), never
 repaired - and any other raise in the transcode (`NoMemoryError`, an
-interrupt) is passed through as it is. A length cap (`ruby_try_verified_text`)
+interrupt) is passed through as it is. A length cap (`ruby_try_verified_text`, over
+`nupur::string::read_utf8_within`)
 is on the UTF-8. Both checked views (`RubyText`, `RubyData`) deref to
 `&str`, and each OWNS A COPY of the (UTF-8) String's bytes, taken with no
 Ruby between the read and the copy (`nupur::utf8_copy::Utf8Copy`; up to 64

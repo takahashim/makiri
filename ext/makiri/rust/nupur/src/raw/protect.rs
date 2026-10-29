@@ -38,10 +38,10 @@ pub(super) unsafe fn injected_raise() {
 #[cfg(feature = "alloc-inject")]
 static RAISE_INJECTOR: std::sync::OnceLock<fn() -> bool> = std::sync::OnceLock::new();
 
-/// Register the raise sweep's answer, once, before any method runs (the
-/// extension's `Init_`); a second registration is ignored.
+/// Register the raise sweep's answer, once (`crate::inject::install`, which
+/// registers the allocation half with it); a second registration is ignored.
 #[cfg(feature = "alloc-inject")]
-pub fn set_raise_injector(armed: fn() -> bool) {
+pub(crate) fn set_raise_injector(armed: fn() -> bool) {
     let _ = RAISE_INJECTOR.set(armed);
 }
 
