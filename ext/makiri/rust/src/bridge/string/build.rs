@@ -4,39 +4,20 @@
 
 use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, ReprValue, Value};
-use crate::bridge::ruby::makiri_error;
 
 /* ---- assembling Ruby Strings ---- */
 
 pub use crate::nupur::build::{utf8_rstring, utf8_str};
 
-/// Join document-order slices totalling `total` bytes into one UTF-8 String.
-///
-/// This is the text index's output path, so it writes straight into the fresh
-/// String's buffer: one pre-sized allocation and one copy run, with no
-/// intermediate. The bounds checks are not redundant with the caller's
-/// bookkeeping - a wrong `total` would otherwise run past the allocation, so
-/// both a long slice and a short sum fail closed. The joined bytes are to be
-/// valid UTF-8, as text-index slices are by the text-input contract; bytes
-/// that were not would make a wrong String, not a memory error.
+/// Join the text index's document-order slices, totalling `total` bytes,
+/// into one UTF-8 String (`nupur::string::utf8_str_from_slices`). The joined
+/// bytes are UTF-8, as text-index slices are by the text-input contract.
 pub fn utf8_str_from_slices<'a>(
     ruby: &Ruby,
     slices: impl Iterator<Item = &'a [u8]>,
     total: usize,
 ) -> Result<Value, Error> {
-    let str = crate::nupur::string::utf8_str_filled(ruby, total, |out| {
-        for s in slices {
-            /* A slice past `total` is refused: `push` writes nothing past
-             * the String's end. */
-            if !out.push(s) {
-                return Err(makiri_error("text slice length inconsistency"));
-            }
-        }
-        /* A short sum is `utf8_str_filled`'s to refuse: it holds the String
-         * to its length. */
-        Ok(())
-    })?;
-    Ok(str.as_value())
+    crate::nupur::string::utf8_str_from_slices(ruby, slices, total).map(|s| s.as_value())
 }
 
 /// A DOM name as a Ruby String: frozen and deduplicated, tagged UTF-8 -
@@ -48,12 +29,10 @@ pub fn utf8_str_from_slices<'a>(
 /// `#name` (Nokogiri's, which callers may edit) answers a fresh String.
 /// Character data - text, attribute values - is never interned.
 ///
-/// Safe to call with any bytes: `rb_enc_interned_str` copies them, and bytes
-/// that were not UTF-8 would make a wrong String, never a memory error. Every
-/// caller passes a document's name, which is UTF-8 by the text-input contract.
+/// Every caller passes a document's name, which is UTF-8 by the text-input
+/// contract (`nupur::string::interned_utf8`).
 pub fn dom_name_str(ruby: &Ruby, bytes: &[u8]) -> Result<Value, Error> {
-    crate::bridge::raw::enc_interned_str(ruby, bytes, super::Encoding::utf8(ruby))
-        .map(|s| s.as_value())
+    crate::nupur::string::interned_utf8(ruby, bytes).map(|s| s.as_value())
 }
 
 /* ---- a String of bytes a document read lends ---- */

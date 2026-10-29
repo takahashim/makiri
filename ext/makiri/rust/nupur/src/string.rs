@@ -222,3 +222,41 @@ fn copy_small<T: Copy>(dst: &mut [T], src: &[T]) {
         _ => dst.copy_from_slice(src),
     }
 }
+
+/// Join `slices`, totalling `total` bytes, into one UTF-8 String: one
+/// allocation of exactly `total` and one copy run into it
+/// ([`utf8_str_filled`]), with no intermediate buffer.
+///
+/// `total` is the caller's bookkeeping, and is held to it both ways: a slice
+/// that would run past it, and a sum that falls short of it, are an internal
+/// error rather than a String past or short of its allocation. The bytes are
+/// tagged UTF-8 without a check; bytes that were not would make a wrong
+/// String, never a memory error.
+pub fn utf8_str_from_slices<'a>(
+    ruby: &Ruby,
+    slices: impl Iterator<Item = &'a [u8]>,
+    total: usize,
+) -> Result<RString, Error> {
+    utf8_str_filled(ruby, total, |out| {
+        for s in slices {
+            /* `push` writes nothing past the String's end. */
+            if !out.push(s) {
+                return Err(crate::rb::error::internal_error(
+                    "a String's slices ran past their total",
+                ));
+            }
+        }
+        /* A short sum is `utf8_str_filled`'s to refuse. */
+        Ok(())
+    })
+}
+
+/// A frozen, deduplicated UTF-8 String of `bytes` - Ruby's own `-"name"`
+/// (`rb_enc_interned_str`), so every read of one name answers the same
+/// object and allocates nothing once Ruby has it. For names, never for
+/// character data a caller may expect to edit. Safe with any bytes: they are
+/// copied, and bytes that were not UTF-8 would make a wrong String, never a
+/// memory error.
+pub fn interned_utf8(ruby: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
+    crate::raw::enc_interned_str(ruby, bytes, crate::encoding::Encoding::utf8(ruby))
+}
