@@ -185,3 +185,72 @@ impl Encoding {
         crate::raw::str_encode(str, self, UNDEF_HEX_CHARREF)
     }
 }
+
+/* ---- reading a String as UTF-8 ---- */
+
+/// Is `e`, raised while reading a String as UTF-8, the String's own fault -
+/// an `EncodingError` (an undefined conversion, an invalid byte sequence, no
+/// converter)? Anything else (`NoMemoryError`, an interrupt delivered while
+/// Ruby loaded a converter) is not about the String, and its reader passes
+/// it on as it was.
+pub fn is_encoding_fault(ruby: &crate::rb::Ruby, e: &Error) -> bool {
+    e.is_kind_of(ruby, crate::rb::Builtin::EncodingError)
+}
+
+/// `s` as a UTF-8 String, transcoded by Ruby with `ecflags` unless its bytes
+/// are read as UTF-8 already ([`Encoding::string_reads_as_utf8_bytes`] -
+/// UTF-8, US-ASCII, ASCII-8BIT), which costs one encoding comparison: no
+/// transcode, no copy, no protected call. The transcode raises - no
+/// converter at all (UTF-7 to UTF-8), or a character it cannot convert under
+/// `ecflags` - and the raise comes back as `Err`.
+fn to_utf8(ruby: &crate::rb::Ruby, s: RString, ecflags: c_int) -> Result<RString, Error> {
+    if Encoding::string_reads_as_utf8_bytes(ruby, s) {
+        return Ok(s);
+    }
+    crate::raw::str_encode(s, Encoding::utf8(ruby), ecflags)
+}
+
+/// `s` as UTF-8 for a strict reader: transcoded with no replacement, so a
+/// character with no UTF-8 form, or a byte that is not one of the encoding's,
+/// is Ruby's `EncodingError` rather than a U+FFFD.
+pub fn to_utf8_strict(ruby: &crate::rb::Ruby, s: RString) -> Result<RString, Error> {
+    to_utf8(ruby, s, 0)
+}
+
+/// `s` as UTF-8 for a lenient reader: transcoded with every invalid or
+/// undefined character replaced (U+FFFD), so the content survives. An
+/// encoding Ruby has no converter for is still its `Err`.
+pub fn to_utf8_replacing(ruby: &crate::rb::Ruby, s: RString) -> Result<RString, Error> {
+    to_utf8(ruby, s, ECONV_REPLACE)
+}
+
+/// The encoding `v` names (an `Encoding`, or a String or Symbol naming one),
+/// or the error Ruby's own lookup raises: `ArgumentError` for an unknown
+/// name. Anything else is a `TypeError` before the lookup, which would run
+/// its `to_str`.
+pub fn to_encoding(ruby: &crate::rb::Ruby, v: crate::rb::Value) -> Result<Encoding, Error> {
+    use crate::rb::ReprValue;
+    let v = if v.is_kind_of(ruby.class_encoding()) {
+        v
+    } else {
+        crate::args::name_arg(v)?.as_value()
+    };
+    crate::raw::to_encoding(ruby, v)
+}
+
+/// Whether Ruby already knows `s` to be valid UTF-8, from its cached
+/// coderange: a read of its flags, which never scans and never allocates.
+/// Only a hint - for code that stays safe whatever it says (a reader that
+/// would otherwise repair or check the bytes itself). A wrong coderange
+/// (another C extension's, a Ruby bug) must never decide what a `&str`
+/// holds: that is [`crate::utf8_copy::Utf8Copy`]'s own check.
+pub fn known_utf8(ruby: &crate::rb::Ruby, s: RString) -> bool {
+    match s.enc_coderange() {
+        /* Every byte < 0x80 in an ASCII-compatible encoding. */
+        crate::rb::Coderange::SevenBit => true,
+        /* Valid for its own encoding, which has to be UTF-8 for that to mean
+         * valid UTF-8. */
+        crate::rb::Coderange::Valid => Encoding::of(s) == Encoding::utf8(ruby),
+        _ => false,
+    }
+}

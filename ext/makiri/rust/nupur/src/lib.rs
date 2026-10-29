@@ -30,7 +30,10 @@
 //!   the free callback. One is made only of a [`rb::DataClass`], a class
 //!   defined without an allocator, so Ruby cannot make one with no payload.
 //! - **A String is read by copying** ([`string`]): no slice of one is handed
-//!   out.
+//!   out. Read as text ([`string::read_utf8`]), it is a copy checked to be
+//!   UTF-8 by std's validator over the copy itself ([`utf8_copy`]), never by
+//!   the String's cached coderange, which another C extension could leave
+//!   wrong.
 //! - **A C integer is converted in one place** ([`int`]): a `long` is 32
 //!   bits on Windows, and the conversions are written once over either
 //!   width and tested at both; everything else converts with `From` /
@@ -152,6 +155,9 @@ pub mod encoding;
 
 /// A Ruby String's bytes, read and written by copying.
 pub mod string;
+
+/// Owned bytes checked to be UTF-8 (`Utf8Copy`), std alone.
+pub mod utf8_copy;
 
 /// A private table from small integers to values ([`table::IntTable`]).
 pub mod table;

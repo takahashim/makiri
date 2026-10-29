@@ -91,7 +91,7 @@ UNSAFE_ISLANDS = {
   "nupur/stack.rs" => 1,
   "nupur/string.rs" => 7,
   "nupur/typed.rs" => 36,
-  "utf8_copy.rs" => 1,
+  "nupur/utf8_copy.rs" => 1,
 }.freeze
 
 # Files whose safety is compiler-enforced. Checked by containment, so adding one

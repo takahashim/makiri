@@ -6,13 +6,12 @@
 use crate::bridge::rb::Ruby;
 use core::ops::Deref;
 
-use crate::bridge::rb::Coderange;
-
 use crate::bridge::rb::ReprValue;
 use crate::bridge::rb::{Error, RString, Value};
 use crate::bridge::ruby::makiri_error;
 
-use crate::utf8_copy::{CopyError, FillError, Utf8Copy};
+use crate::nupur::string::{read_utf8, ReadError};
+use crate::nupur::utf8_copy::Utf8Copy;
 
 use super::*;
 use crate::bridge::ruby::{name_arg, string_arg};
@@ -58,54 +57,18 @@ pub struct RubyStr<C> {
 pub type RubyText = RubyStr<TextContract>;
 pub type RubyData = RubyStr<DataContract>;
 
-/// Why [`RubyStr::acquire`] gave no view.
-#[allow(
-    clippy::large_enum_variant,
-    reason = "an Error holds its message inline (`crate::msg::Msg`), so it is never boxed"
-)]
-enum Refusal<P> {
-    /// The bytes failed the contract; `P` is the check's own answer.
-    Check(P),
-    /// The bytes could not be copied.
-    Oom,
-    /// The transcode to UTF-8 raised ([`utf8_strict`]): an `EncodingError`
-    /// when the text has no UTF-8 form or holds bytes that are not its
-    /// encoding's - or anything else that cut it short, which
-    /// [`encoding_refusal`] hands back as it is.
-    Encoding(Error),
-}
-
-impl<P> crate::falloc::Oom for Refusal<P> {
-    #[inline]
-    fn oom() -> Self {
-        Refusal::Oom
-    }
-}
-
 impl<C: Checked> RubyStr<C> {
-    /// A checked view of `s`: read in its own encoding ([`utf8_strict`]), its
-    /// bytes put to `check` (the contract's own rules: a NUL, a length), then
-    /// copied and the copy checked to be UTF-8 - `not_utf8` when it is not.
-    /// The order is the error's: a NUL is reported before invalid UTF-8.
+    /// A checked view of `s` (`nupur::string::read_utf8`): read in its own
+    /// encoding, its copy put to `check` (the contract's own rules: a NUL, a
+    /// length) and then checked to be UTF-8. The order is the error's: a NUL
+    /// is reported before invalid UTF-8.
     fn acquire<P>(
         ruby: &Ruby,
         s: RString,
-        not_utf8: P,
         check: impl FnOnce(&[u8]) -> Option<P>,
-    ) -> Result<Self, Refusal<P>> {
-        /* Read in its own encoding: a String in another one is transcoded
-         * first, and the copy and the check are of the UTF-8 it became. The
-         * transcode is a fresh String on this frame, so the GC keeps it. */
-        let s = utf8_strict(ruby, s).map_err(Refusal::Encoding)?;
-        /* Copied first, then checked: `check` and the UTF-8 check both read
-         * the copy, which is what the view holds. */
-        let bytes = Utf8Copy::from_source(&StrSource(ruby, s), check).map_err(|e| match e {
-            FillError::Refused(problem) => Refusal::Check(problem),
-            FillError::Copy(CopyError::NotUtf8) => Refusal::Check(not_utf8),
-            FillError::Copy(CopyError::Oom) => Refusal::Oom,
-        })?;
+    ) -> Result<Self, ReadError<P>> {
         Ok(RubyStr {
-            bytes,
+            bytes: read_utf8(ruby, s, check)?,
             contract: core::marker::PhantomData,
         })
     }
@@ -124,26 +87,6 @@ impl RubyText {
     pub(crate) fn text(&self) -> crate::text::VerifiedText<'_> {
         /* The bridge checked the text contract when it built `self`. */
         crate::text::VerifiedText::from_checked(self)
-    }
-}
-
-/* ---- reading a String's bytes ---- */
-
-/// A live String as what a [`Utf8Copy`] copies from: nupur's copying reads,
-/// which hand no slice of the String out.
-struct StrSource<'a>(&'a Ruby, RString);
-
-impl crate::utf8_copy::Source for StrSource<'_> {
-    fn byte_len(&self) -> usize {
-        self.1.len()
-    }
-
-    fn copy_into(&self, dst: &mut [u8]) -> usize {
-        self.1.copy_to(self.0, 0, dst)
-    }
-
-    fn append_into(&self, v: &mut Vec<u8>) -> bool {
-        self.1.append_to(self.0, 0, v).is_ok()
     }
 }
 
@@ -174,15 +117,8 @@ pub fn text_check(
     crate::cutf8::text_verdict(bytes, ruby_str_known_valid_utf8(ruby, coderange_str))
 }
 
-/// Why a String in another encoding was refused ([`Refusal::Encoding`]).
+/// Why a String in another encoding was refused ([`ReadError::NoUtf8Form`]).
 const NOT_UTF8_CONVERTIBLE: &str = "could not be converted to UTF-8 from its encoding";
-
-/// The error for a String whose transcode to UTF-8 raised `e`: the String's
-/// own fault ([`is_encoding_fault`]) worded as the contract's refusal, anything
-/// else returned as it was ([`transcode_refusal`] decides).
-fn encoding_refusal(ruby: &Ruby, what: &str, e: Error) -> Error {
-    transcode_refusal(ruby, e).into_error(|reason| text_error(what, reason))
-}
 
 /// The error for a checked view whose bytes could not be copied.
 fn oom_reading() -> Error {
@@ -242,17 +178,18 @@ fn verified_text_raising(
 ) -> Result<RubyText, Error> {
     use crate::cutf8::TextVerdict;
     let s = name_arg(in_)?;
-    RubyText::acquire(ruby, s, TextVerdict::InvalidUtf8, |b| {
-        b.contains(&0).then_some(TextVerdict::HasNul)
-    })
-    .map_err(|r| match r {
-        Refusal::Check(TextVerdict::HasNul) => on_nul(format_args!(
-            "{what} {}",
-            TextVerdict::HasNul.problem().unwrap_or_default()
-        )),
-        Refusal::Check(v) => text_error(what, v.problem().unwrap_or_default()),
-        Refusal::Oom => oom_reading(),
-        Refusal::Encoding(e) => encoding_refusal(ruby, what, e),
+    RubyText::acquire(ruby, s, |b| b.contains(&0).then_some(TextVerdict::HasNul)).map_err(|r| {
+        match r {
+            ReadError::Refused(v) => {
+                on_nul(format_args!("{what} {}", v.problem().unwrap_or_default()))
+            }
+            ReadError::NotUtf8 => {
+                text_error(what, TextVerdict::InvalidUtf8.problem().unwrap_or_default())
+            }
+            ReadError::NoUtf8Form => text_error(what, NOT_UTF8_CONVERTIBLE),
+            ReadError::Oom => oom_reading(),
+            ReadError::Raised(e) => e,
+        }
     })
 }
 
@@ -263,11 +200,15 @@ fn verified_text_raising(
 /// lets NUL through - in place of the text one.
 pub fn ruby_verified_data(ruby: &Ruby, in_: Value, what: &str) -> Result<RubyData, Error> {
     let s = string_arg(in_)?;
-    let not_utf8 = TextVerdict::InvalidUtf8.data_problem().unwrap_or_default();
-    RubyData::acquire(ruby, s, not_utf8, |_| None).map_err(|r| match r {
-        Refusal::Check(problem) => text_error(what, problem),
-        Refusal::Oom => oom_reading(),
-        Refusal::Encoding(e) => encoding_refusal(ruby, what, e),
+    RubyData::acquire(ruby, s, |_| None::<core::convert::Infallible>).map_err(|r| match r {
+        ReadError::Refused(never) => match never {},
+        ReadError::NotUtf8 => text_error(
+            what,
+            TextVerdict::InvalidUtf8.data_problem().unwrap_or_default(),
+        ),
+        ReadError::NoUtf8Form => text_error(what, NOT_UTF8_CONVERTIBLE),
+        ReadError::Oom => oom_reading(),
+        ReadError::Raised(e) => e,
     })
 }
 
@@ -287,14 +228,7 @@ pub(in crate::bridge) fn ruby_str_known_valid_utf8(
     ruby: &crate::bridge::rb::Ruby,
     str: RString,
 ) -> bool {
-    match str.enc_coderange() {
-        /* Every byte < 0x80 in an ASCII-compatible encoding. */
-        Coderange::SevenBit => true,
-        /* Valid for its own encoding - which has to be UTF-8 for that to mean
-         * valid UTF-8. */
-        Coderange::Valid => Encoding::of(str) == Encoding::utf8(ruby),
-        _ => false,
-    }
+    crate::nupur::encoding::known_utf8(ruby, str)
 }
 
 /// Why [`ruby_try_verified_text`] gave no view: the String broke the
@@ -362,8 +296,7 @@ pub fn ruby_try_verified_text(
     if sv.len() > max_bytes {
         return Err(TextRefusal::Invalid(TOO_LONG));
     }
-    let not_utf8 = TextVerdict::InvalidUtf8.reason().unwrap_or_default();
-    RubyText::acquire(ruby, sv, not_utf8, |b| {
+    RubyText::acquire(ruby, sv, |b| {
         if b.len() > max_bytes {
             return Some(TOO_LONG);
         }
@@ -371,8 +304,12 @@ pub fn ruby_try_verified_text(
             .then(|| TextVerdict::HasNul.reason().unwrap_or_default())
     })
     .map_err(|r| match r {
-        Refusal::Check(reason) => TextRefusal::Invalid(reason),
-        Refusal::Oom => TextRefusal::Invalid("could not be copied (out of memory)"),
-        Refusal::Encoding(e) => transcode_refusal(ruby, e),
+        ReadError::Refused(reason) => TextRefusal::Invalid(reason),
+        ReadError::NotUtf8 => {
+            TextRefusal::Invalid(TextVerdict::InvalidUtf8.reason().unwrap_or_default())
+        }
+        ReadError::NoUtf8Form => TextRefusal::Invalid(NOT_UTF8_CONVERTIBLE),
+        ReadError::Oom => TextRefusal::Invalid("could not be copied (out of memory)"),
+        ReadError::Raised(e) => TextRefusal::Raised(e),
     })
 }

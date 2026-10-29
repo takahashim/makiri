@@ -8,10 +8,39 @@
 //! coderange, which another C extension or a Ruby bug could leave wrong).
 //! The fields are private, so nothing outside this module can change the
 //! bytes once they are checked.
+//!
+//! It depends on std alone, so the extension's Ruby-free test build includes
+//! this same file (`#[path]`), where Miri runs its tests without a Ruby
+//! (`rake miri`). A copy's heap allocation is fallible, and the extension's
+//! OOM sweep can fail it ([`set_alloc_injector`]).
 
 #![allow(unsafe_code)]
 
-use crate::cbuf::OwnedBuf;
+/// The function that answers whether the next heap copy fails, registered
+/// by an extension's OOM sweep ([`set_alloc_injector`]).
+#[cfg(feature = "alloc-inject")]
+static ALLOC_INJECTOR: std::sync::OnceLock<fn() -> bool> = std::sync::OnceLock::new();
+
+/// Register the OOM sweep's answer, once, before any copy is made (the
+/// extension's `Init_`); a second registration is ignored.
+#[cfg(feature = "alloc-inject")]
+pub fn set_alloc_injector(fails: fn() -> bool) {
+    let _ = ALLOC_INJECTOR.set(fails);
+}
+
+/// Room for exactly `len` more bytes in the empty `v`, or `false`: a heap
+/// copy's one allocation, which the OOM sweep can fail.
+fn reserve_exact(v: &mut Vec<u8>, len: usize) -> bool {
+    #[cfg(feature = "alloc-inject")]
+    if ALLOC_INJECTOR.get().is_some_and(|fails| fails()) {
+        return false;
+    }
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "std's fallible reserve: this module depends on std alone, and the sweep's hook is above"
+    )]
+    v.try_reserve_exact(len).is_ok()
+}
 
 /// Up to this many bytes a copy lives inline, on the stack: a selector, an
 /// expression or a name allocates nothing.
@@ -19,7 +48,7 @@ pub const INLINE: usize = 64;
 
 enum Bytes {
     Inline { len: u8, buf: [u8; INLINE] },
-    Heap(OwnedBuf),
+    Heap(Vec<u8>),
 }
 
 /// Why no [`Utf8Copy`] was made.
@@ -116,12 +145,17 @@ impl Utf8Copy {
             if n != len {
                 return Err(FillError::Copy(CopyError::Oom));
             }
-            Bytes::Inline { len: n as u8, buf }
+            /* `n <= INLINE`, so it fits; a failure is the short copy's. */
+            let Ok(len) = u8::try_from(n) else {
+                return Err(FillError::Copy(CopyError::Oom));
+            };
+            Bytes::Inline { len, buf }
         } else {
-            Bytes::Heap(
-                OwnedBuf::reserved(len, |v| src.append_into(v))
-                    .ok_or(FillError::Copy(CopyError::Oom))?,
-            )
+            let mut v = Vec::new();
+            if !reserve_exact(&mut v, len) || !src.append_into(&mut v) {
+                return Err(FillError::Copy(CopyError::Oom));
+            }
+            Bytes::Heap(v)
         };
         let copy = Utf8Copy(bytes);
         if let Some(p) = refuse(copy.as_bytes()) {
@@ -139,7 +173,7 @@ impl Utf8Copy {
     pub fn as_bytes(&self) -> &[u8] {
         match &self.0 {
             Bytes::Inline { len, buf } => buf.get(..usize::from(*len)).unwrap_or(&[]),
-            Bytes::Heap(b) => b.as_slice(),
+            Bytes::Heap(b) => b,
         }
     }
 
@@ -155,6 +189,7 @@ impl Utf8Copy {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_methods)] /* test inputs */
     use super::*;
 
     #[test]

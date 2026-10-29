@@ -3,21 +3,18 @@
 #![forbid(unsafe_code)]
 
 use crate::bridge::rb::Ruby;
-use core::ffi::c_int;
 
-use crate::bridge::rb::{prelude::*, Error, RString, Value};
+use crate::bridge::rb::{Error, RString, Value};
 pub use crate::nupur::encoding::Encoding;
 
 /* ---- encoding ---- */
 
-/// Is `e`, raised while reading a String as UTF-8, the String's own fault -
-/// an `EncodingError` (an undefined conversion, an invalid byte sequence, no
-/// converter)? Anything else (`NoMemoryError`, an interrupt delivered while
-/// Ruby loaded a converter) is not about the String, and its reader passes it
-/// on as it was. The one place that decides which is which.
-pub fn is_encoding_fault(ruby: &Ruby, e: &Error) -> bool {
-    e.is_kind_of(ruby, crate::bridge::rb::Builtin::EncodingError)
-}
+/* Reading a String as UTF-8 is nupur's (`nupur::encoding`); these are its
+ * functions under the names the bridge's readers use. */
+pub(in crate::bridge) use crate::nupur::encoding::to_utf8_strict as utf8_strict;
+pub use crate::nupur::encoding::{
+    is_encoding_fault, to_encoding, to_utf8_replacing as ruby_to_utf8_value,
+};
 
 /// `v` as an encoding argument: the encoding, and the name to write for it -
 /// the String or Symbol as the caller wrote it, or an `Encoding`'s own name.
@@ -56,59 +53,4 @@ pub(in crate::bridge) fn encoding_kind(
     } else {
         StringEncoding::Named(enc.name())
     }
-}
-
-/// The encoding `v` names, or the error Ruby's own lookup raises: `ArgumentError`
-/// for an unknown name. `v` is an `Encoding`, a String or a Symbol, and
-/// anything else is a `TypeError` before the lookup, which would run its
-/// `to_str`.
-pub fn to_encoding(ruby: &Ruby, v: Value) -> Result<Encoding, Error> {
-    let v = if v.is_kind_of(ruby.class_encoding()) {
-        v
-    } else {
-        crate::bridge::ruby::name_arg(v)?.as_value()
-    };
-    crate::bridge::raw::to_encoding(ruby, v)
-}
-
-/// `s` as a UTF-8 String, transcoded by Ruby with `ecflags` unless its bytes
-/// are read as UTF-8 already ([`Encoding::reads_as_utf8_bytes`] - UTF-8,
-/// US-ASCII, ASCII-8BIT), which costs one encoding comparison: no transcode,
-/// no copy, no `protect`.
-///
-/// `rb_str_encode` RAISES - when Ruby has no converter at all (UTF-7,
-/// ISO-2022-JP-2 to UTF-8), and with no replacement flag on any byte or
-/// character it cannot convert - and the raise comes back as `Err`.
-fn ruby_to_utf8(ruby: &Ruby, s: RString, ecflags: c_int) -> Result<RString, Error> {
-    if Encoding::string_reads_as_utf8_bytes(ruby, s) {
-        return Ok(s);
-    }
-    crate::bridge::raw::str_encode(s, Encoding::utf8(ruby), ecflags)
-}
-
-/// `s` as UTF-8 for a STRICT reader (`RubyText`, `RubyData`): transcoded with
-/// no replacement, so a character that has no UTF-8 form, or a byte that is
-/// not one of the encoding's, is an error rather than a U+FFFD. The parse
-/// path replaces instead ([`ruby_to_utf8_value`]); a selector or an attribute
-/// value is not repaired. Ruby's own raise (an `Encoding::*Error`, or
-/// whatever else interrupted the transcode) is returned.
-pub(in crate::bridge) fn utf8_strict(ruby: &Ruby, s: RString) -> Result<RString, Error> {
-    ruby_to_utf8(ruby, s, 0)
-}
-
-/// A UTF-8 String for `s`, honouring its declared encoding so the content
-/// survives.
-///
-///  - UTF-8 / US-ASCII / ASCII-8BIT: returned unchanged. These are already
-///    UTF-8 bytes, or deliberately raw ones, and the native parser does the
-///    WHATWG invalid-byte replacement for them.
-///  - anything else (Shift_JIS, EUC-JP, ISO-8859-1, Windows-1252, ...):
-///    transcoded with invalid/undef -> U+FFFD, so the text becomes the right
-///    characters instead of being read as raw UTF-8 and mangled. Only
-///    non-UTF-8 input pays for this.
-///
-/// An encoding Ruby cannot convert to UTF-8 comes back as its
-/// `Encoding::ConverterNotFoundError`, returned rather than raised.
-pub fn ruby_to_utf8_value(ruby: &Ruby, s: RString) -> Result<RString, Error> {
-    ruby_to_utf8(ruby, s, crate::nupur::encoding::ECONV_REPLACE)
 }

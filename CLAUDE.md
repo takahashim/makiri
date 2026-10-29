@@ -521,7 +521,8 @@ bundle exec rake oom               # OOM-injection sweep: rebuilds with
                                    # Prefix with MAKIRI_SANITIZE=address to combine ASan.
 bundle exec rake miri              # the Ruby-free unsafe modules' tests (utf8_copy, falloc,
                                    # cbuf, ptr_table) under Miri, strict provenance (nightly + miri;
-                                   # CI: verify.yml)
+                                   # CI: verify.yml). utf8_copy is nupur's, std-only, and
+                                   # included in this crate's test build (`#[path]`) for it
 bundle exec rake verus             # Verus proofs (ext/makiri/rust/verus/): falloc's
                                    # grow_capacity, ptr_table's probing and
                                    # load factor, cbuf's Buf (content, ceiling,
@@ -771,7 +772,9 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
   nupur/                   the Ruby binding layer, a crate of its own over rb-sys
                            (`rb/` - values, errors, trampolines, classes, the
                            rooted globals - `raw` (the C calls that can raise),
-                           `typed`, `string` (copying reads, in-place writes),
+                           `typed`, `string` (copying reads, in-place writes,
+                           and `read_utf8`: a String read as checked UTF-8),
+                           `utf8_copy` (the checked copy, std alone),
                            `table`, `build`, `args` (a call's arguments: their
                            type checks, `scan` and `Kwargs`), `hash` (the
                            latched Hash walk), `describe`, `encoding`,
@@ -808,10 +811,6 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            else Ruby-free is `forbid(unsafe_code)`
     doc_cell.rs            `DocCell`: a Document's content behind counted
                            read/write guards (Ruby-free; `bridge::dom` wraps it)
-    utf8_copy.rs           `Utf8Copy`: owned bytes checked by std's `from_utf8` over
-                           the copy itself - what a checked view of a Ruby String
-                           (`RubyText` / `RubyData`) is, so a `&str` never rests on
-                           a String's cached coderange
     cbuf.rs                `Buf`: the owned, capped, growable byte buffer
     cutf8.rs               the one UTF-8 validator + strict 1-codepoint decoder
     utf8_input.rs          HTML input sanitiser: invalid UTF-8 -> U+FFFD, per
@@ -1008,7 +1007,7 @@ document), and the Encoding Standard's decoders (`encoding_rs`, into a
 encoding the Standard has no label for (UTF-32, CP51932) is transcoded by
 Ruby as before (`DocumentSource`, over `html::encoding::transport_for`). Fragment parsing takes text, so
 it has no sniffing: there the input String's encoding is honoured
-(`ruby_to_utf8_value`, `bridge/string/encoding.rs`): UTF-8 / US-ASCII /
+(`ruby_to_utf8_value`, i.e. `nupur::encoding::to_utf8_replacing`): UTF-8 / US-ASCII /
 ASCII-8BIT pass through untouched (the UTF-8 common case is one read of the
 encoding index from the String's flags - no call, no transcode, no copy), any
 other encoding (Shift_JIS, EUC-JP, ISO-8859-1, ...) is
@@ -1042,14 +1041,15 @@ contract, but its NUL refusal is `ArgumentError`, like every other name
 refusal there (the DOM's InvalidCharacterError), so a caller mapping
 `ArgumentError` to a DOMException misses none. Removers and readers keep
 `ruby_verified_text`. **The strict inputs honour the String's encoding
-too** (`utf8_strict`): a String not in UTF-8 / US-ASCII / ASCII-8BIT is
+too** (`nupur::string::read_utf8`, over `nupur::encoding::to_utf8_strict`): a
+String not in UTF-8 / US-ASCII / ASCII-8BIT is
 transcoded to UTF-8 first, with NO replacement - a character or byte it
 cannot convert is `Makiri::Error` ("could not be converted to UTF-8"), never
 repaired - and any other raise in the transcode (`NoMemoryError`, an
 interrupt) is passed through as it is. A length cap (`ruby_try_verified_text`)
 is on the UTF-8. Both checked views (`RubyText`, `RubyData`) deref to
 `&str`, and each OWNS A COPY of the (UTF-8) String's bytes, taken with no
-Ruby between the read and the copy (`crate::utf8_copy::Utf8Copy`; up to 64
+Ruby between the read and the copy (`nupur::utf8_copy::Utf8Copy`; up to 64
 bytes inline, so a UTF-8 selector or expression allocates nothing; one in
 another encoding allocates its transcode) and checked after - its UTF-8 by
 std's `from_utf8` over the copy, ALWAYS: the cached coderange is not

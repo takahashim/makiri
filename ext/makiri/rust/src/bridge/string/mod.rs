@@ -15,7 +15,7 @@
 //! HTML source, was copied out anyway before the GVL was released. So every
 //! String is copied, with no Ruby between the read and the copy, and in one
 //! of two places: a checked view ([`RubyText`], [`RubyData`]) owns a
-//! [`Utf8Copy`](crate::utf8_copy::Utf8Copy) of its String's bytes, checked as
+//! [`Utf8Copy`](crate::nupur::utf8_copy::Utf8Copy) of its String's bytes, checked as
 //! UTF-8, so its `Deref` to `str` is plain and a short one stays inline (the
 //! hot paths - a selector, an expression - allocate nothing); and the parser
 //! inputs own the raw bytes ([`ruby_string_bytes`]).

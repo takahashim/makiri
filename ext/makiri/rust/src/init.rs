@@ -342,6 +342,9 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     /* The raise sweep's answer, for `nupur::raw`'s allocating calls. */
     #[cfg(feature = "alloc-inject")]
     crate::nupur::raw::set_raise_injector(crate::falloc::raise_inject_should_raise);
+    /* The OOM sweep's answer, for a checked copy's heap allocation. */
+    #[cfg(feature = "alloc-inject")]
+    crate::nupur::utf8_copy::set_alloc_injector(crate::falloc::allocation_should_fail);
     let makiri = ruby.define_module("Makiri")?;
     crate::bridge::wrapper::init_ivars(ruby)?;
 

@@ -260,3 +260,71 @@ pub fn utf8_str_from_slices<'a>(
 pub fn interned_utf8(ruby: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
     crate::raw::enc_interned_str(ruby, bytes, crate::encoding::Encoding::utf8(ruby))
 }
+
+/* ---- reading a String as checked UTF-8 ---- */
+
+/// Why [`read_utf8`] gave no copy.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "an Error holds its message inline (`crate::msg::Msg`), so it is never boxed"
+)]
+pub enum ReadError<P> {
+    /// The caller's own check turned the bytes down (a NUL, a length).
+    Refused(P),
+    /// The bytes are not UTF-8.
+    NotUtf8,
+    /// The String's encoding has no UTF-8 form for it: Ruby's transcode
+    /// raised an `EncodingError` ([`crate::encoding::is_encoding_fault`]).
+    NoUtf8Form,
+    /// The copy could not be allocated.
+    Oom,
+    /// Something not about the String cut the transcode short
+    /// (`NoMemoryError`, an interrupt, a `throw`), passed on as it was.
+    Raised(Error),
+}
+
+/// `s`, read in its own encoding and copied as checked UTF-8: a String in
+/// another encoding is transcoded first with no replacement
+/// ([`crate::encoding::to_utf8_strict`]), the copy of what it became is put
+/// to `check` - a reader's own rules, reported ahead of invalid UTF-8 - and
+/// then checked to be UTF-8 by std's validator over the copy itself, never by
+/// the String's cached coderange. Nothing Ruby does afterwards reaches the
+/// copy.
+pub fn read_utf8<P>(
+    ruby: &Ruby,
+    s: RString,
+    check: impl FnOnce(&[u8]) -> Option<P>,
+) -> Result<crate::utf8_copy::Utf8Copy, ReadError<P>> {
+    use crate::utf8_copy::{CopyError, FillError, Utf8Copy};
+    /* The transcode is a fresh String on this frame, so the GC keeps it. */
+    let s = crate::encoding::to_utf8_strict(ruby, s).map_err(|e| {
+        if crate::encoding::is_encoding_fault(ruby, &e) {
+            ReadError::NoUtf8Form
+        } else {
+            ReadError::Raised(e)
+        }
+    })?;
+    Utf8Copy::from_source(&StrSource(ruby, s), check).map_err(|e| match e {
+        FillError::Refused(p) => ReadError::Refused(p),
+        FillError::Copy(CopyError::NotUtf8) => ReadError::NotUtf8,
+        FillError::Copy(CopyError::Oom) => ReadError::Oom,
+    })
+}
+
+/// A live String as what a [`Utf8Copy`](crate::utf8_copy::Utf8Copy) copies
+/// from: the copying reads, which hand no slice of the String out.
+struct StrSource<'a>(&'a Ruby, RString);
+
+impl crate::utf8_copy::Source for StrSource<'_> {
+    fn byte_len(&self) -> usize {
+        self.1.len()
+    }
+
+    fn copy_into(&self, dst: &mut [u8]) -> usize {
+        self.1.copy_to(self.0, 0, dst)
+    }
+
+    fn append_into(&self, v: &mut Vec<u8>) -> bool {
+        self.1.append_to(self.0, 0, v).is_ok()
+    }
+}
