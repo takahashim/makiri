@@ -21,7 +21,13 @@ use super::*;
 /// caller's frame (a local VALUE is), and nothing borrowed from a Ruby String
 /// may be held across the call.
 pub(super) fn account_document(ruby: &crate::bridge::rb::Ruby, rb_doc: Value) {
-    let d = DOC_TYPE.get_known(&rb_doc);
+    account_data(ruby, DOC_TYPE.get_known(&rb_doc));
+}
+
+/// [`account_document`] over the wrapper's data, borrowed from a handle that
+/// holds the object (`new_document`'s fill, for a Document nothing else
+/// refers to yet).
+pub(super) fn account_data(ruby: &crate::bridge::rb::Ruby, d: &DocData) {
     /* Content an edit holds is measured at the next report - which no
      * caller reaches with an edit open, since none runs Ruby. */
     let (Some(now), Some(chunks)) = (d.external_bytes(), d.arena_chunks()) else {

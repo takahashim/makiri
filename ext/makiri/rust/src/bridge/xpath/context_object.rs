@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use crate::bridge::rb::{Error, Value};
 use crate::bridge::ruby::makiri_error;
-use crate::bridge::typed::{Payload, TypedType};
+use crate::bridge::typed::{Payload, Typed, TypedType};
 
 use crate::bridge::string::ruby_try_verified_text;
 use crate::bridge::string::{ruby_verified_text, RubyText};
@@ -89,28 +89,28 @@ impl Payload for XPathCtx {
 /// `Makiri::XPathContext`'s data type.
 pub static XPATH_CTX_TYPE: TypedType<XPathCtx> = TypedType::base(c"Makiri::XPathContext");
 
-/// An `XPathContext` method's receiver: the object, checked to be one, read
-/// as its [`XPathCtx`] for the call.
-pub struct XPathCtxSelf(Value);
+/// An `XPathContext` method's receiver - or a context just made - checked to
+/// be one, read as its [`XPathCtx`] through the [`Typed`] handle that holds
+/// it.
+pub struct XPathCtxSelf(Typed<XPathCtx, 0>);
 
 impl crate::bridge::rb::TryConvert for XPathCtxSelf {
     fn try_convert(_: &Ruby, value: Value) -> Result<Self, Error> {
-        XPATH_CTX_TYPE.get(&value)?;
-        Ok(XPathCtxSelf(value))
+        XPATH_CTX_TYPE.check(value).map(XPathCtxSelf)
     }
 }
 
 impl core::ops::Deref for XPathCtxSelf {
     type Target = XPathCtx;
     fn deref(&self) -> &XPathCtx {
-        XPATH_CTX_TYPE.get_known(&self.0)
+        self.0.data()
     }
 }
 
 impl XPathCtxSelf {
     /// The context object itself.
     pub fn value(&self) -> Value {
-        self.0
+        self.0.value()
     }
 
     /// Rebind the context node to `rb_node`, a Makiri node of the same
@@ -130,7 +130,7 @@ impl XPathCtxSelf {
          * context, `NoMemoryError`): a failure there leaves the context node
          * as it was. After it no Ruby has run, so no evaluate can have begun,
          * and the engine takes the node: the two never disagree. */
-        crate::bridge::raw::ivar_set(self.0, crate::bridge::wrapper::ivar_node(), rb_node)?;
+        crate::bridge::raw::ivar_set(self.value(), crate::bridge::wrapper::ivar_node(), rb_node)?;
         self.ctx.set_context_node(token).map_err(|_| {
             crate::bridge::ruby::internal_error("an evaluate began during XPathContext#node=")
         })
@@ -138,7 +138,7 @@ impl XPathCtxSelf {
 
     /// The keepalive Document.
     fn document(&self) -> Value {
-        crate::bridge::rb::value::ivar_get(self.0, crate::bridge::wrapper::ivar_document())
+        crate::bridge::rb::value::ivar_get(self.value(), crate::bridge::wrapper::ivar_document())
     }
 
     /// Evaluate `expr`, parsed once and cached.
@@ -190,7 +190,7 @@ impl XPathCtx {
         let mut ctx = context_for(ruby, rb_node, document)?;
         ctx.set_lax(lax);
         /* No slot, so the root type is named. */
-        let obj = XPATH_CTX_TYPE.wrap_hidden::<Value>(
+        XPATH_CTX_TYPE.wrap_hidden::<Value>(
             ruby,
             CLASS_XPATH_CONTEXT.defined(ruby)?,
             XPathCtx {
@@ -206,8 +206,9 @@ impl XPathCtx {
                 (crate::bridge::wrapper::ivar_document(), document),
                 (crate::bridge::wrapper::ivar_node(), rb_node),
             ],
-        )?;
-        obj.reveal(ruby)
+            /* Complete once its ivars are in: nothing to fill. */
+            |_| Ok(()),
+        )
     }
 
     /// Evaluate `expr` in `document`, parsed once and cached.

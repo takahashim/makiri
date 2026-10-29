@@ -39,23 +39,57 @@
 //!   a protected call caught is on its way to the trampoline, no protected
 //!   call runs C, so the thread's error info Ruby resumes it from is left
 //!   alone.
+//! - **An object is held while its data is borrowed through a handle.**
+//!   A [`typed::Typed`] - from `TypedType::check` for a value Ruby gave,
+//!   from `TypedType::wrap` for an object just made - lends the data and
+//!   keeps the object where the GC sees it until the last borrow is over,
+//!   wherever the object came from; `wrap_hidden` lends it to its `fill` the
+//!   same way, and hands the object out only once it is complete and shown.
+//!
+//! Several of these rest on checks of this crate's own code, not on its
+//! types alone. In Makiri they are `rake dylint` (`lints/makiri_lints`),
+//! `rake no_unwind` and `rake unsafe:boundaries`; a copy of this layer
+//! elsewhere needs its own:
+//!
+//! - every C call that can raise is inside `raw::call` -
+//!   `raising_call_outside_protect` and `unraising_call_in_raw`, over a
+//!   table of the functions that cannot raise held to a survey of Ruby's C
+//!   API (`script/check_non_raising.rb`);
+//! - every `extern "C"` function and GC-run `Drop` is a [`no_unwind`] site -
+//!   `unguarded_no_unwind_site`, and `rake no_unwind`'s proof of each;
+//! - a safe function that calls Ruby's C holds a proof of the GVL -
+//!   `ffi_without_gvl_proof`;
+//! - no Ruby error is dropped - `discarded_ruby_error`;
+//! - no C `long` is cast outside `int` - `c_integer_outside_int`;
+//! - each file's count of `unsafe` is pinned - `rake unsafe:boundaries`.
 //!
 //! # What the extension must uphold
 //!
 //! The types do not carry these; a crate using the layer keeps them, by
-//! review or by lints (Makiri runs `lints/makiri_lints` on itself and on
-//! this crate):
+//! review or by lints. Each says what checks it in Makiri, which a crate
+//! that copies this layer has to supply in its own way:
 //!
 //! - **A Ruby value stays where the GC's stack scan sees it.** A [`rb::Value`]
-//!   (and every handle over one, [`typed::Typed`] included) is `Copy` and
-//!   `!Send`: on the stack it is kept alive and in place, but in a `Vec`, a
-//!   `Box`, a `static` or a payload's field it is not, and is freed or moved
-//!   while still held. Keep such values on the stack, in a Ruby Array, in a
+//!   (and every handle over one, [`typed::Typed`] included) is `!Send`, and
+//!   a `Value` is `Copy` (a `Typed`, which holds its object, is not): on the
+//!   stack it is kept alive and in place, but in a `Vec`, a `Box`, a
+//!   `static` or a payload's field it is not, and is freed or moved while
+//!   still held. Keep such values on the stack, in a Ruby Array, in a
 //!   wrapped object's slots, or in an [`rb::Opaque`] / [`rb::RbConst`].
+//!   Checked by `ruby_value_on_heap`, which reads the types; a temporary
+//!   handed straight to a call (`f(vec![v])`) is beyond it.
+//! - **A payload is borrowed through its handle.** A [`typed::Typed`]'s
+//!   `data`, not `TypedType::get` / `get_known` over a copy of a `Value`
+//!   (those keep nothing, and serve only a value Ruby keeps for the whole
+//!   borrow - a receiver, an argument, a slot's value), and the handle is not
+//!   `mem::forget`ed. Checked by review.
 //! - **A GVL-released body runs no Ruby.** [`gvl::without_gvl`]'s `Send`
 //!   bound keeps a token and a value out of it, but not a call of a layer
 //!   function that needs neither (making an [`rb::Error`], say) - harmless
-//!   today, yet not a guarantee.
+//!   today, yet not a guarantee. Checked by `ruby_in_gvl_released_body`.
+//! - **Nothing runs the caller's Ruby unasked** - a `to_s`, a block, a
+//!   method call. Checked by `runs_callers_ruby`, with each sanctioned call
+//!   an `allow` stating why.
 //! - **An `unsafe` call keeps its contract** - [`rb::method::finish`],
 //!   [`rb::method::run_init`], [`rb::Ruby::get_unchecked`] - each stated where
 //!   it is defined.

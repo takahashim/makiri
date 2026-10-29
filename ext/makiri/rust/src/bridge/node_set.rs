@@ -305,12 +305,11 @@ pub type NodeSetType = TypedType<NodeSet, 1>;
 pub static NODE_SET_TYPE: NodeSetType = TypedType::base(c"Makiri::NodeSet");
 
 /// A `NodeSet` method's receiver, or an operand checked to be a set: the
-/// object, read as its [`NodeSet`] for the call. It owns the `Value`, which
-/// is on the caller's stack, so the data it reads stays rooted.
+/// object, read as its [`NodeSet`] for the call through the [`Typed`] handle
+/// that holds it.
 ///
-/// Its type is checked once, when it is made (a [`Typed`]): `NodeSet#each`
-/// reads the nodes, the kind and the Document once per element.
-#[derive(Clone, Copy)]
+/// Its type is checked once, when it is made: `NodeSet#each` reads the
+/// nodes, the kind and the Document once per element.
 pub struct NodeSetSelf(Typed<NodeSet, 1>);
 
 impl crate::bridge::rb::TryConvert for NodeSetSelf {
@@ -328,7 +327,7 @@ impl core::ops::Deref for NodeSetSelf {
 
 impl NodeSetSelf {
     /// The set itself.
-    pub fn value(self) -> Value {
+    pub fn value(&self) -> Value {
         self.0.value()
     }
 
@@ -394,7 +393,7 @@ impl NodeSet {
 /// The Document decides how a stored word is read back - an arena token for
 /// XML, an HTML arena node for HTML - so it is checked here rather than taken on
 /// trust: one class test per set, never per node.
-pub fn node_set_new(ruby: &Ruby, document: Value) -> Result<Value, Error> {
+fn node_set_new(ruby: &Ruby, document: Value) -> Result<Typed<NodeSet, 1>, Error> {
     assert!(
         is_kind_of(ruby, document, &CLASS_DOCUMENT),
         "a NodeSet needs the Document its nodes belong to"
@@ -411,30 +410,29 @@ pub fn node_set_new(ruby: &Ruby, document: Value) -> Result<Value, Error> {
     )
 }
 
-/// A NodeSet just built here, held by its maker - on its stack, which keeps
-/// it rooted - and the owner every borrow of its data is tied to: a [`Fill`]
+/// A NodeSet just built here, held by its maker, and the owner every borrow
+/// of its data is tied to: a [`Fill`]
 /// ([`fill`](Self::fill)) or a write ([`with_room`](Self::with_room)) cannot
 /// outlive it.
 ///
-/// Nothing but this frame refers to the set until it is returned, so it is
-/// held in a [`Kept`](crate::bridge::rb::value::Kept): the [`Fill`]'s borrow of
-/// its data keeps the object where the GC sees it.
-pub struct FreshSet(crate::bridge::rb::value::Kept);
+/// Nothing but this frame refers to the set until it is returned: it is the
+/// [`Typed`] handle the wrap made, so the [`Fill`]'s borrow of its data keeps
+/// the object where the GC sees it.
+pub struct FreshSet(Typed<NodeSet, 1>);
 
 impl FreshSet {
     /// An empty NodeSet over `document`.
     pub fn new(ruby: &Ruby, document: Value) -> Result<FreshSet, Error> {
-        node_set_new(ruby, document).map(|set| FreshSet(crate::bridge::rb::value::Kept::new(set)))
+        node_set_new(ruby, document).map(FreshSet)
     }
 
     /// The NodeSet itself, for returning to Ruby.
     pub fn value(&self) -> Value {
-        *self.0.value()
+        self.0.value()
     }
 
     fn set(&self) -> &NodeSet {
-        /* Built as a NodeSet by `new`. */
-        NODE_SET_TYPE.get_known(self.0.value())
+        self.0.data()
     }
 
     /// A handle to append through, borrowing the set.

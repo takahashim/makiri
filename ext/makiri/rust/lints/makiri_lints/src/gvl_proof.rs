@@ -8,7 +8,7 @@
 //! its signature: a `&Ruby` (the token only an entry makes), or a Ruby value
 //! (`ReprValue`: a value is `!Send` and made only where a token is), or a
 //! handle of the layer's that is made only from one of those (`Encoding`,
-//! `Typed`, `Hidden`, `Unwritten`), or such a `self`. So a function whose
+//! `Typed`, `Unwritten`), or such a `self`. So a function whose
 //! body calls `rb_sys::` must take one of them - checked on every function
 //! of the crate, private ones included, so a public function cannot lend its
 //! proof to a helper that has none: the helper needs its own. A call inside a
@@ -29,7 +29,7 @@ use crate::FFI_WITHOUT_GVL_PROOF;
 use crate::boundaries::{NUPUR, callee, path_of};
 
 /// The layer's handles that exist only where a token or a Ruby value did.
-const PROOF_TYPES: &[&str] = &["Ruby", "Encoding", "Typed", "Hidden", "Unwritten"];
+const PROOF_TYPES: &[&str] = &["Ruby", "Encoding", "Typed", "Unwritten"];
 
 pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
     if cx.tcx.crate_name(rustc_span::def_id::LOCAL_CRATE).as_str() != NUPUR {

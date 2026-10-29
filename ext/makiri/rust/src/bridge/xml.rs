@@ -26,7 +26,7 @@ use crate::bridge::html::with_arg_node;
 use crate::bridge::ruby::{check_frozen, is_kind_of};
 use crate::bridge::string::{ruby_verified_text, RubyText};
 use crate::bridge::wrapper::*;
-use crate::bridge::wrapper::{node_repr, DocKind, DocumentShell, NodeRepr};
+use crate::bridge::wrapper::{new_xml_document, node_repr, NodeRepr};
 use crate::bridge::xml_decode::xml_decode_input;
 use crate::child_index::{ChildList, Children, TokenTree};
 use crate::html_dom::cross_import::cross_html_to_xml;
@@ -669,18 +669,16 @@ pub fn parse_xml_document(ruby: &Ruby, source: Value, limits: ParseLimits) -> Re
     let src = xml_decode_input(ruby, source, Some(limits.budget()))?;
     /* The wrapper before the parse: its allocation can fail, and `src`, an
      * owned copy, is dropped on the way out if it does. */
-    let shell = DocumentShell::new(ruby, DocKind::Xml)?;
-
-    /* Ruby-free from here: only the copied bytes and the limits cross. */
-    let bytes = src.as_slice();
-    let result =
-        crate::bridge::gvl::without_gvl(ruby, || crate::xml::tree::parse_ex(bytes, Some(&limits)))?;
-    drop(src);
-
-    let arena = result.map_err(|status| parse_status_error(status, Unit::Document))?;
-    /* `src` is gone, so the collection `install`'s GC report may trigger
-     * disturbs nothing. */
-    shell.install_xml(ruby, arena)
+    new_xml_document(ruby, || {
+        /* Ruby-free from here: only the copied bytes and the limits cross. */
+        let bytes = src.as_slice();
+        let result = crate::bridge::gvl::without_gvl(ruby, || {
+            crate::xml::tree::parse_ex(bytes, Some(&limits))
+        })?;
+        /* Gone before the Document's report to the GC, which may collect. */
+        drop(src);
+        result.map_err(|status| parse_status_error(status, Unit::Document))
+    })
 }
 
 /// `Document#root` for an XML document: the root element, or nil.
@@ -698,19 +696,18 @@ pub fn document_internal_subset(ruby: &Ruby, rb_self: Value) -> Result<Option<Va
 /// `Document#_copy`: a whole-document copy of `document`, node for node
 /// (`mutate::copy_document`, where what it keeps is stated).
 pub fn copy_xml_document(ruby: &Ruby, document: Value) -> Result<Value, Error> {
-    /* The wrapper first, while nothing needs freeing - see DocumentShell. The
+    /* The wrapper first, while nothing needs freeing (`new_document`). The
      * copy then reads `document` and runs no Ruby. */
-    let shell = DocumentShell::new(ruby, DocKind::Xml)?;
-    let arena = crate::xml::mutate::copy_document(&*xml_read(&document)?).map_err(xml_mut_error)?;
-    shell.install_xml(ruby, arena)
+    new_xml_document(ruby, || {
+        crate::xml::mutate::copy_document(&*xml_read(&document)?).map_err(xml_mut_error)
+    })
 }
 
 /// A fresh, empty XML Document: an arena holding a DOCUMENT node and no root.
 pub fn new_empty_xml_document(ruby: &Ruby) -> Result<Value, Error> {
-    let shell = DocumentShell::new(ruby, DocKind::Xml)?;
-    let arena =
-        XmlDoc::create(None).map_err(|_| makiri_error("out of memory allocating XML document"))?;
-    shell.install_xml(ruby, arena)
+    new_xml_document(ruby, || {
+        XmlDoc::create(None).map_err(|_| makiri_error("out of memory allocating XML document"))
+    })
 }
 
 /// Strict-decode `source` and parse it as a fragment into `document`'s arena,
