@@ -19,8 +19,8 @@
 //! carried. The only difference from panicking directly is that the C frames
 //! were unwound by C, in the way C expects.
 //!
-//! This is the same shape the callbacks already use for the node cap and for an
-//! allocation failure - latch a flag, return STOP, report after the walk - and
+//! This is the same shape a callback uses for any other reason to stop - a
+//! limit reached, an allocation failure - latch a flag, return STOP, report after the walk - and
 //! it is deliberately the same, because a panic has no better claim than an OOM
 //! to be handled mid-traversal.
 

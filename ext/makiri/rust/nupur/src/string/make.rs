@@ -1,60 +1,20 @@
-//! A Ruby String's bytes, read and written by copying: the layer hands no
-//! slice of a String out.
-//!
-//! Reading is [`RString::copy_to`] (into a caller's buffer) and
-//! [`RString::append_to`] (into a `Vec`'s reserved room, never growing it),
-//! each a read and a copy with nothing run between, so nothing Ruby does
-//! afterwards - a GC, the String rewritten or grown - reaches what the caller
-//! holds. Writing is [`utf8_str_filled`]: a String made at its full length
-//! and written front to back in place, through an [`Unwritten`].
+//! Making a Ruby String: a copy of some bytes ([`utf8_str`]), one written
+//! in place front to back ([`utf8_str_filled`]) - from several slices at once
+//! ([`utf8_str_from_slices`]) - and a frozen, interned name
+//! ([`interned_utf8`]).
 
 #![allow(unsafe_code)]
 
 use crate::rb::value::AsRawValue;
 use crate::rb::{Error, RString, Ruby};
 
-/// [`RString::append_to`]'s refusal: the buffer had too little spare room.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NoRoom;
-
-impl RString {
-    /// Copy the bytes from `offset` (none past the end) into `dst`, as many
-    /// as both hold, and say how many.
-    ///
-    /// The String's buffer is read and copied out of in one step, with
-    /// nothing run in between, and no slice of it is handed out: a caller
-    /// owns what it reads, so nothing Ruby does afterwards - a GC, the String
-    /// rewritten or grown - can reach it.
-    #[inline]
-    pub fn copy_to(self, _ruby: &Ruby, offset: usize, dst: &mut [u8]) -> usize {
-        // SAFETY: read and copied out at once; nothing runs while it is held.
-        let src = unsafe { self.as_slice() }.get(offset..).unwrap_or(&[]);
-        let n = src.len().min(dst.len());
-        if let (Some(d), Some(s)) = (dst.get_mut(..n), src.get(..n)) {
-            d.copy_from_slice(s);
-        }
-        n
-    }
-
-    /// Append the bytes from `offset` (none past the end) to `v`, whose spare
-    /// capacity must already hold them - the caller reserved it, fallibly -
-    /// and say how many. Nothing is allocated here: when the room is short,
-    /// `v` is left as it was and the answer is [`NoRoom`]. The read is
-    /// [`copy_to`](Self::copy_to)'s, in one step after the room is checked.
-    #[inline]
-    pub fn append_to(self, _ruby: &Ruby, offset: usize, v: &mut Vec<u8>) -> Result<usize, NoRoom> {
-        // SAFETY: as `copy_to` - read and copied out at once.
-        let src = unsafe { self.as_slice() }.get(offset..).unwrap_or(&[]);
-        if v.capacity() - v.len() < src.len() {
-            return Err(NoRoom);
-        }
-        #[allow(
-            clippy::disallowed_methods,
-            reason = "the room was checked above, so it cannot grow"
-        )]
-        v.extend_from_slice(src);
-        Ok(src.len())
-    }
+/// A UTF-8 String holding a copy of `bytes`; a failed allocation is `Err`
+/// (`NoMemoryError`).
+///
+/// `bytes` must be valid UTF-8 (the String is tagged so without a check).
+/// Bytes that were not would make a wrong String, never a memory error.
+pub fn utf8_str(ruby: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
+    crate::raw::utf8_str_new(ruby, bytes)
 }
 
 /// A UTF-8 String of exactly `len` bytes, written by `fill` straight into
@@ -259,98 +219,4 @@ pub fn utf8_str_from_slices<'a>(
 /// memory error.
 pub fn interned_utf8(ruby: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
     crate::raw::enc_interned_str(ruby, bytes, crate::encoding::Encoding::utf8(ruby))
-}
-
-/* ---- reading a String as checked UTF-8 ---- */
-
-/// Why [`read_utf8`] gave no copy.
-#[allow(
-    clippy::large_enum_variant,
-    reason = "an Error holds its message inline (`crate::msg::Msg`), so it is never boxed"
-)]
-pub enum ReadError<P> {
-    /// The caller's own check turned the bytes down (a NUL).
-    Refused(P),
-    /// The UTF-8 is longer than the reader's cap ([`read_utf8_within`]).
-    TooLong,
-    /// The bytes are not UTF-8.
-    NotUtf8,
-    /// The String's encoding has no UTF-8 form for it: Ruby's transcode
-    /// raised an `EncodingError`.
-    NoUtf8Form,
-    /// The copy could not be allocated.
-    Oom,
-    /// Something not about the String cut the transcode short
-    /// (`NoMemoryError`, an interrupt, a `throw`), passed on as it was.
-    Raised(Error),
-}
-
-/// `s`, read in its own encoding and copied as checked UTF-8: a String in
-/// another encoding is transcoded first with no replacement
-/// ([`crate::encoding::to_utf8_strict`]), the copy of what it became is put
-/// to `check` - a reader's own rules, reported ahead of invalid UTF-8 - and
-/// then checked to be UTF-8 by std's validator over the copy itself, never by
-/// the String's cached coderange. Nothing Ruby does afterwards reaches the
-/// copy.
-pub fn read_utf8<P>(
-    ruby: &Ruby,
-    s: RString,
-    check: impl FnOnce(&[u8]) -> Option<P>,
-) -> Result<crate::utf8_copy::Utf8Copy, ReadError<P>> {
-    read_utf8_within(ruby, s, usize::MAX, check)
-}
-
-/// [`read_utf8`] under a cap of `max_bytes` on the UTF-8 the String becomes
-/// (a UTF-16 String is about twice its UTF-8 length, so the cap is measured
-/// after the transcode). An over-long String is refused before it is copied,
-/// and the copy is held to the cap again, ahead of `check`.
-pub fn read_utf8_within<P>(
-    ruby: &Ruby,
-    s: RString,
-    max_bytes: usize,
-    check: impl FnOnce(&[u8]) -> Option<P>,
-) -> Result<crate::utf8_copy::Utf8Copy, ReadError<P>> {
-    use crate::utf8_copy::{CopyError, FillError, Utf8Copy};
-    /* The transcode is a fresh String on this frame, so the GC keeps it. An
-     * `EncodingError` is the String's own fault; anything else - every exit
-     * included, which no class names - is passed on. */
-    let s = crate::encoding::to_utf8_strict(ruby, s).map_err(|e| {
-        match e.rescue(ruby, &[crate::rb::Builtin::EncodingError]) {
-            Ok(_handled) => ReadError::NoUtf8Form,
-            Err(e) => ReadError::Raised(e),
-        }
-    })?;
-    if s.len() > max_bytes {
-        return Err(ReadError::TooLong);
-    }
-    let checks = |b: &[u8]| {
-        if b.len() > max_bytes {
-            Some(ReadError::TooLong)
-        } else {
-            check(b).map(ReadError::Refused)
-        }
-    };
-    Utf8Copy::from_source(&StrSource(ruby, s), checks).map_err(|e| match e {
-        FillError::Refused(r) => r,
-        FillError::Copy(CopyError::NotUtf8) => ReadError::NotUtf8,
-        FillError::Copy(CopyError::Oom) => ReadError::Oom,
-    })
-}
-
-/// A live String as what a [`Utf8Copy`](crate::utf8_copy::Utf8Copy) copies
-/// from: the copying reads, which hand no slice of the String out.
-struct StrSource<'a>(&'a Ruby, RString);
-
-impl crate::utf8_copy::Source for StrSource<'_> {
-    fn byte_len(&self) -> usize {
-        self.1.len()
-    }
-
-    fn copy_into(&self, dst: &mut [u8]) -> usize {
-        self.1.copy_to(self.0, 0, dst)
-    }
-
-    fn append_into(&self, v: &mut Vec<u8>) -> bool {
-        self.1.append_to(self.0, 0, v).is_ok()
-    }
 }

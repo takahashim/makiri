@@ -8,7 +8,7 @@
 #![forbid(unsafe_code)]
 
 use crate::bridge::rb::Ruby;
-use crate::bridge::rb::{Error, Value};
+use crate::bridge::rb::{Error, ReprValue, Value};
 use crate::bridge::ruby::makiri_error;
 
 use crate::html_dom::html::{
@@ -348,7 +348,7 @@ impl HtmlView<'_> {
         };
         let Some(raw) = target else {
             drop(self);
-            return utf8_str(ruby, b"");
+            return utf8_str(ruby, b"").map(|s| s.as_value());
         };
         let node = self.read.node(raw);
         if !matches!(
@@ -365,7 +365,7 @@ impl HtmlView<'_> {
             )?;
             return match text {
                 Some(text) => Ok(text),
-                None => utf8_str(ruby, b""),
+                None => utf8_str(ruby, b"").map(|s| s.as_value()),
             };
         }
         let p = self.read.parsed();

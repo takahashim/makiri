@@ -96,6 +96,7 @@ fn allocations() {
 
 fn callers_ruby(ruby: &crate::bridge::rb::Ruby, m: crate::bridge::rb::RModule) {
     let _ = crate::bridge::rb::Module::call_method(m, ruby, "new", &[]); //~
+    let _ = crate::bridge::rb::method::yield_value(ruby, ruby.qnil()); //~
 }
 
 /// Stands in for a `bridge/` module: the bridge-scoped lints treat

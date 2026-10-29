@@ -42,8 +42,8 @@ fn reserve_exact(v: &mut Vec<u8>, len: usize) -> bool {
     v.try_reserve_exact(len).is_ok()
 }
 
-/// Up to this many bytes a copy lives inline, on the stack: a selector, an
-/// expression or a name allocates nothing.
+/// Up to this many bytes a copy lives inline, on the stack: a short argument
+/// - a name, a query - allocates nothing.
 pub const INLINE: usize = 64;
 
 enum Bytes {

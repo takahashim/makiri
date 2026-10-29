@@ -135,7 +135,7 @@ mod lint_probe;
 pub mod rb;
 
 /// Every Ruby C call that can raise, each under `rb_protect`.
-pub mod raw;
+pub(crate) mod raw;
 
 /// Every conversion between Rust's integer widths and C's `long` - the
 /// layer's own: what it hands an extension is in Rust's widths.

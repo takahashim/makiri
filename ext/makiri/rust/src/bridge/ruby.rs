@@ -5,12 +5,11 @@
 
 #![forbid(unsafe_code)]
 
-pub use crate::nupur::args::{index_arg, integer_arg, name_arg, string_arg};
+pub use crate::nupur::args::{index_arg, integer_arg, name_arg, range_beg_len, string_arg};
 pub use crate::nupur::describe::{AsText, Describe, ExceptionText};
-pub use crate::nupur::raw::{check_frozen, range_beg_len};
 pub use crate::nupur::rb::error::{arg_error, internal_error, type_error};
 pub use crate::nupur::rb::global::is_kind_of;
-pub use crate::nupur::rb::value::{boolean, identity_word, nil, same_value};
+pub use crate::nupur::rb::value::{boolean, check_frozen, identity_word, nil, same_value};
 
 use crate::bridge::rb::Error;
 

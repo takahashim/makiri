@@ -7,7 +7,7 @@ use crate::bridge::rb::{Error, ReprValue, Value};
 
 /* ---- assembling Ruby Strings ---- */
 
-pub use crate::nupur::build::{utf8_rstring, utf8_str};
+pub use crate::nupur::string::utf8_str;
 
 /// Join the text index's document-order slices, totalling `total` bytes,
 /// into one UTF-8 String (`nupur::string::utf8_str_from_slices`). The joined
@@ -60,7 +60,7 @@ pub fn str_from_read<G>(
         return Ok(None);
     };
     match kind {
-        StrKind::Utf8 => utf8_str(ruby, b),
+        StrKind::Utf8 => utf8_str(ruby, b).map(|s| s.as_value()),
         StrKind::DomName => dom_name_str(ruby, b),
     }
     .map(Some)

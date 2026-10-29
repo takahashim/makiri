@@ -40,7 +40,7 @@ fn new_ns(ruby: &Ruby, class: RClass, prefix: Value, href: Value) -> Result<Valu
 /// String.
 fn prefix_value(ruby: &Ruby, p: Option<&[u8]>) -> Result<Value, Error> {
     match p.filter(|p| !p.is_empty()) {
-        Some(p) => utf8_str(ruby, p),
+        Some(p) => utf8_str(ruby, p).map(|s| s.as_value()),
         None => Ok(ruby.qnil().as_value()),
     }
 }
@@ -68,7 +68,7 @@ pub fn namespace(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
             .name_parts(this.id)
             .and_then(|n| Some((n.prefix, n.ns_uri?)))
         {
-            Some((p, u)) => Some((prefix_value(ruby, p)?, utf8_str(ruby, u)?)),
+            Some((p, u)) => Some((prefix_value(ruby, p)?, utf8_str(ruby, u)?.as_value())),
             None => None,
         }
     };
@@ -111,7 +111,7 @@ pub fn namespaces(ruby: &Ruby, this: XmlSelf) -> Result<RHash, Error> {
     let h = hash(ruby)?;
     for id in core::iter::successors(Some(this.id), |&n| d.parent(n)) {
         for (at, _, u) in declarations(&d, id) {
-            let key = crate::bridge::string::utf8_rstring(ruby, d.qname(at))?;
+            let key = crate::bridge::string::utf8_str(ruby, d.qname(at))?;
             if h.get(key)?.is_none() {
                 aset(h, key.as_value(), utf8_str(ruby, u)?)?;
             }

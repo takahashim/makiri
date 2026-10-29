@@ -4,7 +4,7 @@
 //! function pointers in that struct directly, so they have the C calling
 //! convention and receive a raw data pointer - the raw Ruby ABI, and therefore
 //! this layer's job. A struct says what it is through [`Payload`], and the
-//! callbacks below are the one monomorphised bridge from Ruby's GC to it, so
+//! callbacks (`callbacks`) are the one monomorphised bridge from Ruby's GC to it, so
 //! no other module writes an `extern "C"` GC function.
 //!
 //! What an object holds is an [`Envelope`]: the payload `T`, and `N` slots
@@ -25,7 +25,16 @@
 
 #![allow(unsafe_code)]
 
-use core::ffi::{c_char, c_void, CStr};
+mod callbacks;
+mod data_type;
+mod external;
+
+pub use external::External;
+
+use callbacks::{free_cb, free_embedded_cb, mark_cb, memsize_cb};
+use data_type::{data_pointer, typed_data, typed_data_known, wrap_built, DataType};
+
+use core::ffi::{c_char, CStr};
 use core::marker::PhantomData;
 
 use crate::rb::value::AsRawValue;
@@ -100,61 +109,6 @@ pub trait Payload: Sized {
     }
 }
 
-/// The bytes an object holds outside Ruby's heap, as reported to the GC -
-/// the one way a report is made, so what was reported is always what the
-/// free callback gives back ([`Payload::reported_external`] answers
-/// [`reported`](Self::reported)).
-///
-/// Memory Ruby does not allocate is otherwise invisible to it and never
-/// triggers a collection. A cell, so a payload read through `&T` reports.
-#[derive(Default)]
-pub struct External(core::cell::Cell<usize>);
-
-impl External {
-    pub const fn new() -> External {
-        External(core::cell::Cell::new(0))
-    }
-
-    /// What has been reported and not given back.
-    #[inline]
-    pub fn reported(&self) -> usize {
-        self.0.get()
-    }
-
-    /// The object holds `bytes` outside the heap now: the change since the
-    /// last report goes to the GC. A change Ruby could not take whole - past
-    /// an `ssize_t` - is not reported, and not recorded, so the two never
-    /// disagree. The default collector only raises its malloc count here and
-    /// collects at the next allocation (`rb_gc_adjust_memory_usage` is
-    /// MEMOP_TYPE_REALLOC), but another may collect in the call, so what is
-    /// borrowed across it must be what a collection neither frees nor moves:
-    /// this payload, whose object its caller keeps (a receiver, a slot's
-    /// value, a [`Typed`] handle) and which compaction does not move - never
-    /// a String's bytes. The new figure is recorded first, for a collection
-    /// that reads it.
-    pub fn report(&self, _: &crate::rb::Ruby, bytes: usize) {
-        let then = self.0.get();
-        let delta = if bytes >= then {
-            rb_sys::ssize_t::try_from(bytes - then)
-        } else {
-            rb_sys::ssize_t::try_from(then - bytes).map(|d| -d)
-        };
-        let Ok(delta) = delta else { return };
-        if delta == 0 {
-            return;
-        }
-        self.0.set(bytes);
-        // SAFETY: a plain counter adjustment, with the GVL held (`&Ruby`).
-        unsafe { rb_sys::rb_gc_adjust_memory_usage(delta) };
-    }
-
-    /// [`report`](Self::report) `more` bytes than were.
-    #[inline]
-    pub fn grow(&self, ruby: &crate::rb::Ruby, more: usize) {
-        self.report(ruby, self.0.get().saturating_add(more));
-    }
-}
-
 /// The bytes an object of payload `T` with `N` slots keeps as its data - its
 /// envelope, padding included: what a size ratchet over a wrapper should
 /// measure, since a sum of the parts misses the padding.
@@ -171,132 +125,6 @@ struct Envelope<T, const N: usize> {
     /// Written once, by [`wrap_built`], and never again.
     roots: [VALUE; N],
     data: T,
-}
-
-/* The GC callbacks below are the crate's only `extern "C"` functions with no
- * panic latch, and deliberately so. They run from Ruby's collector, where
- * there is no frame to raise into: `mark_cb` cannot report a failure without
- * risking premature collection of what it did not mark, and `free_cb` cannot
- * report one without leaking or freeing twice. So a panic here keeps the old
- * behaviour - Rust turns the unwind at the boundary into an abort - which is
- * the honest answer when the alternative is a corrupted heap. Keep their
- * bodies trivial; that is what makes the choice cheap.
- *
- * Each passes over a null data pointer. `rb_data_typed_object_zalloc` makes
- * the object before it allocates a non-embedded type's data, so a failed
- * allocation leaves an object with none; CRuby's collector does not call a
- * callback for it today, but that is its implementation, not its documented
- * contract, and one branch here means nothing rests on it. */
-
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        raising_call_outside_protect,
-        reason = "rb_gc_mark raises NoMemoryError only when the mark stack cannot grow, a longjmp this frame loses nothing to (the no_unwind guard's Drop does nothing unless unwinding) and every C extension's dmark is exposed to alike"
-    )
-)]
-unsafe extern "C" fn mark_cb<T: Payload, const N: usize>(ptr: *mut c_void) {
-    crate::no_unwind::must_not_unwind::<crate::no_unwind::GcMark, _>(|| {
-        if ptr.is_null() {
-            return;
-        }
-        // SAFETY: Ruby hands back the data pointer of an object `wrap_built`
-        // made, which holds a live envelope (see `wrap_built`). Only the slots
-        // are read: no reference to the payload is made, which a method may be
-        // reading when the collector runs.
-        let roots = unsafe { core::ptr::addr_of!((*(ptr as *const Envelope<T, N>)).roots).read() };
-        for r in roots {
-            // SAFETY: from Ruby's mark phase, with the GVL held; a slot holds
-            // a live value (or `Qfalse`, which a mark ignores).
-            unsafe { rb_sys::rb_gc_mark(r) };
-        }
-    })
-}
-
-/// Give back what the payload reported, once it is dropped.
-#[inline]
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        ffi_without_gvl_proof,
-        reason = "private: called only from the free callbacks, which Ruby runs with the GVL"
-    )
-)]
-fn give_back(reported: usize) {
-    if reported != 0 {
-        let n = rb_sys::ssize_t::try_from(reported).unwrap_or(rb_sys::ssize_t::MAX);
-        // SAFETY: a plain counter adjustment, from the free hook, where it
-        // only subtracts - as Ruby's own `xfree` does from here.
-        unsafe { rb_sys::rb_gc_adjust_memory_usage(n.saturating_neg()) };
-    }
-}
-
-unsafe extern "C" fn free_cb<T: Payload, const N: usize>(ptr: *mut c_void) {
-    crate::no_unwind::must_not_unwind::<crate::no_unwind::GcFree, _>(|| {
-        if ptr.is_null() {
-            return;
-        }
-        // SAFETY: as `mark_cb`; the object is being collected, so this is its
-        // last access - the payload is dropped exactly once, here, and never
-        // read again - and the data came from `rb_data_typed_object_zalloc`'s
-        // `xcalloc`, so it goes back to `ruby_xfree`, as
-        // `TypedData_Make_Struct`'s data does.
-        /* The drop is a read and `quietly`: a type whose drop the compiler
-         * cannot show unwind-free (a tree's recursive glue) is caught rather
-         * than unwound into the collector. */
-        unsafe {
-            let data = core::ptr::addr_of!((*(ptr as *const Envelope<T, N>)).data).read();
-            let reported = crate::caught::quietly(0, || data.reported_external());
-            crate::caught::quietly((), || drop(data));
-            give_back(reported);
-            rb_sys::ruby_xfree(ptr);
-        }
-    })
-}
-
-unsafe extern "C" fn free_embedded_cb<T: Payload, const N: usize>(ptr: *mut c_void) {
-    crate::no_unwind::must_not_unwind::<crate::no_unwind::GcFreeEmbedded, _>(|| {
-        if ptr.is_null() {
-            return;
-        }
-        // SAFETY: as `free_cb`, for an embeddable type: the payload is dropped
-        // and the memory is left to Ruby - the object's own slot when it was
-        // embedded, and data Ruby frees after this callback when it was not.
-        let data = unsafe { core::ptr::addr_of!((*(ptr as *const Envelope<T, N>)).data).read() };
-        let reported = crate::caught::quietly(0, || data.reported_external());
-        crate::caught::quietly((), || drop(data));
-        give_back(reported);
-    })
-}
-
-/// The bytes the object owns beyond what Ruby counts itself. For a plain
-/// type that is the whole envelope (Ruby counts its slot, not the data it
-/// points at); for an embeddable one Ruby counts the envelope - as part of
-/// the slot it is embedded in, or by the allocation's own size when it is
-/// not - so only what the payload owns beyond its struct is left.
-unsafe extern "C" fn memsize_cb<T: Payload, const N: usize, const EMBEDDABLE: bool>(
-    ptr: *const c_void,
-) -> rb_sys::size_t {
-    crate::no_unwind::must_not_unwind::<crate::no_unwind::GcMemsize, _>(|| {
-        if ptr.is_null() {
-            return 0;
-        }
-        /* `quietly`: the size is advisory, so a panic in it - an overflow
-         * check in a sum, say - answers 0 rather than unwinding into the
-         * collector. (Not so for mark: a value left unmarked is freed while
-         * still referenced, so it must be unwind-free itself.) */
-        // SAFETY: as `mark_cb`.
-        let data = unsafe { &(*(ptr as *const Envelope<T, N>)).data };
-        let slots = core::mem::size_of::<[VALUE; N]>();
-        let bytes = crate::caught::quietly(0, || {
-            if EMBEDDABLE {
-                data.memsize().saturating_sub(core::mem::size_of::<T>())
-            } else {
-                data.memsize().saturating_add(slots)
-            }
-        });
-        rb_sys::size_t::try_from(bytes).unwrap_or(rb_sys::size_t::MAX)
-    })
 }
 
 /// A `rb_data_type_t` for a payload `T` with `N` slots: its GC callbacks
@@ -647,200 +475,6 @@ impl<T: Payload + Copy, const N: usize> EmbeddedType<T, N> {
     }
 }
 
-/* ---- the raw machinery behind TypedType ---- */
-
-/// A `rb_data_type_t` that can live in a `static`.
-///
-/// `rb_data_type_t` holds raw pointers, so it is not `Sync`; these are set at
-/// compile time and never written. `repr(transparent)` keeps the layout exactly
-/// `rb_data_type_t`, which is what `rb_data_typed_object_wrap` reads.
-#[repr(transparent)]
-struct DataType(rb_sys::rb_data_type_t);
-
-// SAFETY: the contents are set once at compile time and never mutated. Ruby
-// reads them from whichever thread holds the GVL.
-unsafe impl Sync for DataType {}
-
-/* The table of callbacks, in pointer-sized words: 5 up to Ruby 4.0 (dmark,
- * dfree, dsize, dcompact, reserved[1]) and 12 from 4.1 (+ handle_weak_references,
- * reserved[7]). Zero-initialising it is right for a layout whose extra words
- * are all optional callbacks or zero-filled reserve - which only someone who
- * has read the new header knows - so any other size stops the build here
- * instead of shipping a table nobody has checked. */
-const FUNCTION_TABLE_WORDS: usize =
-    size_of::<rb_sys::rb_data_type_struct__bindgen_ty_1>() / size_of::<usize>();
-const _: () = assert!(
-    FUNCTION_TABLE_WORDS == 5 || FUNCTION_TABLE_WORDS == 12,
-    "rb_data_type_t's callback table has a layout nupur has not read: check Ruby's \
-     include/ruby/internal/core/rtypeddata.h, then list its size here"
-);
-
-impl DataType {
-    /// `parent` is null for a base type.
-    pub const fn new(
-        name: *const core::ffi::c_char,
-        parent: *const rb_sys::rb_data_type_t,
-        dmark: rb_sys::RUBY_DATA_FUNC,
-        dfree: rb_sys::RUBY_DATA_FUNC,
-        dsize: Option<unsafe extern "C" fn(*const core::ffi::c_void) -> rb_sys::size_t>,
-        embedded: bool,
-    ) -> DataType {
-        const FREE_IMMEDIATELY: VALUE =
-            rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_FREE_IMMEDIATELY as VALUE;
-        const EMBEDDABLE: VALUE = rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_EMBEDDABLE as VALUE;
-        /* Zero first, then set only the fields used: Ruby's partial-initialiser
-         * convention (`reserved` "must be filled with zeros"), and what keeps
-         * this compiling when Ruby adds a callback to the table, as 4.1 did
-         * (`handle_weak_references`, `reserved[1]` -> `reserved[7]`). The
-         * layout check above is what turns a layout nobody has read into a
-         * build failure, not a silent one. */
-        // SAFETY: `rb_data_type_t` is plain C data - pointers, options of
-        // function pointers and an integer - for which all-zero is valid, and
-        // is Ruby's own initial state for the fields not set below.
-        let mut t: rb_sys::rb_data_type_t = unsafe { core::mem::zeroed() };
-        t.wrap_struct_name = name;
-        t.function.dmark = dmark;
-        t.function.dfree = dfree;
-        t.function.dsize = dsize;
-        /* No compaction callback (`dcompact` stays None): an object's only
-         * values are its slots, marked pinned. */
-        t.parent = parent;
-        t.data = core::ptr::null_mut();
-        t.flags = if embedded {
-            FREE_IMMEDIATELY | EMBEDDABLE
-        } else {
-            FREE_IMMEDIATELY
-        };
-        DataType(t)
-    }
-
-    /// The raw pointer the Ruby API wants.
-    #[inline]
-    pub const fn as_ptr(&self) -> *const rb_sys::rb_data_type_t {
-        self as *const DataType as *const rb_sys::rb_data_type_t
-    }
-}
-
-/// The data pointer of a TypedData object of type `ty` (or a type deriving
-/// from it), or the `TypeError` Ruby's own check raises.
-///
-/// The type is tested first, so a well-typed object - every call on the normal
-/// path - makes no protected call: its data pointer is read directly. Only a
-/// mismatch runs `rb_check_typeddata` (protected), which is what keeps the
-/// error message Ruby's own, word for word, on every supported Ruby.
-///
-/// The pointer is never null: an object whose data was never allocated is a
-/// `TypeError` too. `rb_data_typed_object_zalloc` makes a non-embedded type's
-/// object before its data, so an allocation that failed leaves an object of
-/// the class with none, which `ObjectSpace` can still hand to Ruby code until
-/// it is collected; every reader of a payload comes through here or
-/// [`typed_data_known`].
-fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void, Error> {
-    let (v, ty) = (v.as_raw(), ty.as_ptr());
-    // SAFETY: `v` is a live value and `ty` a registered data type; the data
-    // pointer is read only once the type is known to match.
-    unsafe {
-        if rb_sys::rb_typeddata_is_kind_of(v, ty) != 0 {
-            let p = data_pointer(v);
-            if p.is_null() {
-                return Err(crate::rb::error::type_error(
-                    "an object whose data was never allocated",
-                ));
-            }
-            return Ok(p);
-        }
-        match super::raw::check_typeddata(v, ty) {
-            Err(e) => Err(e),
-            /* rb_typeddata_is_kind_of said no, so the check should have raised. */
-            Ok(_) => Err(crate::rb::error::type_error("wrong argument type")),
-        }
-    }
-}
-
-/// The data pointer of a TypedData object, read without a check.
-///
-/// # Safety
-/// `v` is a live TypedData object.
-#[inline]
-unsafe fn data_pointer(v: VALUE) -> *mut c_void {
-    use rb_sys::stable_api::StableApiDefinition;
-    // SAFETY: the caller's contract.
-    unsafe { rb_sys::stable_api::get_default().rtypeddata_get_data(v) }
-}
-
-/// The data pointer of a TypedData object whose type the caller has already
-/// established - a receiver its `TryConvert` checked, or the owner a
-/// checked node holds.
-///
-/// A mismatch here is a bug in that reasoning, not a user error, so it panics:
-/// the panic unwinds through the Rust frames (running their destructors) and
-/// the method's trampoline makes it the internal error (`rb::error::INTERNAL_ERROR`), where a raise
-/// would longjmp past them.
-fn typed_data_known(v: Value, ty: &'static DataType) -> *mut c_void {
-    let (v, ty) = (v.as_raw(), ty.as_ptr());
-    // SAFETY: as in `typed_data`; the assert is the type check.
-    unsafe {
-        assert!(
-            rb_sys::rb_typeddata_is_kind_of(v, ty) != 0,
-            "a VALUE of an established type had a different one"
-        );
-        let p = data_pointer(v);
-        /* An established object was checked (`typed_data`) or made whole
-         * (`wrap_built`), so its data is there. */
-        assert!(!p.is_null(), "an established object without its data");
-        p
-    }
-}
-
-/// Make a `klass` object of data type `ty` with room for an envelope, and
-/// write `data` and `roots` into it: `TypedData_Make_Struct`, the C API's own
-/// way to make an object with its data, for every type - embedded or not,
-/// which only decides where Ruby puts the data (`rtypeddata_get_data` finds it
-/// either way).
-///
-/// One C call, `rb_data_typed_object_zalloc`, makes the object and its data,
-/// so one protected call per object. A non-embedded type's data is its
-/// `xcalloc`, which also makes it a point where Ruby decides whether malloc
-/// pressure calls for a collection: `rb_gc_adjust_memory_usage`, which a
-/// payload reports external memory with, only adds to that pressure, so a loop of
-/// wraps with no Ruby allocation of their data ran no GC at all
-/// (`spec/gc_accounting_spec.rb`).
-///
-/// The order is the point. The data is zeroed until the envelope is written,
-/// which is not a valid payload, so the payload is built BEFORE the object
-/// exists, and nothing runs between the allocation and the write: no mark,
-/// free or size callback can see the zeroed data, and a panic building the
-/// payload leaves no object at all. The roots are on this frame through the
-/// allocation (the caller's array), where the GC's stack scan keeps them
-/// alive and unmoved, and are in the slots - where the mark finds them -
-/// before anything else runs. A failed allocation - `Err`, from `raw`'s
-/// protected call - drops the payload.
-///
-/// # Safety
-/// Under the GVL; `ty` must be the type of `T` with `N` slots; each root is
-/// a live value.
-unsafe fn wrap_built<T, const N: usize>(
-    klass: VALUE,
-    ty: *const rb_data_type_t,
-    data: T,
-    roots: [VALUE; N],
-) -> Result<VALUE, Error> {
-    const { assert!(core::mem::size_of::<Envelope<T, N>>() != 0) };
-    const { assert!(core::mem::align_of::<Envelope<T, N>>() <= 16) }; /* malloc's alignment */
-    let obj = super::raw::typed_object_zalloc(klass, core::mem::size_of::<Envelope<T, N>>(), ty)?;
-    let p = data_pointer(obj) as *mut Envelope<T, N>;
-    if p.is_null() {
-        return Err(crate::rb::error::internal_error(
-            "a TypedData object was made without its data",
-        ));
-    }
-    p.write(Envelope { roots, data });
-    /* The roots stayed on this frame until here; from here the mark sees
-     * them in the slots. */
-    core::hint::black_box(&roots);
-    Ok(obj)
-}
-
 /// The largest envelope an embedded type takes: with `RTypedData`'s header it fits
 /// the 80-byte slot, well inside Ruby's largest (640), so
 /// `rb_data_typed_object_zalloc` embeds it. Were it not embedded, the object
@@ -851,43 +485,3 @@ pub const EMBED_MAX: usize = 40;
 /// after `RTypedData`'s header, which a slot places at an 8-byte boundary
 /// only - not the 16 `wrap_built` allows for `xcalloc`'s data.
 pub const EMBED_ALIGN: usize = 8;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    unsafe extern "C" fn mark(_: *mut c_void) {}
-    unsafe extern "C" fn free(_: *mut c_void) {}
-    unsafe extern "C" fn size(_: *const c_void) -> rb_sys::size_t {
-        0
-    }
-
-    /// The table's words past the three callbacks `DataType::new` sets are
-    /// all zero - `dcompact`, the reserve (`reserved[1]` up to Ruby 4.0), and on
-    /// 4.1 `handle_weak_references` and `reserved[7]` too - since a non-zero
-    /// reserve is a callback Ruby would call.
-    #[test]
-    fn the_callback_table_leaves_what_it_does_not_set_zero() {
-        let ty = DataType::new(
-            c"nupur::test".as_ptr(),
-            core::ptr::null(),
-            Some(mark),
-            Some(free),
-            Some(size),
-            false,
-        );
-        let table = &ty.0.function;
-        assert!(table.dmark.is_some() && table.dfree.is_some() && table.dsize.is_some());
-        assert!(table.dcompact.is_none());
-        // SAFETY: the table is `FUNCTION_TABLE_WORDS` pointer-sized words of
-        // plain data, read here as such.
-        let words = unsafe {
-            core::slice::from_raw_parts(table as *const _ as *const usize, FUNCTION_TABLE_WORDS)
-        };
-        assert!(words[3..].iter().all(|&w| w == 0), "{words:?}");
-        assert_eq!(ty.0.flags, VALUE::from(FREE_IMMEDIATELY_FLAG));
-    }
-
-    const FREE_IMMEDIATELY_FLAG: u32 =
-        rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_FREE_IMMEDIATELY as u32;
-}

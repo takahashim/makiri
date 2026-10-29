@@ -139,12 +139,13 @@ fn strict_utf8(ruby: &Ruby, str: RString, eff: Encoding) -> Result<RString, Erro
     if eff.reads_as_utf8_bytes(ruby) {
         return Ok(str);
     }
-    let mut input = str;
-    if Encoding::of(str) != eff {
-        input = super::raw::str_dup(input)?;
-        super::raw::enc_associate(input, eff)?;
-    }
-    super::raw::str_encode(input, Encoding::utf8(ruby), 0).or_else(|e| {
+    let input = if Encoding::of(str) == eff {
+        str
+    } else {
+        eff.relabel(str)?
+    };
+    let strict = crate::nupur::encoding::Unconvertible::Raise;
+    Encoding::utf8(ruby).encode(input, strict).or_else(|e| {
         /* Worded first, as the message is the raise's own; the error is then
          * handled only if it is an `EncodingError`, and passed on otherwise. */
         let refusal = syntax_error(format_args!(

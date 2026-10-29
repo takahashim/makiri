@@ -30,9 +30,6 @@ pub use crate::nupur::args;
 pub use crate::nupur::build;
 pub use crate::nupur::hash;
 
-/// The Ruby C calls that can raise, each with its raise stated.
-pub use crate::nupur::raw;
-
 /// The Ruby layer over rb-sys: values, errors, method registration, classes.
 pub use crate::nupur::rb;
 

@@ -89,7 +89,7 @@ fn each(ruby: &Ruby, s: NodeSetSelf) -> Result<Value, Error> {
         let node = s.at(ruby, i)?.ok_or_else(|| {
             crate::bridge::ruby::internal_error("a node set changed while it was iterated")
         })?;
-        crate::bridge::raw::yield_value(ruby, node)?;
+        yield_node(ruby, node)?;
     }
     Ok(this)
 }
@@ -167,4 +167,17 @@ pub fn init_node_set(ruby: &Ruby) -> Result<(), Error> {
     klass.define_method("each", method!(each, 0))?;
     klass.define_method("dup", method!(dup, -1))?;
     Ok(())
+}
+
+/// Yield `node` to `#each`'s block: the caller's Ruby, run with no document
+/// read held (the set is read by index, one node at a time).
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        runs_callers_ruby,
+        reason = "NodeSet#each's block, the point of the method; no document read is held across it"
+    )
+)]
+fn yield_node(ruby: &Ruby, node: Value) -> Result<Value, Error> {
+    crate::bridge::rb::method::yield_value(ruby, node)
 }

@@ -10,7 +10,8 @@
 use crate::bridge::rb::{prelude::*, Error, RArray, RHash, Ruby, Value};
 use crate::function;
 
-use crate::bridge::build::{ary, aset, hash, int, push, sym};
+use crate::bridge::build::{ary, aset, hash, int, push, symbol as sym};
+use crate::bridge::rb::Symbol;
 use crate::bridge::ruby::boolean;
 use crate::bridge::string::{ruby_verified_text, utf8_str};
 use crate::init::MOD_LEXBOR;
@@ -27,20 +28,20 @@ use crate::selectors::stylesheet::{parse, Decl, Fail, Rule, MAX_DEPTH};
 /// for every declaration; a per-call struct does that without process-global
 /// mutable state, and a stylesheet is one call.
 struct Keys {
-    type_: Value,
-    selectors: Value,
-    declarations: Value,
-    name: Value,
-    value: Value,
-    important: Value,
-    text: Value,
-    specificity: Value,
-    selector_text: Value,
-    prelude: Value,
-    rules: Value,
-    sym_style: Value,
-    sym_bad_style: Value,
-    sym_at_rule: Value,
+    type_: Symbol,
+    selectors: Symbol,
+    declarations: Symbol,
+    name: Symbol,
+    value: Symbol,
+    important: Symbol,
+    text: Symbol,
+    specificity: Symbol,
+    selector_text: Symbol,
+    prelude: Symbol,
+    rules: Symbol,
+    sym_style: Symbol,
+    sym_bad_style: Symbol,
+    sym_at_rule: Symbol,
 }
 
 impl Keys {

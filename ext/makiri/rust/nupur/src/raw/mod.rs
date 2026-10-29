@@ -76,178 +76,12 @@ fn c_len<L: TryFrom<usize>>(n: usize) -> Result<L, Error> {
     L::try_from(n).map_err(|_| crate::rb::error::arg_error("string too large"))
 }
 
-/// An exception of `class` with the UTF-8 message `msg`: `rb_exc_new_str`,
-/// which allocates and runs the class's `initialize`, and so raises.
-#[inline]
-pub fn exception_new(ruby: &Ruby, class: ExceptionClass, msg: &[u8]) -> Result<Value, Error> {
-    let s = utf8_str_new(ruby, msg)?.as_raw();
-    let class = class.as_raw();
-    let exc = call(|| unsafe {
-        injected_raise();
-        rb_sys::rb_exc_new_str(class, s)
-    })?;
-    // SAFETY: the object just made.
-    Ok(unsafe { Value::from_raw(exc) })
-}
-
-/// Does [`call`] still tell a raise from a `throw` or a `break`? It does by
-/// `rb_protect`'s state, `TAG_RAISE`, a number Ruby does not document
-/// (`protect`'s own doc), so the extension asks once as it loads: a raise is
-/// made under `call` and must come back as an exception. `Ok(false)` is a Ruby
-/// whose numbering this was not written for - the exit it left pending is
-/// forgotten here, and the caller refuses to load.
-pub fn raise_is_recognised(ruby: &Ruby) -> Result<bool, Error> {
-    let exc = exception_new(ruby, ruby.exception_runtime_error(), b"raise self-check")?.as_raw();
-    let outcome = call::<(), _>(|| unsafe { rb_sys::rb_exc_raise(exc) });
-    let recognised = matches!(
-        &outcome,
-        Err(e) if e.is_kind_of(ruby, crate::rb::Builtin::RuntimeError)
-    );
-    if !recognised {
-        reset_pending_exit();
-        forget_errinfo(ruby);
-    }
-    Ok(recognised)
-}
-
-/// The longest class name [`with_classname`] hands on; a longer one is cut.
-const CLASSNAME_MAX: usize = 128;
-
-/// `rb_obj_classname`: the name of `v`'s class, handed to `f` as bytes. Raises
-/// `NoMemoryError`: an anonymous class's name (`#<Class:0x...>`) is a String
-/// made on each call, referenced by nothing once the call returns - so `f`
-/// is handed a copy, up to [`CLASSNAME_MAX`] bytes, and may do anything.
-pub fn with_classname<R>(v: Value, f: impl FnOnce(&[u8]) -> R) -> Result<R, Error> {
-    let v = v.as_raw();
-    let p = call(|| unsafe {
-        injected_raise();
-        rb_sys::rb_obj_classname(v)
-    })?;
-    if p.is_null() {
-        return Ok(f(b"Object"));
-    }
-    /* Copied out at once, before `f` runs: the name may be a temporary
-     * String nothing references, which a collection `f` set off could free.
-     * A name past the buffer is cut - it is written into a message. */
-    let mut buf = [0u8; CLASSNAME_MAX];
-    // SAFETY: a NUL-terminated C string owned by the class or by that
-    // temporary String, read and copied here with nothing run between.
-    let name = unsafe { core::ffi::CStr::from_ptr(p) }.to_bytes();
-    /* At a character boundary, so a cut name ends in a whole character. */
-    let n = crate::msg::floor_char_boundary(name, CLASSNAME_MAX);
-    if let (Some(d), Some(s)) = (buf.get_mut(..n), name.get(..n)) {
-        d.copy_from_slice(s);
-    }
-    Ok(f(buf.get(..n).unwrap_or_default()))
-}
-
-/// `rb_hash_lookup2` at `key`, `Ok(None)` for no entry. The key must be a
-/// Symbol or a plain String, hashed and compared in C - any other is a
-/// `TypeError` here, as [`hash_aset`]'s, since its own `#hash` would run - but
-/// a key already IN the Hash may
-/// be any object, and one whose hash collides is compared with its `eql?`,
-/// the caller's Ruby, which can raise or `throw`. That comes back as `Err`,
-/// to be passed on: read as "no entry", the exception would be lost and the
-/// keyword taken as absent. In the raise sweep's set (`injected_raise`), so
-/// that path is run.
-pub fn hash_lookup(h: RHash, key: Value) -> Result<Option<Value>, Error> {
-    const UNDEF: VALUE = rb_sys::Qundef as VALUE;
-    plain_key_or_refuse(key)?;
-    let (h, key) = (h.as_raw(), key.as_raw());
-    let v = call(|| unsafe {
-        injected_raise();
-        rb_sys::rb_hash_lookup2(h, key, UNDEF)
-    })?;
-    // SAFETY: a value of the Hash's, or `Qundef`, which is not handed out.
-    Ok((v != UNDEF).then(|| unsafe { Value::from_raw(v) }))
-}
-
-/// `rb_range_values`: a Range's ends and whether it excludes its end. For a
-/// Range (or a subclass's instance) the fields are read, and no Ruby runs.
-pub fn range_values(r: Range) -> Result<(Value, Value, bool), Error> {
-    let r = r.as_raw();
-    let (mut beg, mut end, mut excl): (VALUE, VALUE, c_int) = (0, 0, 0);
-    let (pb, pe, px) = (
-        &mut beg as *mut VALUE,
-        &mut end as *mut VALUE,
-        &mut excl as *mut c_int,
-    );
-    call(|| unsafe { rb_sys::rb_range_values(r, pb, pe, px) })?;
-    // SAFETY: the Range's own ends, live while it is.
-    Ok(unsafe { (Value::from_raw(beg), Value::from_raw(end), excl != 0) })
-}
-
-/// The constant `name` of `outer` (`rb_const_get`): raises `NameError` for
-/// none, and an autoload runs Ruby code - for a class the extension's own
-/// Ruby defines.
-pub fn const_get(ruby: &Ruby, outer: Value, name: &core::ffi::CStr) -> Result<Value, Error> {
-    let id = intern_cstr(ruby, name)?.as_raw();
-    let outer = outer.as_raw();
-    let v = call(|| unsafe { rb_sys::rb_const_get(outer, id) })?;
-    // SAFETY: the constant's value, live while it is bound.
-    Ok(unsafe { Value::from_raw(v) })
-}
-
-/// `recv.name(*args)` (`rb_funcallv`): the caller's Ruby, which is why each
-/// call of it is allowed where it is made (`rake dylint`'s
-/// `runs_callers_ruby`) - the one use is
-/// a `Data` class of the extension's own, whose `new` takes the
-/// arguments as Data's does.
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        runs_callers_ruby,
-        reason = "the one call of a method: XML::Namespace.new, Makiri's own Data class"
-    )
-)]
-pub fn call_method(
-    ruby: &Ruby,
-    recv: Value,
-    name: &core::ffi::CStr,
-    args: &[Value],
-) -> Result<Value, Error> {
-    let id = intern_cstr(ruby, name)?.as_raw();
-    let argc = c_int::try_from(args.len())
-        .map_err(|_| crate::rb::error::arg_error("too many arguments"))?;
-    let recv = recv.as_raw();
-    /* `Value` is transparent over `VALUE`, so the slice is the C array. */
-    let argv = args.as_ptr() as *const VALUE;
-    let v = call(|| unsafe { rb_sys::rb_funcallv(recv, id, argc, argv) })?;
-    // SAFETY: what the method returned, live on this frame.
-    Ok(unsafe { Value::from_raw(v) })
-}
-
-/// `rb_module_new`: an anonymous module. Raises `NoMemoryError`.
-pub fn module_new(_: &Ruby) -> Result<RModule, Error> {
-    let v = call(|| unsafe {
-        injected_raise();
-        rb_sys::rb_module_new()
-    })?;
-    typed(v, RModule::from_value, "a C call made no Module")
-}
-
-/// `rb_big2ll`: raises `RangeError` past an `i64`. For a Bignum only - the C
-/// reads a Bignum's header unchecked - so crate-private: the one caller is
-/// `Integer::to_i64`, which answers a Fixnum itself.
-pub(crate) fn big2ll(n: Integer) -> Result<i64, Error> {
-    let n = n.as_raw();
-    Ok(i64::from(call(|| unsafe { rb_sys::rb_big2ll(n) })?))
-}
-
-/// `rb_big2ull`: raises `RangeError` past a `u64`. For a non-negative Bignum
-/// only (a negative one would wrap), so crate-private: the one caller is
-/// `Integer::to_u64`, which refuses a negative value and answers a Fixnum
-/// itself.
-pub(crate) fn big2ull(n: Integer) -> Result<u64, Error> {
-    let n = n.as_raw();
-    Ok(u64::from(call(|| unsafe { rb_sys::rb_big2ull(n) })?))
-}
-
 /* ---- the rest, by what it wraps ---- */
 
 mod check;
 mod data;
 mod define;
+mod exception;
 mod iterate;
 mod string;
 mod symbol;
@@ -255,6 +89,7 @@ mod values;
 pub use check::*;
 pub(crate) use data::*;
 pub use define::*;
+pub use exception::*;
 pub use iterate::*;
 pub use string::*;
 pub use symbol::*;

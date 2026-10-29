@@ -130,7 +130,11 @@ impl XPathCtxSelf {
          * context, `NoMemoryError`): a failure there leaves the context node
          * as it was. After it no Ruby has run, so no evaluate can have begun,
          * and the engine takes the node: the two never disagree. */
-        crate::bridge::raw::ivar_set(self.value(), crate::bridge::wrapper::ivar_node(), rb_node)?;
+        crate::bridge::rb::value::ivar_set(
+            self.value(),
+            crate::bridge::wrapper::ivar_node(),
+            rb_node,
+        )?;
         self.ctx.set_context_node(token).map_err(|_| {
             crate::bridge::ruby::internal_error("an evaluate began during XPathContext#node=")
         })

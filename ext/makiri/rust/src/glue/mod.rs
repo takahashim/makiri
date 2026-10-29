@@ -17,11 +17,11 @@
 //! `Result<_, crate::bridge::rb::Error>`, which the method's trampoline turns
 //! into a raise after the Rust frames have returned normally
 //! (`bridge::rb::method::finish`), and a Ruby C function that can raise is called
-//! only through `bridge::raw`, whose every wrapper catches the raise and hands
+//! only through `nupur::raw`, whose every wrapper catches the raise and hands
 //! it back the same way - Ruby's allocator's `NoMemoryError` included, so
 //! the glue builds its Arrays, Hashes and Strings through `bridge::build` and
 //! `bridge::string`. `rake dylint`'s `raising_call_outside_protect` holds the
-//! raising C calls to `nupur::raw` (`bridge::raw`), each inside its protected
+//! raising C calls to `nupur::raw`, each inside its protected
 //! `call` - and the extension cannot name one at all, not depending on rb-sys.
 //!
 //! **Nothing Ruby crosses into a GVL-released closure.** Not a `Value`, not a

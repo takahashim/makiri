@@ -1,4 +1,4 @@
-//! Arrays, Hashes and numbers (`build` spells these for a caller).
+//! Arrays, Hashes, Ranges and numbers (`build` spells some of these for a caller).
 
 use super::*;
 
@@ -61,7 +61,7 @@ pub(crate) fn table_set(h: RHash, n: u32, v: Value) -> Result<(), Error> {
     let key = crate::int::fixnum(i64::from(n)).ok_or_else(|| {
         Error::new(
             crate::rb::Builtin::RangeError,
-            "a table key past a Fixnum (more than 2^30 nodes on Windows)",
+            "a table key past a Fixnum (2^30 - 1 on Windows)",
         )
     })?;
     let (h, v) = (h.as_raw(), v.as_raw());
@@ -172,4 +172,57 @@ pub(crate) fn enumeratorize(obj: Value, meth: Symbol) -> Result<Value, Error> {
         rb_sys::rb_enumeratorize_with_size(o, m, 0, core::ptr::null(), None)
     })?;
     typed(v, Some, "a C call made no value")
+}
+
+/// `rb_hash_lookup2` at `key`, `Ok(None)` for no entry. The key must be a
+/// Symbol or a plain String, hashed and compared in C - any other is a
+/// `TypeError` here, as [`hash_aset`]'s, since its own `#hash` would run - but
+/// a key already IN the Hash may
+/// be any object, and one whose hash collides is compared with its `eql?`,
+/// the caller's Ruby, which can raise or `throw`. That comes back as `Err`,
+/// to be passed on: read as "no entry", the exception would be lost and the
+/// keyword taken as absent. In the raise sweep's set (`injected_raise`), so
+/// that path is run.
+pub fn hash_lookup(h: RHash, key: Value) -> Result<Option<Value>, Error> {
+    const UNDEF: VALUE = rb_sys::Qundef as VALUE;
+    plain_key_or_refuse(key)?;
+    let (h, key) = (h.as_raw(), key.as_raw());
+    let v = call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_hash_lookup2(h, key, UNDEF)
+    })?;
+    // SAFETY: a value of the Hash's, or `Qundef`, which is not handed out.
+    Ok((v != UNDEF).then(|| unsafe { Value::from_raw(v) }))
+}
+
+/// `rb_range_values`: a Range's ends and whether it excludes its end. For a
+/// Range (or a subclass's instance) the fields are read, and no Ruby runs.
+pub fn range_values(r: Range) -> Result<(Value, Value, bool), Error> {
+    let r = r.as_raw();
+    let (mut beg, mut end, mut excl): (VALUE, VALUE, c_int) = (0, 0, 0);
+    let (pb, pe, px) = (
+        &mut beg as *mut VALUE,
+        &mut end as *mut VALUE,
+        &mut excl as *mut c_int,
+    );
+    call(|| unsafe { rb_sys::rb_range_values(r, pb, pe, px) })?;
+    // SAFETY: the Range's own ends, live while it is.
+    Ok(unsafe { (Value::from_raw(beg), Value::from_raw(end), excl != 0) })
+}
+
+/// `rb_big2ll`: raises `RangeError` past an `i64`. For a Bignum only - the C
+/// reads a Bignum's header unchecked - so crate-private: the one caller is
+/// `Integer::to_i64`, which answers a Fixnum itself.
+pub(crate) fn big2ll(n: Integer) -> Result<i64, Error> {
+    let n = n.as_raw();
+    Ok(i64::from(call(|| unsafe { rb_sys::rb_big2ll(n) })?))
+}
+
+/// `rb_big2ull`: raises `RangeError` past a `u64`. For a non-negative Bignum
+/// only (a negative one would wrap), so crate-private: the one caller is
+/// `Integer::to_u64`, which refuses a negative value and answers a Fixnum
+/// itself.
+pub(crate) fn big2ull(n: Integer) -> Result<u64, Error> {
+    let n = n.as_raw();
+    Ok(u64::from(call(|| unsafe { rb_sys::rb_big2ull(n) })?))
 }

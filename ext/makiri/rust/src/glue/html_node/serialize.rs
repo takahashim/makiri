@@ -34,14 +34,14 @@ fn layout_opt(ruby: &Ruby, args: &[Value]) -> Result<Layout, Error> {
 /// XML Attr does; the serializer itself has no markup for one, and refused.
 fn render(ruby: &Ruby, node: HtmlNode<'_>, scope: Scope, layout: Layout) -> Result<RString, Error> {
     if node.node_type() == NodeType::Attribute {
-        return crate::bridge::string::utf8_rstring(ruby, b"");
+        return crate::bridge::string::utf8_str(ruby, b"");
     }
     let buf =
         serialize(node, scope, layout).ok_or_else(|| makiri_error("HTML serialization failed"))?;
     /* The serializer emits UTF-8, so the String is tagged UTF-8 rather than
      * built as binary and re-tagged; protected, so a failed allocation drops
      * `buf` rather than leaking it. */
-    crate::bridge::string::utf8_rstring(ruby, buf.as_slice())
+    crate::bridge::string::utf8_str(ruby, buf.as_slice())
 }
 
 /// Outer HTML: the node itself plus its descendants. `pretty: true` indents.

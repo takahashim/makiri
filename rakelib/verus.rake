@@ -17,7 +17,7 @@ VERUS_COPIES = [
   ["ext/makiri/rust/src/limits.rs", "ext/makiri/rust/verus/limits.rs", "admit"],
   ["ext/makiri/rust/src/cbuf.rs", "ext/makiri/rust/verus/cbuf.rs", "copy_small"],
   # nupur's copy of it, which writes a String in place (`utf8_str_filled`).
-  ["ext/makiri/rust/nupur/src/string.rs", "ext/makiri/rust/verus/cbuf.rs", "copy_small"],
+  ["ext/makiri/rust/nupur/src/string/make.rs", "ext/makiri/rust/verus/cbuf.rs", "copy_small"],
   *%w[as_slice append append_growing raise_limit reserve steal content_limit
       content_limit_for grow_to].map do |name|
     ["ext/makiri/rust/src/cbuf.rs", "ext/makiri/rust/verus/cbuf.rs", "Buf::#{name}"]

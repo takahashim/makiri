@@ -8,11 +8,11 @@
 //! # Where a GC may run
 //!
 //! Building any String or NodeSet allocates, and Ruby's allocator raises
-//! `NoMemoryError` - which `bridge::raw` hands back as `Err`. Every read of the document is a
+//! `NoMemoryError` - which `nupur::raw` hands back as `Err`. Every read of the document is a
 //! guard (`HtmlSelf::read`). A node is wrapped after the read
 //! (`HtmlView::wrap`), and a String (`str_from_read`), a NodeSet or an Array
 //! of names is built with the read held; every allocation
-//! returns `Err` on failure (`bridge::raw`). The attribute
+//! returns `Err` on failure (`nupur::raw`). The attribute
 //! lookups take their name through `ruby_verified_text`, an owned copy, which
 //! goes with the read.
 
@@ -81,7 +81,7 @@ pub fn name(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     })?;
     match name {
         Some(name) => Ok(name),
-        None => crate::bridge::string::utf8_str(ruby, b""),
+        None => crate::bridge::string::utf8_str(ruby, b"").map(|s| s.as_value()),
     }
 }
 

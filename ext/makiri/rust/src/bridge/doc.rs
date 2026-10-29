@@ -18,7 +18,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::bridge::rb::{Error, RString, Ruby, Value};
+use crate::bridge::rb::{Error, RString, ReprValue, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
 
@@ -154,7 +154,7 @@ pub fn document_title(ruby: &Ruby, rb_doc: Value) -> Result<RString, Error> {
     let read = html_read(&rb_doc)?;
     let title = read.doc().title();
     let bytes = title.as_deref().unwrap_or(&[]);
-    crate::bridge::string::utf8_rstring(ruby, bytes)
+    crate::bridge::string::utf8_str(ruby, bytes)
 }
 
 /// `Document#encoding`: the character encoding the document was read in, by
@@ -167,7 +167,7 @@ pub fn document_encoding(rb_doc: Value) -> Result<&'static str, Error> {
 /// 0 no-quirks, 1 quirks, 2 limited-quirks. Set by the parser from the doctype.
 pub fn document_quirks_mode(ruby: &Ruby, rb_doc: Value) -> Result<Value, Error> {
     let mode = html_read(&rb_doc)?.doc().compat_mode();
-    crate::bridge::build::int(ruby, mode)
+    crate::bridge::build::int(ruby, mode).map(|i| i.as_value())
 }
 
 /// `Document#errors`: the (currently always empty) parse-warning Array.

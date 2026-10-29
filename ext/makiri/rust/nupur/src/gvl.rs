@@ -30,8 +30,8 @@ use core::ffi::c_void;
 /// # Interrupts
 /// `rb_thread_call_without_gvl` checks for pending interrupts before and after
 /// the body and RAISES there - a longjmp over this frame and its callers, which
-/// skips their destructors: the parsed document in `out` and the copied source
-/// leaked on every `Timeout`/`Thread#raise` that landed during a parse (30
+/// skips their destructors: whatever the body made and its callers own leaked
+/// on every `Timeout`/`Thread#raise` that landed meanwhile (in Makiri, 30
 /// interrupted 5 MB parses grew the process by ~900 MB). The `2` variant never
 /// raises: an interrupt pending at the start makes it return without running
 /// the body, and it does not check afterwards. So:

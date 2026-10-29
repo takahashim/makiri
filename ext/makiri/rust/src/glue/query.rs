@@ -125,11 +125,12 @@ impl Keywords {
 fn matching_lax(ruby: &Ruby, v: Value) -> Result<bool, Error> {
     /* By identity: a Symbol is unique, and `eql?` would be the caller's
      * value's method. */
-    if v.is_nil() || crate::bridge::ruby::same_value(v, crate::bridge::build::sym(ruby, "strict")?)
+    if v.is_nil()
+        || crate::bridge::ruby::same_value(v, crate::bridge::build::symbol(ruby, "strict")?)
     {
         return Ok(false);
     }
-    if crate::bridge::ruby::same_value(v, crate::bridge::build::sym(ruby, "lax")?) {
+    if crate::bridge::ruby::same_value(v, crate::bridge::build::symbol(ruby, "lax")?) {
         return Ok(true);
     }
     Err(Error::new(

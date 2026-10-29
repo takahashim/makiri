@@ -123,7 +123,7 @@ fn alloc_inject_calls() -> Result<u64, Error> {
 }
 
 /// `Makiri.__raise_inject(n)` - arm "the nth raising C call raises
-/// `NoMemoryError` in place of its allocation" (`bridge::raw`'s allocating
+/// `NoMemoryError` in place of its allocation" (`nupur::raw`'s allocating
 /// wrappers; `script/check_raise_injection.rb`).
 fn raise_inject(nth: Value) -> Result<(), Error> {
     let nth = crate::bridge::ruby::integer_arg(nth)?.to_i64()?;
@@ -259,12 +259,12 @@ fn panic_probe(ruby: &Ruby, kind: Value) -> Result<(), Error> {
 /// `Makiri.__drop_exit { ... }` - yield once and drop what the block's exit
 /// or exception came back as: a method that loses an `Err`, which the lints
 /// keep out of the extension, and so made by nupur
-/// (`raw::yield_dropping_error_for_test`). A dropped `throw`, `break` or
+/// (`rb::method::yield_dropping_error_for_test`). A dropped `throw`, `break` or
 /// thread kill must still be resumed - by the trampoline, as the method
 /// returns (`spec/pending_exit_spec.rb`) - never lost, nor left pending for
 /// another method or thread. Any build.
 fn drop_exit(ruby: &Ruby) {
-    crate::bridge::raw::yield_dropping_error_for_test(ruby);
+    crate::bridge::rb::method::yield_dropping_error_for_test(ruby);
 }
 
 /// `Makiri::XML.__decode(str)` - the strict input decode in isolation, without
@@ -274,6 +274,7 @@ fn xml_decode(ruby: &Ruby, str: Value) -> Result<Value, Error> {
     /* decode-only: no arena, no budget */
     crate::bridge::xml_decode::xml_decode_input(ruby, s, None)
         .and_then(|d| crate::bridge::string::utf8_str(ruby, d.as_slice()))
+        .map(crate::bridge::rb::ReprValue::as_value)
 }
 
 /* ------------------------------------------------------------------ *

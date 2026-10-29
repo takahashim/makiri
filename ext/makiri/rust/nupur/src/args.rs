@@ -32,11 +32,20 @@ pub fn index_arg(v: Value) -> Result<i64, Error> {
     integer_arg(v)?.to_i64()
 }
 
+/// A Range argument over a collection of `count` elements, as `Array#[]`
+/// reads one (`rb_range_beg_len`): the start and the length it selects,
+/// `None` for a start outside the collection, `RangeError` for a bound too
+/// large, and a `TypeError` for a Range whose ends are not Integers or nil -
+/// whose `to_int` the C would run.
+pub fn range_beg_len(range: Value, count: usize) -> Result<Option<(usize, usize)>, Error> {
+    crate::raw::range_beg_len(range, count)
+}
+
 const TO_S_HINT: &str = "; call #to_s to convert it";
 const TO_I_HINT: &str = "; call #to_i to convert it";
 
-/// `v` as a String for a NAME (an attribute or element name, a prefix, a
-/// selector, an expression): a String, or a Symbol's name. Nothing else
+/// `v` as a String for a NAME - anything a caller may write as a Symbol as
+/// well: a String, or a Symbol's name. Nothing else
 /// converts, as [`string_arg`].
 pub fn name_arg(v: Value) -> Result<RString, Error> {
     if let Some(s) = RString::from_value(v) {

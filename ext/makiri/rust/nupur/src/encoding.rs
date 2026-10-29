@@ -16,10 +16,33 @@ use crate::rb::{Error, RString};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Encoding(*mut rb_sys::rb_encoding);
 
-/// `rb_str_encode`'s flags to replace, with U+FFFD (or `?`), an invalid byte
-/// sequence or a character the target has no form for, rather than raise.
-pub const ECONV_REPLACE: c_int = rb_sys::ruby_econv_flag_type::RUBY_ECONV_INVALID_REPLACE as c_int
-    | rb_sys::ruby_econv_flag_type::RUBY_ECONV_UNDEF_REPLACE as c_int;
+/// What a transcode ([`Encoding::encode`]) does with a byte sequence that is
+/// invalid in the source, or a character the target has no form for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Unconvertible {
+    /// Raise Ruby's `EncodingError` (`InvalidByteSequenceError`,
+    /// `UndefinedConversionError`).
+    Raise,
+    /// Replace either with U+FFFD (or `?` where the target has none).
+    Replace,
+    /// Write a character the target has no form for as a hex character
+    /// reference (`&#x...;`); an invalid sequence still raises.
+    HexCharRef,
+}
+
+impl Unconvertible {
+    /// `rb_str_encode`'s flags for it.
+    fn ecflags(self) -> c_int {
+        use rb_sys::ruby_econv_flag_type as f;
+        match self {
+            Unconvertible::Raise => 0,
+            Unconvertible::Replace => {
+                f::RUBY_ECONV_INVALID_REPLACE as c_int | f::RUBY_ECONV_UNDEF_REPLACE as c_int
+            }
+            Unconvertible::HexCharRef => f::RUBY_ECONV_UNDEF_HEX_CHARREF as c_int,
+        }
+    }
+}
 
 impl Encoding {
     /// The encoding's name, as Ruby spells it.
@@ -108,63 +131,13 @@ impl Encoding {
         self == Encoding::utf8(ruby) || self.is_usascii()
     }
 
-    /// Whether text that is already UTF-8/US-ASCII needs hex-character-reference
-    /// transcoding to this encoding (that is, it is something else).
-    pub fn needs_transcode(self, ruby: &crate::rb::Ruby) -> bool {
-        !self.is_utf8_compatible(ruby)
-    }
-
     /// Whether input in this encoding is read as UTF-8 bytes with no
     /// transcode: UTF-8, US-ASCII, or ASCII-8BIT - deliberately raw bytes.
     /// Anything else is transcoded to UTF-8 first. How the bytes are then
-    /// checked is each reader's own: HTML repairs invalid UTF-8 to U+FFFD
-    /// - and the next reader may refuse it.
+    /// checked is each reader's own: one repairs invalid UTF-8 to U+FFFD,
+    /// another refuses it.
     pub fn reads_as_utf8_bytes(self, ruby: &crate::rb::Ruby) -> bool {
         self.is_utf8_compatible(ruby) || self.is_ascii8bit()
-    }
-
-    /// [`Encoding::reads_as_utf8_bytes`] for `s`'s encoding, by index and
-    /// with no call on the common path: the index is read from the String's
-    /// flags, where Ruby keeps it inline for every encoding below
-    /// `RUBY_ENCODING_INLINE_MAX` (the builtin three are 0-2), and compared
-    /// with the builtin indices, looked up once. Every strict read (a
-    /// selector, an attribute name or value) asks, and `rb_enc_get` +
-    /// `rb_utf8_encoding` cost `Node#[]` ~13%.
-    #[cfg_attr(
-        dylint_lib = "makiri_lints",
-        allow(
-            raising_call_outside_protect,
-            reason = "rb_enc_get_index raises for a File or a Symbol, as rb_enc_get; `s` is a String, and a String's index is an ivar read when it is not inline"
-        )
-    )]
-    pub fn string_reads_as_utf8_bytes(_: &crate::rb::Ruby, s: RString) -> bool {
-        use rb_sys::ruby_encoding_consts::{
-            RUBY_ENCODING_INLINE_MAX, RUBY_ENCODING_MASK, RUBY_ENCODING_SHIFT,
-        };
-        static BUILTIN: std::sync::OnceLock<[c_int; 3]> = std::sync::OnceLock::new();
-        // SAFETY: `s` is a live String - a heap object, whose flags word is
-        // the first field of its `RBasic` and readable; reading it runs no Ruby.
-        let flags = unsafe { (*(s.as_raw() as *const rb_sys::RBasic)).flags };
-        /* Seven bits, which a `c_int` holds. */
-        let bits =
-            (crate::int::word(flags) & RUBY_ENCODING_MASK as usize) >> RUBY_ENCODING_SHIFT as u32;
-        let inline = c_int::try_from(bits).unwrap_or(c_int::MAX);
-        let index = if inline == RUBY_ENCODING_INLINE_MAX as c_int {
-            // SAFETY: as above; the lookup reads an instance variable and
-            // raises nothing.
-            unsafe { rb_sys::rb_enc_get_index(s.as_raw()) }
-        } else {
-            inline
-        };
-        // SAFETY: Ruby's immutable builtin encoding indices.
-        let builtin = BUILTIN.get_or_init(|| unsafe {
-            [
-                rb_sys::rb_utf8_encindex(),
-                rb_sys::rb_usascii_encindex(),
-                rb_sys::rb_ascii8bit_encindex(),
-            ]
-        });
-        builtin.contains(&index)
     }
 
     /// A copy of `str` tagged with this encoding instead of its own: its
@@ -176,43 +149,13 @@ impl Encoding {
         crate::raw::enc_associate(copy, self)
     }
 
-    /// `str` transcoded to this encoding, a character it cannot represent
-    /// becoming a hex character reference. A transcoding failure is returned,
-    /// not raised.
-    pub fn encode_charref(self, str: RString) -> Result<RString, Error> {
-        const UNDEF_HEX_CHARREF: c_int =
-            rb_sys::ruby_econv_flag_type::RUBY_ECONV_UNDEF_HEX_CHARREF as c_int;
-        crate::raw::str_encode(str, self, UNDEF_HEX_CHARREF)
+    /// `str` transcoded to this encoding by Ruby (`rb_str_encode`), `on`
+    /// deciding what an unconvertible sequence becomes. Raises - no
+    /// converter at all, or a sequence `on` leaves to raise - and the raise
+    /// comes back as `Err`.
+    pub fn encode(self, str: RString, on: Unconvertible) -> Result<RString, Error> {
+        crate::raw::str_encode(str, self, on.ecflags())
     }
-}
-
-/* ---- reading a String as UTF-8 ---- */
-
-/// `s` as a UTF-8 String, transcoded by Ruby with `ecflags` unless its bytes
-/// are read as UTF-8 already ([`Encoding::string_reads_as_utf8_bytes`] -
-/// UTF-8, US-ASCII, ASCII-8BIT), which costs one encoding comparison: no
-/// transcode, no copy, no protected call. The transcode raises - no
-/// converter at all (UTF-7 to UTF-8), or a character it cannot convert under
-/// `ecflags` - and the raise comes back as `Err`.
-fn to_utf8(ruby: &crate::rb::Ruby, s: RString, ecflags: c_int) -> Result<RString, Error> {
-    if Encoding::string_reads_as_utf8_bytes(ruby, s) {
-        return Ok(s);
-    }
-    crate::raw::str_encode(s, Encoding::utf8(ruby), ecflags)
-}
-
-/// `s` as UTF-8 for a strict reader: transcoded with no replacement, so a
-/// character with no UTF-8 form, or a byte that is not one of the encoding's,
-/// is Ruby's `EncodingError` rather than a U+FFFD.
-pub fn to_utf8_strict(ruby: &crate::rb::Ruby, s: RString) -> Result<RString, Error> {
-    to_utf8(ruby, s, 0)
-}
-
-/// `s` as UTF-8 for a lenient reader: transcoded with every invalid or
-/// undefined character replaced (U+FFFD), so the content survives. An
-/// encoding Ruby has no converter for is still its `Err`.
-pub fn to_utf8_replacing(ruby: &crate::rb::Ruby, s: RString) -> Result<RString, Error> {
-    to_utf8(ruby, s, ECONV_REPLACE)
 }
 
 /// The encoding `v` names (an `Encoding`, or a String or Symbol naming one),
@@ -227,21 +170,4 @@ pub fn to_encoding(ruby: &crate::rb::Ruby, v: crate::rb::Value) -> Result<Encodi
         crate::args::name_arg(v)?.as_value()
     };
     crate::raw::to_encoding(ruby, v)
-}
-
-/// Whether Ruby already knows `s` to be valid UTF-8, from its cached
-/// coderange: a read of its flags, which never scans and never allocates.
-/// Only a hint - for code that stays safe whatever it says (a reader that
-/// would otherwise repair or check the bytes itself). A wrong coderange
-/// (another C extension's, a Ruby bug) must never decide what a `&str`
-/// holds: that is [`crate::utf8_copy::Utf8Copy`]'s own check.
-pub fn known_utf8(ruby: &crate::rb::Ruby, s: RString) -> bool {
-    match s.enc_coderange() {
-        /* Every byte < 0x80 in an ASCII-compatible encoding. */
-        crate::rb::Coderange::SevenBit => true,
-        /* Valid for its own encoding, which has to be UTF-8 for that to mean
-         * valid UTF-8. */
-        crate::rb::Coderange::Valid => Encoding::of(s) == Encoding::utf8(ruby),
-        _ => false,
-    }
 }

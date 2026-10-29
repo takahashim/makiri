@@ -136,8 +136,8 @@ mod tests {
     use super::*;
     use rb_sys::stable_api::{get_default, StableApiDefinition};
 
-    /// A Windows `long`: 2^30 - 1 is the largest Fixnum, and a node token
-    /// with a document stamp in its high half is far past it.
+    /// A Windows `long`: 2^30 - 1 is the largest Fixnum, and a 64-bit key
+    /// with anything in its high half is far past it.
     #[test]
     fn a_32_bit_long_has_31_bit_fixnums() {
         assert_eq!(fixable_in::<i32>((1 << 30) - 1), Some((1 << 30) - 1));

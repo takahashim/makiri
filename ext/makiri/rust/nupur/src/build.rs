@@ -1,12 +1,16 @@
 //! Ruby objects made from Rust values - Arrays, Hashes, Integers, Floats,
 //! Symbols, UTF-8 Strings - each a protected call of `raw`'s, so a failed
 //! allocation is `Err`. The one way a caller makes one: `raw`'s constructors
-//! are the crate's own. A String written in place is `string`'s.
+//! are the crate's own. Each answers its own type, which every function
+//! taking a value takes as it is (`impl ReprValue`). A String is `string`'s
+//! ([`utf8_str`] here too).
 
 #![forbid(unsafe_code)]
 
 use crate::rb::ReprValue;
-use crate::rb::{Error, RArray, RHash, Ruby, Value};
+use crate::rb::{Error, Float, Integer, RArray, RHash, Ruby, Symbol, Value};
+
+pub use crate::string::utf8_str;
 
 use super::raw;
 
@@ -16,8 +20,8 @@ pub fn ary(ruby: &Ruby, capa: usize) -> Result<RArray, Error> {
 }
 
 /// Append `v` to `a`.
-pub fn push(a: RArray, v: Value) -> Result<(), Error> {
-    raw::ary_push(a, v)
+pub fn push(a: RArray, v: impl ReprValue) -> Result<(), Error> {
+    raw::ary_push(a, v.as_value())
 }
 
 /// An empty Hash.
@@ -27,23 +31,23 @@ pub fn hash(ruby: &Ruby) -> Result<RHash, Error> {
 
 /// `h[k] = v`, for a String or Symbol `k` (any other is a `TypeError`: see
 /// `raw::hash_aset`).
-pub fn aset(h: RHash, k: Value, v: Value) -> Result<(), Error> {
-    raw::hash_aset(h, k, v)
+pub fn aset(h: RHash, k: impl ReprValue, v: impl ReprValue) -> Result<(), Error> {
+    raw::hash_aset(h, k.as_value(), v.as_value())
 }
 
 /// An Integer.
-pub fn int(ruby: &Ruby, n: i64) -> Result<Value, Error> {
-    raw::int_from_i64(ruby, n).map(|i| i.as_value())
+pub fn int(ruby: &Ruby, n: i64) -> Result<Integer, Error> {
+    raw::int_from_i64(ruby, n)
 }
 
 /// An Integer from an unsigned value.
-pub fn uint(ruby: &Ruby, n: u64) -> Result<Value, Error> {
-    raw::int_from_u64(ruby, n).map(|i| i.as_value())
+pub fn uint(ruby: &Ruby, n: u64) -> Result<Integer, Error> {
+    raw::int_from_u64(ruby, n)
 }
 
 /// A Float.
-pub fn float(ruby: &Ruby, f: f64) -> Result<Value, Error> {
-    raw::float_new(ruby, f).map(|f| f.as_value())
+pub fn float(ruby: &Ruby, f: f64) -> Result<Float, Error> {
+    raw::float_new(ruby, f)
 }
 
 /// `obj.enum_for(meth)`: an Enumerator over `obj`'s method `meth`.
@@ -52,27 +56,6 @@ pub fn enumerator(ruby: &Ruby, obj: Value, meth: &str) -> Result<Value, Error> {
 }
 
 /// The Symbol named by the UTF-8 `name`.
-pub fn symbol(ruby: &Ruby, name: &str) -> Result<crate::rb::Symbol, Error> {
-    crate::raw::sym(ruby, name)
-}
-
-/// [`symbol`] as a plain `Value`.
-pub fn sym(ruby: &Ruby, name: &str) -> Result<Value, Error> {
-    raw::sym(ruby, name).map(|s| s.as_value())
-}
-
-/// A UTF-8 String holding a copy of `bytes`; a failed allocation is `Err`
-/// (`NoMemoryError`), as `raw`'s every call is.
-///
-/// `bytes` must be valid UTF-8 (the String is tagged so without a check):
-/// everything a document lends is, by the text-input contract, and so is
-/// every checked view. Bytes that were not would make a wrong String, never
-/// a memory error.
-pub fn utf8_str(ruby: &Ruby, bytes: &[u8]) -> Result<Value, Error> {
-    utf8_rstring(ruby, bytes).map(|s| s.as_value())
-}
-
-/// [`utf8_str`] as an `RString`.
-pub fn utf8_rstring(ruby: &Ruby, bytes: &[u8]) -> Result<crate::rb::RString, Error> {
-    crate::raw::utf8_str_new(ruby, bytes)
+pub fn symbol(ruby: &Ruby, name: &str) -> Result<Symbol, Error> {
+    raw::sym(ruby, name)
 }
