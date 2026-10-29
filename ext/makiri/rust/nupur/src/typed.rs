@@ -126,9 +126,12 @@ impl External {
     /// an `ssize_t` - is not reported, and not recorded, so the two never
     /// disagree. The default collector only raises its malloc count here and
     /// collects at the next allocation (`rb_gc_adjust_memory_usage` is
-    /// MEMOP_TYPE_REALLOC), but another may collect in the call, so nothing
-    /// borrowed from a Ruby object is held across it; the new figure is
-    /// recorded first, for a collection that reads it.
+    /// MEMOP_TYPE_REALLOC), but another may collect in the call, so what is
+    /// borrowed across it must be what a collection neither frees nor moves:
+    /// this payload, whose object its caller keeps (a receiver, a slot's
+    /// value, a [`Typed`] handle) and which compaction does not move - never
+    /// a String's bytes. The new figure is recorded first, for a collection
+    /// that reads it.
     pub fn report(&self, _: &crate::rb::Ruby, bytes: usize) {
         let then = self.0.get();
         let delta = if bytes >= then {
