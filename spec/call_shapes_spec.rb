@@ -4,7 +4,7 @@
 # the arity errors, and how a block's exits travel out of NodeSet#each.
 #
 # These are what magnus's `scan_args` and `method!` answered before Makiri
-# replaced them with its own argument reading (`glue::args`) and method
+# replaced them with its own argument reading (`nupur::args`) and method
 # trampolines (`bridge::rb::method`). They were pinned first, and the
 # replacement answers the same - messages included, since Ruby's own arity
 # message is what a caller sees.

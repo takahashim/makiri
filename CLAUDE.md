@@ -73,7 +73,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   parser) and `bridge::raw::hash_foreach`'s `rb_hash_foreach` callback, which
   answers "stop" for a latched panic or an error and never raises from inside
   the walk. For the same reason a Hash is walked only through
-  `glue::hash::hash_foreach` over it (`RHash` has no walk of its own, so
+  `nupur::hash::hash_foreach` over it (`RHash` has no walk of its own, so
   there is no latch-less one to call, as magnus's `foreach` was). The reference-only
   Lexbor callbacks carry it too (`lexbor::selectors`' traversal,
   `lexbor::chunks::chunk_cb`, `tree_guard::hook_token_cb`).
@@ -769,7 +769,9 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            (`rb/` - values, errors, trampolines, classes, the
                            rooted globals - `raw` (the C calls that can raise),
                            `typed`, `string` (copying reads, in-place writes),
-                           `table`, `build`, `args`, `describe`, `encoding`,
+                           `table`, `build`, `args` (a call's arguments: their
+                           type checks, `scan` and `Kwargs`), `hash` (the
+                           latched Hash walk), `describe`, `encoding`,
                            `int` (every C-integer conversion),
                            `gvl`, `stack`, `abi`, `msg`, `caught`, and its own
                            `no_unwind` sites, under `--cfg nupur_no_unwind`).

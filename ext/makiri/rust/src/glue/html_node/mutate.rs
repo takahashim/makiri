@@ -453,7 +453,7 @@ pub fn create_pi(
 
 /// `Document#create_document_type(name, public_id = "", system_id = "")`.
 pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    let args = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::positional(1, 2))?;
+    let args = crate::bridge::args::scan(ruby, args, crate::bridge::args::Shape::positional(1, 2))?;
     let rb_name = args.required(0);
     let (rb_pub, rb_sys_) = (args.optional(0), args.optional(1));
 

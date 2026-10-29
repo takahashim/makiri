@@ -309,11 +309,18 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
 
     let defines = (path.starts_with("makiri::bridge::") || path.starts_with("makiri::nupur::"))
         && path.rsplit("::").next().is_some_and(is_definition);
-    if defines || path.starts_with("makiri::glue::args::") {
+    /* Splitting an argument list: `nupur::args`' scan, its `Scanned` and
+     * `Kwargs` - not its per-value type checks (`string_arg` and kin), which
+     * the bridge's conversions use. */
+    let splits_args = path
+        .strip_prefix("makiri::nupur::args::")
+        .is_some_and(|item| !item.ends_with("_arg"));
+    if defines || splits_args {
         let module = module_of(cx, expr.hir_id);
         if in_bridge(&module)
             && !within(&module, "nupur::rb::class")
             && !within(&module, "nupur::raw")
+            && !within(&module, "nupur::args")
         {
             span_lint_and_help(
                 cx,

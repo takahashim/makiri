@@ -11,8 +11,8 @@ use crate::bridge::rb::{prelude::*, Error, RString, Ruby, Value};
 use crate::method;
 
 use super::HtmlSelf;
+use crate::bridge::args::Kwargs;
 use crate::bridge::ruby::makiri_error;
-use crate::glue::kwargs::Kwargs;
 use crate::html_dom::html::{HtmlNode, NodeType};
 use crate::html_dom::serialize::{serialize, Layout, Scope};
 use crate::init::MOD_HTML_NODE_METHODS;

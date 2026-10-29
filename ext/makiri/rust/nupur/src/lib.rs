@@ -155,8 +155,12 @@ pub mod string;
 /// A private table from small integers to values ([`table::IntTable`]).
 pub mod table;
 
-/// Reading a method's arguments: a type check each, no conversion.
+/// Reading a method's arguments: a type check each, no conversion; the
+/// separation of positional arguments and keywords; keywords by name.
 pub mod args;
+
+/// Walking a Hash's pairs.
+pub mod hash;
 
 /// Ruby values written into a message without a call.
 pub mod describe;

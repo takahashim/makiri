@@ -139,8 +139,8 @@ fn fragment_from_args(
     args: &[Value],
     document: impl FnOnce(&Ruby) -> Result<Value, Error>,
 ) -> Result<Value, Error> {
-    let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::with_keywords(1, 0))?;
-    let kw = crate::glue::kwargs::Kwargs::from_scan(a.keywords());
+    let a = crate::bridge::args::scan(ruby, args, crate::bridge::args::Shape::with_keywords(1, 0))?;
+    let kw = crate::bridge::args::Kwargs::from_scan(a.keywords());
     let context = kw.value(ruby, "context")?;
     /* Read before the backing document is made, so a bad value costs nothing. */
     let limit = crate::glue::kwargs::parse_limits(
@@ -191,7 +191,7 @@ fn node_parse(ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Value, Erro
 /// `Document#import_node(node, deep = false)` -> a copy of `node` owned by THIS
 /// document - the DOM importNode, whose `deep` defaults to false.
 fn doc_import_node(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, Error> {
-    let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::positional(1, 1))?;
+    let a = crate::bridge::args::scan(ruby, args, crate::bridge::args::Shape::positional(1, 1))?;
     /* `deep` is truthiness, anything but nil and false - the DOM default off. */
     let deep = a.optional(0).is_some_and(|v| v.to_bool());
     crate::bridge::doc::import_node(ruby, self_, a.required(0), deep)
@@ -200,7 +200,7 @@ fn doc_import_node(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, E
 /// `Node#clone_node(deep = false)`: a copy owned by the same document and
 /// detached from any parent - the DOM cloneNode, whose `deep` defaults to false.
 pub fn node_clone_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::positional(0, 1))?;
+    let a = crate::bridge::args::scan(ruby, args, crate::bridge::args::Shape::positional(0, 1))?;
     /* Truthiness: anything but nil and false. */
     let deep = a.optional(0).is_some_and(|v| v.to_bool());
     crate::bridge::doc::clone_node(ruby, rb_self, deep)

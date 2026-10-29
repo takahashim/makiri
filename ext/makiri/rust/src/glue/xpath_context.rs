@@ -13,9 +13,9 @@
 use crate::bridge::rb::{prelude::*, Error, Ruby, Value};
 use crate::{function, method};
 
+use crate::bridge::args::Kwargs;
 use crate::bridge::ruby::is_kind_of;
 use crate::bridge::xpath::{XPathCtx, XPathCtxSelf};
-use crate::glue::kwargs::Kwargs;
 use crate::glue::query::{register_bindings, Keywords};
 use crate::init::{CLASS_NODE, CLASS_XPATH_CONTEXT};
 
@@ -35,7 +35,7 @@ fn expect_node(ruby: &Ruby, v: Value) -> Result<(), Error> {
 /// Keywords read exactly as `#xpath`'s do: the mode, and prefix bindings - here
 /// registered on the context, so they hold for every later evaluate.
 fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
-    let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::with_keywords(1, 0))?;
+    let a = crate::bridge::args::scan(ruby, args, crate::bridge::args::Shape::with_keywords(1, 0))?;
     let node = a.required(0);
     let kw = Keywords::scan(ruby, Kwargs::from_scan(a.keywords()))?;
     expect_node(ruby, node)?;

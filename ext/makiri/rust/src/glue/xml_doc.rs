@@ -37,7 +37,7 @@ fn parse_limits(ruby: &Ruby, h: Option<RHash>) -> Result<ParseLimits, Error> {
     let key = crate::bridge::build::symbol(ruby, "max_bytes")?;
     /* The keys are read from the Hash itself (`hash::each_pair`), not
      * through a `keys` a subclass can redefine. */
-    crate::glue::hash::each_pair(ruby, h, |k, _| {
+    crate::bridge::hash::each_pair(ruby, h, |k, _| {
         /* By identity: `eql?` would be the caller's key's method. */
         if crate::bridge::ruby::same_value(k, key.as_value()) {
             return Ok(());
@@ -79,7 +79,7 @@ fn parse_limits(ruby: &Ruby, h: Option<RHash>) -> Result<ParseLimits, Error> {
 /// (`lib/makiri/xml/document.rb`), which reads an IO and converts the source
 /// to a String first, as the HTML entry does: `source` is a String here.
 fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
-    let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::with_keywords(1, 0))?;
+    let a = crate::bridge::args::scan(ruby, args, crate::bridge::args::Shape::with_keywords(1, 0))?;
     let source = a.required(0);
     let limits = parse_limits(ruby, a.keywords())?;
     crate::bridge::xml::parse_xml_document(ruby, source, limits)
