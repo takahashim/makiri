@@ -22,6 +22,14 @@ use crate::xml::chars::is_reserved_pi_target;
 use crate::xml::chars::{only_unexpanded, scan_reference};
 use crate::xml::{ParseError, MAX_DEPTH};
 
+/// The top of a content model's group nesting, bounded like element
+/// nesting - so a hostile content model cannot exhaust the stack - and by
+/// the stack itself ([`crate::stack::Depth`]).
+const GROUP_TOP: crate::stack::Depth = {
+    const _: () = assert!(MAX_DEPTH <= u32::MAX as usize);
+    crate::stack::Depth::top(MAX_DEPTH as u32)
+};
+
 /// An ExternalID's identifiers (§4.2.2). Either may be absent, and which one is
 /// present is the difference between SYSTEM and PUBLIC, so they are named
 /// rather than positional.
@@ -232,7 +240,7 @@ impl<'c, 'a> Subset<'c, 'a> {
             if self.cur.eat_keyword(b"#PCDATA") {
                 self.mixed()?;
             } else {
-                self.cp_group(0)?;
+                self.cp_group(GROUP_TOP)?;
                 self.eat_quantifier();
             }
         }
@@ -269,16 +277,16 @@ impl<'c, 'a> Subset<'c, 'a> {
     /// A choice or seq (§3.2.1) after its '(' - one kind of separator
     /// throughout. Nesting is bounded like element nesting, so a hostile
     /// content model cannot exhaust the stack.
-    fn cp_group(&mut self, depth: usize) -> R {
-        if depth >= MAX_DEPTH {
+    fn cp_group(&mut self, depth: crate::stack::Depth) -> R {
+        let Ok(inner) = depth.enter() else {
             return self.cur.limit();
-        }
+        };
         let mut sep: Option<u8> = None;
         loop {
             self.cur.skip_ws();
             if self.cur.peek() == Some(b'(') {
                 self.cur.advance();
-                self.cp_group(depth + 1)?;
+                self.cp_group(inner)?;
             } else {
                 self.cur.scan_qname()?;
             }

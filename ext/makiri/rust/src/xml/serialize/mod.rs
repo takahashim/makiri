@@ -32,15 +32,21 @@ mod xml;
 use crate::cbuf::Buf;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
-/// How many nesting levels the writers go between asks of the stack
-/// (`crate::stack::exhausted`). The stack grows with the nesting alone - a
-/// sibling's frames are gone before the next one's - and Ruby's check
-/// (`ruby_stack_check`) reports low while a reserve for C frames is still
-/// left, so a few levels between asks fit in that reserve: eight levels of
-/// the writers' frames come to about 2 KiB (a 128 KiB Fiber overflowed some
-/// 500 levels deep), and `spec/native_stack_guard_spec.rb` holds it in such
-/// a Fiber. Asking at every element cost `to_xml` and `canonicalize` 13-18%.
-pub(super) const STACK_CHECK_EVERY: u32 = 8;
+/// The top of the writers' recursion: one level per element, bounded by
+/// the parse's own [`crate::xml::model::MAX_DEPTH`] and by the stack
+/// ([`crate::stack::Depth`]).
+pub(super) const TOP: crate::stack::Depth = {
+    const _: () = assert!(crate::xml::model::MAX_DEPTH <= u32::MAX as usize);
+    crate::stack::Depth::top(crate::xml::model::MAX_DEPTH as u32)
+};
+
+/// A refused [`crate::stack::Depth::enter`], as the writers' failure.
+pub(super) fn too_deep(t: crate::stack::TooDeep) -> Failure {
+    match t {
+        crate::stack::TooDeep::Limit => Failure::TooDeep,
+        crate::stack::TooDeep::StackLow => Failure::StackLow,
+    }
+}
 
 /// Why serialization produced no output.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

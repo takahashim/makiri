@@ -12,10 +12,10 @@
 use super::bindings::{Bindings, Prefix};
 use super::out::{put, put_comment, put_pi, C14N, W};
 use super::Failure;
-use super::STACK_CHECK_EVERY;
 use crate::cbuf::Buf;
 use crate::falloc::{OomResult, VecGrow};
-use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId, MAX_DEPTH};
+use crate::stack::Depth;
+use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
 fn xmlns_decl(doc: &XmlDoc, a: NodeId) -> Option<(&[u8], &[u8])> {
     let p = doc.decl_prefix(a)?;
@@ -66,7 +66,7 @@ impl<'d> Writer<'d, '_> {
 
     /// `is_apex` marks the node the canonicalization STARTS at, which renders
     /// every declaration in scope rather than only its own (§2.2).
-    fn node(&mut self, n: NodeId, is_apex: bool, depth: u32) -> W {
+    fn node(&mut self, n: NodeId, is_apex: bool, depth: Depth) -> W {
         let doc = self.doc;
         match doc.type_(n) {
             Some(ArenaKind::Element) => self.element(n, is_apex, depth),
@@ -85,7 +85,7 @@ impl<'d> Writer<'d, '_> {
         }
     }
 
-    fn children(&mut self, n: NodeId, depth: u32) -> W {
+    fn children(&mut self, n: NodeId, depth: Depth) -> W {
         let doc = self.doc;
         for cid in doc.children(n) {
             self.node(cid, false, depth)?;
@@ -255,27 +255,21 @@ impl<'d> Writer<'d, '_> {
         Ok(())
     }
 
-    fn element(&mut self, n: NodeId, is_apex: bool, depth: u32) -> W {
-        if depth as usize >= MAX_DEPTH {
-            return Err(Failure::TooDeep);
-        }
-        /* Asked every `STACK_CHECK_EVERY` levels, not per element: the
-         * stack grows with the nesting alone (see there). */
-        if depth % STACK_CHECK_EVERY == 0 && crate::stack::exhausted() {
-            return Err(Failure::StackLow);
-        }
+    fn element(&mut self, n: NodeId, is_apex: bool, depth: Depth) -> W {
+        let inner = depth.enter().map_err(super::too_deep)?;
         let base = self.binds.len();
         if is_apex {
             self.push_ancestor_decls(n)?;
         }
-        let r = self.element_in_scope(n, is_apex, depth);
+        let r = self.element_in_scope(n, is_apex, inner);
         self.binds.truncate(base);
         r
     }
 
     /// [`element`](Self::element) with `n`'s own declarations in scope; the
-    /// caller owns the scope, so an early `?` cannot unbalance it.
-    fn element_in_scope(&mut self, n: NodeId, is_apex: bool, depth: u32) -> W {
+    /// caller owns the scope, so an early `?` cannot unbalance it. `inner`
+    /// is the children's depth.
+    fn element_in_scope(&mut self, n: NodeId, is_apex: bool, inner: Depth) -> W {
         let doc = self.doc;
         /* The apex renders every binding in scope, its own included, so it
          * reads the scope after pushing them; any other element renders what
@@ -319,7 +313,7 @@ impl<'d> Writer<'d, '_> {
 
         self.put(b">")?;
         for cid in doc.children(n) {
-            self.node(cid, false, depth + 1)?;
+            self.node(cid, false, inner)?;
         }
         self.put(b"</")?;
         self.qname(n)?;
@@ -366,19 +360,19 @@ pub(super) fn write(b: &mut Buf, doc: &XmlDoc, n: NodeId, comments: bool) -> W {
         binds: Bindings::new(),
     };
     if doc.type_(n) != Some(ArenaKind::Document) {
-        return w.node(n, true, 0);
+        return w.node(n, true, super::TOP);
     }
     let mut seen_root = false;
     for cid in doc.children(n) {
         let ty = doc.type_(cid);
         if ty == Some(ArenaKind::Element) {
-            w.node(cid, true, 0)?;
+            w.node(cid, true, super::TOP)?;
             seen_root = true;
         } else if ty == Some(ArenaKind::Pi) || (ty == Some(ArenaKind::Comment) && comments) {
             if seen_root {
                 w.put(b"\n")?;
             }
-            w.node(cid, false, 0)?;
+            w.node(cid, false, super::TOP)?;
             if !seen_root {
                 w.put(b"\n")?;
             }

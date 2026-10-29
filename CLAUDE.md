@@ -1192,7 +1192,13 @@ own recursion does not have - there the count refuses too late, and Ruby's
 `SystemStackError` handling longjmps past `Drop`. (The CSS lowering's
 `Build::enter_selector_nesting` checked the same way while XML's CSS ran on
 it; CSS matching, HTML and XML, keeps nesting on a heap stack and needs no
-check.) Ruby:
+check.) Every other recursion in the engine passes a `crate::stack::Depth`
+down as an argument - the XML writers (`to_xml`, `canonicalize`), the DTD's
+content-model groups, `parse_stylesheet`'s rule nesting - whose `enter`
+refuses both its limit and a low stack (asked every `STACK_CHECK_EVERY`
+levels), so a new recursion written with one cannot count and forget the
+stack: the writers did, and a 500-deep document killed the process in a
+128 KiB Fiber (`spec/native_stack_guard_spec.rb`). Ruby:
 `Node#{xpath,at_xpath}(expr, [namespaces])`, `Makiri::XPathContext`
 (`.new`, `#evaluate`, `#register_namespace`/`#register_ns`, `#register_variable`).
 `#xpath` returns a NodeSet for node-sets, else String/Float/boolean. Errors map
