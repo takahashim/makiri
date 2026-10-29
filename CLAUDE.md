@@ -149,14 +149,29 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   free callback, which reads `Payload::reported_external` (the
   `External`'s `reported()`) before the drop: no `Drop` of Makiri's calls
   Ruby. An object whose data is not complete when it is
-  made - a Document before its content (`DocumentShell`), an XPathContext
-  before its ivars - is made by `wrap_hidden`, which writes its hidden
-  ivars while it still has its class (generic ivar storage may read it) and
-  then hides it from `ObjectSpace`, as a `Hidden` that hands out no `Value`
-  (a hidden object has no class, and Ruby code given one would crash on it)
-  until `reveal`; a
+  made - a Document before its content (`new_html_document` /
+  `new_xml_document`), an XPathContext before its ivars - is made by
+  `wrap_hidden`, which writes its hidden ivars while it still has its class
+  (generic ivar storage may read it), hides it from `ObjectSpace`, runs the
+  caller's `fill` over its data, and only then shows it and returns it (a
+  hidden object has no class, and Ruby code given one would crash on it, so
+  none is handed out before); a
   Document's node table is a `table::IntTable`, made hidden and never shown. There is
   no bare `hide` / `reveal`.
+  **A payload is borrowed through a `typed::Typed` handle, which holds its
+  object**: `TypedType::check` makes one for a value Ruby gave, `wrap` returns
+  one for an object just made, and `wrap_hidden` lends one's data to its
+  `fill`. A `&T` keeps its object alive to the type checker only - a
+  non-embedded payload is its own malloc'd block, which the stack scan does
+  not take for the object - so the handle holds the VALUE in an
+  `rb::value::Kept`, whose `Drop` hands it to `keep_alive` (an empty `asm!`
+  with the VALUE as an input operand; a `read_volatile` of it on the targets
+  without a stable `asm!`, a weaker contract and unchecked there; the
+  premises that make either enough are stated there) after the last borrow. Borrow from the handle, never through
+  a copy of its `Value`; `get` / `get_known` hold nothing and serve only a
+  value Ruby keeps for the whole borrow (a receiver, an argument, a slot's
+  value - `html_read` and its kin, over a node's Document).
+  `black_box` (the old `gc_guard`) is best-effort and is not used.
   The other half - no Ruby value kept where the GC's stack scan cannot
   see it (a `Vec`, a `Box`, a static or `thread_local!`, a `Payload` type's
   own field) - is `rake dylint`'s `ruby_value_on_heap`,
@@ -212,7 +227,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   Ruby's headers, as rb-sys's bindings carry their doc comments: an entry
   documented to raise (`@exception`) or that never returns fails. The survey
   took `rb_obj_reveal` out (its write barrier can allocate, so it is a
-  protected `raw::obj_reveal`, and `Hidden::reveal` / `DocumentShell::install`
+  protected `raw::obj_reveal`, and `wrap_hidden` / `new_*_document`
   return `Result`) and `rb_enc_get` / `rb_enc_get_index` (a File or Symbol
   raises: an `allow` at the String-only call sites); the headers say nothing
   of any of them. `REVIEWED` holds what the survey keeps a path for and the
@@ -1766,8 +1781,9 @@ Key decisions that got there, worth not regressing:
 - **Per-context compiled-AST cache** (`bridge/xpath/context_object.rs`): an `XPathContext` parses
   each expression once and re-runs the cached AST (bounded by `AST_CACHE_MAX`).
   `Node#xpath` uses a throwaway context and does not cache.
-- **Every Document reports its arena to the GC** (`account_document`, which
-  `DocumentShell::install` calls; the free callback takes the report back, through `Payload::reported_external`). Neither
+- **Every Document reports its arena to the GC** (`account_document`, whose
+  `account_data` `new_html_document` / `new_xml_document` call through the
+  new Document's handle, before it is shown; the free callback takes the report back, through `Payload::reported_external`). Neither
   arena, HTML or XML, is an `xmalloc`, so without the report Ruby
   sees a parsed Document as ~56 bytes and NO collection is triggered by memory
   pressure: `500.times { Makiri::HTML(html) }` ran with zero GCs, 2.2 GB RSS,
@@ -1775,10 +1791,11 @@ Key decisions that got there, worth not regressing:
   nokolexbor at ±43% variance, and nothing failed. With the report it is at
   parity. The diagnostic is `GC.count` across a parse loop (must rise) and
   `minflt` per parse (near 0 once warm). A Document gets its arena ONLY through
-  `bridge::wrapper::DocumentShell`: the wrapper is allocated first (a Ruby
-  allocation can raise, and a raise would leak a parse result already held),
-  and `install_html(Box<HtmlParsed>)` / `install_xml(Box<XmlDoc>)` store the
-  content and report it in one step, so a
+  `bridge::wrapper::new_html_document` / `new_xml_document`: the wrapper is
+  allocated first (a Ruby allocation can raise, and a raise would leak a
+  parse result already held), then the caller's closure builds the content
+  (`Box<HtmlParsed>` / `Box<XmlDoc>`), which is stored and reported in one
+  step, so a
   new parse entry cannot skip the report; `spec/gc_accounting_spec.rb` pins
   both halves. The report is what the document OWNS (`HtmlParsed::external_bytes`,
   the XML arena's `memsize`). Growth through

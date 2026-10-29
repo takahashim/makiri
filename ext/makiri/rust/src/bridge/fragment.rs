@@ -18,7 +18,7 @@ use crate::bridge::ruby::makiri_error;
 use crate::bridge::html::{html_node_key, with_html_node, wrap_html_node};
 use crate::bridge::ruby::{is_kind_of, string_arg};
 use crate::bridge::string::{ruby_verified_text, HtmlSource};
-use crate::bridge::wrapper::{html_doc_check, html_read, DocKind, DocumentShell};
+use crate::bridge::wrapper::{html_doc_check, html_read, new_html_document};
 pub use crate::html_dom::fragment::FragmentTag;
 use crate::html_dom::fragment::{FragmentContext, FragmentError, TransientFragment};
 use crate::html_dom::html::{HtmlDoc, HtmlDocMut, HtmlNode, HtmlNodeKey, Place, RawNode};
@@ -259,10 +259,8 @@ pub fn build_fragment(
 /// `<html><body></body></html>` shell, owned by the fragment's wrapper.
 pub fn fragment_shell_document(ruby: &Ruby) -> Result<Value, Error> {
     const SHELL: &[u8] = b"<html><body></body></html>";
-    /* The wrapper first, while nothing needs freeing - see DocumentShell. */
-    let shell = DocumentShell::new(ruby, DocKind::Html)?;
-    let Ok(parsed) = parse_html(SHELL, true, ParseLimits::DEFAULT) else {
-        return Err(makiri_error("failed to create fragment document"));
-    };
-    shell.install_html(ruby, parsed)
+    new_html_document(ruby, || {
+        parse_html(SHELL, true, ParseLimits::DEFAULT)
+            .map_err(|_| makiri_error("failed to create fragment document"))
+    })
 }

@@ -1,5 +1,5 @@
 //! The Document wrapper: its data, its TypedData types and GC hooks, the
-//! node table, [`DocumentShell`], and the accessors that reach a Document's
+//! node table, [`new_html_document`] / [`new_xml_document`], and the accessors that reach a Document's
 //! content.
 
 #![forbid(unsafe_code)]
@@ -12,7 +12,7 @@ use crate::bridge::ruby::{internal_error, makiri_error};
 
 use super::*;
 use crate::bridge::dom::{Body, Conflict, HtmlRead, HtmlWrite, XmlRead, XmlWrite};
-use crate::bridge::typed::{Hidden, Payload, TypedType};
+use crate::bridge::typed::{Payload, TypedType};
 use crate::child_index::ChildPositionMemo;
 use crate::html_dom::post_parse::HtmlParsed;
 use crate::init::RbConst;
@@ -57,7 +57,7 @@ impl EditState {
 /// while a child walk holds the memo, a GC run in the middle of either), and
 /// the GC callbacks read it shared too.
 pub struct DocData {
-    /// Set once, by `DocumentShell::install`; reached only through the
+    /// Set once, by `new_document`; reached only through the
     /// guards of `bridge::dom` ([`html_read`], [`html_write`], [`xml_read`],
     /// [`xml_write`]).
     content: OnceCell<Body>,
@@ -210,116 +210,101 @@ impl From<DocKind> for Kind {
     }
 }
 
-/// A Document wrapper allocated before the content it will own, and the only
-/// way a Document gets that content.
+/// A new HTML Document, holding what `make` builds - the only way a
+/// Document gets its content (see [`new_document`]).
+pub fn new_html_document(
+    ruby: &Ruby,
+    make: impl FnOnce() -> Result<Box<HtmlParsed>, Error>,
+) -> Result<Value, Error> {
+    new_document(ruby, DocKind::Html, || {
+        let parsed = make()?;
+        let stamp = parsed.doc().arena().stamp();
+        Ok((stamp, Body::Html(crate::doc_cell::DocCell::new(parsed))))
+    })
+}
+
+/// A new XML Document, holding the arena `make` builds, as
+/// [`new_html_document`].
+pub fn new_xml_document(
+    ruby: &Ruby,
+    make: impl FnOnce() -> Result<Box<XmlDoc>, Error>,
+) -> Result<Value, Error> {
+    new_document(ruby, DocKind::Xml, || {
+        let arena = make()?;
+        let stamp = arena.doc_node().stamp();
+        Ok((stamp, Body::Xml(crate::doc_cell::DocCell::new(arena))))
+    })
+}
+
+/// A Document wrapper made before the content it will own, `make` run to
+/// build the content, and the content installed and reported to the GC.
 ///
 /// The order is the point. Allocating the Ruby wrapper can fail
 /// (`NoMemoryError`, as `Err`), and a parse result is expensive to have made
-/// for nothing. So the wrapper is made FIRST - before the parse - and the
-/// parsed handle goes in afterwards through
-/// [`install`](Self::install), which also reports the arena to the GC. That
-/// report is not optional (see `account_document`), and the parse entries used
-/// to make it by hand, each one a place to forget it.
+/// for nothing - and is leaked if a raise passes it. So the wrapper is made
+/// FIRST, and `make` - the parse - runs after, inside `wrap_hidden`'s fill.
+/// The arena's report to the GC (`account_document`) is not optional, and
+/// the parse entries used to make it by hand, each one a place to forget it.
 ///
-/// Until `install` the wrapper is HIDDEN (`TypedType::wrap_hidden`: no class,
-/// so `ObjectSpace` does not list it, and a [`Hidden`] hands out no `Value`
-/// that could reach Ruby code before its class is back) - from the moment
-/// `wrap_hidden` returns, and before that no Ruby code runs to find it (see
-/// there): a Document with no content answers nothing, and every accessor
-/// assumes the content is there. A parse runs
-/// with the GVL released between the two, so another thread could otherwise
-/// find the wrapper and call a method on it; a parse that fails leaves it
-/// hidden for the GC to free.
-pub struct DocumentShell {
-    obj: Hidden<DocData, 1>,
-}
-
-impl DocumentShell {
-    pub fn new(ruby: &Ruby, kind: DocKind) -> Result<DocumentShell, Error> {
-        let (klass, ty) = match kind {
-            DocKind::Html => (
-                crate::init::CLASS_HTML_DOCUMENT.defined(ruby)?,
-                &HTML_DOC_TYPE,
-            ),
-            DocKind::Xml => (
-                crate::init::CLASS_XML_DOCUMENT.defined(ruby)?,
-                &XML_DOC_TYPE,
-            ),
-        };
-        /* The errors array and the node table are built before the wrap and
-         * kept in locals, so the conservative stack scan pins them across the
-         * wrap's allocation; the table goes into the slot with the data. */
-        let errors = crate::bridge::rb::ReprValue::as_value(crate::bridge::build::ary(ruby, 0)?);
-        /* Hidden, so no Ruby code reaches the table through `ObjectSpace` to
-         * clear, freeze or fill it: its values are handed out as node
-         * wrappers unchecked. */
-        let nodes = crate::nupur::table::IntTable::new_hidden(ruby)?;
-        let obj = ty.wrap_hidden(
-            ruby,
-            klass,
-            DocData {
-                content: OnceCell::new(),
-                edits: Cell::new(EditState::default()),
-                external: crate::bridge::typed::External::new(),
-                chunks: Cell::new(0),
-                child_memo: RefCell::new(ChildPositionMemo::default()),
-                stamp: Cell::new(0),
-            },
-            [nodes],
-            /* Written before it is hidden, and a failure hides it all the
-             * same: no content-less Document is left where `ObjectSpace`
-             * lists it. */
-            &[(ivar_errors(), errors)],
-        )?;
-        Ok(DocumentShell { obj })
-    }
-
-    /// Give the HTML Document its parsed document - the GC owns it from here -
-    /// and report the arena's size.
-    pub fn install_html(
-        self,
-        ruby: &crate::bridge::rb::Ruby,
-        parsed: Box<HtmlParsed>,
-    ) -> Result<Value, Error> {
-        let stamp = parsed.doc().arena().stamp();
-        self.install(
-            ruby,
-            stamp,
-            Body::Html(crate::doc_cell::DocCell::new(parsed)),
-        )
-    }
-
-    /// Give the XML Document its arena, as [`install_html`](Self::install_html).
-    pub fn install_xml(
-        self,
-        ruby: &crate::bridge::rb::Ruby,
-        arena: Box<XmlDoc>,
-    ) -> Result<Value, Error> {
-        let stamp = arena.doc_node().stamp();
-        self.install(ruby, stamp, Body::Xml(crate::doc_cell::DocCell::new(arena)))
-    }
-
-    #[allow(
-        clippy::panic,
-        reason = "`new` makes the wrapper without content, and only `install` - which takes the shell - gives it some"
-    )]
-    fn install(
-        self,
-        ruby: &crate::bridge::rb::Ruby,
-        stamp: u32,
-        content: Body,
-    ) -> Result<Value, Error> {
-        /* `self.obj` is a Document wrapper with no content yet, so nothing is
-         * overwritten. */
-        if self.obj.data().content.set(content).is_err() {
-            panic!("a Document installed twice");
-        }
-        self.obj.data().stamp.set(stamp);
-        /* Content in place: the Document can be seen now. */
-        let obj = self.obj.reveal(ruby)?;
-        account_document(ruby, obj);
-        Ok(obj)
-    }
+/// Until the content is in, the wrapper is HIDDEN (`TypedType::wrap_hidden`:
+/// no class, so `ObjectSpace` does not list it, and it is handed out only
+/// once shown): a Document with no content answers nothing, and every
+/// accessor assumes the content is there. A parse runs with the GVL released
+/// inside `make`, so another thread could otherwise find the wrapper and
+/// call a method on it; a `make` that fails leaves it hidden for the GC to
+/// free.
+fn new_document(
+    ruby: &Ruby,
+    kind: DocKind,
+    make: impl FnOnce() -> Result<(u32, Body), Error>,
+) -> Result<Value, Error> {
+    let (klass, ty) = match kind {
+        DocKind::Html => (
+            crate::init::CLASS_HTML_DOCUMENT.defined(ruby)?,
+            &HTML_DOC_TYPE,
+        ),
+        DocKind::Xml => (
+            crate::init::CLASS_XML_DOCUMENT.defined(ruby)?,
+            &XML_DOC_TYPE,
+        ),
+    };
+    /* The errors array and the node table are built before the wrap and
+     * kept in locals, so the conservative stack scan pins them across the
+     * wrap's allocation; the table goes into the slot with the data. */
+    let errors = crate::bridge::rb::ReprValue::as_value(crate::bridge::build::ary(ruby, 0)?);
+    /* Hidden, so no Ruby code reaches the table through `ObjectSpace` to
+     * clear, freeze or fill it: its values are handed out as node
+     * wrappers unchecked. */
+    let nodes = crate::nupur::table::IntTable::new_hidden(ruby)?;
+    ty.wrap_hidden(
+        ruby,
+        klass,
+        DocData {
+            content: OnceCell::new(),
+            edits: Cell::new(EditState::default()),
+            external: crate::bridge::typed::External::new(),
+            chunks: Cell::new(0),
+            child_memo: RefCell::new(ChildPositionMemo::default()),
+            stamp: Cell::new(0),
+        },
+        [nodes],
+        /* Written before it is hidden, and a failure hides it all the
+         * same: no content-less Document is left where `ObjectSpace`
+         * lists it. */
+        &[(ivar_errors(), errors)],
+        |d| {
+            let (stamp, content) = make()?;
+            /* A wrapper just made, with no content yet. */
+            if d.content.set(content).is_err() {
+                return Err(internal_error("a Document installed twice"));
+            }
+            d.stamp.set(stamp);
+            /* Reported through the handle `wrap_hidden` holds the object
+             * by: nothing else refers to it yet, and the report may collect. */
+            account_data(ruby, d);
+            Ok(())
+        },
+    )
 }
 
 /* ------------------------------------------------------------------ *
@@ -328,7 +313,7 @@ impl DocumentShell {
 
 /// The content of `rb_doc`, a VALUE known to be a Document (a node's
 /// keepalive Document, or a Document method's receiver). Every Document that
-/// Ruby can reach has one (`DocumentShell` reveals it only after `install`),
+/// Ruby can reach has one (`new_document` shows it only once the content is in),
 /// so its absence is a broken invariant.
 fn body_known(rb_doc: &Value) -> Result<&Body, Error> {
     DOC_TYPE

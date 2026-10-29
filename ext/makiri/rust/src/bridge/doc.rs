@@ -25,7 +25,7 @@ use crate::bridge::ruby::makiri_error;
 use crate::bridge::html::new_node;
 use crate::bridge::html::{html_node_key, with_html_node, wrap_html_node};
 use crate::bridge::string::DocumentSource;
-use crate::bridge::wrapper::{html_read, node_repr, xml_read, DocKind, DocumentShell, NodeRepr};
+use crate::bridge::wrapper::{html_read, new_html_document, node_repr, xml_read, NodeRepr};
 use crate::bridge::xml::xml_node_document;
 use crate::bridge::xml::{xml_mut_result, xml_node_unwrap};
 use crate::html_dom::html::RawNode;
@@ -78,32 +78,31 @@ pub fn parse_document(
     given: Option<crate::bridge::string::GivenEncoding>,
 ) -> Result<Value, Error> {
     let s = crate::bridge::ruby::string_arg(source)?;
-    /* Allocate the wrapper with a null handle, so a failed parse still
-     * frees cleanly through GC - and first, before this frame owns the
-     * source's copy: the wrapper's allocation can raise. This entry is
+    /* The wrapper is made with no content, so a failed parse still frees
+     * cleanly through GC - and first, before this frame owns the source's
+     * copy: the wrapper's allocation can raise. This entry is
      * defined on Makiri::HTML::Document, so the result is always HTML. */
-    let shell = DocumentShell::new(ruby, DocKind::Html)?;
-    /* The bytes as they are, with the transport layer's encoding: `given`,
-     * else the String's own (none for binary, which is sniffed). The copy is
-     * what the parse reads with the GVL released, so nothing here borrows
-     * from the Ruby String. */
-    let src = DocumentSource::from_ruby(ruby, s, given)?;
+    new_html_document(ruby, || {
+        /* The bytes as they are, with the transport layer's encoding: `given`,
+         * else the String's own (none for binary, which is sniffed). The copy
+         * is what the parse reads with the GVL released, so nothing here
+         * borrows from the Ruby String. */
+        let src = DocumentSource::from_ruby(ruby, s, given)?;
 
-    /* The body - sniffing, decoding and parsing - runs on this thread with
-     * the GVL released, so the parsed handle comes back as it is. */
-    let input = src.input();
-    let result = crate::bridge::gvl::without_gvl(ruby, || {
-        crate::html::tree::parse_document_bytes(input, limit)
-    })?;
-    drop(src);
+        /* The body - sniffing, decoding and parsing - runs on this thread
+         * with the GVL released, so the parsed handle comes back as it is. */
+        let input = src.input();
+        let result = crate::bridge::gvl::without_gvl(ruby, || {
+            crate::html::tree::parse_document_bytes(input, limit)
+        })?;
+        /* Gone before the Document's report to the GC, which may collect. */
+        drop(src);
 
-    let parsed = result.map_err(|e| match e {
-        HtmlParseError::Guard(stop) => guard_error(stop, limit),
-        HtmlParseError::Failed => makiri_error("failed to parse HTML document"),
-    })?;
-    /* The GC learns the arena's size in `install`; `owned` is already gone, so
-     * a collection that triggers has nothing of ours to invalidate. */
-    shell.install_html(ruby, parsed)
+        result.map_err(|e| match e {
+            HtmlParseError::Guard(stop) => guard_error(stop, limit),
+            HtmlParseError::Failed => makiri_error("failed to parse HTML document"),
+        })
+    })
 }
 
 /// An empty HTML document - no children - in `compat_mode` (Lexbor's
@@ -114,12 +113,12 @@ pub fn new_empty_document(
     compat_mode: u32,
     encoding: &'static str,
 ) -> Result<Value, Error> {
-    /* The wrapper first, while nothing needs freeing - see DocumentShell. */
-    let shell = DocumentShell::new(ruby, DocKind::Html)?;
-    let mut parsed = empty_html_document(compat_mode)
-        .map_err(|_| makiri_error("failed to create HTML document"))?;
-    parsed.set_encoding(encoding);
-    shell.install_html(ruby, parsed)
+    new_html_document(ruby, || {
+        let mut parsed = empty_html_document(compat_mode)
+            .map_err(|_| makiri_error("failed to create HTML document"))?;
+        parsed.set_encoding(encoding);
+        Ok(parsed)
+    })
 }
 
 /* ------------------------------------------------------------------ *

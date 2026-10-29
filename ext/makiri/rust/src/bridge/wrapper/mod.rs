@@ -1,6 +1,6 @@
 //! The Ruby wrappers of Makiri's nodes and Documents: the structs behind
 //! them, their TypedData types and GC hooks, the one way a Document gets its
-//! parsed handle ([`DocumentShell`]), and the representation-agnostic
+//! parsed handle ([`new_html_document`] / [`new_xml_document`]), and the representation-agnostic
 //! accessors every node method starts from.
 //!
 //! Which representation a wrapper holds is decided here, by its TypedData
