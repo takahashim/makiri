@@ -491,6 +491,50 @@ module Makiri::XML::NodeMethods
 class Makiri::XML::ProcessingInstruction < Makiri::ProcessingInstruction
   include Makiri::XML::NodeMethods
 
+module Makiri::XML::SAX
+  def self._parse(3)
+
+class Makiri::XML::SAX::Document < Object
+  def cdata_block(1 req:string)
+  def characters(1 req:string)
+  def comment(1 req:string)
+  def end_document(0)
+  def end_element(1 req:name)
+  def end_element_namespace(-2 req:name,opt:prefix,opt:uri)
+  def error(1 req:string)
+  def processing_instruction(2 req:name,req:content)
+  def start_document(0)
+  def start_element(-2 req:name,opt:attrs)
+  def start_element_namespace(-2 req:name,opt:attrs,opt:prefix,opt:uri,opt:ns)
+  def warning(1 req:string)
+  def xmldecl(3 req:version,req:encoding,req:standalone)
+
+class Makiri::XML::SAX::Parser < Object
+  def document(0)
+  def document=(1 req)
+  def encoding(0)
+  def encoding=(1 req)
+  def parse(1 req:input,block:block)
+  def parse_file(-2 req:filename,opt:encoding,block:block)
+  def parse_io(-2 req:io,opt:encoding,block:block)
+  def parse_memory(-2 req:input,opt:encoding)
+  private def initialize(-1 opt:document,opt:encoding)
+
+class Makiri::XML::SAX::Parser::Attribute < Struct
+  def self.[](-1)
+  def self.inspect(0)
+  def self.keyword_init?(0)
+  def self.members(0)
+  def self.new(-1)
+  def localname(0)
+  def localname=(1)
+  def prefix(0)
+  def prefix=(1)
+  def uri(0)
+  def uri=(1)
+  def value(0)
+  def value=(1)
+
 class Makiri::XML::SyntaxError < Makiri::Error
 
 class Makiri::XML::Text < Makiri::Text

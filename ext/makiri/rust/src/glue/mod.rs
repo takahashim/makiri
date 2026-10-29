@@ -58,6 +58,9 @@ pub mod xpath_context;
 /// `Makiri::XML::Document` and `DocumentFragment`.
 pub mod xml_doc;
 
+/// `Makiri::XML::SAX`'s native entry.
+pub mod xml_sax;
+
 /// The `Makiri::XML::*` node surface.
 pub mod xml_node;
 

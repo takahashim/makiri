@@ -35,6 +35,27 @@ end
 # The replacement text of the "xml_content" scenario; see there for its length.
 XML_CONTENT_TEXT = ("rewritten" * 8192).freeze
 
+# A SAX handler that records every event, for the SAX scenarios.
+class SaxRecord < Makiri::XML::SAX::Document
+  attr_reader :out
+
+  def initialize
+    super
+    @out = []
+  end
+
+  def xmldecl(*a) = @out << [:decl, *a]
+  def start_document = @out << [:sd]
+  def end_document = @out << [:ed]
+  def start_element_namespace(n, a = [], pf = nil, u = nil, ns = []) = @out << [:s, n, a.map(&:to_a), pf, u, ns]
+  def end_element_namespace(n, pf = nil, u = nil) = @out << [:e, n, pf, u]
+  def characters(s) = @out << [:t, s]
+  def comment(s) = @out << [:c, s]
+  def cdata_block(s) = @out << [:cd, s]
+  def processing_instruction(n, c) = @out << [:pi, n, c]
+  def error(s) = @out << [:err, s]
+end
+
 SCENARIOS = {
   # Two insertion modes whose text handling, on a failed allocation, once
   # returned "reprocess" from an aborted parse: the token went round the
@@ -48,6 +69,16 @@ SCENARIOS = {
   # XML parse covering the syntax surface: declaration, DOCTYPE (SYSTEM id +
   # internal subset), default + prefixed namespaces, prefixed attributes,
   # references, comment, CDATA, PI, nesting, CRLF normalization in an attr.
+  # The SAX parser over the same syntax surface: its scratch arena's
+  # allocations, and the Strings, Arrays and Attributes made for the handler.
+  "xml_sax" => lambda do
+    src = %(<?xml version="1.0"?><r xmlns="urn:d" xmlns:p="urn:p" p:a="v">) +
+          %(<p:b>t &amp; &#x41;</p:b><!--c--><![CDATA[cd]]><?pi d?><e/></r>)
+    h = SaxRecord.new
+    Makiri::XML::SAX::Parser.new(h).parse(src)
+    h.out.inspect
+  end,
+
   "xml_parse" => lambda do
     src = <<~XML
       <?xml version="1.0" encoding="UTF-8"?>

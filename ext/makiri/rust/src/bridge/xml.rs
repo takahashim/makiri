@@ -616,12 +616,7 @@ fn parse_status_error(status: ParseError, unit: Unit) -> Error {
     match status {
         ParseError::Syntax => Error::new(&EXC_XML_SYNTAX_ERROR, unit.malformed()),
         ParseError::Limit => Error::new(&EXC_XML_LIMIT_EXCEEDED, unit.budget()),
-        ParseError::Unsupported => Error::new(
-            &EXC_XML_SYNTAX_ERROR,
-            "unsupported DTD construct: Makiri does not apply attribute defaults or \
-             non-CDATA attribute types, expand parameter entities, or expand entities \
-             a DTD declares",
-        ),
+        ParseError::Unsupported => Error::new(&EXC_XML_SYNTAX_ERROR, UNSUPPORTED_DTD),
         ParseError::Oom => makiri_error(unit.failed()),
         /* The parser's own invariant (`ExpandErr::Overflow`: an expansion
          * outgrew its input), never the input's fault. */
@@ -631,6 +626,22 @@ fn parse_status_error(status: ParseError, unit: Unit) -> Error {
         ParseError::Stopped => crate::bridge::ruby::internal_error(unit.failed()),
     }
 }
+
+/// The words a document parse's refusal raises with, for a reader that
+/// reports rather than raises it (the SAX parser's `error`): `None` for a
+/// status that is no refusal of the input.
+pub(crate) fn document_refusal(status: ParseError) -> Option<&'static str> {
+    match status {
+        ParseError::Syntax => Some(Unit::Document.malformed()),
+        ParseError::Limit => Some(Unit::Document.budget()),
+        ParseError::Unsupported => Some(UNSUPPORTED_DTD),
+        ParseError::Oom | ParseError::Internal | ParseError::Stopped => None,
+    }
+}
+
+const UNSUPPORTED_DTD: &str = "unsupported DTD construct: Makiri does not apply attribute \
+     defaults or non-CDATA attribute types, expand parameter entities, or expand entities a \
+     DTD declares";
 
 /// Which entry point failed. The two carry their own wording rather than one
 /// composed string: the document path says "malformed XML" where the fragment

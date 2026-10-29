@@ -42,6 +42,14 @@
 
 ### Added
 
+* `Makiri::XML::SAX`: a SAX parser for XML, `Parser` and `Document` in the
+  shape of `Nokogiri::XML::SAX`. The handler's methods are called as the
+  document is read and no document is built, so memory follows the open
+  elements rather than the document. It applies `Makiri::XML`'s checks, so
+  the two accept the same documents; a refused input is reported to the
+  handler's `#error`, then `#end_document`, and what the handler raises or
+  throws leaves the parse at once.
+
 * HTML documents are decoded as browsers decode them: the HTML Standard's
   encoding sniffing algorithm with the Encoding Standard's decoders. A
   binary (ASCII-8BIT) or US-ASCII String is read in the encoding its byte

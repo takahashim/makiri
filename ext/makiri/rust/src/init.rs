@@ -502,6 +502,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     crate::glue::html_doc::init_html_doc(ruby)?;
     crate::glue::xml_node::init(ruby)?;
     crate::glue::xml_doc::init_xml_doc(ruby)?;
+    crate::glue::xml_sax::init_xml_sax(ruby)?;
     crate::glue::node_set::init_node_set(ruby)?;
     crate::glue::xpath_context::init_xpath_context(ruby)?;
     crate::glue::query::init_xpath(ruby)?;

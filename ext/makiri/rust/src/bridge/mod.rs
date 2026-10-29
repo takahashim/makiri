@@ -93,3 +93,6 @@ pub mod string;
 pub use crate::nupur::typed;
 
 pub mod xml_decode;
+
+/// The SAX parser's Ruby side: a streaming parse calling a handler.
+pub mod xml_sax;

@@ -153,6 +153,22 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
     the element into `urn:x` on re-parse. Create the element in the namespace
     instead (`create_element("r", "xmlns" => "urn:x")`, or parse it so).
 
+## XML SAX
+
+* `Makiri::XML::SAX` reads XML only; there is no HTML SAX parser
+  (`Nokogiri::HTML4::SAX`), since an HTML5 tree builder rearranges elements
+  it has already opened.
+* `characters` is called once per run of character data between two tags,
+  with its references expanded; Nokogiri (libxml2) may split a run around a
+  reference (`t&amp;x` is three calls there). `reference` is never called:
+  Makiri refuses a reference to an entity a DTD declares.
+* A refused input is reported to `error` with the words `Makiri::XML` raises
+  (`"malformed XML"`, ...), not libxml2's messages. `warning` is never called.
+* There is no `ParserContext`: a block given to `parse` raises
+  `NotImplementedError`, and there is no `recovery` or `replace_entities`.
+* `parse_io` reads the IO whole before the parse begins, and there is no
+  `PushParser`.
+
 ## HTML parsing
 
 * `<?php ... ?>` in HTML input is a **ProcessingInstruction** node; `#to_html`

@@ -106,6 +106,22 @@ RSpec.describe "native stack guard" do
     end
   end
 
+  # The SAX parser runs the handler's Ruby on top of the parser's frames; the
+  # parse loop does not nest per element, so a deep document only costs the
+  # handler's own (returned) calls.
+  describe "the XML SAX parser, inside a small Fiber" do
+    it "reads a deep document whole" do
+      status, out, err = run_isolated({ "RUBY_FIBER_MACHINE_STACK_SIZE" => "131072" }, <<~RUBY)
+        h = Class.new(Makiri::XML::SAX::Document) { attr_reader :n; def start_element(*) = (@n = (@n || 0) + 1) }.new
+        xml = "<a>" * 1000 + "x" + "</a>" * 1000
+        Fiber.new { Makiri::XML::SAX::Parser.new(h).parse(xml) }.resume
+        print h.n
+      RUBY
+      expect(status).to be_success, err
+      expect(out).to eq("1000"), err
+    end
+  end
+
   # HTML matching needs no guard at all: `css_match` keeps every
   # nesting level (`:is`/`:where`/`:not`, and `:has()` since it moved to
   # `Frame::HasStep`, `of S` since `Frame::NthOfStep`) on its own heap stack.

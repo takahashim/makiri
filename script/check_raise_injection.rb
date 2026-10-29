@@ -64,6 +64,27 @@ XML
 # Each scenario runs a workload and returns a String to compare with the
 # baseline; every Document it makes goes into `docs` as soon as it exists, so a
 # run that raised midway is still checked.
+# A SAX handler that records every event, for the SAX scenarios.
+class SaxRecord < Makiri::XML::SAX::Document
+  attr_reader :out
+
+  def initialize
+    super
+    @out = []
+  end
+
+  def xmldecl(*a) = @out << [:decl, *a]
+  def start_document = @out << [:sd]
+  def end_document = @out << [:ed]
+  def start_element_namespace(n, a = [], pf = nil, u = nil, ns = []) = @out << [:s, n, a.map(&:to_a), pf, u, ns]
+  def end_element_namespace(n, pf = nil, u = nil) = @out << [:e, n, pf, u]
+  def characters(s) = @out << [:t, s]
+  def comment(s) = @out << [:c, s]
+  def cdata_block(s) = @out << [:cd, s]
+  def processing_instruction(n, c) = @out << [:pi, n, c]
+  def error(s) = @out << [:err, s]
+end
+
 SCENARIOS = {
   "html_read" => lambda do |docs|
     doc = Makiri::HTML(HTML_SRC)
@@ -117,6 +138,14 @@ SCENARIOS = {
     doc.to_html + other.to_html
   end,
 
+  # The SAX parser: a raise at any call it makes - a String, an Array, an
+  # Attribute, the handler's method - must leave the parse as an ordinary
+  # raise, and the next parse must run whole (the baseline compare).
+  "xml_sax" => lambda do |_docs|
+    h = SaxRecord.new
+    Makiri::XML::SAX::Parser.new(h).parse(XML_SRC)
+    h.out.inspect
+  end,
   "xml_read" => lambda do |docs|
     doc = Makiri::XML(XML_SRC)
     docs << doc
