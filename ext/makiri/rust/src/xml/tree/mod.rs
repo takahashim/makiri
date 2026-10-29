@@ -11,10 +11,11 @@
 mod cursor;
 mod decl;
 mod dtd;
+pub mod events;
 mod scope;
 
 use crate::falloc::{OomResult, VecGrow};
-use crate::xml::arena::{AppendError, DoctypeId};
+use crate::xml::arena::{AppendError, DoctypeId, Mark};
 use crate::xml::chars::{
     expand_into, is_reserved_pi_target, normalize_newlines, ExpandErr, ExpandMode,
 };
@@ -26,6 +27,7 @@ use crate::xml::{
 };
 use cursor::{is_space, Cursor, InSlice, R};
 use dtd::{scan_external_id, Declared, ExternalId, Subset};
+use events::{Build, Events, Flow, XmlDecl};
 use scope::{Frame, Scope};
 
 /// One attribute of the current start tag before namespace resolution.
@@ -35,7 +37,7 @@ struct RawAttr {
     val: InSlice,
 }
 
-pub struct Parser<'a> {
+pub struct Parser<'a, E: Events> {
     cur: Cursor<'a>,
     doc: &'a mut Document,
     fragment: Option<NodeId>,
@@ -43,14 +45,27 @@ pub struct Parser<'a> {
     ratt: Vec<RawAttr>,
     stack: Vec<NodeId>,
     frames: Vec<Frame>,
+    /// A streaming parse's arena marks, one per open element, taken before
+    /// the element was made: its end gives back everything since
+    /// ([`events`]). Empty in a tree-building parse.
+    marks: Vec<Mark>,
+    /// Whether the root element was read. Kept here rather than read from the
+    /// arena, which a streaming parse gives back.
+    root_seen: bool,
     saw_doctype: bool,
     /// What a DOCTYPE declared, which outlives the DOCTYPE: a reference to one
     /// of its entities is refused wherever it occurs, not where it was declared.
     declared: Declared,
+    events: &'a mut E,
 }
 
-impl<'a> Parser<'a> {
-    fn new(input: &'a [u8], doc: &'a mut Document, fragment: Option<NodeId>) -> Self {
+impl<'a, E: Events> Parser<'a, E> {
+    fn new(
+        input: &'a [u8],
+        doc: &'a mut Document,
+        fragment: Option<NodeId>,
+        events: &'a mut E,
+    ) -> Self {
         Parser {
             cur: Cursor::new(input),
             doc,
@@ -59,8 +74,38 @@ impl<'a> Parser<'a> {
             ratt: Vec::new(),
             stack: Vec::new(),
             frames: Vec::new(),
+            marks: Vec::new(),
+            root_seen: false,
             saw_doctype: false,
             declared: Declared::default(),
+            events,
+        }
+    }
+
+    /* ---- reports (a streaming parse's; `Build` reports nothing) ---- */
+
+    /// Make a report; a receiver that answers `Break` stops the parse.
+    #[inline]
+    fn report(&mut self, f: impl FnOnce(&mut E, &Document) -> Flow) -> R {
+        match f(self.events, self.doc) {
+            Flow::Continue(()) => Ok(()),
+            Flow::Break(()) => Err(ParseError::Stopped),
+        }
+    }
+
+    /// The arena's mark, in a streaming parse: what is made after it is
+    /// given back once reported ([`events`]).
+    #[inline]
+    fn stream_mark(&self) -> Option<Mark> {
+        E::STREAMING.then(|| self.doc.mark())
+    }
+
+    /// Give back what was made since `mark` - a streaming parse's node, once
+    /// reported and linked nowhere.
+    #[inline]
+    fn give_back(&mut self, mark: Option<Mark>) {
+        if let Some(m) = mark {
+            self.doc.rewind(m);
         }
     }
 
@@ -284,6 +329,14 @@ impl<'a> Parser<'a> {
     fn parse_comment(&mut self, parent: NodeId) -> R {
         self.cur.advance_n(3);
         let body = self.cur.scan_until_close(b"-->", Some(b'-'))?;
+        if E::STREAMING {
+            let mark = self.stream_mark();
+            let v = self.own(body)?;
+            self.report(|e, d| e.comment(d.span(v)))?;
+            self.give_back(mark);
+            self.cur.take_close(body, b"-->");
+            return Ok(());
+        }
         let c = self.new_node(ArenaKind::Comment)?;
         let v = self.own(body)?;
         self.doc.node_mut(c).value = v;
@@ -299,8 +352,14 @@ impl<'a> Parser<'a> {
         }
         self.cur.advance_n(8);
         let body = self.cur.scan_until_close(b"]]>", None)?;
+        let mark = self.stream_mark();
         let cval = self.own(body)?;
-        self.append_chardata(parent, ArenaKind::CDataSection, cval)?;
+        if E::STREAMING {
+            self.report(|e, d| e.cdata(d.span(cval)))?;
+            self.give_back(mark);
+        } else {
+            self.append_chardata(parent, ArenaKind::CDataSection, cval)?;
+        }
         self.cur.take_close(body, b"]]>");
         Ok(())
     }
@@ -315,7 +374,17 @@ impl<'a> Parser<'a> {
                 return self.cur.syntax();
             }
             /* `<?xml ...?>` is the declaration, not a PI: no node comes of it. */
-            return decl::parse_body(&mut self.cur, self.doc);
+            let d = decl::parse_body(&mut self.cur, self.doc)?;
+            let cur = &self.cur;
+            let decl = XmlDecl {
+                version: cur.slice(d.version),
+                encoding: d.encoding.map(|s| cur.slice(s)),
+                standalone: d.standalone.map(|s| cur.slice(s)),
+            };
+            return match self.events.xml_decl(&decl) {
+                Flow::Continue(()) => Ok(()),
+                Flow::Break(()) => Err(ParseError::Stopped),
+            };
         }
         if is_reserved_pi_target(tgt) {
             return self.cur.syntax(); /* reserved target ("XML"/"xmL"/...) */
@@ -327,6 +396,14 @@ impl<'a> Parser<'a> {
             self.cur.require_space()?;
         }
         let body = self.cur.scan_until_close(b"?>", None)?;
+        if E::STREAMING {
+            let mark = self.stream_mark();
+            let (lp, vp) = (self.own(t)?, self.own(body)?);
+            self.report(|e, d| e.pi(d.span(lp), d.span(vp)))?;
+            self.give_back(mark);
+            self.cur.take_close(body, b"?>");
+            return Ok(());
+        }
         let pi = self.new_node(ArenaKind::Pi)?;
         let lp = self.own(t)?;
         let vp = self.own(body)?;
@@ -374,6 +451,11 @@ impl<'a> Parser<'a> {
             Some(frame) => self.scope.leave(frame),
             None => self.scope.leave_without_frame(),
         }
+        self.report(|e, d| e.end_element(d, top))?;
+        if E::STREAMING {
+            let mark = self.marks.pop();
+            self.give_back(mark);
+        }
         Ok(())
     }
 
@@ -382,7 +464,7 @@ impl<'a> Parser<'a> {
     /// The internal subset is checked by [`dtd`], which keeps nothing; an
     /// external subset is named but, as §5.1 allows, never read.
     fn parse_doctype(&mut self) -> R {
-        if !self.stack.is_empty() || self.doc.root().is_some() || self.saw_doctype {
+        if !self.stack.is_empty() || self.root_seen || self.saw_doctype {
             return self.cur.syntax();
         }
         self.saw_doctype = true;
@@ -455,6 +537,7 @@ impl<'a> Parser<'a> {
             Some(s) => s,
             None => return self.cur.syntax(),
         };
+        let mark = self.stream_mark();
         let el = self.new_node(ArenaKind::Element)?;
         self.set_node_qname(el, name, &sp)?;
         {
@@ -463,26 +546,39 @@ impl<'a> Parser<'a> {
             n.col = tc;
         }
         if self.stack.is_empty() && self.fragment.is_none() {
-            if self.doc.root().is_some() {
+            if self.root_seen {
                 return self.cur.syntax(); /* multiple roots */
             }
-            self.doc.set_root(Some(el));
+            self.root_seen = true;
+            if !E::STREAMING {
+                self.doc.set_root(Some(el));
+            }
         }
-        let parent = self.cur_parent();
-        self.doc.append_child(parent, el);
+        /* A streaming parse links nothing: the element is given back when it
+         * closes, and a parent's child list must not point past the mark. */
+        if !E::STREAMING {
+            let parent = self.cur_parent();
+            self.doc.append_child(parent, el);
+        }
         let frame = self.scope.enter();
         let pushed = self.parse_element_body(el)?;
+        self.report(|e, d| e.start_element(d, el))?;
         if pushed {
             if self.stack.len() + 1 > MAX_DEPTH {
                 return self.cur.limit();
             }
-            /* Both slots first, so the two stacks stay the same height. */
+            /* Every slot first, so the stacks stay the same height. */
             let el_slot = self.stack.falloc_slot().or_oom::<ParseError>()?;
             let frame_slot = self.frames.falloc_slot().or_oom::<ParseError>()?;
+            if let Some(m) = mark {
+                self.marks.falloc_slot().or_oom::<ParseError>()?.push(m);
+            }
             el_slot.push(el);
             frame_slot.push(frame);
         } else {
             self.scope.leave(frame); /* self-closing: pop its scope now */
+            self.report(|e, d| e.end_element(d, el))?;
+            self.give_back(mark);
         }
         Ok(())
     }
@@ -512,7 +608,13 @@ impl<'a> Parser<'a> {
             return Ok(()); /* document-level whitespace: discarded */
         }
         let raw = self.cur.slice(text);
+        let mark = self.stream_mark();
         let tv = self.expand(raw, ExpandMode::Text)?;
+        if E::STREAMING {
+            self.report(|e, d| e.text(d.span(tv)))?;
+            self.give_back(mark);
+            return Ok(());
+        }
         let parent = self.cur_parent();
         self.append_chardata(parent, ArenaKind::Text, tv)
     }
@@ -551,7 +653,7 @@ impl<'a> Parser<'a> {
     /// for when a parse is finished lived twice.
     fn run_to_end(&mut self, require_root: bool) -> R {
         self.run()?;
-        let unclosed = !self.stack.is_empty() || (require_root && self.doc.root().is_none());
+        let unclosed = !self.stack.is_empty() || (require_root && !self.root_seen);
         if unclosed {
             return self.cur.syntax();
         }
@@ -596,8 +698,26 @@ pub fn parse_ex(src: &[u8], limits: Option<&ParseLimits>) -> Result<Box<Document
     check_source_len(src.len(), max_bytes)?;
     let mut doc = Document::create(limits)?;
     let norm = normalize_newlines(src)?;
-    Parser::new(norm.as_deref().unwrap_or(src), &mut doc, None).run_to_end(true)?;
+    Parser::new(norm.as_deref().unwrap_or(src), &mut doc, None, &mut Build).run_to_end(true)?;
     Ok(doc)
+}
+
+/// Parse `src` under `limits`, reporting to `events` as it goes and keeping
+/// nothing ([`events`]): the same parse as [`parse_ex`], whose checks it
+/// runs, over a scratch arena given back node by node. `Err(Stopped)` when
+/// a report stopped it; any other `Err` is the parse's own refusal, at the
+/// point the reports so far reached.
+pub fn parse_streaming<E: Events>(
+    src: &[u8],
+    limits: Option<&ParseLimits>,
+    events: &mut E,
+) -> Result<(), ParseError> {
+    const { assert!(E::STREAMING, "a tree-building receiver is parse_ex's") };
+    let max_bytes = limits.map_or(crate::xml::MAX_BYTES, ParseLimits::budget);
+    check_source_len(src.len(), max_bytes)?;
+    let mut doc = Document::create(limits)?;
+    let norm = normalize_newlines(src)?;
+    Parser::new(norm.as_deref().unwrap_or(src), &mut doc, None, events).run_to_end(true)
 }
 
 /// Parse a fragment into a live document's arena. The document reference and
@@ -632,7 +752,8 @@ fn parse_fragment_into(
 ) -> Result<NodeId, ParseError> {
     let frag = doc.new_node(ArenaKind::DocumentFragment)?;
     let norm = normalize_newlines(src)?;
-    let mut p = Parser::new(norm.as_deref().unwrap_or(src), doc, Some(frag));
+    let mut build = Build;
+    let mut p = Parser::new(norm.as_deref().unwrap_or(src), doc, Some(frag), &mut build);
     if inherit_doc_ns {
         p.seed_doc_namespaces()?;
     }

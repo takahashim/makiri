@@ -626,6 +626,9 @@ fn parse_status_error(status: ParseError, unit: Unit) -> Error {
         /* The parser's own invariant (`ExpandErr::Overflow`: an expansion
          * outgrew its input), never the input's fault. */
         ParseError::Internal => crate::bridge::ruby::internal_error(unit.failed()),
+        /* Only a streaming parse's receiver stops a parse, and these units
+         * build trees. */
+        ParseError::Stopped => crate::bridge::ruby::internal_error(unit.failed()),
     }
 }
 

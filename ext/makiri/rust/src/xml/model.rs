@@ -30,6 +30,9 @@ pub enum ParseError {
     /// attribute default, a non-CDATA attribute type, a parameter entity, a
     /// reference to a declared entity) - refused rather than ignored.
     Unsupported,
+    /// A streaming parse's receiver stopped it
+    /// ([`crate::xml::tree::events`]); a tree-building parse never stops so.
+    Stopped,
 }
 
 impl crate::falloc::Oom for ParseError {

@@ -2,13 +2,14 @@
 //!
 //! Its own module for the same reason [`super::dtd`] is: it builds NO node. All
 //! it leaves behind is `Document::mark_encoding_decl`, which the serializer reads
-//! to decide whether to write an `encoding` back out. The three pseudo-attribute
+//! to decide whether to write an `encoding` back out, and the values as written
+//! ([`Decl`]), which a streaming parse reports. The three pseudo-attribute
 //! value grammars below are naming rules for nothing else, so they live with the
 //! only production that uses them.
 
 #![forbid(unsafe_code)]
 
-use super::cursor::{Cursor, R};
+use super::cursor::{Cursor, InSlice, R};
 use crate::xml::Document;
 
 fn is_version_num(s: &[u8]) -> bool {
@@ -38,16 +39,23 @@ fn decl_eq(cur: &mut Cursor<'_>) -> R {
     Ok(())
 }
 
-fn decl_value(cur: &mut Cursor<'_>, ok: fn(&[u8]) -> bool) -> R {
+fn decl_value(cur: &mut Cursor<'_>, ok: fn(&[u8]) -> bool) -> R<InSlice> {
     let v = cur.parse_quoted()?;
     if !ok(cur.slice(v)) {
         return cur.syntax();
     }
-    Ok(())
+    Ok(v)
+}
+
+/// The declaration's pseudo-attribute values, as slices of the input.
+pub(super) struct Decl {
+    pub version: InSlice,
+    pub encoding: Option<InSlice>,
+    pub standalone: Option<InSlice>,
 }
 
 /// '<?xml' consumed. version (encoding)? (standalone)? S? '?>'
-pub(super) fn parse_body(cur: &mut Cursor<'_>, doc: &mut Document) -> R {
+pub(super) fn parse_body(cur: &mut Cursor<'_>, doc: &mut Document) -> R<Decl> {
     cur.require_space()?;
     if !cur.eat_keyword(b"version") {
         return cur.syntax();
@@ -59,25 +67,27 @@ pub(super) fn parse_body(cur: &mut Cursor<'_>, doc: &mut Document) -> R {
     if !is_version_num(cur.slice(ver)) {
         return cur.syntax();
     }
-    let (mut saw_enc, mut saw_sd) = (false, false);
+    let (mut encoding, mut standalone) = (None, None);
     loop {
         let had_s = cur.skip_some_ws();
         if cur.starts(b"?>") {
             cur.advance_n(2);
-            return Ok(());
+            return Ok(Decl {
+                version: ver,
+                encoding,
+                standalone,
+            });
         }
         if !had_s {
             return cur.syntax();
         }
-        if !saw_enc && !saw_sd && cur.eat_keyword(b"encoding") {
-            saw_enc = true;
+        if encoding.is_none() && standalone.is_none() && cur.eat_keyword(b"encoding") {
             doc.mark_encoding_decl();
             decl_eq(cur)?;
-            decl_value(cur, is_enc_name)?;
-        } else if !saw_sd && cur.eat_keyword(b"standalone") {
-            saw_sd = true;
+            encoding = Some(decl_value(cur, is_enc_name)?);
+        } else if standalone.is_none() && cur.eat_keyword(b"standalone") {
             decl_eq(cur)?;
-            decl_value(cur, is_yes_no)?;
+            standalone = Some(decl_value(cur, is_yes_no)?);
         } else {
             return cur.syntax();
         }
