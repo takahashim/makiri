@@ -10,8 +10,8 @@
 use crate::bridge::rb::{prelude::*, Error, Ruby, Value};
 use crate::method;
 
+use crate::bridge::args::Kwargs;
 use crate::bridge::ruby::makiri_error;
-use crate::glue::kwargs::Kwargs;
 
 use crate::init::MOD_XML_NODE_METHODS;
 use crate::xml::serialize::{self as xml_serialize, Failure};

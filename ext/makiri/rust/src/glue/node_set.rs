@@ -59,7 +59,7 @@ fn aref(ruby: &Ruby, s: NodeSetSelf, args: &[Value]) -> Result<Option<Value>, Er
                 _ => Ok(None),
             }
         }
-        _ => Err(crate::glue::args::arity_error(args.len(), 1, Some(2))),
+        _ => Err(crate::bridge::args::arity_error(args.len(), 1, Some(2))),
     }
 }
 
@@ -120,7 +120,7 @@ fn op_minus(ruby: &Ruby, s: NodeSetSelf, other: Value) -> Result<Value, Error> {
 /// whose document is taken) that the set pins as a GC keepalive; the optional
 /// list seeds it, and every node in it must belong to that document.
 fn s_new(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
-    let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::positional(1, 1))?;
+    let a = crate::bridge::args::scan(ruby, args, crate::bridge::args::Shape::positional(1, 1))?;
     let owner = a.required(0);
     let list = a.optional(0);
 

@@ -217,7 +217,7 @@ pub fn lshift(ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
 /// original under the name of a copy (and `#clone(freeze: true)` froze it),
 /// with a stray node left behind. `XML::Document#dup` is the document copy.
 pub fn clone_node(ruby: &Ruby, this: XmlSelf, args: &[Value]) -> Result<Value, Error> {
-    let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::positional(0, 1))?;
+    let a = crate::bridge::args::scan(ruby, args, crate::bridge::args::Shape::positional(0, 1))?;
     let deep = a.optional(0).is_some_and(|v| v.to_bool());
     if crate::bridge::ruby::same_value(this.value, this.document) {
         return Err(makiri_error("clone_node cannot copy a document; use #dup"));
@@ -234,12 +234,12 @@ pub fn clone_node(ruby: &Ruby, this: XmlSelf, args: &[Value]) -> Result<Value, E
 
 /// `create_element(name, content = nil, attributes = {})` -> Element.
 pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    let a = crate::glue::args::scan(
+    let a = crate::bridge::args::scan(
         ruby,
         args,
-        crate::glue::args::Shape {
+        crate::bridge::args::Shape {
             rest: true,
-            ..crate::glue::args::Shape::positional(1, 0)
+            ..crate::bridge::args::Shape::positional(1, 0)
         },
     )?;
     let name = a.required(0);
@@ -276,7 +276,7 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
          * the Hash (`hash::each_pair`). */
         /* `rb_el` was wrapped just above, so it converts. */
         let el_self = <XmlSelf as crate::bridge::rb::TryConvert>::try_convert(ruby, rb_el)?;
-        crate::glue::hash::each_pair(ruby, h, |k, v| {
+        crate::bridge::hash::each_pair(ruby, h, |k, v| {
             aset(ruby, el_self, k, v)?;
             Ok(())
         })?;
@@ -356,7 +356,7 @@ pub fn create_loose_dom_element(
 
 /// `create_document_type(name, public_id = "", system_id = "")` -> DocumentType.
 pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::positional(1, 2))?;
+    let a = crate::bridge::args::scan(ruby, args, crate::bridge::args::Shape::positional(1, 2))?;
     let name = a.required(0);
     let nil = ruby.qnil().as_value();
     let nv = verified_name(ruby, name, "doctype name")?;
@@ -422,7 +422,7 @@ pub fn create_pi(ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Res
 
 /// `Document#import_node(node, deep = false)` - the DOM's importNode.
 pub fn import_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::positional(1, 1))?;
+    let a = crate::bridge::args::scan(ruby, args, crate::bridge::args::Shape::positional(1, 1))?;
     let deep = a.optional(0).is_some_and(|v| v.to_bool());
     wrap(
         ruby,

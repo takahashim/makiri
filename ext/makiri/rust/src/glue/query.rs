@@ -19,13 +19,13 @@
 use crate::bridge::rb::{prelude::*, Error, RHash, Ruby, Value};
 use crate::method;
 
+use crate::bridge::args::Kwargs;
 use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::ruby_try_verified_text_pair;
 use crate::bridge::wrapper::keepalive_document;
 use crate::bridge::xpath::{
     context_for, evaluate_to_ruby, parse_query, Answer, Cx, QueryAst, XPathCtx,
 };
-use crate::glue::kwargs::Kwargs;
 use crate::init::{MOD_HTML_NODE_METHODS, MOD_XML_NODE_METHODS};
 
 /// A query's arguments, read once for every entry point.
@@ -53,7 +53,8 @@ impl QueryArgs {
                 lax: false,
             });
         }
-        let a = crate::glue::args::scan(ruby, args, crate::glue::args::Shape::with_keywords(1, 1))?;
+        let a =
+            crate::bridge::args::scan(ruby, args, crate::bridge::args::Shape::with_keywords(1, 1))?;
         let kw = Keywords::scan(ruby, Kwargs::from_scan(a.keywords()))?;
         let mut q = QueryArgs {
             text: a.required(0),
@@ -87,8 +88,8 @@ impl QueryArgs {
 /// caller's method runs.
 fn merge_hashes(ruby: &Ruby, a: RHash, b: RHash) -> Result<RHash, Error> {
     let out: RHash = crate::bridge::build::hash(ruby)?;
-    crate::glue::hash::hash_foreach(a, |k, v| crate::bridge::build::aset(out, k, v))?;
-    crate::glue::hash::hash_foreach(b, |k, v| crate::bridge::build::aset(out, k, v))?;
+    crate::bridge::hash::hash_foreach(a, |k, v| crate::bridge::build::aset(out, k, v))?;
+    crate::bridge::hash::hash_foreach(b, |k, v| crate::bridge::build::aset(out, k, v))?;
     Ok(out)
 }
 
@@ -162,7 +163,7 @@ fn bind_each(
             h.len()
         )));
     }
-    crate::glue::hash::each_pair(ruby, h, |prefix, uri| {
+    crate::bridge::hash::each_pair(ruby, h, |prefix, uri| {
         bind_pair(ruby, prefix, uri, cap, &mut register)
     })
 }

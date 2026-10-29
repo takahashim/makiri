@@ -1,22 +1,25 @@
-//! Reading a Hash argument's pairs.
+//! Reading a Hash's pairs: the one walk of a Hash, which latches a panic
+//! rather than let it unwind into `rb_hash_foreach`'s C frames.
 
-use crate::bridge::rb::{Error, RArray, RHash, Ruby, Value};
+#![forbid(unsafe_code)]
+
+use crate::rb::{Error, RArray, RHash, Ruby, Value};
 
 /// `h`'s pairs, each handed to `f` in turn; the first `Err` stops the walk
 /// and is returned.
 ///
-/// Over `bridge::raw::hash_foreach`, which latches a panic in `f` rather than
-/// let it unwind into `rb_hash_foreach`'s C frames, and resumes it once they
-/// are gone, where the method's trampoline makes it `Makiri::InternalError`.
-/// `f`'s own error is kept here rather than raised from inside the walk. The
-/// one way the glue walks a Hash (`rake unsafe:boundaries` fails on another
-/// `.foreach(`).
-pub(crate) fn hash_foreach(
+/// Over [`crate::raw::hash_foreach`], which latches a panic in `f` rather
+/// than let it unwind into `rb_hash_foreach`'s C frames, and resumes it once
+/// they are gone, where the method's trampoline makes it the internal error.
+/// `f`'s own error is kept here rather than raised from inside the walk.
+/// `RHash` has no walk of its own, so this is the one way an extension walks
+/// a Hash.
+pub fn hash_foreach(
     h: RHash,
     mut f: impl FnMut(Value, Value) -> Result<(), Error>,
 ) -> Result<(), Error> {
     let mut failed: Option<Error> = None;
-    crate::bridge::raw::hash_foreach(h, &mut |k, v| match f(k, v) {
+    crate::raw::hash_foreach(h, &mut |k, v| match f(k, v) {
         Ok(()) => true,
         Err(e) => {
             failed = Some(e);
@@ -32,15 +35,15 @@ pub(crate) fn hash_foreach(
 /// non-pair tripped an `expect`), and handed out only after the walk, so a
 /// caller's use of them - which allocates - is outside the iteration. The copy runs no Ruby code of the caller's; the
 /// Array holding it is a Ruby object on this frame, so the GC sees it.
-pub(crate) fn each_pair(
+pub fn each_pair(
     ruby: &Ruby,
     h: RHash,
     mut f: impl FnMut(Value, Value) -> Result<(), Error>,
 ) -> Result<(), Error> {
-    let pairs: RArray = crate::bridge::build::ary(ruby, h.len() * 2)?;
+    let pairs: RArray = crate::build::ary(ruby, h.len() * 2)?;
     hash_foreach(h, |k, v| {
-        crate::bridge::build::push(pairs, k)?;
-        crate::bridge::build::push(pairs, v)
+        crate::build::push(pairs, k)?;
+        crate::build::push(pairs, v)
     })?;
     for i in (0..pairs.len()).step_by(2) {
         f(pairs.entry(i), pairs.entry(i + 1))?;

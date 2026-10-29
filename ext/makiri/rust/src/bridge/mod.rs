@@ -26,7 +26,9 @@
 
 /// The Arrays, Hashes, numbers and Symbols the glue builds, allocation
 /// failures as `Err`.
+pub use crate::nupur::args;
 pub use crate::nupur::build;
+pub use crate::nupur::hash;
 
 /// The Ruby C calls that can raise, each with its raise stated.
 pub use crate::nupur::raw;
