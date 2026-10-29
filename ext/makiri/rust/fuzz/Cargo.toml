@@ -35,6 +35,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "xml_stream"
+path = "fuzz_targets/xml_stream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "xpath"
 path = "fuzz_targets/xpath.rs"
 test = false
