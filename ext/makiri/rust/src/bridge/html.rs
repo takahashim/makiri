@@ -20,7 +20,7 @@ use crate::init::{
     CLASS_HTML_PROCESSING_INSTRUCTION, CLASS_HTML_TEXT, CLASS_XML_DOCUMENT,
 };
 
-use crate::bridge::dom::HtmlRead;
+use crate::bridge::dom::{HtmlRead, HtmlWrite};
 use crate::bridge::string::{utf8_str, RubyData, RubyText};
 use crate::bridge::wrapper::*;
 use crate::child_index::{ChildList, Children, TokenTree};
@@ -700,7 +700,7 @@ pub fn new_node<R>(
 fn lend_document<R>(
     ruby: &crate::bridge::rb::Ruby,
     rb_doc: &Value,
-    lend: impl FnOnce(&mut crate::bridge::dom::HtmlWrite<'_>) -> R,
+    lend: impl FnOnce(&mut HtmlWrite<'_>) -> R,
 ) -> Result<R, Error> {
     let doc = HTML_DOC_TYPE.check(*rb_doc)?;
     /* The loan ends with this block, before the report below can run Ruby;
@@ -717,15 +717,38 @@ fn lend_document<R>(
     Ok(r)
 }
 
-/// Take `node` out of its tree, the release half of an adoption: a fragment
-/// contributes its children (the DOM leaves a spliced one empty), anything
-/// else leaves its parent.
-fn release_from_tree(d: &mut HtmlDocMut<'_>, node: RawNode) {
-    let n = d.node(node);
-    if n.node_type() == NodeType::DocumentFragment {
-        d.detach_children(node);
-    } else if n.parent().is_some() {
-        d.detach(node);
+/// A node copied in from another document, still to be taken out of it: the
+/// second half of the move `appendChild` performs across documents (the XML
+/// twin is `bridge::xml`'s `Adoption`). It holds the source's WRITE, which
+/// [`insert`] takes before the copy is made, so finishing cannot be refused
+/// and the write and the original it releases are one value.
+struct Adoption<'a> {
+    /// The source document, written: taken BEFORE the copy, so a refusal (a
+    /// read of it still held) comes while there is nothing to take back,
+    /// rather than after the copy is placed. The original is read through it
+    /// for the copy, too.
+    source: HtmlWrite<'a>,
+    /// The source's Document, whose tree version the release bumps.
+    src_document: Value,
+    /// The original, in the source document.
+    src: RawNode,
+}
+
+impl Adoption<'_> {
+    /// The copy is placed: take the original out of its own document, so
+    /// the whole reads as a move, and drop that document's indexes, which
+    /// still list it. A fragment gives up its children (the DOM leaves a
+    /// spliced one empty); anything else leaves its parent. Recorded before
+    /// the change (`record_edit`). The source's write ends with this.
+    fn finish(mut self) {
+        record_edit(self.src_document, EditKind::ChildList);
+        let mut d = self.source.edit();
+        let n = d.node(self.src);
+        if n.node_type() == NodeType::DocumentFragment {
+            d.detach_children(self.src);
+        } else if n.parent().is_some() {
+            d.detach(self.src);
+        }
     }
 }
 
@@ -758,64 +781,56 @@ pub fn insert(
      * and kept as a reference: in the receiver's document it is read through
      * the edit's own borrow, never through a second one. */
     let incoming = node_ref(incoming_doc, key)?;
-    let same = crate::bridge::ruby::same_value(incoming_doc, document);
     let incoming_handle = doc_known(incoming_doc);
-    /* From another document, the argument's own document is written too -
-     * its original released once the copy is in - so it is taken for the
-     * edit before anything changes: a refusal then comes before the copy is
-     * placed rather than after, which would leave the copy in and the
-     * original where it was. The source is read through the same borrow.
+    /* From another document, the argument's own document is written too, so
+     * it is taken for the edit before anything changes ([`Adoption::source`]).
      * Nothing between here and the release runs Ruby. */
-    let mut source = match same {
+    let adoption = match crate::bridge::ruby::same_value(incoming_doc, document) {
         true => None,
-        false => Some(html_write(&incoming_handle)?),
+        false => Some(Adoption {
+            source: html_write(&incoming_handle)?,
+            src_document: incoming_doc,
+            src: incoming,
+        }),
     };
-    let (placed, adopted) = edit.with_tree(|d, target| -> Result<(RawNode, bool), Error> {
-        let node = if same {
-            let insertion = Insertion::new(d.node(target), place, d.node(incoming))
-                .map_err(crate::bridge::dom_error::pre_insert_error)?;
-            insertion
-                .check()
-                .map_err(crate::bridge::dom_error::pre_insert_error)?;
-            if insertion.unchanged() {
-                return Ok((incoming, false));
+    let placed = edit.with_tree(|d, target| -> Result<RawNode, Error> {
+        let node = match &adoption {
+            None => {
+                let insertion = Insertion::new(d.node(target), place, d.node(incoming))
+                    .map_err(crate::bridge::dom_error::pre_insert_error)?;
+                insertion
+                    .check()
+                    .map_err(crate::bridge::dom_error::pre_insert_error)?;
+                if insertion.unchanged() {
+                    return Ok(incoming);
+                }
+                if d.node(incoming).parent().is_some() {
+                    d.detach(incoming);
+                }
+                incoming
             }
-            if d.node(incoming).parent().is_some() {
-                d.detach(incoming);
+            Some(a) => {
+                /* From another document: checked, then copied into this one -
+                 * the original is released once the copy is in. */
+                let src = a
+                    .source
+                    .parsed()
+                    .resolve(key)
+                    .map_err(|ForeignNode| foreign_node_error())?;
+                Insertion::new(d.node(target), place, src)
+                    .and_then(|i| i.check())
+                    .map_err(crate::bridge::dom_error::pre_insert_error)?;
+                d.import(src, true)
+                    .map_err(|_| makiri_error("failed to import node"))?
             }
-            incoming
-        } else {
-            /* From another document: checked, then copied into this one - the
-             * original is released below, once the copy is in. */
-            let parsed = source
-                .as_ref()
-                .ok_or_else(|| {
-                    crate::bridge::ruby::internal_error("an adoption without its source")
-                })?
-                .parsed();
-            let src = parsed
-                .resolve(key)
-                .map_err(|ForeignNode| foreign_node_error())?;
-            Insertion::new(d.node(target), place, src)
-                .and_then(|i| i.check())
-                .map_err(crate::bridge::dom_error::pre_insert_error)?;
-            d.import(src, true)
-                .map_err(|_| makiri_error("failed to import node"))?
         };
         d.place(target, node, place);
-        Ok((node, !same))
+        Ok(node)
     })??;
-    let Some(mut source) = source.take().filter(|_| adopted) else {
+    let Some(adoption) = adoption else {
         return Ok(rb_incoming);
     };
-    /* Take the original out of the document it came from, so the whole thing
-     * reads as the move the DOM says appendChild performs - and drop that
-     * document's indexes, which still list it. Recorded before the change
-     * (`record_edit`), through the borrow taken above, which cannot be
-     * refused now. */
-    record_edit(incoming_doc, EditKind::ChildList);
-    release_from_tree(&mut source.edit(), incoming);
-    drop(source);
+    adoption.finish();
     /* The document that grew is the receiver's, by the copy; the original's
      * only lost a link. */
     crate::bridge::wrapper::account_growth(ruby, document);
