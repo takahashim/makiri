@@ -452,6 +452,20 @@ impl FreshSet {
         w.reserve(ruby, room)?;
         Ok(w)
     }
+
+    /// A NodeSet over `document`, filled by `fill` through its write borrow
+    /// ([`with_room`](Self::with_room), room for `room` nodes taken first):
+    /// what every operation that makes a set from sets it already has is.
+    fn build(
+        ruby: &Ruby,
+        document: Value,
+        room: usize,
+        fill: impl FnOnce(&mut NodeVec) -> Result<(), Error>,
+    ) -> Result<Value, Error> {
+        let result = FreshSet::new(ruby, document)?;
+        fill(&mut *result.with_room(ruby, room)?)?;
+        Ok(result.value())
+    }
 }
 
 /// The pushes into a [`FreshSet`]: one borrow of the set, so the "this
@@ -564,15 +578,14 @@ impl NodeSetSelf {
 
     /// A new set of at most `len` nodes from `beg`.
     fn take(&self, ruby: &Ruby, beg: usize, len: usize) -> Result<Value, Error> {
-        let result = FreshSet::new(ruby, self.document())?;
-        let mut w = result.with_room(ruby, len)?;
-        let mine = self.read()?;
-        let tail = mine.as_slice().get(beg..).unwrap_or_default();
-        for &n in &tail[..len.min(tail.len())] {
-            w.push(ruby, n)?;
-        }
-        drop(w);
-        Ok(result.value())
+        FreshSet::build(ruby, self.document(), len, |w| {
+            let mine = self.read()?;
+            let tail = mine.as_slice().get(beg..).unwrap_or_default();
+            for &n in &tail[..len.min(tail.len())] {
+                w.push(ruby, n)?;
+            }
+            Ok(())
+        })
     }
 
     /// `other` as a set that can be combined with this one: a NodeSet, and of
@@ -616,50 +629,47 @@ impl NodeSetSelf {
     /// `self | other`: the union, deduped, self first.
     pub fn union(&self, ruby: &Ruby, other: &NodeSet) -> Result<Value, Error> {
         let room = self.count()?.saturating_add(other.count()?);
-        let result = FreshSet::new(ruby, self.document())?;
-        let mut w = result.with_room(ruby, room)?;
-        let (mine, theirs) = (self.read()?, other.read()?);
-        let mut seen = Index::empty(mine.len() + theirs.len());
-        for &n in mine.as_slice().iter().chain(theirs.as_slice()) {
-            if seen.insert(n, w.as_slice()) {
-                w.push(ruby, n)?;
+        FreshSet::build(ruby, self.document(), room, |w| {
+            let (mine, theirs) = (self.read()?, other.read()?);
+            let mut seen = Index::empty(mine.len() + theirs.len());
+            for &n in mine.as_slice().iter().chain(theirs.as_slice()) {
+                if seen.insert(n, w.as_slice()) {
+                    w.push(ruby, n)?;
+                }
             }
-        }
-        drop(w);
-        Ok(result.value())
+            Ok(())
+        })
     }
 
     /// `self + other`: the concatenation, duplicates kept.
     pub fn concat(&self, ruby: &Ruby, other: &NodeSet) -> Result<Value, Error> {
         let room = self.count()?.saturating_add(other.count()?);
-        let result = FreshSet::new(ruby, self.document())?;
-        let mut w = result.with_room(ruby, room)?;
-        let (mine, theirs) = (self.read()?, other.read()?);
-        for &n in mine.as_slice().iter().chain(theirs.as_slice()) {
-            w.push(ruby, n)?;
-        }
-        drop(w);
-        Ok(result.value())
+        FreshSet::build(ruby, self.document(), room, |w| {
+            let (mine, theirs) = (self.read()?, other.read()?);
+            for &n in mine.as_slice().iter().chain(theirs.as_slice()) {
+                w.push(ruby, n)?;
+            }
+            Ok(())
+        })
     }
 
     /// `&` ([`Membership::In`]) and `-` ([`Membership::NotIn`]): each node of
     /// self with that membership in `other`, deduped, in self's order.
     pub fn filter(&self, ruby: &Ruby, other: &NodeSet, keep: Membership) -> Result<Value, Error> {
-        let result = FreshSet::new(ruby, self.document())?;
-        let mut w = result.with_room(ruby, self.count()?)?;
-        let (mine, theirs) = (self.read()?, other.read()?);
-        let theirs_index = Index::build(theirs.as_slice());
-        let mut seen = Index::empty(mine.len());
-        for &n in mine.as_slice() {
-            if theirs_index.contains(n, theirs.as_slice()) != (keep == Membership::In) {
-                continue;
+        FreshSet::build(ruby, self.document(), self.count()?, |w| {
+            let (mine, theirs) = (self.read()?, other.read()?);
+            let theirs_index = Index::build(theirs.as_slice());
+            let mut seen = Index::empty(mine.len());
+            for &n in mine.as_slice() {
+                if theirs_index.contains(n, theirs.as_slice()) != (keep == Membership::In) {
+                    continue;
+                }
+                if seen.insert(n, w.as_slice()) {
+                    w.push(ruby, n)?;
+                }
             }
-            if seen.insert(n, w.as_slice()) {
-                w.push(ruby, n)?;
-            }
-        }
-        drop(w);
-        Ok(result.value())
+            Ok(())
+        })
     }
 }
 
@@ -675,21 +685,20 @@ pub fn node_set_of_nodes(
     document: Value,
     nodes: impl Iterator<Item = Value>,
 ) -> Result<Value, Error> {
-    let set = FreshSet::new(ruby, document)?;
-    let mut w = set.with_room(ruby, 0)?;
-    for item in nodes {
-        if !is_kind_of(ruby, item, &CLASS_NODE)
-            || !crate::bridge::ruby::same_value(keepalive_document(ruby, item)?, document)
-        {
-            return Err(Error::new(
-                crate::bridge::rb::Builtin::ArgumentError,
-                "every node must be a Makiri node belonging to the given document",
-            ));
+    FreshSet::build(ruby, document, 0, |w| {
+        for item in nodes {
+            if !is_kind_of(ruby, item, &CLASS_NODE)
+                || !crate::bridge::ruby::same_value(keepalive_document(ruby, item)?, document)
+            {
+                return Err(Error::new(
+                    crate::bridge::rb::Builtin::ArgumentError,
+                    "every node must be a Makiri node belonging to the given document",
+                ));
+            }
+            w.push(ruby, node_raw(ruby, item)?)?;
         }
-        w.push(ruby, node_raw(ruby, item)?)?;
-    }
-    drop(w);
-    Ok(set.value())
+        Ok(())
+    })
 }
 
 /// Which nodes of self [`NodeSet::filter`] keeps: those in the other set
