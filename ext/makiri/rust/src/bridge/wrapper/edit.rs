@@ -49,33 +49,19 @@ pub enum EditKind {
 /// Recording after the change instead would miss an edit that panics, or
 /// fails having changed something, and leave a reader trusting a stale cache.
 pub fn record_edit(rb_doc: Value, kind: EditKind) {
-    doc_data_known(&rb_doc).update_edits(|e| e.record(kind));
+    doc_data_known(&doc_known(rb_doc)).update_edits(|e| e.record(kind));
 }
 
 /// `Document#tree_version`: how many child-list edits the document has seen.
 /// `TypeError` for a non-Document.
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        unheld_payload_borrow,
-        reason = "rb_doc is the method's receiver, which Ruby keeps for the call"
-    )
-)]
 pub fn tree_version(rb_doc: Value) -> Result<u64, Error> {
-    Ok(DOC_TYPE.get(&rb_doc)?.edits.get().tree_version)
+    Ok(DOC_TYPE.check(rb_doc)?.data().edits.get().tree_version)
 }
 
 /// `Document#attribute_version`: how many attribute edits the document has
 /// seen. `TypeError` for a non-Document.
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        unheld_payload_borrow,
-        reason = "rb_doc is the method's receiver, which Ruby keeps for the call"
-    )
-)]
 pub fn attribute_version(rb_doc: Value) -> Result<u64, Error> {
-    Ok(DOC_TYPE.get(&rb_doc)?.edits.get().attribute_version)
+    Ok(DOC_TYPE.check(rb_doc)?.data().edits.get().attribute_version)
 }
 
 /* ---- the child-position memo ---- */
@@ -94,7 +80,8 @@ fn with_child_memo<R>(
     rb_doc: Value,
     f: impl FnOnce(&mut ChildPositionMemo, u64) -> R,
 ) -> Result<R, Error> {
-    let d = doc_data_known(&rb_doc);
+    let doc = doc_known(rb_doc);
+    let d = doc_data_known(&doc);
     let version = d.edits.get().tree_version;
     let mut memo = d.child_memo.try_borrow_mut().map_err(|_| {
         crate::bridge::ruby::internal_error("a Document's child memo was found in use")

@@ -67,7 +67,7 @@ static XML_NODE_CLASSES: NodeClasses = NodeClasses {
 /// `document`'s arena; a caller with no node holds an `Option` and maps `None`
 /// to nil itself.
 pub fn wrap_xml_node(ruby: &Ruby, id: NodeId, document: Value) -> Result<Value, Error> {
-    let ty = xml_read(&document)?.type_(id);
+    let ty = xml_read(&doc_known(document))?.type_(id);
     wrap_xml_node_of_type(ruby, id, ty, document)
 }
 
@@ -82,7 +82,7 @@ pub(in crate::bridge) fn wrap_xml_node_checked(
     if let Some(cached) = crate::bridge::wrapper::cached_node(document, &id)? {
         return Ok(cached);
     }
-    let ty = xml_read(&document)?.type_(id);
+    let ty = xml_read(&doc_known(document))?.type_(id);
     if ty.is_none() {
         return Err(crate::bridge::ruby::internal_error(
             "a stored node of another document",
@@ -132,7 +132,7 @@ impl TokenTree for XmlDoc {
 impl ChildListHost for XmlSelf {
     type Tree<'a> = XmlDoc;
     fn document(&self) -> Value {
-        self.document
+        self.document()
     }
     fn with_children<R>(
         &self,
@@ -149,7 +149,7 @@ impl ChildListHost for XmlSelf {
     fn wrap_child(&self, ruby: &Ruby, token: Option<usize>) -> Result<Option<Value>, Error> {
         token
             .and_then(NodeId::from_token)
-            .map(|id| wrap_xml_node(ruby, id, self.document))
+            .map(|id| wrap_xml_node(ruby, id, self.document()))
             .transpose()
     }
 }
@@ -160,8 +160,8 @@ impl ChildListHost for XmlSelf {
 /// through the XML TypedData type, which fails with TypeError for an HTML node.
 pub fn xml_node_unwrap(ruby: &Ruby, rb_self: Value) -> Result<NodeId, Error> {
     if crate::bridge::ruby::is_kind_of(ruby, rb_self, &CLASS_XML_DOCUMENT) {
-        XML_DOC_TYPE.ensure(rb_self)?; /* TypeError for any other Document */
-        return Ok(xml_read(&rb_self)?.doc_node());
+        let document = XML_DOC_TYPE.check(rb_self)?; /* TypeError for any other Document */
+        return Ok(xml_read(&document)?.doc_node());
     }
     let nd = crate::bridge::wrapper::read_node(&XML_NODE_TYPE, rb_self)?;
     /* A wrapper's word is a real node; a null one is a broken invariant,
@@ -197,12 +197,12 @@ pub fn xml_node_document(ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
 
 /// A method receiver already checked to be an XML node or XML Document; see the
 /// HTML twin, `HtmlSelf`.
-#[derive(Clone, Copy)]
 pub struct XmlSelf {
     pub value: Value,
     pub id: NodeId,
-    /// The keepalive Document (the receiver itself for a Document).
-    pub document: Value,
+    /// The keepalive Document (the receiver itself for a Document), as the
+    /// handle its content is read through.
+    document: DocHandle,
 }
 
 impl crate::bridge::rb::TryConvert for XmlSelf {
@@ -211,23 +211,31 @@ impl crate::bridge::rb::TryConvert for XmlSelf {
          * Document come from the same place ([`xml_node_unwrap`] and
          * [`xml_node_document`] each ask, for the callers that need one). */
         if crate::bridge::ruby::is_kind_of(ruby, value, &CLASS_XML_DOCUMENT) {
-            XML_DOC_TYPE.ensure(value)?; /* TypeError for any other Document */
+            /* TypeError for any other Document */
+            let document = XML_DOC_TYPE.check(value)?;
+            let id = xml_read(&document)?.doc_node();
             return Ok(XmlSelf {
                 value,
-                id: xml_read(&value)?.doc_node(),
-                document: value,
+                id,
+                document,
             });
         }
         let nd = crate::bridge::wrapper::read_node(&XML_NODE_TYPE, value)?;
         Ok(XmlSelf {
             value,
             id: nd.node.xml().ok_or_else(wrapper_without_node)?,
-            document: nd.document,
+            document: doc_known(nd.document),
         })
     }
 }
 
 impl XmlSelf {
+    /// The keepalive Document (the receiver itself for a Document).
+    #[inline]
+    pub fn document(&self) -> Value {
+        self.document.value()
+    }
+
     /// The arena behind the receiver's Document, borrowed for reading: a
     /// counted borrow, so it must not be held across a call that can raise
     /// (`rake unsafe:boundaries`) - read what is needed, drop it, then build
@@ -237,7 +245,7 @@ impl XmlSelf {
         Ok(XmlView {
             read: xml_read(&self.document)?,
             id: self.id,
-            document: self.document,
+            document: self.document(),
         })
     }
 }
@@ -297,7 +305,7 @@ impl XmlView<'_> {
 /// the slices a reader borrowed. Every path that hands out a `&mut` goes
 /// through here, so the one guard covers the factories and the imports as
 /// well as the tree edits.
-fn arena_mut(document: &Value) -> Result<XmlWrite<'_>, Error> {
+fn arena_mut(document: &DocHandle) -> Result<XmlWrite<'_>, Error> {
     xml_write(document)
 }
 
@@ -385,6 +393,7 @@ pub fn with_arena_for_new_node<R>(
     document: Value,
     f: impl FnOnce(&mut XmlDoc) -> R,
 ) -> Result<R, Error> {
+    let document = doc_known(document);
     let mut write = arena_mut(&document)?;
     Ok(f(&mut write))
 }
@@ -408,14 +417,14 @@ pub fn with_arena_for_new_node<R>(
 pub struct Editing<'a> {
     /// The receiver, frozen-checked again at the change.
     receiver: Value,
-    document: Value,
-    id: NodeId,
-    /// The receiver, borrowed mutably for the edit's life: a read of its
-    /// document (`XmlSelf::doc_ref`) cannot still be held when the edit
+    /// The receiver's Document, borrowed from the receiver, which
+    /// [`begin_edit`] took mutably for the edit's life: a read of its
+    /// document (`XmlSelf::read`) cannot still be held when the edit
     /// begins, nor be taken while it runs - the arena it borrows is the one
     /// the edit may grow. A COPY of the receiver is not covered; reads go
     /// through the receiver itself.
-    _this: core::marker::PhantomData<&'a mut XmlSelf>,
+    document: &'a DocHandle,
+    id: NodeId,
 }
 
 impl Editing<'_> {
@@ -427,12 +436,12 @@ impl Editing<'_> {
     /// The arena, read while the edit is held and before it is spent: the
     /// read borrows the permit, so it is over before the change can run.
     pub fn read(&self) -> Result<XmlRead<'_>, Error> {
-        xml_read(&self.document)
+        xml_read(self.document)
     }
 
     /// Its document, for the Ruby-side work an edit does around the arena call.
     pub fn document(&self) -> Value {
-        self.document
+        self.document.value()
     }
 
     /// Lend the arena for the change. `f` runs no Ruby (see [`with_arena_for_new_node`]),
@@ -463,7 +472,7 @@ impl Editing<'_> {
         node: NodeId,
         f: impl FnOnce(&mut XmlDoc, NodeId) -> R,
     ) -> Result<R, Error> {
-        let attrs = crate::xml::mutate::decides_attr_ns(&*xml_read(&self.document)?, node);
+        let attrs = crate::xml::mutate::decides_attr_ns(&*xml_read(self.document)?, node);
         let also = attrs.then_some(EditKind::Attributes);
         self.lend_recording(EditKind::ChildList, also, f)
     }
@@ -497,18 +506,17 @@ impl Editing<'_> {
     ) -> Result<R, Error> {
         let id = self.id;
         self.receiver.check_frozen()?;
-        check_attr_owner_frozen(self.document, id)?;
+        check_attr_owner_frozen(self.document.value(), id)?;
         /* Recorded once both refusals are past and BEFORE the change, with no
          * Ruby run in between (`record_edit`): an edit that then fails, or a
          * panic in it, still invalidates what it may have changed. */
-        record_edit(self.document, kind);
+        record_edit(self.document.value(), kind);
         if let Some(also) = also {
-            record_edit(self.document, also);
+            record_edit(self.document.value(), also);
         }
-        with_arena_for_new_node(self.document, |d| {
-            d.invalidate_name_index();
-            f(d, id)
-        })
+        let mut write = arena_mut(self.document)?;
+        write.invalidate_name_index();
+        Ok(f(&mut write, id))
     }
 }
 
@@ -517,7 +525,8 @@ impl Editing<'_> {
 /// frozen flag, before and after the arguments are converted.
 fn check_attr_owner_frozen(document: Value, id: NodeId) -> Result<(), Error> {
     let owner = {
-        let doc = xml_read(&document)?;
+        let handle = doc_known(document);
+        let doc = xml_read(&handle)?;
         match (doc.type_(id), doc.parent(id)) {
             (Some(ArenaKind::Attribute), Some(owner)) => Some(owner),
             _ => None,
@@ -533,14 +542,16 @@ fn check_attr_owner_frozen(document: Value, id: NodeId) -> Result<(), Error> {
 /// evaluation. The name index is dropped later, by [`Editing::with_arena`].
 pub fn begin_edit<'a>(ruby: &Ruby, this: &'a mut XmlSelf) -> Result<Editing<'a>, Error> {
     this.value.check_frozen()?;
-    check_attr_owner_frozen(this.document, this.id)?;
+    check_attr_owner_frozen(this.document(), this.id)?;
     /* Before any argument is converted: see `account_growth`. */
-    crate::bridge::wrapper::account_growth(ruby, this.document);
+    crate::bridge::wrapper::account_growth(ruby, this.document());
+    /* The `&mut` is given up for a shared borrow of the same life, so the
+     * caller's receiver stays borrowed until the edit is spent. */
+    let this: &'a XmlSelf = this;
     Ok(Editing {
         receiver: this.value,
-        document: this.document,
+        document: &this.document,
         id: this.id,
-        _this: core::marker::PhantomData,
     })
 }
 
@@ -684,13 +695,13 @@ pub fn parse_xml_document(ruby: &Ruby, source: Value, limits: ParseLimits) -> Re
 
 /// `Document#root` for an XML document: the root element, or nil.
 pub fn document_root(ruby: &Ruby, rb_self: Value) -> Result<Option<Value>, Error> {
-    let root = xml_read(&rb_self)?.root();
+    let root = xml_read(&doc_known(rb_self))?.root();
     root.map(|n| wrap_xml_node(ruby, n, rb_self)).transpose()
 }
 
 /// `Document#internal_subset` for an XML document: the DOCTYPE node, or nil.
 pub fn document_internal_subset(ruby: &Ruby, rb_self: Value) -> Result<Option<Value>, Error> {
-    let doctype = xml_read(&rb_self)?.doctype();
+    let doctype = xml_read(&doc_known(rb_self))?.doctype();
     doctype.map(|n| wrap_xml_node(ruby, n, rb_self)).transpose()
 }
 
@@ -700,7 +711,7 @@ pub fn copy_xml_document(ruby: &Ruby, document: Value) -> Result<Value, Error> {
     /* The wrapper first, while nothing needs freeing (`new_document`). The
      * copy then reads `document` and runs no Ruby. */
     new_xml_document(ruby, || {
-        crate::xml::mutate::copy_document(&*xml_read(&document)?).map_err(xml_mut_error)
+        crate::xml::mutate::copy_document(&*xml_read(&doc_known(document))?).map_err(xml_mut_error)
     })
     .map(|doc| doc.value())
 }
@@ -725,11 +736,12 @@ pub fn fragment_into(
     source: Value,
     inherit_doc_ns: bool,
 ) -> Result<NodeId, Error> {
-    let max_bytes = xml_read(&document)?.max_bytes();
+    let handle = doc_known(document);
+    let max_bytes = xml_read(&handle)?.max_bytes();
     let source = crate::bridge::ruby::string_arg(source)?;
     let src = xml_decode_input(ruby, source, Some(max_bytes))?;
     let parsed = {
-        let mut xdoc = arena_mut(&document)?;
+        let mut xdoc = arena_mut(&handle)?;
         tree::parse_fragment(&mut xdoc, src.as_slice(), inherit_doc_ns)
     };
     let frag = parsed.map_err(|status| parse_status_error(status, Unit::Fragment))?;
@@ -751,7 +763,7 @@ pub fn fragment_into(
 /// `None` for a non-element (the name is then not even verified, matching the
 /// readers' nil-returning behaviour). The name is converted BEFORE the arena is
 /// borrowed: a Symbol's name or a transcode is a Ruby allocation.
-pub fn find_attribute(ruby: &Ruby, this: XmlSelf, name: Value) -> Result<Option<NodeId>, Error> {
+pub fn find_attribute(ruby: &Ruby, this: &XmlSelf, name: Value) -> Result<Option<NodeId>, Error> {
     let id = this.id;
     if this.read()?.type_(id) != Some(ArenaKind::Element) {
         return Ok(None);
@@ -767,7 +779,7 @@ pub fn find_attribute(ruby: &Ruby, this: XmlSelf, name: Value) -> Result<Option<
 /// as [`find_attribute`].
 pub fn find_attribute_ns(
     ruby: &Ruby,
-    this: XmlSelf,
+    this: &XmlSelf,
     ns: Value,
     local: Value,
 ) -> Result<Option<NodeId>, Error> {
@@ -862,8 +874,11 @@ pub fn insert(
     at: crate::xml::mutate::Place,
 ) -> Result<Value, Error> {
     let edit = begin_edit(ruby, &mut this)?;
-    let target_doc = edit.document();
+    let target = edit.document;
+    let target_doc = target.value();
     let (src, src_document) = incoming_ref(ruby, arg)?;
+    /* The source's handle, which its write in an adoption borrows. */
+    let source;
     let (node, adoption) = if crate::bridge::ruby::same_value(src_document, target_doc) {
         /* The same arena: a move. */
         (src, None)
@@ -871,11 +886,12 @@ pub fn insert(
         /* An adoption writes the source too, so it is taken for the edit
          * BEFORE the copy is made ([`Adoption::sdoc`]). Nothing between here
          * and the release runs Ruby. */
-        let sdoc = xml_write(&src_document)?;
+        source = doc_known(src_document);
+        let sdoc = xml_write(&source)?;
         let (mark, copied) = {
             /* Two distinct arenas (the documents differ): the target
              * written, the source read through its own write. */
-            let mut dst = arena_mut(&target_doc)?;
+            let mut dst = arena_mut(target)?;
             (dst.mark(), import_subtree(&mut dst, &sdoc, src))
         };
         let copy = xml_mut_result(copied)?;
@@ -901,7 +917,7 @@ pub fn insert(
         /* The receiver's document grew by the copy. */
         crate::bridge::wrapper::account_growth(ruby, target_doc);
     }
-    wrap_xml_node(ruby, node, this.document)
+    wrap_xml_node(ruby, node, this.document())
 }
 
 /// `arg` as the node an insertion takes in, and the Document it lives in: a
@@ -915,8 +931,8 @@ fn incoming_ref(ruby: &Ruby, arg: Value) -> Result<(NodeId, Value), Error> {
     }
     /* One read of the wrapper, as a receiver's: `TypeError` for an HTML node
      * or Document, as `xml_node_unwrap` raises. */
-    let XmlSelf { id, document, .. } =
-        <XmlSelf as crate::bridge::rb::TryConvert>::try_convert(ruby, arg)?;
+    let incoming = <XmlSelf as crate::bridge::rb::TryConvert>::try_convert(ruby, arg)?;
+    let (id, document) = (incoming.id, incoming.document());
     /* Inserting `arg` relinks IT - its parent, prev and next all change, and an
      * adoption takes it out of its own document - so a frozen argument is a
      * frozen node being modified, which the receiver check alone let through:
@@ -947,10 +963,12 @@ pub fn import_copy(
             let src = xml_node_unwrap(ruby, node_v)?;
             let copied = if crate::bridge::ruby::same_value(src_document, rb_self) {
                 /* Same arena: the single-`&mut` clone path. */
-                clone_node(&mut *arena_mut(&rb_self)?, src, deep)
+                clone_node(&mut *arena_mut(&doc_known(rb_self))?, src, deep)
             } else {
-                let mut dst = arena_mut(&rb_self)?;
-                copy_node_from(&mut dst, &*xml_read(&src_document)?, src, deep)
+                let (target, source) = (doc_known(rb_self), doc_known(src_document));
+                let mut dst = arena_mut(&target)?;
+                let read = xml_read(&source)?;
+                copy_node_from(&mut dst, &read, src, deep)
             };
             xml_mut_result(copied)?
         }
@@ -958,7 +976,11 @@ pub fn import_copy(
             /* The HTML source, read for the closure; the copy goes into the
              * receiver's arena, another document. */
             let copied = with_arg_node(ruby, node_v, |src| {
-                Ok::<_, Error>(cross_html_to_xml(&mut *arena_mut(&rb_self)?, src, deep))
+                Ok::<_, Error>(cross_html_to_xml(
+                    &mut *arena_mut(&doc_known(rb_self))?,
+                    src,
+                    deep,
+                ))
             })??;
             xml_mut_result(copied)?
         }

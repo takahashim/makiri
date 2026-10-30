@@ -21,9 +21,8 @@
 //!   layer function with no proof of the GVL in its signature.
 //! - `gvl_token_outside_entry` ([`entry`]): the GVL's token made anywhere but
 //!   the entries Ruby calls.
-//! - `forgotten_handle` and `unheld_payload_borrow` ([`handles`]): a handle
-//!   that holds a wrapped object forgotten, and a payload borrowed through a
-//!   bare `Value` with no reason the value is kept.
+//! - `forgotten_handle` ([`handles`]): a handle that holds a wrapped object
+//!   forgotten.
 //! - `discarded_ruby_error` ([`discarded`]): an `Err` of a Ruby error thrown
 //!   away rather than handled with `Error::rescue`.
 //! - `ruby_value_on_heap` ([`value_on_heap`]): a Ruby value kept where Ruby's
@@ -97,7 +96,6 @@ pub fn register_lints(sess: &Session, lint_store: &mut LintStore) {
         UNRAISING_CALL_IN_RAW,
         GVL_TOKEN_OUTSIDE_ENTRY,
         FORGOTTEN_HANDLE,
-        UNHELD_PAYLOAD_BORROW,
     ]);
     lint_store.register_late_lint_pass(Box::new(|_| Box::new(MakiriLints)));
 }
@@ -296,19 +294,6 @@ declare_lint! {
 }
 
 declare_lint! {
-    /// ### What it does
-    /// Reports every call of `TypedType::get` / `get_known`.
-    ///
-    /// ### Why is this bad?
-    /// They borrow a payload from a bare `Value`, which keeps nothing: sound
-    /// only for a value Ruby keeps for the whole borrow. Each call is allowed
-    /// where it is made, with that reason, or borrows through a `Typed`.
-    pub UNHELD_PAYLOAD_BORROW,
-    Deny,
-    "a payload borrowed through a bare Value, with no reason it is kept"
-}
-
-declare_lint! {
     pub DISCARDED_RUBY_ERROR,
     Deny,
     "a Result of a Ruby error whose Err is thrown away"
@@ -331,7 +316,6 @@ declare_lint_pass!(MakiriLints => [
     UNRAISING_CALL_IN_RAW,
     GVL_TOKEN_OUTSIDE_ENTRY,
     FORGOTTEN_HANDLE,
-    UNHELD_PAYLOAD_BORROW,
 ]);
 
 impl<'tcx> LateLintPass<'tcx> for MakiriLints {

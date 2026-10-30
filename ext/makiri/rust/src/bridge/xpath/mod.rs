@@ -17,7 +17,7 @@ use crate::bridge::html::{html_node_key, with_html_node};
 use crate::bridge::node_set::FreshSet;
 use crate::bridge::node_wrap::wrap_doc_node;
 use crate::bridge::string::ruby_verified_text;
-use crate::bridge::wrapper::{html_read, xml_read, DocKind, NodeWord, DOC_TYPE};
+use crate::bridge::wrapper::{doc_known, html_read, xml_read, DocKind, NodeWord, DOC_TYPE};
 use crate::bridge::xml::xml_node_unwrap;
 use crate::engine_error::{Error as XPathError, ErrorKind};
 use crate::html_dom::xpath::HtmlDom;
@@ -90,11 +90,13 @@ impl Cx {
     ) -> Result<Result<XPathValue, XPathError>, Error> {
         Ok(match DocKind::of(document) {
             DocKind::Xml => {
-                let doc = xml_read(&document)?;
+                let handle = doc_known(document);
+                let doc = xml_read(&handle)?;
                 run_on(&self.session, &*doc, ast, answer)
             }
             DocKind::Html => {
-                let doc = html_read(&document)?;
+                let handle = doc_known(document);
+                let doc = html_read(&handle)?;
                 run_on(
                     &self.session,
                     crate::html_dom::xpath::dom(doc.parsed()),

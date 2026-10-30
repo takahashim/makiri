@@ -95,7 +95,7 @@ static HTML_NODE_CLASSES: NodeClasses = NodeClasses {
 /// the HTML parser does not produce) falls back to `Makiri::HTML::Node`.
 pub fn wrap_html_node(ruby: &Ruby, node: RawNode, document: Value) -> Result<Value, Error> {
     // The caller hands `node` with the Document it belongs to.
-    let node_type = html_read(&document)?.node(node).node_type();
+    let node_type = html_read(&doc_known(document))?.node(node).node_type();
     wrap_html_node_of_type(ruby, node, node_type, document)
 }
 
@@ -112,7 +112,7 @@ pub(in crate::bridge) fn wrap_html_node_checked(
     if let Some(cached) = crate::bridge::wrapper::cached_node(document, &node)? {
         return Ok(cached);
     }
-    let node_type = html_read(&document)?
+    let node_type = html_read(&doc_known(document))?
         .doc()
         .checked(node)
         .map(|n| n.node_type())
@@ -204,12 +204,12 @@ pub(in crate::bridge) fn html_node_key(
 /// `node()` resolves it against the receiver's document without a check - the
 /// receiver's own Document, kept alive by the argument, is what makes that
 /// sound - while `with_node` is the checked boundary.
-#[derive(Clone, Copy)]
 pub struct HtmlSelf {
     pub value: Value,
     key: HtmlNodeKey,
-    /// The keepalive Document (the receiver itself for a Document).
-    pub document: Value,
+    /// The keepalive Document (the receiver itself for a Document), as the
+    /// handle its content is read through.
+    document: DocHandle,
 }
 
 impl crate::bridge::rb::TryConvert for HtmlSelf {
@@ -218,12 +218,18 @@ impl crate::bridge::rb::TryConvert for HtmlSelf {
         Ok(HtmlSelf {
             value,
             key,
-            document,
+            document: doc_known(document),
         })
     }
 }
 
 impl HtmlSelf {
+    /// The keepalive Document (the receiver itself for a Document).
+    #[inline]
+    pub fn document(&self) -> Value {
+        self.document.value()
+    }
+
     /// The receiver's document, borrowed for reading: the guard the
     /// receiver's node and document are read through ([`HtmlView`]).
     ///
@@ -244,7 +250,7 @@ impl HtmlSelf {
         Ok(HtmlView {
             read: html_read(&self.document)?,
             raw: self.key.raw_node(),
-            document: self.document,
+            document: self.document(),
         })
     }
 
@@ -464,7 +470,7 @@ impl<'d> TokenTree for HtmlTree<'d> {
 impl ChildListHost for HtmlSelf {
     type Tree<'a> = HtmlTree<'a>;
     fn document(&self) -> Value {
-        self.document
+        self.document()
     }
     fn with_children<R>(
         &self,
@@ -482,7 +488,7 @@ impl ChildListHost for HtmlSelf {
     fn wrap_child(&self, ruby: &Ruby, token: Option<usize>) -> Result<Option<Value>, Error> {
         token
             .and_then(RawNode::from_word)
-            .map(|n| wrap_html_node(ruby, n, self.document))
+            .map(|n| wrap_html_node(ruby, n, self.document()))
             .transpose()
     }
 }
@@ -571,7 +577,7 @@ pub fn edit<'a>(ruby: &Ruby, this: &'a mut HtmlSelf) -> Result<HtmlEdit<'a>, Err
     this.value.check_frozen()?;
     check_attr_owner_frozen(this)?;
     /* Before any argument is converted: see `account_growth`. */
-    crate::bridge::wrapper::account_growth(ruby, this.document);
+    crate::bridge::wrapper::account_growth(ruby, this.document());
     Ok(HtmlEdit { this })
 }
 
@@ -595,7 +601,7 @@ fn check_attr_owner_frozen(this: &HtmlSelf) -> Result<(), Error> {
         }
     };
     match owner {
-        Some(owner) => crate::bridge::wrapper::check_node_frozen(this.document, owner),
+        Some(owner) => crate::bridge::wrapper::check_node_frozen(this.document(), owner),
         None => Ok(()),
     }
 }
@@ -655,7 +661,7 @@ impl<'a> HtmlEdit<'a> {
     ) -> Result<R, Error> {
         self.this.value.check_frozen()?;
         check_attr_owner_frozen(self.this)?;
-        record_edit(self.this.document, kind);
+        record_edit(self.this.document(), kind);
         /* The receiver is not frozen - checked just now - and the guard refuses any other
          * read still held. `f` runs no Ruby (this method's contract with its
          * callers), and the guard goes with it. `edit` drops the indexes. */
@@ -692,11 +698,11 @@ fn lend_document<R>(
     rb_doc: &Value,
     lend: impl FnOnce(&mut crate::bridge::dom::HtmlWrite<'_>) -> R,
 ) -> Result<R, Error> {
-    html_doc_check(*rb_doc)?;
+    let doc = HTML_DOC_TYPE.check(*rb_doc)?;
     /* The loan ends with this block, before the report below can run Ruby;
      * `lend` runs none. */
     let r = {
-        let mut write = html_write(rb_doc)?;
+        let mut write = html_write(&doc)?;
         lend(&mut write)
     };
     /* A factory grows the document without an edit after it - a namespace
@@ -733,7 +739,7 @@ pub fn insert(
     rb_incoming: Value,
     place: Place,
 ) -> Result<Value, Error> {
-    let document = this.document;
+    let document = this.document();
     let edit = edit(ruby, this)?;
     let (key, incoming_doc) = html_node_key(ruby, rb_incoming)?;
     /* The argument is relinked too - `place` changes its parent and siblings, and
@@ -749,6 +755,7 @@ pub fn insert(
      * the edit's own borrow, never through a second one. */
     let incoming = node_ref(incoming_doc, key)?;
     let same = crate::bridge::ruby::same_value(incoming_doc, document);
+    let incoming_handle = doc_known(incoming_doc);
     /* From another document, the argument's own document is written too -
      * its original released once the copy is in - so it is taken for the
      * edit before anything changes: a refusal then comes before the copy is
@@ -757,7 +764,7 @@ pub fn insert(
      * Nothing between here and the release runs Ruby. */
     let mut source = match same {
         true => None,
-        false => Some(html_write(&incoming_doc)?),
+        false => Some(html_write(&incoming_handle)?),
     };
     let (placed, adopted) = edit.with_tree(|d, target| -> Result<(RawNode, bool), Error> {
         let node = if same {

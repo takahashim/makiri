@@ -17,21 +17,11 @@ use super::*;
 /// difference since the last call, so it is safe to call again after the
 /// document grows.
 ///
-/// May run a collection right here, with `rb_doc`'s data borrowed across it,
-/// so `rb_doc` must be a Document Ruby keeps for the call - a method's
-/// receiver, or a node's slot value - and not one only this frame refers to,
-/// which a local `Value` does not keep (a new Document is reported through
-/// its handle, [`account_data`]); nothing borrowed from a Ruby String may be
-/// held across the call.
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        unheld_payload_borrow,
-        reason = "its contract: rb_doc is a receiver or a node's slot value, which Ruby keeps for the call (a new Document goes through account_data, over its handle)"
-    )
-)]
+/// May run a collection right here, with `rb_doc`'s data borrowed across it
+/// through its handle, which holds the Document meanwhile. Nothing borrowed
+/// from a Ruby String may be held across the call.
 pub(super) fn account_document(ruby: &crate::bridge::rb::Ruby, rb_doc: Value) {
-    account_data(ruby, DOC_TYPE.get_known(&rb_doc));
+    account_data(ruby, doc_known(rb_doc).data());
 }
 
 /// [`account_document`] over the wrapper's data, borrowed from a handle that
@@ -77,7 +67,7 @@ pub(super) const GROWTH_MIN_BYTES: usize = 512 * 1024;
 /// so at the start of an edit, before any argument is converted, and after a
 /// loan, whose arguments were copies.
 pub fn account_growth(ruby: &crate::bridge::rb::Ruby, rb_doc: Value) {
-    if doc_data_known(&rb_doc).grown_enough() {
+    if doc_data_known(&doc_known(rb_doc)).grown_enough() {
         account_document(ruby, rb_doc);
     }
 }

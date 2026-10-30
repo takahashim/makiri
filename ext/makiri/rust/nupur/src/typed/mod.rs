@@ -202,29 +202,19 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
         typed_data(v, &self.raw).map(|_| ())
     }
 
-    /// The payload behind `v`, or Ruby's own `TypeError`, for a `v` kept for
-    /// the whole borrow - by Ruby (a receiver, an argument, a slot's value),
-    /// or by a [`Typed`] handle the caller holds across it; anything else - an
-    /// object just made, a value read from somewhere this frame may change -
-    /// is borrowed from a handle ([`check`](Self::check)'s, or `wrap`'s),
-    /// which keeps the object.
+    /// A handle on `v`, an object of this type whose type the caller already
+    /// established - a node's Document from its slot, a receiver its method's
+    /// conversion checked; a mismatch is a bug in that reasoning, and panics.
     ///
-    /// Borrowed for as long as the caller borrows `v`, the object that owns the
-    /// data - so the reference cannot outlive the VALUE it came from. That
-    /// borrow is the type checker's alone: the object must be kept alive
-    /// as well - by Ruby (a receiver, an argument, a slot's owner) - since
-    /// nothing here holds it.
-    pub fn get<'v>(&'static self, v: &'v Value) -> Result<&'v T, Error> {
-        let p = typed_data(*v, &self.raw)? as *const Envelope<T, N>;
-        // SAFETY: `typed_data` verified the type, and the wrapper owns the data.
-        Ok(unsafe { &(*p).data })
-    }
-
-    /// [`get`](Self::get) for a VALUE whose type the caller already
-    /// established; a mismatch is a bug in that reasoning, and panics.
-    pub fn get_known<'v>(&'static self, v: &'v Value) -> &'v T {
-        // SAFETY: as `get`; `known_ptr` asserts the type.
-        unsafe { &(*self.known_ptr(*v)).data }
+    /// The fast way in for those: one `rb_typeddata_is_kind_of`, asserted,
+    /// where [`check`](Self::check) answers a `TypeError`. Its data is
+    /// borrowed from the handle, as any [`Typed`]'s, so the object is held
+    /// for as long as the borrow - there is no way from a bare `Value` to a
+    /// `&T`, whose lifetime the GC would not see.
+    #[inline]
+    pub fn known(&'static self, v: Value) -> Typed<T, N> {
+        self.known_ptr(v);
+        Typed::new(v)
     }
 
     /// Slot `I` of `v`, an object of this type whose type the caller already
@@ -236,8 +226,8 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
     #[inline]
     pub fn root_known<const I: usize>(&'static self, v: &Value) -> Value {
         const { assert!(I < N, "no such slot") };
-        // SAFETY: as `get_known`; the slots were written by `wrap_built` and
-        // hold live values.
+        // SAFETY: `known_ptr` asserted the type, and `v` is rooted by the
+        // caller; the slots were written by `wrap_built` and hold live values.
         unsafe { value((*self.known_ptr(*v)).roots[I]) }
     }
 
@@ -306,10 +296,9 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
 /// handle holds it where the GC sees it until the handle is dropped, which
 /// is after the last borrow of [`data`](Self::data): borrow from the handle,
 /// not from a copy of its [`value`](Self::value), and do not `mem::forget`
-/// it. A handle the caller keeps to the end of a call also keeps the object
-/// through every borrow made inside the call, by whatever means - so code
-/// written over a `Value` (a reader's guard taken with `get_known`) is safe
-/// on an object just made while its handle outlives the call.
+/// it. It is the only way to a `&T`: [`TypedType::check`] makes one for a
+/// value Ruby gave, [`TypedType::known`] for one whose type is established,
+/// and [`TypedType::wrap`] returns one for an object just made.
 ///
 /// A hot path that reads an object's data and slots several times - a
 /// collection's elements and its owner, per element - pays for the check

@@ -50,7 +50,8 @@
 //!   alone.
 //! - **An object is held while its data is borrowed through a handle.**
 //!   A [`typed::Typed`] - from `TypedType::check` for a value Ruby gave,
-//!   from `TypedType::wrap` for an object just made - lends the data and
+//!   `TypedType::known` for one whose type is established, `TypedType::wrap`
+//!   for an object just made; there is no other way to a payload - lends the data and
 //!   keeps the object where the GC sees it until the last borrow is over,
 //!   wherever the object came from; `wrap_hidden` lends it to its `fill` the
 //!   same way, and hands the object out only once it is complete and shown.
@@ -97,13 +98,10 @@
 //!   temporary handed straight to a call (`f(vec![v])`) too. Beyond it: a
 //!   value behind `dyn Trait` once coerced, and a generic body for the
 //!   type it is called with.
-//! - **A payload is borrowed through its handle.** A [`typed::Typed`]'s
-//!   `data`, not `TypedType::get` / `get_known` over a copy of a `Value`
-//!   (those keep nothing, and serve only a value kept for the whole borrow -
-//!   by Ruby, as a receiver, an argument or a slot's value is, or by a handle
-//!   the caller holds across the call), and the handle is not `mem::forget`ed.
-//!   Checked by `unheld_payload_borrow` (every `get` / `get_known` an `allow`
-//!   with the reason its value is kept) and `forgotten_handle`; a type check
+//! - **A payload's handle is not `mem::forget`ed.** A payload is borrowed
+//!   only through a [`typed::Typed`] (`check`, `known`, `wrap`), whose drop
+//!   is what holds the object past the last borrow; there is no way from a
+//!   bare `Value` to a `&T`. Checked by `forgotten_handle`; a type check
 //!   that borrows nothing is `TypedType::ensure`.
 //! - **A GVL-released body runs no Ruby.** [`gvl::without_gvl`]'s `Send`
 //!   bound keeps a token and a value out of it, but not a call of a layer

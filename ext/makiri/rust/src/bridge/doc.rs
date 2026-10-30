@@ -25,7 +25,9 @@ use crate::bridge::ruby::makiri_error;
 use crate::bridge::html::new_node;
 use crate::bridge::html::{html_node_key, with_html_node, wrap_html_node};
 use crate::bridge::string::DocumentSource;
-use crate::bridge::wrapper::{html_read, new_html_document, node_repr, xml_read, NodeRepr};
+use crate::bridge::wrapper::{
+    doc_known, html_read, new_html_document, node_repr, xml_read, NodeRepr,
+};
 use crate::bridge::xml::xml_node_document;
 use crate::bridge::xml::{xml_mut_result, xml_node_unwrap};
 use crate::html_dom::html::RawNode;
@@ -139,7 +141,8 @@ pub fn new_empty_document(
 )]
 pub fn document_root(ruby: &Ruby, rb_doc: Value) -> Result<Option<Value>, Error> {
     let root = {
-        let read = html_read(&rb_doc)?;
+        let doc = doc_known(rb_doc);
+        let read = html_read(&doc)?;
         read.doc().as_node().document_root().map(RawNode::from)
     };
     root.map(|root| wrap_html_node(ruby, root, rb_doc))
@@ -151,7 +154,8 @@ pub fn document_root(ruby: &Ruby, rb_doc: Value) -> Result<Option<Value>, Error>
 /// Protected: a collapsed title is this frame's own copy, which the String's
 /// allocation raising past the frame would leak.
 pub fn document_title(ruby: &Ruby, rb_doc: Value) -> Result<RString, Error> {
-    let read = html_read(&rb_doc)?;
+    let doc = doc_known(rb_doc);
+    let read = html_read(&doc)?;
     let title = read.doc().title();
     let bytes = title.as_deref().unwrap_or(&[]);
     crate::bridge::string::utf8_str(ruby, bytes)
@@ -166,7 +170,7 @@ pub fn document_encoding(rb_doc: Value) -> Result<&'static str, Error> {
 /// `Document#quirks_mode`, as an Integer matching Lexbor (and Gumbo/Nokogiri):
 /// 0 no-quirks, 1 quirks, 2 limited-quirks. Set by the parser from the doctype.
 pub fn document_quirks_mode(ruby: &Ruby, rb_doc: Value) -> Result<Value, Error> {
-    let mode = html_read(&rb_doc)?.doc().compat_mode();
+    let mode = html_read(&doc_known(rb_doc))?.doc().compat_mode();
     crate::bridge::build::int(ruby, mode).map(|i| i.as_value())
 }
 
@@ -195,7 +199,8 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, node_v: Value, deep: bool) -> Re
         let xml_doc = xml_node_document(ruby, node_v)?;
         let src = xml_node_unwrap(ruby, node_v)?;
         let imp = {
-            let xdoc = xml_read(&xml_doc)?;
+            let source = doc_known(xml_doc);
+            let xdoc = xml_read(&source)?;
             new_node(ruby, &rb_self, |d| d.import_xml(&xdoc, src, deep))?
         };
         return wrap_html_node(ruby, xml_mut_result(imp)?, rb_self);

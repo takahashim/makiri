@@ -46,7 +46,7 @@ fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
         let nodes = matched.map_err(|e| query_error(e, selector))?;
         node_set_from(
             ruby,
-            this.document,
+            this.document(),
             nodes.into_iter().map(|n| RawNode::from(n).into()),
         )
     })?;
@@ -76,7 +76,7 @@ fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, 
     })??;
     drop(sv);
     found
-        .map(|n| wrap_html_node(ruby, n, this.document))
+        .map(|n| wrap_html_node(ruby, n, this.document()))
         .transpose()
 }
 

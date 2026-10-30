@@ -18,7 +18,7 @@ use crate::bridge::ruby::makiri_error;
 use crate::bridge::html::{html_node_key, with_html_node, wrap_html_node};
 use crate::bridge::ruby::{is_kind_of, string_arg};
 use crate::bridge::string::{ruby_verified_text, HtmlSource};
-use crate::bridge::wrapper::{html_doc_check, html_read, new_html_document, DocHandle};
+use crate::bridge::wrapper::{doc_known, html_doc_check, html_read, new_html_document, DocHandle};
 pub use crate::html_dom::fragment::FragmentTag;
 use crate::html_dom::fragment::{FragmentContext, FragmentError, TransientFragment};
 use crate::html_dom::html::{HtmlDoc, HtmlDocMut, HtmlNode, HtmlNodeKey, Place, RawNode};
@@ -106,7 +106,7 @@ pub fn resolve_fragment_context(
         return Ok(ContextArg::Tag(FragmentTag::MATH));
     }
     html_doc_check(document)?;
-    let Some(tag) = html_read(&document)?.doc().tag_id(name) else {
+    let Some(tag) = html_read(&doc_known(document))?.doc().tag_id(name) else {
         return Err(unknown_context(name));
     };
     Ok(ContextArg::Tag(FragmentTag::html(tag)))
@@ -232,7 +232,8 @@ pub fn build_fragment(
         ContextArg::Tag(at) => FragmentContext::tag(at),
         ContextArg::Element(el) => {
             html_doc_check(document)?;
-            let doc = html_read(&document)?;
+            let handle = doc_known(document);
+            let doc = html_read(&handle)?;
             with_html_node(el.document, el.key, |cn| element_context(cn, doc.doc()))??
         }
     };

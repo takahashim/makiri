@@ -316,20 +316,20 @@ fn new_document(
  * document content <-> wrapper accessors                             *
  * ------------------------------------------------------------------ */
 
-/// The content of `rb_doc`, a VALUE known to be a Document (a node's
-/// keepalive Document, or a Document method's receiver). Every Document that
-/// Ruby can reach has one (`new_document` shows it only once the content is in),
-/// so its absence is a broken invariant.
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        unheld_payload_borrow,
-        reason = "rb_doc is a node's keepalive Document (a slot value) or a Document method's receiver, kept by Ruby for the call"
-    )
-)]
-fn body_known(rb_doc: &Value) -> Result<&Body, Error> {
-    DOC_TYPE
-        .get_known(rb_doc)
+/// `rb_doc`, a VALUE known to be a Document (a node's keepalive Document,
+/// or a Document method's receiver), as the handle its content is borrowed
+/// through: the guards below borrow it, so the Document is held for as long
+/// as they are. A mismatch is a broken invariant, and panics.
+#[inline]
+pub fn doc_known(rb_doc: Value) -> DocHandle {
+    DOC_TYPE.known(rb_doc)
+}
+
+/// The content of `doc`. Every Document that Ruby can reach has one
+/// (`new_document` shows it only once the content is in), so its absence is
+/// a broken invariant.
+fn body_known(doc: &DocHandle) -> Result<&Body, Error> {
+    doc.data()
         .content
         .get()
         .ok_or_else(|| internal_error("a Document without its content"))
@@ -352,11 +352,10 @@ fn wrong_kind() -> Error {
     internal_error("a Document of the other kind")
 }
 
-/// `rb_doc`'s HTML document, borrowed for reading for as long as the caller
-/// borrows the VALUE - which it holds, and which keeps the Document alive.
-/// `rb_doc` is known to be an HTML Document.
-pub fn html_read(rb_doc: &Value) -> Result<HtmlRead<'_>, Error> {
-    match body_known(rb_doc)? {
+/// `doc`'s HTML document, borrowed for reading for as long as the handle -
+/// which holds the Document - is. `doc` is known to be an HTML Document.
+pub fn html_read(doc: &DocHandle) -> Result<HtmlRead<'_>, Error> {
+    match body_known(doc)? {
         Body::Html(c) => HtmlRead::of(c).map_err(held_error),
         Body::Xml(_) => Err(wrong_kind()),
     }
@@ -364,24 +363,24 @@ pub fn html_read(rb_doc: &Value) -> Result<HtmlRead<'_>, Error> {
 
 /// `rb_doc`'s HTML document, borrowed for an edit; refused while a read
 /// holds it. The caller has made the edit's checks and runs no Ruby while it holds this.
-pub(in crate::bridge) fn html_write(rb_doc: &Value) -> Result<HtmlWrite<'_>, Error> {
-    match body_known(rb_doc)? {
+pub(in crate::bridge) fn html_write(doc: &DocHandle) -> Result<HtmlWrite<'_>, Error> {
+    match body_known(doc)? {
         Body::Html(c) => HtmlWrite::of(c).map_err(held_error),
         Body::Xml(_) => Err(wrong_kind()),
     }
 }
 
 /// `rb_doc`'s XML arena, borrowed for reading, as [`html_read`].
-pub fn xml_read(rb_doc: &Value) -> Result<XmlRead<'_>, Error> {
-    match body_known(rb_doc)? {
+pub fn xml_read(doc: &DocHandle) -> Result<XmlRead<'_>, Error> {
+    match body_known(doc)? {
         Body::Xml(c) => XmlRead::of(c).map_err(held_error),
         Body::Html(_) => Err(wrong_kind()),
     }
 }
 
 /// `rb_doc`'s XML arena, borrowed for an edit, as [`html_write`].
-pub(in crate::bridge) fn xml_write(rb_doc: &Value) -> Result<XmlWrite<'_>, Error> {
-    match body_known(rb_doc)? {
+pub(in crate::bridge) fn xml_write(doc: &DocHandle) -> Result<XmlWrite<'_>, Error> {
+    match body_known(doc)? {
         Body::Xml(c) => XmlWrite::of(c).map_err(held_error),
         Body::Html(_) => Err(wrong_kind()),
     }
@@ -390,15 +389,8 @@ pub(in crate::bridge) fn xml_write(rb_doc: &Value) -> Result<XmlWrite<'_>, Error
 /// Whether `rb_doc`'s content is borrowed right now - by a read or an edit.
 /// Between Ruby calls it never is, unless a raise skipped a guard's release:
 /// what `Makiri.__borrowed?` answers the raise sweep.
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        unheld_payload_borrow,
-        reason = "rb_doc is the test hook's argument, which Ruby keeps for the call"
-    )
-)]
 pub fn document_borrowed(rb_doc: Value) -> Result<bool, Error> {
-    Ok(match DOC_TYPE.get(&rb_doc)?.content.get() {
+    Ok(match DOC_TYPE.check(rb_doc)?.data().content.get() {
         Some(Body::Html(c)) => c.is_borrowed(),
         Some(Body::Xml(c)) => c.is_borrowed(),
         None => false,
@@ -418,7 +410,8 @@ pub(in crate::bridge) fn with_html_parsed_known<R>(
     rb_doc: Value,
     f: impl FnOnce(&HtmlParsed) -> R,
 ) -> Result<R, Error> {
-    let read = html_read(&rb_doc)?;
+    let doc = doc_known(rb_doc);
+    let read = html_read(&doc)?;
     Ok(f(read.parsed()))
 }
 
@@ -428,7 +421,8 @@ pub(in crate::bridge) fn with_html_parsed_if<R>(
     rb_doc: Value,
     f: impl FnOnce(&HtmlParsed) -> R,
 ) -> Result<Option<R>, Error> {
-    match body_known(&rb_doc)? {
+    let doc = doc_known(rb_doc);
+    match body_known(&doc)? {
         Body::Html(c) => {
             let read = HtmlRead::of(c).map_err(held_error)?;
             Ok(Some(f(read.parsed())))
@@ -611,13 +605,6 @@ pub(in crate::bridge) fn check_node_frozen(
 
 /// A Document's wrapper data, for the fields that are the wrapper's own
 /// rather than the content's - every one of them a cell, so this is shared.
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        unheld_payload_borrow,
-        reason = "callers hand a receiver or a node's slot value, which Ruby keeps for the call"
-    )
-)]
-pub(super) fn doc_data_known(rb_doc: &Value) -> &DocData {
-    DOC_TYPE.get_known(rb_doc)
+pub(super) fn doc_data_known(doc: &DocHandle) -> &DocData {
+    doc.data()
 }

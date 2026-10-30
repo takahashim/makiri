@@ -14,8 +14,8 @@ use super::value::{AsRawValue, ReprValue, Value};
 /// borrowed, whether Ruby keeps it as well or this frame alone does (an
 /// object just made). The layer's own.
 ///
-/// A borrow of an object's data ([`crate::typed::TypedType::get`],
-/// [`crate::typed::Typed::data`]) keeps its `Value` alive to the type checker
+/// A borrow of an object's data ([`crate::typed::Typed::data`]) would keep
+/// a bare `Value` alive to the type checker
 /// only: once the `Value` is no longer used, the optimizer may drop it from
 /// every register and stack slot, and the data pointer left - a non-embedded
 /// type's data is its own malloc'd block - is not one the scan takes for the
