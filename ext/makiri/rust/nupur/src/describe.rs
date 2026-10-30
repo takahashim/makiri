@@ -105,7 +105,7 @@ impl core::fmt::Display for ExceptionText<'_> {
         /* The message is the exception's `mesg`, read as an attribute: calling
          * `#message` would run its class's Ruby. A message that is not a
          * String is answered as "error". */
-        let Some(id) = for_message(|| super::raw::intern_cstr(self.0, c"mesg")) else {
+        let Some(id) = for_message(|| crate::rb::HiddenId::intern(self.0, c"mesg")) else {
             return f.write_str("error");
         };
         /* An attribute read: it runs no Ruby and raises nothing. */

@@ -70,7 +70,8 @@ fn key_into(buf: &mut Vec<u8>, local: &[u8], ns: &[u8]) {
 /// The reusable key buffer, sized once for the longest key the map holds.
 ///
 /// A [`Cell`], because the index is read through a shared borrow of its
-/// document; the GVL serialises lookups, and one takes the buffer and puts it
+/// document; the GVL of the Ractor the document belongs to serialises
+/// lookups, and one takes the buffer and puts it
 /// back. [`KeyScratch::with_key`] is the only way in, so the take/put pair
 /// cannot be split by an early return.
 struct KeyScratch {

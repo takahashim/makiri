@@ -347,6 +347,12 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
         raise: crate::falloc::raise_inject_should_raise,
         alloc: crate::falloc::allocation_should_fail,
     });
+    /* Every method defined below may be called from any Ractor
+     * (`spec/ractor_spec.rb`). The layer's half is nupur's (its `lib.rs`);
+     * ours is that what the extension keeps for the process is atomic, a
+     * `OnceLock`, thread-local or a class, and that a Document never leaves
+     * the Ractor that made it. */
+    crate::nupur::rb::method::declare_ractor_safe(ruby);
     let makiri = ruby.define_module("Makiri")?;
     crate::bridge::wrapper::init_ivars(ruby)?;
 

@@ -246,9 +246,9 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   that CAN raise, but not where the extension calls it, is an `allow` at that
   call with its reason, never a crate-wide entry: `rb_gc_mark` in the mark
   callback (it raises only when memory runs out, and that longjmp loses
-  nothing there) and `rb_attr_get` in `ivar_get` (it raises only in a
-  non-main Ractor, which never reaches the extension: it is not declared
-  Ractor-safe, so Ruby refuses its methods there - `spec/ractor_spec.rb`).
+  nothing there) and `rb_attr_get` in `ivar_get` (it raises only for an `@`
+  name of a class, a module or a shareable object read from another Ractor,
+  and `ivar_get` takes a `HiddenId`, which is never an `@` name).
   `raising_call_outside_protect` fails on such a call outside the closure
   handed to `raw::call` (a function that raises only for what its caller
   rules out, `rb_obj_is_kind_of` with a non-class, is an `allow` at its
@@ -1515,9 +1515,9 @@ only approximates; `:any-link` / `:link` are an HTML `a`/`area` or an SVG
 `a` with an `href`, and `:empty` ignores comments and processing
 instructions, as browsers have them (M2, M9, M10 in
 `docs/parser_differences.ja.md`; `compat::as_lexbor` runs Lexbor's).
-**The CSS engine is per thread** (`css_cache`'s `thread_local!`): Ruby runs
-one thread at a time under the GVL, so each Ruby thread's engine is reached
-by one query at a time, and being the thread's alone it needs to be neither
+**The CSS engine is per thread** (`css_cache`'s `thread_local!`): a query
+never releases the GVL, so each thread's engine is reached by one query at
+a time, whichever Ractor the thread is in, and being the thread's alone it needs to be neither
 `Send` nor `Sync` - its kept stacks hold DOM node handles, which are
 neither. A re-entrant second borrow on one thread is `ParseError::Busy`
 (`try_borrow_mut`), never a second `&mut`. The reference builds' engines
@@ -1646,7 +1646,10 @@ are good for is catching a *regression in kind* (a row falling to parity or
 below), not for defending a second decimal place.
 
 Parsing also scales across threads (~1.7-2.4× on 8 cores) because it releases
-the GVL; XPath does not scale, by design (it holds the GVL - see below).
+the GVL; XPath does not scale across threads, by design (it holds the GVL -
+see below), but does across Ractors, each with a GVL of its own: an
+XPath+CSS loop ran 3.8x the throughput in 4 Ractors (0.9x in 4 threads) on
+an M-series Mac's 4 performance cores.
 
 Key decisions that got there, worth not regressing:
 
@@ -1672,7 +1675,8 @@ Key decisions that got there, worth not regressing:
   the GVL for the whole evaluation by design** (`xpath::ctx::Session::evaluate` is a plain
   GVL-held call). The engine and DOM are not thread-safe against concurrent
   mutation, and holding the GVL makes that safe *by construction*: the GVL
-  serialises all Ruby-thread C code, so an XPath walk never runs in parallel
+  serialises all C code of its Ractor's threads, and a Document and every
+  context over it belong to one Ractor, so an XPath walk never runs in parallel
   with a tree mutation, with another `evaluate` on the same context, or with a
   `register_variable`/`register_namespace`/`node=` on the same context - no
   locking needed (and none is used). An earlier version released the GVL for
