@@ -112,12 +112,11 @@ jobs:
         run: bundle exec rake kani
 
   # Miri over the Ruby-free modules that hold `unsafe` (`utf8_copy`,
-  # `falloc`)
-  # and the buffer built on them (`cbuf`): their tests run on Miri's
-  # interpreter, which reports undefined behaviour - an out-of-bounds or
-  # dangling access, a misaligned or provenance-less pointer - that a test on
-  # hardware passes over. Kani proves the same code bounded; this runs it
-  # unbounded. `bridge/` needs Ruby and is not here.
+  # `falloc`): their tests run on Miri's interpreter, which reports undefined
+  # behaviour - an out-of-bounds or dangling access, a misaligned or
+  # provenance-less pointer - that a test on hardware passes over. `cbuf` and
+  # `ptr_table` are `forbid(unsafe_code)`, so they are not here, and neither
+  # is nupur's Ruby-facing `unsafe`, which needs a Ruby.
   miri:
     name: Miri (Ruby-free unsafe)
     runs-on: ubuntu-24.04
@@ -136,7 +135,7 @@ jobs:
         env:
           MIRIFLAGS: "-Zmiri-strict-provenance"
         # Quoted: an unquoted `name:: ` would be read as a YAML mapping.
-        run: "cargo +nightly miri test --no-default-features --lib -- utf8_copy:: falloc:: cbuf:: ptr_table::"
+        run: "cargo +nightly miri test --no-default-features --lib -- utf8_copy:: falloc::"
 
   # Verus over ext/makiri/rust/verus/: `falloc::grow_capacity`,
   # `ptr_table`, `cbuf::Buf` and `limits::admit` (copied, and checked against the source by

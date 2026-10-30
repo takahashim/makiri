@@ -540,8 +540,8 @@ bundle exec rake oom               # OOM-injection sweep: rebuilds with
                                    # borrowed (`Makiri.__borrowed?`) or unusable - the
                                    # runtime check of the guards-across-raises rule.
                                    # Prefix with MAKIRI_SANITIZE=address to combine ASan.
-bundle exec rake miri              # the Ruby-free unsafe modules' tests (utf8_copy, falloc,
-                                   # cbuf, ptr_table) under Miri, strict provenance (nightly + miri;
+bundle exec rake miri              # the Ruby-free unsafe modules' tests (utf8_copy,
+                                   # falloc) under Miri, strict provenance (nightly + miri;
                                    # CI: verify.yml). utf8_copy is nupur's, std-only, and
                                    # included in this crate's test build (`#[path]`) for it
 bundle exec rake verus             # Verus proofs (ext/makiri/rust/verus/): falloc's

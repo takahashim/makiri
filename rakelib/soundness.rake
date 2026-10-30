@@ -1,10 +1,13 @@
 # frozen_string_literal: true
 
-# Miri over the Ruby-free modules that hold `unsafe`, and the buffer built on
-# them: their tests on Miri's interpreter, which reports undefined behaviour a
-# run on hardware passes over (CI: verify.yml). Needs the nightly toolchain
-# with the `miri` component. MIRI_FILTERS replaces the module list.
-MIRI_FILTERS = %w[utf8_copy:: falloc:: cbuf:: ptr_table::].freeze
+# Miri over the Ruby-free modules that hold `unsafe` - `utf8_copy` and
+# `falloc` (`try_box`, the injection hook): their tests on Miri's interpreter,
+# which reports undefined behaviour a run on hardware passes over (CI:
+# verify.yml). `cbuf` and `ptr_table` were here while they held `unsafe`;
+# both are `forbid(unsafe_code)` now, so Miri would only be running std.
+# Needs the nightly toolchain with the `miri` component. MIRI_FILTERS
+# replaces the module list.
+MIRI_FILTERS = %w[utf8_copy:: falloc::].freeze
 desc "Run the Ruby-free unsafe modules' tests under Miri (nightly)"
 task :miri do
   filters = ENV["MIRI_FILTERS"] ? ENV["MIRI_FILTERS"].split(",") : MIRI_FILTERS
