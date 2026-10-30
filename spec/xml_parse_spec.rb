@@ -448,6 +448,14 @@ RSpec.describe "Makiri::XML minimal parse" do
         .to raise_error(Makiri::XML::SyntaxError, /declared US-ASCII/)
     end
 
+    it "holds a document declaring US-ASCII to ASCII whatever decodes it" do
+      src = %(<?xml version="1.0" encoding="US-ASCII"?><r>café</r>)
+      [src, "\xEF\xBB\xBF".b + src.b].each do |s|
+        expect { Makiri::XML(s) }.to raise_error(Makiri::XML::SyntaxError, /declared US-ASCII/)
+      end
+      expect(Makiri::XML(%(<?xml version="1.0" encoding="US-ASCII"?><r>cafe</r>)).root.text).to eq("cafe")
+    end
+
     it "reads a String tagged US-ASCII, which claims no encoding, as UTF-8 when nothing is declared" do
       src = "<r>caf\xC3\xA9</r>".dup.force_encoding("US-ASCII")
       expect(Makiri::XML(src).root.text).to eq("café")
