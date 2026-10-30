@@ -64,9 +64,9 @@ fn word(c: &[u8]) -> u64 {
 pub fn lines_build(bytes: &[u8]) -> Option<Lines> {
     let mut starts: Vec<usize> = Vec::new();
     starts.falloc_push(0).ok()?;
-    let mut chunks = bytes.chunks_exact(16);
+    let (chunks, rest) = bytes.as_chunks::<16>();
     let mut base = 0usize;
-    for c in &mut chunks {
+    for c in chunks {
         let (lo, hi) = (newline_mask(word(&c[..8])), newline_mask(word(&c[8..])));
         if lo | hi != 0 {
             for (off, mut m) in [(0usize, lo), (8, hi)] {
@@ -80,7 +80,7 @@ pub fn lines_build(bytes: &[u8]) -> Option<Lines> {
         }
         base += 16;
     }
-    for (i, &b) in chunks.remainder().iter().enumerate() {
+    for (i, &b) in rest.iter().enumerate() {
         if b == b'\n' {
             starts.falloc_push(base + i + 1).ok()?;
         }
