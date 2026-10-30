@@ -38,7 +38,7 @@ fn css(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result<Value, 
         let nodes = matched.map_err(|e| query_error(e, selector))?;
         node_set_from(
             ruby,
-            this.document,
+            this.document(),
             nodes.into_iter().map(|n| n.id().into()),
         )
     })?;
@@ -64,7 +64,7 @@ fn at_css(ruby: &Ruby, this: XmlSelf, selector: Value, ns: Value) -> Result<Opti
         )
     })??;
     drop(sv);
-    found.map(|n| wrap(ruby, n, this.document)).transpose()
+    found.map(|n| wrap(ruby, n, this.document())).transpose()
 }
 
 /// `#matches?`: does THIS node match? Its ancestors and siblings take part,

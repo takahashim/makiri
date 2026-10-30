@@ -219,13 +219,13 @@ pub fn lshift(ruby: &Ruby, this: XmlSelf, arg: Value) -> Result<Value, Error> {
 pub fn clone_node(ruby: &Ruby, this: XmlSelf, args: &[Value]) -> Result<Value, Error> {
     let a = crate::bridge::args::scan(ruby, args, crate::bridge::args::Shape::positional(0, 1))?;
     let deep = a.optional(0).is_some_and(|v| v.to_bool());
-    if crate::bridge::ruby::same_value(this.value, this.document) {
+    if crate::bridge::ruby::same_value(this.value, this.document()) {
         return Err(makiri_error("clone_node cannot copy a document; use #dup"));
     }
-    let copy = xml_mut_result(with_arena_for_new_node(this.document, |d| {
+    let copy = xml_mut_result(with_arena_for_new_node(this.document(), |d| {
         mutate::clone_node(d, this.id, deep)
     })?)?;
-    wrap(ruby, copy, this.document)
+    wrap(ruby, copy, this.document())
 }
 
 /* ------------------------------------------------------------------ */
@@ -275,8 +275,8 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
          * a Symbol, a value must be a String), after the pairs are out of
          * the Hash (`hash::each_pair`). */
         /* `rb_el` was wrapped just above, so it converts. */
-        let el_self = <XmlSelf as crate::bridge::rb::TryConvert>::try_convert(ruby, rb_el)?;
         crate::bridge::hash::each_pair(ruby, h, |k, v| {
+            let el_self = <XmlSelf as crate::bridge::rb::TryConvert>::try_convert(ruby, rb_el)?;
             aset(ruby, el_self, k, v)?;
             Ok(())
         })?;

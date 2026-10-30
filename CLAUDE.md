@@ -159,30 +159,34 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   Document's node table is a `table::IntTable`, made hidden and never shown. There is
   no bare `hide` / `reveal`.
   **A payload is borrowed through a `typed::Typed` handle, which holds its
-  object**: `TypedType::check` makes one for a value Ruby gave, `wrap` returns
-  one for an object just made, and `wrap_hidden` lends one's data to its
-  `fill`. A `&T` keeps its object alive to the type checker only - a
+  object**: `TypedType::check` makes one for a value Ruby gave, `known` for
+  one whose type is established (asserted, a panic on a mismatch), `wrap`
+  returns one for an object just made, and `wrap_hidden` lends one's data to
+  its `fill`. It is the ONLY way to a payload: there is no `&Value -> &T`. A `&T` keeps its object alive to the type checker only - a
   non-embedded payload is its own malloc'd block, which the stack scan does
   not take for the object - so the handle holds the VALUE in an
   `rb::kept::Kept`, whose `Drop` hands it to `keep_alive` (an empty `asm!`
   with the VALUE as an input operand; a `read_volatile` of it on the targets
   without a stable `asm!`, a weaker contract and unchecked there; the
-  premises that make either enough are stated there) after the last borrow. Borrow from the handle, never through
-  a copy of its `Value` (`rake dylint`'s `forgotten_handle` refuses a forgotten
-  handle, and `unheld_payload_borrow` makes each bare borrow an allow with its
-  reason); `get` / `get_known` hold nothing and serve only a
-  value kept for the whole borrow - by Ruby (a receiver, an argument, a
-  slot's value: `html_read` and its kin, over a node's Document), or by a
-  `Typed` handle the caller holds across the call (`new_html_document` /
-  `new_xml_document` return one, which `DocumentFragment.parse` holds while
-  it reads and fills its new backing Document).
+  premises that make either enough are stated there) after the last borrow.
+  The Document's guards take one too: `html_read` / `xml_read` and the
+  writes borrow a `DocHandle` (`doc_known(v)` for a node's slot or a
+  receiver, `check` for a value to be checked, or what `new_html_document` /
+  `new_xml_document` return), and `HtmlSelf` / `XmlSelf` own their
+  Document's, so a receiver view borrows it from the receiver. There is no
+  `&Value -> &T` (`get` / `get_known` are gone); a type check that borrows
+  nothing is `ensure`, and a forgotten handle is `rake dylint`'s
+  `forgotten_handle`.
   `black_box` (the old `gc_guard`) is best-effort and is not used.
   The other half - no Ruby value kept where the GC's stack scan cannot
   see it (a `Vec`, a `Box`, a static or `thread_local!`, a `Payload` type's
   own field) - is `rake dylint`'s `ruby_value_on_heap`,
   which reads the types; it is why raw `VALUE`s stay in `nupur/src/raw/` and
-  `nupur/src/typed/`, since a lint sees a `VALUE` only as an integer. What it
-  cannot see is a temporary handed straight to a call (`f(vec![v])`).
+  `nupur/src/typed/`, since a lint sees a `VALUE` only as an integer. It
+  reads every expression's type too, so a temporary handed straight to a
+  call (`f(vec![v])`) or a closure boxed with a value it captured is
+  reported; what it cannot see is a value behind `dyn Trait` once coerced
+  and a generic body instantiated with a Ruby value.
   `rb_data_type_t` is built from a zeroed value with only `dmark`, `dfree`,
   `dsize` and the flags set (`DataType::new`), and a size assertion stops the
   build on a callback table nobody has read: it is 5 words up to Ruby 4.0 and 12
@@ -481,11 +485,10 @@ bundle exec rake dylint            # the crate's own lints (lints/makiri_lints),
                                    # Ruby calls in: `get_unchecked` - crate-private
                                    # - in `rb::method`, `finish` in a `method!` /
                                    # `function!` expansion, `run_init` in an
-                                   # `extern "C" fn Init_*`), unheld_payload_borrow
-                                   # (every `TypedType::get` / `get_known`, each an
-                                   # allow saying why its value is kept; a bare type
-                                   # check is `ensure`), forgotten_handle (a `Typed` /
-                                   # `Kept` given to `mem::forget` or `ManuallyDrop`)
+                                   # `extern "C" fn Init_*`), forgotten_handle (a
+                                   # `Typed` / `Kept` given to `mem::forget` or
+                                   # `ManuallyDrop`; a handle is the only way to a
+                                   # payload)
                                    # (a sanctioned site is an allow with its reason);
                                    # then their self-test
                                    # (src/lint_probe.rs). Needs the nightly

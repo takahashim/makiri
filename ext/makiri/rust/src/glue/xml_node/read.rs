@@ -27,8 +27,8 @@ use crate::child_index;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
 /// Wrap an optional reached node under the receiver's Document (None -> nil).
-fn wrap_rel(ruby: &Ruby, this: XmlSelf, rel: Option<NodeId>) -> Result<Option<Value>, Error> {
-    rel.map(|n| wrap(ruby, n, this.document)).transpose()
+fn wrap_rel(ruby: &Ruby, this: &XmlSelf, rel: Option<NodeId>) -> Result<Option<Value>, Error> {
+    rel.map(|n| wrap(ruby, n, this.document())).transpose()
 }
 
 fn is_element(d: &XmlDoc, id: NodeId) -> bool {
@@ -182,7 +182,7 @@ pub fn last_child(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
 /// Attr is its own root.
 pub fn root_node(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     let root = crate::dom_rules::root(&*this.read()?, this.id);
-    wrap(ruby, root, this.document)
+    wrap(ruby, root, this.document())
 }
 
 pub fn next_element(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, Error> {
@@ -200,7 +200,7 @@ pub fn last_element_child(ruby: &Ruby, this: XmlSelf) -> Result<Option<Value>, E
 }
 
 pub fn get_document(this: XmlSelf) -> Result<Value, Error> {
-    Ok(this.document)
+    Ok(this.document())
 }
 
 fn children_of(d: &XmlDoc, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
@@ -259,7 +259,7 @@ fn attrs_of(d: &XmlDoc, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
 
 /// `#[]` - the attribute's value, or nil.
 pub fn aref(ruby: &Ruby, this: XmlSelf, rb_name: Value) -> Result<Option<Value>, Error> {
-    let found = crate::bridge::xml::find_attribute(ruby, this, rb_name)?;
+    let found = crate::bridge::xml::find_attribute(ruby, &this, rb_name)?;
     str_from_read(ruby, this.read()?, StrKind::Utf8, |d| {
         found.map(|at| d.value(at))
     })
@@ -268,7 +268,7 @@ pub fn aref(ruby: &Ruby, this: XmlSelf, rb_name: Value) -> Result<Option<Value>,
 /// `#key?` / `#has_attribute?`: whether `#[]` finds an attribute by that
 /// qualified name (DOM `hasAttribute`) - case-sensitive, as XML names are.
 pub fn has_key(ruby: &Ruby, this: XmlSelf, rb_name: Value) -> Result<bool, Error> {
-    Ok(crate::bridge::xml::find_attribute(ruby, this, rb_name)?.is_some())
+    Ok(crate::bridge::xml::find_attribute(ruby, &this, rb_name)?.is_some())
 }
 
 /// `#attribute_value_ns(ns, local)` (DOM `getAttributeNS`): the value of the
@@ -280,7 +280,7 @@ pub fn attribute_value_ns(
     rb_ns: Value,
     rb_local: Value,
 ) -> Result<Option<Value>, Error> {
-    let found = crate::bridge::xml::find_attribute_ns(ruby, this, rb_ns, rb_local)?;
+    let found = crate::bridge::xml::find_attribute_ns(ruby, &this, rb_ns, rb_local)?;
     str_from_read(ruby, this.read()?, StrKind::Utf8, |d| {
         found.map(|at| d.value(at))
     })
@@ -294,8 +294,8 @@ pub fn attribute_node_ns(
     rb_ns: Value,
     rb_local: Value,
 ) -> Result<Option<Value>, Error> {
-    let found = crate::bridge::xml::find_attribute_ns(ruby, this, rb_ns, rb_local)?;
-    wrap_rel(ruby, this, found)
+    let found = crate::bridge::xml::find_attribute_ns(ruby, &this, rb_ns, rb_local)?;
+    wrap_rel(ruby, &this, found)
 }
 
 /// The Attr NODE with that qualified name.
@@ -304,8 +304,8 @@ pub fn attribute_by_qualified_name(
     this: XmlSelf,
     rb_name: Value,
 ) -> Result<Option<Value>, Error> {
-    let a = crate::bridge::xml::find_attribute(ruby, this, rb_name)?;
-    wrap_rel(ruby, this, a)
+    let a = crate::bridge::xml::find_attribute(ruby, &this, rb_name)?;
+    wrap_rel(ruby, &this, a)
 }
 
 pub fn attribute_nodes(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
@@ -341,7 +341,7 @@ pub fn spaceship(ruby: &Ruby, this: XmlSelf, other: Value) -> Result<Option<i64>
     let same_document = crate::bridge::ruby::is_kind_of(ruby, other, &crate::init::CLASS_NODE)
         && crate::bridge::ruby::same_value(
             crate::bridge::wrapper::keepalive_document(ruby, other)?,
-            this.document,
+            this.document(),
         );
     if !same_document {
         return Ok(None);

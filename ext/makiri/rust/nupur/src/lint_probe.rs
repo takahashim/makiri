@@ -36,21 +36,12 @@ mod entry {
     }
 }
 
-/// A payload borrowed through a bare `Value` (`unheld_payload_borrow`), and
-/// a handle that holds its object forgotten (`forgotten_handle`).
+/// A handle that holds its object forgotten (`forgotten_handle`).
 #[rustfmt::skip] // keeps each marker on the line reported
 mod handles {
     struct P;
     impl crate::typed::Payload for P {}
     static T: crate::typed::TypedType<P> = crate::typed::TypedType::base(c"lint_probe");
-
-    fn bare(v: crate::rb::Value) -> bool {
-        T.get(&v).is_err() //~
-    }
-
-    fn known(v: crate::rb::Value) -> usize {
-        core::mem::size_of_val(T.get_known(&v)) //~
-    }
 
     fn forgotten(v: crate::rb::Value) -> Result<(), crate::rb::Error> {
         let handle = T.check(v)?;

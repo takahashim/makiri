@@ -108,7 +108,7 @@ fn doc_s_new(ruby: &Ruby, _klass: Value) -> Result<Value, Error> {
 /// mode, for `#dup` to copy the children into.
 fn doc_empty_copy(ruby: &Ruby, this: HtmlSelf) -> Result<Value, Error> {
     let mode = u32::try_from(this.read()?.doc().compat_mode()).unwrap_or(0);
-    let encoding = crate::bridge::doc::document_encoding(this.document)?;
+    let encoding = crate::bridge::doc::document_encoding(this.document())?;
     crate::bridge::doc::new_empty_document(ruby, mode, encoding)
 }
 
@@ -180,7 +180,7 @@ fn node_parse(ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Value, Erro
     let at = fragment::ContextArg::element(ruby, this.value)?;
     let frag = fragment::build_fragment(
         ruby,
-        this.document,
+        this.document(),
         rb_html,
         at,
         fragment::ParseLimits::DEFAULT,

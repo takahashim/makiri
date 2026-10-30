@@ -200,7 +200,7 @@ pub fn content(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
  * ------------------------------------------------------------------ */
 
 pub fn get_document(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
-    Ok(this.document)
+    Ok(this.document())
 }
 
 /// `#parent`. For an attribute, the element it is set on - Lexbor's own
@@ -261,7 +261,7 @@ pub fn root_node(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
         let view = this.read()?;
         RawNode::from(crate::dom_rules::root(&HtmlTree::new(), view.node()))
     };
-    wrap_html_node(ruby, root, this.document)
+    wrap_html_node(ruby, root, this.document())
 }
 
 /// `#children`: every child node, as a NodeSet.
@@ -404,7 +404,7 @@ pub fn attribute_by_qualified_name(
     /* The name is not read past here; wrapping allocates, so it happens after. */
     drop(nv);
     found
-        .map(|at| wrap_html_node(ruby, at, this.document))
+        .map(|at| wrap_html_node(ruby, at, this.document()))
         .transpose()
 }
 
@@ -506,7 +506,7 @@ pub fn attribute_node_ns(
     };
     drop(args);
     found
-        .map(|at| wrap_html_node(ruby, at, this.document))
+        .map(|at| wrap_html_node(ruby, at, this.document()))
         .transpose()
 }
 
@@ -529,7 +529,7 @@ pub fn value(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 /// not place - a parser-inserted implicit `<html>`/`<head>`/`<body>`, a text or
 /// comment node - never a wrong line.
 pub fn line(this: super::HtmlSelf) -> Result<Option<usize>, Error> {
-    crate::bridge::html::node_line(this.document, this.raw())
+    crate::bridge::html::node_line(this.document(), this.raw())
 }
 
 /* ------------------------------------------------------------------ *

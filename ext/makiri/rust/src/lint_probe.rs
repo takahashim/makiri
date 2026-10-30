@@ -41,6 +41,22 @@ fn bindings(v: Value) {
     let _slice: &[Value] = &[];
 }
 
+fn take<T>(_: T) {}
+
+/// Temporaries no binding names, which only the expression check sees.
+#[rustfmt::skip] // keeps each marker on the line reported
+fn temporaries(v: Value, kept: &Vec<Value>) {
+    take(vec![v]); //~
+    let _n = vec![v].len(); //~
+    take(Some(Box::new(v))); //~
+    take(Box::new(move || v)); //~
+    let _outer = vec![vec![v]]; //~
+    take(&[v]);
+    take(kept.len());
+    take(Box::new(|| kept.len()));
+    take(kept);
+}
+
 thread_local! {
     static LIST: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) }; //~
     static ONE: Cell<Option<RString>> = const { Cell::new(None) }; //~
