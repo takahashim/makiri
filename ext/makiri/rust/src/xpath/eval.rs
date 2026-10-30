@@ -73,9 +73,6 @@ pub struct Evaluation<'e, 'd, D: Dom<'d>> {
     pub budget: Budget,
     pub str_cache: StrCache<'d>,
     pub order_index: OrderIndex,
-    /// The CSS lowering's sibling positions, one parent at a time.
-    #[cfg(any(test, feature = "xml-css-reference"))]
-    pub(crate) sibling_positions: super::funcs::SiblingPositions<D::Node>,
     memo: Memo<D::Node>,
 }
 
@@ -89,8 +86,6 @@ impl<'e, 'd, D: Dom<'d>> Evaluation<'e, 'd, D> {
             budget: Budget::with_limits(cx.limits()),
             str_cache: StrCache::new(),
             order_index: OrderIndex::new(),
-            #[cfg(any(test, feature = "xml-css-reference"))]
-            sibling_positions: super::funcs::SiblingPositions::new(),
             memo: Memo(Vec::new()),
         }
     }

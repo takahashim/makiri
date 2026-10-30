@@ -1,5 +1,5 @@
 //! The built-in XPath 1.0 function library, plus the
-//! two Nokogiri-compatible builtins and the CSS lowering's internal hooks.
+//! two Nokogiri-compatible builtins.
 //!
 //! One function per builtin behind one signature, and [`BUILTINS`] is the only
 //! place that names them - with their purity beside each. Keeping "does it exist" and "what does it do" as one
@@ -12,13 +12,8 @@
 
 #![forbid(unsafe_code)]
 
-/// The CSS lowering's internal hooks, built with the lowering only.
-#[cfg(any(test, feature = "xml-css-reference"))]
-mod css_hooks;
 /// The functions beyond XPath 1.0's library: the Nokogiri builtins.
 mod ext;
-#[cfg(any(test, feature = "xml-css-reference"))]
-pub(crate) use css_hooks::SiblingPositions;
 
 use super::abi::*;
 use super::axis::walk_descendants;
@@ -31,27 +26,6 @@ use crate::err_setf;
 use crate::falloc::{try_vec_with_capacity, Reserve, VecGrow};
 use core::ops::ControlFlow;
 use std::collections::HashMap;
-
-/// Names the CSS lowering EMITS and the evaluator RESOLVES for an untyped
-/// `:*-of-type`, where the "type" is the element's own expanded name - a
-/// self-reference XPath 1.0 cannot express (there is no `current()`). The
-/// leading \x01 cannot come out of the lexer, so these are unreachable from a
-/// user expression. XML host only.
-///
-/// They live here, not beside the evaluator: one end emits them and the other
-/// resolves them, and a name that only one end knows is a call that resolves to
-/// nothing.
-#[cfg(any(test, feature = "xml-css-reference"))]
-pub const FN_OF_TYPE_POS: &[u8] = b"\x01of-type-pos";
-#[cfg(any(test, feature = "xml-css-reference"))]
-pub const FN_OF_TYPE_POS_LAST: &[u8] = b"\x01of-type-pos-last";
-/// The same pair for the `-child` family: the position among ALL element
-/// siblings. XPath can say that (`count(preceding-sibling::*) + 1`), but per
-/// candidate it is n^2 over a flat list; the hook reads a per-parent memo.
-#[cfg(any(test, feature = "xml-css-reference"))]
-pub const FN_CHILD_POS: &[u8] = b"\x01child-pos";
-#[cfg(any(test, feature = "xml-css-reference"))]
-pub const FN_CHILD_POS_LAST: &[u8] = b"\x01child-pos-last";
 
 /// Namespace URI registered from Nokogiri's XPath context, so prefixed names
 /// like "nokogiri-builtin:css-class" resolve.
@@ -76,8 +50,7 @@ pub type FnImpl<'e, 'd, D> = fn(
 /// Which library a built-in belongs to: the namespace its name is looked up in.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Library {
-    /// XPath 1.0's own, unprefixed - plus the CSS lowering's hooks, whose
-    /// names no expression can spell.
+    /// XPath 1.0's own, unprefixed.
     Core,
     /// Nokogiri's builtins, under [`NS_NOKOGIRI_BUILTIN_URI`].
     Nokogiri,
@@ -144,14 +117,6 @@ enum Builtin {
     Round,
     CssClass,
     LocalNameIs,
-    #[cfg(any(test, feature = "xml-css-reference"))]
-    OfTypePos,
-    #[cfg(any(test, feature = "xml-css-reference"))]
-    OfTypePosLast,
-    #[cfg(any(test, feature = "xml-css-reference"))]
-    ChildPos,
-    #[cfg(any(test, feature = "xml-css-reference"))]
-    ChildPosLast,
 }
 
 /// One [`BUILTINS`] row.
@@ -265,42 +230,14 @@ impl Builtin {
             Builtin::Round => fn_round::<D> as FnImpl<'e, 'd, D>,
             Builtin::CssClass => ext::fn_css_class::<D> as FnImpl<'e, 'd, D>,
             Builtin::LocalNameIs => ext::fn_local_name_is::<D> as FnImpl<'e, 'd, D>,
-            #[cfg(any(test, feature = "xml-css-reference"))]
-            Builtin::OfTypePos => css_hooks::fn_of_type_pos::<D> as FnImpl<'e, 'd, D>,
-            #[cfg(any(test, feature = "xml-css-reference"))]
-            Builtin::OfTypePosLast => css_hooks::fn_of_type_pos_last::<D> as FnImpl<'e, 'd, D>,
-            #[cfg(any(test, feature = "xml-css-reference"))]
-            Builtin::ChildPos => css_hooks::fn_child_pos::<D> as FnImpl<'e, 'd, D>,
-            #[cfg(any(test, feature = "xml-css-reference"))]
-            Builtin::ChildPosLast => css_hooks::fn_child_pos_last::<D> as FnImpl<'e, 'd, D>,
         }
     }
 }
-
-/// The CSS lowering's internal hooks, in their own table so they are built
-/// with the lowering only: their names begin with \x01, which no expression
-/// can spell, so only the lowering reaches them.
-#[cfg(any(test, feature = "xml-css-reference"))]
-#[rustfmt::skip]
-const CSS_HOOKS: &[Entry] = {
-    use Builtin::*;
-    use Library::*;
-    use Purity::*;
-    &[
-        e(Core, FN_OF_TYPE_POS, OfTypePos, Impure, 0, usize::MAX),
-        e(Core, FN_OF_TYPE_POS_LAST, OfTypePosLast, Impure, 0, usize::MAX),
-        e(Core, FN_CHILD_POS, ChildPos, Impure, 0, usize::MAX),
-        e(Core, FN_CHILD_POS_LAST, ChildPosLast, Impure, 0, usize::MAX),
-    ]
-};
-#[cfg(not(any(test, feature = "xml-css-reference")))]
-const CSS_HOOKS: &[Entry] = &[];
 
 /// The table entry for `local` in `library`.
 fn find(library: Library, local: &[u8]) -> Option<&'static Entry> {
     BUILTINS
         .iter()
-        .chain(CSS_HOOKS)
         .find(|e| e.library == library && e.name == local)
 }
 
@@ -510,10 +447,7 @@ fn find_bytes(hay: &[u8], needle: &[u8]) -> Option<usize> {
 
 /// The number of characters in valid UTF-8: every byte that is not a
 /// continuation byte starts one.
-///
-/// Shared with the CSS lowering's `[a$=v]`, which needs the same character
-/// count to place `substring`'s start the way `string-length` measures it.
-pub(crate) fn count_chars(s: &[u8]) -> usize {
+fn count_chars(s: &[u8]) -> usize {
     s.iter().filter(|&&b| (b & 0xC0) != 0x80).count()
 }
 

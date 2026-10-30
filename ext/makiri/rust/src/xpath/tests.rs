@@ -1,7 +1,7 @@
-//! The engine end to end, without Ruby: an XML document, an expression or a
-//! selector, and the value that comes back.
+//! The engine end to end, without Ruby: an XML document, an expression, and
+//! the value that comes back.
 //!
-//! The Ruby specs reach the same paths through `Node#xpath` and `#css`; these
+//! The Ruby specs reach the same paths through `Node#xpath`; these
 //! run under `cargo test` (and under ASan in CI) with nothing between the test
 //! and the engine's front door. The expected values are what `Makiri::XML`
 //! answered for the same document and expressions when these were written.
@@ -52,22 +52,12 @@ fn text(s: &str) -> Answer {
     Answer::Str(s.to_string())
 }
 
-enum Query {
-    XPath,
-    #[cfg(feature = "html-dom")]
-    Css,
-}
-
 /// Run `expr` against [`DOC`] from its document node, with `d` bound to
 /// `urn:d`, and describe what came back. `tighten` adjusts the budgets first.
 /// A node-set is also asked for through `evaluate_first`, which must agree on
 /// its first node.
-fn run(
-    query: Query,
-    expr: &str,
-    tighten: impl FnOnce(&mut crate::xpath::limits::Limits),
-) -> Answer {
-    run_on(DOC, query, expr, tighten)
+fn run(expr: &str, tighten: impl FnOnce(&mut crate::xpath::limits::Limits)) -> Answer {
+    run_on(DOC, expr, tighten)
 }
 
 /// [`run`] against a document of the caller's choosing, so a test can pin a
@@ -75,7 +65,6 @@ fn run(
 /// top element).
 fn run_on(
     doc_bytes: &[u8],
-    query: Query,
     expr: &str,
     tighten: impl FnOnce(&mut crate::xpath::limits::Limits),
 ) -> Answer {
@@ -87,16 +76,7 @@ fn run_on(
     let source = VerifiedText::from_bytes(expr.as_bytes()).expect("verified");
     let mut parse_budget = Budget::with_limits(ctx.limits());
     /* `source` borrows `expr`, which outlives the parse. */
-    let compiled: Result<Box<Ast>, _> = match query {
-        Query::XPath => parse_owned(source, &mut parse_budget),
-        #[cfg(feature = "html-dom")]
-        Query::Css => {
-            let ns = crate::css::CssNs {
-                default_namespace: false,
-            };
-            crate::css::compile_owned(source, &ns, crate::css::Form::Select, &mut parse_budget)
-        }
-    };
+    let compiled: Result<Box<Ast>, _> = parse_owned(source, &mut parse_budget);
     let ast = match compiled {
         Ok(ast) => ast,
         Err(_) => return Answer::Err(parse_budget.take_error().status),
@@ -132,7 +112,7 @@ fn run_on(
 }
 
 fn xpath(expr: &str) -> Answer {
-    run(Query::XPath, expr, |_| {})
+    run(expr, |_| {})
 }
 
 #[test]
@@ -200,7 +180,7 @@ fn numbers_and_booleans_follow_the_xpath_rules() {
 fn failures_come_back_with_their_status() {
     assert_eq!(xpath("//a["), Answer::Err(ErrorKind::Syntax));
     assert_eq!(xpath("foo()"), Answer::Err(ErrorKind::Syntax));
-    let capped = run(Query::XPath, "//c | //a", |l| l.max_nodeset_size = 2);
+    let capped = run("//c | //a", |l| l.max_nodeset_size = 2);
     assert_eq!(capped, Answer::Err(ErrorKind::Limit));
 }
 
@@ -261,120 +241,6 @@ fn an_unknown_function_is_a_syntax_error() {
     );
 }
 
-#[cfg(feature = "html-dom")]
-fn css(selector: &str) -> Answer {
-    run(Query::Css, selector, |_| {})
-}
-
-#[cfg(feature = "html-dom")]
-#[test]
-fn css_selectors_lower_to_the_same_answers_as_xml_css() {
-    assert_eq!(css("a"), nodes(&["a", "a"]));
-    assert_eq!(css(r#"a[k="2"]"#), nodes(&["a"]));
-    assert_eq!(css("b > c"), nodes(&["c", "c"]));
-    assert_eq!(css("a + b"), nodes(&["b"]));
-    assert_eq!(css("c:nth-child(2)"), nodes(&["c"]));
-    assert_eq!(css("b > :not(c)"), nodes(&["d:e"]));
-    assert_eq!(css("d|e"), nodes(&["d:e"]));
-    assert_eq!(css("b > *:first-child"), nodes(&["c"]));
-    assert_eq!(css("a:last-of-type"), nodes(&["a"]));
-    assert_eq!(css("c[n]"), nodes(&["c"]));
-    assert_eq!(css("a["), Answer::Err(ErrorKind::Syntax));
-    // A selector list lowers to a chain of unions, held to the same depth cap.
-    assert_eq!(
-        css(&vec!["a"; 1100].join(",")),
-        Answer::Err(ErrorKind::Limit)
-    );
-}
-
-/// A class name holding whitespace (`.x\ y`) "represents nothing": `.class`
-/// goes through `token_match`'s never-test, so it matches no element - the
-/// answer the HTML matcher gives, not every element whose class has a space.
-/// `[a~=v]` takes the same check, so the two agree.
-#[cfg(feature = "html-dom")]
-#[test]
-fn a_class_name_with_whitespace_matches_nothing() {
-    let doc = br#"<r><e class="x y"/><e class="xy"/></r>"#;
-    assert_eq!(
-        run_on(doc, Query::Css, r".x\ y", |_| {}),
-        Answer::Nodes(vec![])
-    );
-    assert_eq!(
-        run_on(doc, Query::Css, ".xy", |_| {}),
-        Answer::Nodes(vec!["e".to_string()])
-    );
-}
-
-/// An empty `[a~=v]` value represents nothing too - including on an element
-/// whose attribute is empty, where the padded needle `'  '` would be found
-/// in `concat(' ', '', ' ')`. `token_match` refuses it, for `~=` and `.class`.
-#[cfg(feature = "html-dom")]
-#[test]
-fn an_empty_token_matches_nothing_even_on_an_empty_attribute() {
-    let doc = br#"<r><e class=""/><e class="x"/></r>"#;
-    assert_eq!(
-        run_on(doc, Query::Css, r#"[class~=""]"#, |_| {}),
-        Answer::Nodes(vec![])
-    );
-    assert_eq!(
-        run_on(doc, Query::Css, r#"[class~="x"]"#, |_| {}),
-        Answer::Nodes(vec!["e".to_string()])
-    );
-}
-
-/// `:root` is the document element, as Lexbor's matcher answers it - not merely
-/// a parentless element. A child element has an element parent, so `e:root` is
-/// empty; only the document element matches.
-#[cfg(feature = "html-dom")]
-#[test]
-fn root_is_the_document_element_not_any_parentless_element() {
-    assert_eq!(css(":root"), nodes(&["r"]));
-    assert_eq!(css("a:root"), nodes(&[]));
-    assert_eq!(css("c:root"), nodes(&[]));
-}
-
-/// A CDATA section is a child, so it makes an element NON-empty, exactly as
-/// Lexbor's `:empty` (which ignores only comments) has it. An empty CDATA still
-/// counts: it is a node.
-#[cfg(feature = "html-dom")]
-#[test]
-fn empty_counts_a_cdata_child_but_not_a_comment() {
-    let doc = br#"<r><a><![CDATA[]]></a><b/><c><!--x--></c><d><![CDATA[z]]></d></r>"#;
-    let one = |name: &str| Answer::Nodes(vec![name.to_string()]);
-    assert_eq!(run_on(doc, Query::Css, "b:empty", |_| {}), one("b"));
-    assert_eq!(run_on(doc, Query::Css, "c:empty", |_| {}), one("c"));
-    assert_eq!(run_on(doc, Query::Css, "a:empty", |_| {}), nodes(&[]));
-    assert_eq!(run_on(doc, Query::Css, "d:empty", |_| {}), nodes(&[]));
-}
-
-/// `:nth-child(an+b)` with a NEGATIVE `a`: only the first few positions match,
-/// and the answer is the same as the HTML matcher's.
-#[cfg(feature = "html-dom")]
-#[test]
-fn nth_child_with_a_negative_step_matches_the_leading_positions() {
-    /* `<r>` has element children a(1) a(2) b(3); `<b>` has c(1) c(2) d:e(3).
-     * `-1n+3` is positions 1..=3, `-2n+2` is 2, `-2n+1` is 1. */
-    assert_eq!(css("r > :nth-child(-1n+3)"), nodes(&["a", "a", "b"]));
-    assert_eq!(css("b > :nth-child(-2n+2)"), nodes(&["c"]));
-    assert_eq!(css("b > :nth-child(-2n+1)"), nodes(&["c"]));
-    assert_eq!(css("r > :nth-child(-1n+0)"), nodes(&[]));
-}
-
-/// A selector list nested past the lowering's cap is refused with LIMIT on the
-/// way down, not after the native stack has run out: a stack overflow longjmps
-/// past `Parsed`'s `Drop`, leaving the process-global parser's borrow held, so
-/// every later XML `css`/`at_css`/`matches?` would fail `Busy` for the life of
-/// the process. The second assertion is what tells an ordinary refusal from a
-/// lost borrow.
-#[cfg(feature = "html-dom")]
-#[test]
-fn a_deeply_nested_selector_is_refused_and_leaves_the_parser_usable() {
-    let depth = crate::css::MAX_SELECTOR_NESTING as usize + 8;
-    let nested = format!("{}a{}", ":not(".repeat(depth), ")".repeat(depth));
-    assert_eq!(css(&nested), Answer::Err(ErrorKind::Limit));
-    assert_eq!(css("a"), nodes(&["a", "a"]));
-}
-
 /// With no room in the string-value cache, comparisons build their values
 /// uncached and still answer as with the cache.
 #[test]
@@ -389,7 +255,7 @@ fn comparisons_answer_the_same_with_no_cache() {
     ];
     for e in exprs {
         let cached = xpath(e);
-        let uncached = run(Query::XPath, e, |l| l.max_cache_bytes = 0);
+        let uncached = run(e, |l| l.max_cache_bytes = 0);
         assert_eq!(cached, uncached, "{e}");
     }
 }

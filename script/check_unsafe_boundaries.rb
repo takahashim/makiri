@@ -108,7 +108,7 @@ UNSAFE_ISLANDS = {
 # The subtree roots in FORBID_ROOTS make whole directories compiler-forbidden:
 # `forbid` is inherited, so a new file under `glue/` or `xpath/` cannot slip in
 # with an `allow`, however few its `unsafe`s.
-FORBID_ROOTS = %w[bridge/mod.rs css/mod.rs glue/mod.rs css_match/mod.rs selectors/mod.rs xml/mod.rs
+FORBID_ROOTS = %w[bridge/mod.rs glue/mod.rs css_match/mod.rs selectors/mod.rs xml/mod.rs
                   xpath/mod.rs].freeze
 
 FORBID_FILES = %w[
@@ -120,8 +120,7 @@ FORBID_FILES = %w[
   bridge/wrapper/document.rs bridge/wrapper/edit.rs bridge/wrapper/node.rs
   bridge/xml.rs bridge/xml_decode.rs bridge/xpath/context_object.rs
   bridge/xpath/mod.rs cbuf.rs child_index.rs
-  conformance/mod.rs css/build.rs css/lower.rs
-  css/mod.rs css_cache.rs css_match/mod.rs
+  conformance/mod.rs css_cache.rs css_match/mod.rs
   cutf8.rs cutf8/verify.rs doc_cell.rs
   dom_rules.rs engine_error.rs glue/css.rs
   glue/html_doc.rs glue/html_node/css.rs glue/html_node/mutate.rs
@@ -153,12 +152,11 @@ FORBID_FILES = %w[
   xml/verify.rs xml/xpath.rs xpath/abi.rs
   xpath/ast.rs xpath/ast_ops.rs xpath/attr_pred.rs
   xpath/axis.rs xpath/ctx.rs xpath/dom.rs
-  xpath/eval.rs xpath/funcs/css_hooks.rs xpath/funcs/ext.rs
-  xpath/funcs/mod.rs xpath/lex.rs xpath/limits.rs
-  xpath/mod.rs xpath/nodetest.rs xpath/number.rs
-  xpath/order.rs xpath/parse.rs xpath/step_index.rs
-  xpath/str_cache.rs xpath/tests.rs xpath/value.rs
-  xpath/verify.rs
+  xpath/eval.rs xpath/funcs/ext.rs xpath/funcs/mod.rs
+  xpath/lex.rs xpath/limits.rs xpath/mod.rs
+  xpath/nodetest.rs xpath/number.rs xpath/order.rs
+  xpath/parse.rs xpath/step_index.rs xpath/str_cache.rs
+  xpath/tests.rs xpath/value.rs xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/

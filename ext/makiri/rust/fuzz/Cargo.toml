@@ -22,10 +22,8 @@ default-features = false
 # compares against, and `lexbor-reference` Lexbor's tree, the reference
 # `html_diff` compares the ported tree builder against (and Lexbor's selector
 # and stylesheet parsers beside the ports, for `selector_diff` and
-# `stylesheet_diff`), and `xml-css-reference` the CSS-to-XPath lowering the
-# `css` target holds the XML matcher to; none ships in any build of the
-# extension.
-features = ["lexbor", "css-reference", "lexbor-reference", "xml-css-reference"]
+# `stylesheet_diff`); neither ships in any build of the extension.
+features = ["lexbor", "css-reference", "lexbor-reference"]
 
 [[bin]]
 name = "xml"

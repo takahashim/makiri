@@ -111,12 +111,6 @@ pub mod doc_cell;
 #[cfg(feature = "html-dom")]
 pub mod css_cache;
 
-/// The CSS-to-XPath lowering `Makiri::XML`'s CSS ran on before `css_match`
-/// took it over: kept only as the reference the XML matcher is tested and
-/// fuzzed against (`xml::css_tests`, the `css` fuzz target).
-#[cfg(any(test, feature = "xml-css-reference"))]
-pub mod css;
-
 /// The shared UTF-8 primitives. Unconditional, like `falloc`
 /// and `cbuf`: the XML and XPath layers use the strict decoder whatever the
 /// feature set.
@@ -145,8 +139,7 @@ pub mod limits;
 pub mod stack;
 
 /// The engine error vocabulary - the kind, the message buffer and the sink -
-/// shared by XPath and the CSS lowering that feeds it. Unconditional and
-/// Ruby-free.
+/// of XPath's front end and evaluator. Unconditional and Ruby-free.
 pub mod engine_error;
 
 /// The one pointer hash, and the pointer-keyed tables the per-document indexes

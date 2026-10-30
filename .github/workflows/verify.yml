@@ -15,7 +15,6 @@ on:
       - "!ext/makiri/rust/src/bridge/**"
       - "!ext/makiri/rust/src/glue/**"
       - "!ext/makiri/rust/src/lexbor/**"
-      - "!ext/makiri/rust/src/css/**"
       - "!ext/makiri/rust/src/init.rs"
       - "ext/makiri/rust/verus/**"
       - "ext/makiri/rust/build.rs"
