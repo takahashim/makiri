@@ -7,8 +7,9 @@
 # class, and a Document - with every node, set and context over it - never
 # leaves the Ractor that made it, which the last examples pin.
 #
-# :slow - a Ractor is a thread Valgrind and the sanitizers add nothing to.
-RSpec.describe "Makiri in Ractors", :slow do
+# Not :slow: the examples are small, and Makiri's code running in parallel is
+# what ASan and Valgrind have the most to say about.
+RSpec.describe "Makiri in Ractors" do
   around do |example|
     previous = Warning[:experimental]
     Warning[:experimental] = false
