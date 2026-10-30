@@ -197,10 +197,10 @@ pub(super) unsafe fn wrap_built<T, const N: usize>(
             "a TypedData object was made without its data",
         ));
     }
+    /* The roots are read here, after the allocation - the one point a
+     * collection can run - so they stayed on this frame across it; from
+     * here the mark sees them in the slots. */
     p.write(Envelope { roots, data });
-    /* The roots stayed on this frame until here; from here the mark sees
-     * them in the slots. */
-    core::hint::black_box(&roots);
     Ok(obj)
 }
 

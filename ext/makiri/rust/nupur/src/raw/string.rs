@@ -70,11 +70,13 @@ pub fn enc_associate(s: RString, enc: Encoding) -> Result<RString, Error> {
 
 /// `rb_str_encode` to `enc` with `flags`: raises `Encoding::ConverterNotFoundError`
 /// when Ruby has no converter, and - without replacement flags -
-/// `Encoding::InvalidByteSequenceError` / `UndefinedConversionError`.
+/// `Encoding::InvalidByteSequenceError` / `UndefinedConversionError`; the new
+/// String's allocation raises `NoMemoryError`.
 #[inline]
 pub fn str_encode(s: RString, enc: Encoding, flags: c_int) -> Result<RString, Error> {
     let (v, e) = (s.as_raw(), enc.as_raw());
     let r = call(|| unsafe {
+        injected_raise();
         rb_sys::rb_str_encode(
             v,
             rb_sys::rb_enc_from_encoding(e),

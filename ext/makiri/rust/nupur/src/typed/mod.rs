@@ -310,7 +310,7 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
 /// before the object), and a non-embedded type's data, which is all this
 /// reads, is its own allocation, which compaction does not move.
 pub struct Typed<T: Payload + 'static, const N: usize> {
-    obj: crate::rb::value::Kept,
+    obj: crate::rb::kept::Kept,
     _t: PhantomData<fn() -> T>,
 }
 
@@ -319,7 +319,7 @@ impl<T: Payload + 'static, const N: usize> Typed<T, N> {
     #[inline]
     fn new(v: Value) -> Typed<T, N> {
         Typed {
-            obj: crate::rb::value::Kept::new(v),
+            obj: crate::rb::kept::Kept::new(v),
             _t: PhantomData,
         }
     }
@@ -393,7 +393,7 @@ impl<T: Payload + 'static, const N: usize> TypedType<T, N> {
             .try_for_each(|&(id, v)| crate::raw::ivar_set(obj, id, v));
         // SAFETY: the object just made, of ours; hiding writes only its class
         // field, which the reveal below restores.
-        unsafe { rb_sys::rb_obj_hide(obj.as_raw()) };
+        unsafe { crate::rb::object::obj_hide(obj) };
         written?;
         fill(made.data())?;
         crate::raw::obj_reveal(obj, crate::rb::ReprValue::as_value(klass))?;

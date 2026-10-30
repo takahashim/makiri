@@ -166,7 +166,7 @@ impl Error {
         let class = class.into().resolve(ruby);
         match &self.0 {
             Kind::New(c, _) | Kind::Formatted(c, _) => {
-                crate::rb::value::class_inherits(c.resolve(ruby).as_value(), class.as_value())
+                crate::rb::object::class_inherits(c.resolve(ruby).as_value(), class.as_value())
             }
             Kind::Exception(v) => v.is_kind_of(class),
             Kind::Jump(_) => false,

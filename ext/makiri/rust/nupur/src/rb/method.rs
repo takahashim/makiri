@@ -440,6 +440,8 @@ pub unsafe fn run_init(
     crate::no_unwind::must_not_unwind::<crate::no_unwind::Init, _>(|| {
         // SAFETY: Ruby calls an extension's `Init_` on its thread, with the GVL.
         let ruby = unsafe { Ruby::get_unchecked() };
+        /* What the layer asks Ruby once, before any of the extension runs. */
+        crate::encoding::init(&ruby);
         let msg = match std::panic::catch_unwind(AssertUnwindSafe(|| check(&ruby))) {
             Ok(Ok(())) => match std::panic::catch_unwind(AssertUnwindSafe(|| init(&ruby))) {
                 Ok(Ok(())) => return,

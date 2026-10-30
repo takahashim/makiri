@@ -91,7 +91,7 @@ sites! {
     /// `string::utf8_str_filled`'s guard, which empties a String a panic left
     /// unfilled - while that panic unwinds.
     DropUnfilled => "nupur_unwinds_drop_unfilled",
-    /// `rb::value::Kept`'s `Drop`, which hands its value to `keep_alive`.
+    /// `rb::kept::Kept`'s `Drop`, which hands its value to `keep_alive`.
     DropKept => "nupur_unwinds_drop_kept",
     /// The check's own control ([`self_test`]): a body that CAN unwind, so a
     /// check build that still works leaves exactly this symbol undefined.

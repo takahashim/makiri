@@ -146,6 +146,8 @@ const VALUE_HOMES: &[&str] = &[
     "nupur::raw",
     "nupur::typed",
     "nupur::rb::value",
+    "nupur::rb::kept",
+    "nupur::rb::object",
     "nupur::rb::ruby",
     "nupur::rb::method",
 ];

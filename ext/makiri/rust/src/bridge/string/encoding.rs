@@ -11,7 +11,6 @@ pub use crate::nupur::encoding::Encoding;
 
 /* Reading a String as UTF-8 is nupur's (`nupur::encoding`). */
 pub use crate::nupur::encoding::to_encoding;
-pub use crate::nupur::string::known_utf8;
 
 /// `v` as an encoding argument: the encoding, and the name to write for it -
 /// the String or Symbol as the caller wrote it, or an `Encoding`'s own name.
@@ -59,7 +58,7 @@ pub(in crate::bridge) fn encoding_kind(
     use crate::html::encoding::StringEncoding;
     if claims_no_encoding(enc) {
         StringEncoding::Binary
-    } else if enc.is_utf8_compatible(ruby) {
+    } else if enc.is_utf8_or_ascii(ruby) {
         StringEncoding::Utf8
     } else {
         StringEncoding::Named(enc.name())

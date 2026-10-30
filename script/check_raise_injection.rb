@@ -165,6 +165,33 @@ SCENARIOS = {
     root.element_children[1].remove
     doc.to_xml + other.to_xml
   end,
+
+  # Strings not in UTF-8: every reader's transcode (`nupur::string::to_utf8`)
+  # and the output's, each of whose allocations raises in turn. A raise
+  # there is passed on, never taken for the String's own fault - and the
+  # fault, when it is one, leaves the caller's `$!` as it was.
+  "transcode" => lambda do |docs|
+    doc = Makiri::HTML("<div><p title='\u65E5\u672C'>x</p></div>")
+    docs << doc
+    out = []
+    frag = Makiri::HTML::DocumentFragment.parse("<b>\u65E5\u672C\u8A9E</b>".encode("Shift_JIS"))
+    out << frag.to_html
+    out << doc.css("p[title='\u65E5\u672C']".encode("Shift_JIS")).size.to_s
+    xml = Makiri::XML(%(<?xml version="1.0" encoding="Shift_JIS"?><r>\u65E5\u672C</r>).encode("Shift_JIS").b)
+    docs << xml
+    out << xml.root.text << xml.to_xml(encoding: "ISO-8859-1")
+    begin
+      raise "outer"
+    rescue RuntimeError
+      begin
+        doc.at_css("\x82".dup.force_encoding("Shift_JIS"))
+      rescue Makiri::Error => e
+        out << e.message
+      end
+      out << $!.message
+    end
+    out.join("\n")
+  end,
 }
 
 # A document a run left still works: it reads, and it takes an edit.

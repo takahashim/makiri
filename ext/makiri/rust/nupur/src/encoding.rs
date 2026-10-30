@@ -4,6 +4,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use core::ffi::c_int;
+use core::sync::atomic::{AtomicI32, Ordering};
 
 use crate::rb::value::AsRawValue;
 use crate::rb::{Error, RString};
@@ -16,39 +17,49 @@ use crate::rb::{Error, RString};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Encoding(*mut rb_sys::rb_encoding);
 
-/// Ruby's three builtin encodings, read once: C globals Ruby sets at boot and
-/// never moves, so a comparison with one is a load rather than a call into
-/// libruby each time.
-struct Builtins {
-    utf8: *mut rb_sys::rb_encoding,
-    usascii: *mut rb_sys::rb_encoding,
-    ascii8bit: *mut rb_sys::rb_encoding,
+/* The indices of Ruby's three builtin encodings - the ones whose text is read
+ * as UTF-8 bytes - asked once, at `Init_` ([`init`]), and only read after.
+ * Ruby keeps them as constants, but hides them from extensions
+ * (`ruby_preserved_encindex`), so they are asked rather than written here.
+ * -1 is no encoding's index: read before `init`, every test answers "not
+ * read as UTF-8 bytes", which sends a String to Ruby's transcode - slower,
+ * never wrong. (No method runs before `Init_`.) */
+static UTF8: AtomicI32 = AtomicI32::new(-1);
+static USASCII: AtomicI32 = AtomicI32::new(-1);
+static ASCII8BIT: AtomicI32 = AtomicI32::new(-1);
+
+/// Ask Ruby the builtin encodings' indices, once: the first thing
+/// `rb::method::run_init` does, before the extension's own `Init_` code.
+pub(crate) fn init(_: &crate::rb::Ruby) {
+    // SAFETY: under the GVL (`&Ruby`), at `Init_`; each returns a constant.
+    let (utf8, usascii, ascii8bit) = unsafe {
+        (
+            rb_sys::rb_utf8_encindex(),
+            rb_sys::rb_usascii_encindex(),
+            rb_sys::rb_ascii8bit_encindex(),
+        )
+    };
+    UTF8.store(utf8, Ordering::Relaxed);
+    USASCII.store(usascii, Ordering::Relaxed);
+    ASCII8BIT.store(ascii8bit, Ordering::Relaxed);
 }
 
-// SAFETY: the pointers are Ruby's process-lifetime encodings, only compared
-// and handed back as `Encoding`s; nothing is read or written through them
-// here.
-unsafe impl Send for Builtins {}
-// SAFETY: as above.
-unsafe impl Sync for Builtins {}
+/// Whether the encoding of index `index` is read as UTF-8 bytes with no
+/// transcode: UTF-8, US-ASCII or ASCII-8BIT. The one definition of that set,
+/// which [`Encoding::is_utf8_ascii_or_binary`] and a String's own
+/// ([`RString::reads_as_utf8_bytes`](crate::rb::RString::reads_as_utf8_bytes))
+/// both ask.
+#[inline]
+pub(crate) fn reads_as_utf8_index(index: c_int) -> bool {
+    [&UTF8, &USASCII, &ASCII8BIT]
+        .iter()
+        .any(|i| i.load(Ordering::Relaxed) == index)
+}
 
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        ffi_without_gvl_proof,
-        reason = "private: read by the Encoding methods, each of which holds an Encoding or a token; the three calls read C globals"
-    )
-)]
-fn builtins() -> &'static Builtins {
-    static B: std::sync::OnceLock<Builtins> = std::sync::OnceLock::new();
-    // SAFETY: Ruby's immutable global encodings, set at boot.
-    B.get_or_init(|| unsafe {
-        Builtins {
-            utf8: rb_sys::rb_utf8_encoding(),
-            usascii: rb_sys::rb_usascii_encoding(),
-            ascii8bit: rb_sys::rb_ascii8bit_encoding(),
-        }
-    })
+/// Whether the encoding of index `index` is UTF-8.
+#[inline]
+pub(crate) fn is_utf8_index(index: c_int) -> bool {
+    UTF8.load(Ordering::Relaxed) == index
 }
 
 /// What a transcode ([`Encoding::encode`]) does with a byte sequence that is
@@ -103,7 +114,8 @@ impl Encoding {
     /// UTF-8. Takes the token, as every C call of the layer that has no Ruby
     /// value to show for the GVL does.
     pub fn utf8(_: &crate::rb::Ruby) -> Encoding {
-        Encoding(builtins().utf8)
+        // SAFETY: Ruby's immutable global encoding.
+        Encoding(unsafe { rb_sys::rb_utf8_encoding() })
     }
 
     /// The encoding Ruby knows by `name`, or None for a name it does not
@@ -150,16 +162,26 @@ impl Encoding {
     }
 
     pub fn is_usascii(self) -> bool {
-        self.0 == builtins().usascii
+        // SAFETY: Ruby's immutable global encoding.
+        self.0 == unsafe { rb_sys::rb_usascii_encoding() }
     }
 
     pub fn is_ascii8bit(self) -> bool {
-        self.0 == builtins().ascii8bit
+        // SAFETY: Ruby's immutable global encoding.
+        self.0 == unsafe { rb_sys::rb_ascii8bit_encoding() }
+    }
+
+    /// The encoding's index (`rb_enc_to_index`), as a String's flags carry
+    /// it.
+    fn index(self) -> c_int {
+        // SAFETY: one of Ruby's encodings, which live for the process; the
+        // read of its index field raises nothing.
+        unsafe { rb_sys::rb_enc_to_index(self.0) }
     }
 
     /// UTF-8 or US-ASCII: text in it is already UTF-8, character for
     /// character. What a serialized String needs no transcoding into.
-    pub fn is_utf8_compatible(self, ruby: &crate::rb::Ruby) -> bool {
+    pub fn is_utf8_or_ascii(self, ruby: &crate::rb::Ruby) -> bool {
         self == Encoding::utf8(ruby) || self.is_usascii()
     }
 
@@ -172,8 +194,8 @@ impl Encoding {
     /// For an encoding that is not a String's - a declared one, a given one.
     /// A String's own is [`RString::reads_as_utf8_bytes`](crate::rb::RString::reads_as_utf8_bytes),
     /// which reads its flags rather than look its encoding up.
-    pub fn is_utf8_ascii_or_binary(self, ruby: &crate::rb::Ruby) -> bool {
-        self.is_utf8_compatible(ruby) || self.is_ascii8bit()
+    pub fn is_utf8_ascii_or_binary(self, _: &crate::rb::Ruby) -> bool {
+        reads_as_utf8_index(self.index())
     }
 
     /// A copy of `str` tagged with this encoding instead of its own: its
