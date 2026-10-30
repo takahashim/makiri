@@ -2,7 +2,7 @@ name: Valgrind + GC.compact
 
 on:
   # Valgrind memcheck runs nightly (and by hand): it is the only check without a
-  # frequency threshold (any "definitely lost" / uninitialised-value use fails,
+  # frequency threshold (any "definitely lost" or invalid access fails,
   # unlike the PR-level macOS leak gate, which only flags stacks repeated >=30x).
   # It also ran on every push to main while the extension carried C; with the
   # crate's unsafe confined to reviewed islands (`rake unsafe:boundaries`) and
@@ -22,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       valgrind_options:
-        description: "Extra Valgrind options, e.g. --expensive-definedness-checks=yes"
+        description: "Extra Valgrind options, e.g. --keep-stacktraces=alloc-and-free"
         required: false
         default: ""
 
@@ -33,11 +33,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Valgrind memcheck on the full spec suite.  Complements ASan by catching
-  # layout-independent errors ASan misses: use of uninitialised values, and
-  # invalid reads/writes that happen to land inside valid malloc regions
-  # (intra-arena overflows).  Runs on Linux because Valgrind is x86_64/amd64
-  # Linux only.
+  # Valgrind memcheck on the full spec suite: leaks with no frequency
+  # threshold, and invalid reads/writes. Uninitialised values are not checked
+  # (rakelib/valgrind.rake says why). Runs on Linux because Valgrind is
+  # x86_64/amd64 Linux only.
   valgrind-memcheck:
     # Nightly and by hand; not on pull requests (see the note under `on:`).
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -51,17 +50,14 @@ jobs:
       # wall-clock with no loss of coverage (each shard is balanced by file size).
       VALGRIND_SHARDS: "4"
       VALGRIND_SHARD_INDEX: ${{ matrix.shard }}
-      # These heavy jobs verify memory discipline (uninit values, intra-arena
-      # overflows, use-after-move), not the property space - so the full
+      # These heavy jobs verify memory discipline (leaks, invalid accesses,
+      # use-after-move), not the property space - so the full
       # 300-iteration PBT sweep (already run by the normal CI matrix) is
       # overkill here and, multiplied by Valgrind's 10-50x slowdown, never
       # finishes.  A handful of iterations exercises every memory path while
       # keeping the run tractable.
       PBT_COUNT: "15"
       CSS_PBT_COUNT: "15"
-      # --track-origins roughly doubles memcheck's runtime and only adds an origin
-      # backtrace to a finding; the nightly run keeps it, for triage.
-      VALGRIND_TRACK_ORIGINS: "yes"
     strategy:
       fail-fast: false
       matrix:
@@ -99,7 +95,7 @@ jobs:
       - name: Run spec suite under Valgrind (ruby_memcheck)
         env:
           # Gzipped copies of Valgrind's XML, uploaded when the job fails: it
-          # holds each error's origin, which ruby_memcheck's report does not.
+          # holds each error's whole stacks, which ruby_memcheck's report trims.
           VALGRIND_XML_KEEP: ${{ github.workspace }}/valgrind-xml
           # A manual run's extra options (see `on.workflow_dispatch`).
           VALGRIND_EXTRA: ${{ github.event.inputs.valgrind_options }}
