@@ -24,7 +24,7 @@ impl RString {
     /// owns what it reads, so nothing Ruby does afterwards - a GC, the String
     /// rewritten or grown - can reach it.
     #[inline]
-    pub fn copy_to(self, _ruby: &Ruby, offset: usize, dst: &mut [u8]) -> usize {
+    pub fn copy_to(self, offset: usize, dst: &mut [u8]) -> usize {
         // SAFETY: read and copied out at once; nothing runs while it is held.
         let src = unsafe { self.as_slice() }.get(offset..).unwrap_or(&[]);
         let n = src.len().min(dst.len());
@@ -40,7 +40,7 @@ impl RString {
     /// `v` is left as it was and the answer is [`NoRoom`]. The read is
     /// [`copy_to`](Self::copy_to)'s, in one step after the room is checked.
     #[inline]
-    pub fn append_to(self, _ruby: &Ruby, offset: usize, v: &mut Vec<u8>) -> Result<usize, NoRoom> {
+    pub fn append_to(self, offset: usize, v: &mut Vec<u8>) -> Result<usize, NoRoom> {
         // SAFETY: as `copy_to` - read and copied out at once.
         let src = unsafe { self.as_slice() }.get(offset..).unwrap_or(&[]);
         if v.capacity() - v.len() < src.len() {
@@ -65,7 +65,7 @@ impl RString {
     /// with the builtin indices (`encoding`'s one table of them). Every strict read asks, so it
     /// is on the hot path: `rb_enc_get` + `rb_utf8_encoding` cost Makiri's
     /// `Node#[]` ~13%.
-    pub fn reads_as_utf8_bytes(self, _: &Ruby) -> bool {
+    pub fn reads_as_utf8_bytes(self) -> bool {
         crate::encoding::reads_as_utf8_index(self.encoding_index())
     }
 
@@ -106,7 +106,7 @@ impl RString {
     /// reader that would otherwise repair or check the bytes itself). A wrong
     /// coderange (another C extension's, a Ruby bug) must never decide what a
     /// `&str` holds: that is [`crate::utf8_copy::Utf8Copy`]'s own check.
-    pub fn known_utf8(self, _: &Ruby) -> bool {
+    pub fn known_utf8(self) -> bool {
         match self.enc_coderange() {
             /* Every byte < 0x80 in an ASCII-compatible encoding. */
             crate::rb::Coderange::SevenBit => true,
@@ -158,8 +158,8 @@ pub fn to_utf8(
     on: Unconvertible,
 ) -> Result<Transcode, Error> {
     let as_utf8 = match read_as {
-        None => s.reads_as_utf8_bytes(ruby),
-        Some(enc) => enc.is_utf8_ascii_or_binary(ruby),
+        None => s.reads_as_utf8_bytes(),
+        Some(enc) => enc.is_utf8_ascii_or_binary(),
     };
     if as_utf8 {
         return Ok(Transcode::AsIs(s));
@@ -253,7 +253,7 @@ pub fn read_utf8_within<P>(
             check(b).map(ReadError::Refused)
         }
     };
-    Utf8Copy::from_source(&StrSource(ruby, s), checks).map_err(|e| match e {
+    Utf8Copy::from_source(&StrSource(s), checks).map_err(|e| match e {
         FillError::Refused(r) => r,
         FillError::Copy(CopyError::NotUtf8) => ReadError::NotUtf8,
         FillError::Copy(CopyError::Oom) => ReadError::Oom,
@@ -262,18 +262,18 @@ pub fn read_utf8_within<P>(
 
 /// A live String as what a [`Utf8Copy`](crate::utf8_copy::Utf8Copy) copies
 /// from: the copying reads, which hand no slice of the String out.
-struct StrSource<'a>(&'a Ruby, RString);
+struct StrSource(RString);
 
-impl crate::utf8_copy::Source for StrSource<'_> {
+impl crate::utf8_copy::Source for StrSource {
     fn byte_len(&self) -> usize {
-        self.1.len()
+        self.0.len()
     }
 
     fn copy_into(&self, dst: &mut [u8]) -> usize {
-        self.1.copy_to(self.0, 0, dst)
+        self.0.copy_to(0, dst)
     }
 
     fn append_into(&self, v: &mut Vec<u8>) -> bool {
-        self.1.append_to(self.0, 0, v).is_ok()
+        self.0.append_to(0, v).is_ok()
     }
 }

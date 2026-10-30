@@ -113,13 +113,9 @@ pub use crate::cutf8::TextVerdict;
 ///
 /// `coderange_str` is consulted only for its CACHED coderange, which never
 /// scans and never allocates.
-pub fn text_check(
-    ruby: &crate::bridge::rb::Ruby,
-    coderange_str: RString,
-    bytes: &[u8],
-) -> TextVerdict {
+pub fn text_check(coderange_str: RString, bytes: &[u8]) -> TextVerdict {
     /* The cached coderange reads flags; it never scans and never allocates. */
-    crate::cutf8::text_verdict(bytes, coderange_str.known_utf8(ruby))
+    crate::cutf8::text_verdict(bytes, coderange_str.known_utf8())
 }
 
 /// Why a String in another encoding was refused ([`ReadError::NoUtf8Form`]).

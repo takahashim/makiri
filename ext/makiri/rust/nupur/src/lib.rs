@@ -24,7 +24,13 @@
 //! - **The GVL is a token.** A [`rb::Ruby`] is made only by a trampoline and
 //!   by [`rb::method::run_init`], both `unsafe fn`s only the macros' expansion
 //!   (and the extension's `Init_`) call; everything that calls Ruby takes one,
-//!   or a Ruby value, which exists only where one did.
+//!   or a Ruby value, which exists only where one did. Either is proof
+//!   enough, so a function takes `&Ruby` only when it holds no Ruby value
+//!   (or handle made from one, `self` included) to show. The exceptions say
+//!   more than the GVL: the reads of the running method's own frame
+//!   (`rb::method::block_given`, `keyword_given`, `yield_value`), whose
+//!   token is the method's, and `Opaque::get`, whose value lives in a
+//!   static.
 //! - **A wrapped object's values are its slots** ([`typed`]), marked by the
 //!   layer; a payload holds none. Memory reported to the GC is given back by
 //!   the free callback. One is made only of a [`rb::DataClass`], a class

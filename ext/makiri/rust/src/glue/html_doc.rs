@@ -32,7 +32,7 @@ fn doc_s_parse(
     amplification: Value,
     encoding: Value,
 ) -> Result<Value, Error> {
-    let limit = crate::glue::kwargs::parse_limits(ruby, Some(depth), Some(amplification))?;
+    let limit = crate::glue::kwargs::parse_limits(Some(depth), Some(amplification))?;
     let given = encoding_arg(ruby, encoding)?;
     crate::bridge::doc::parse_document(ruby, source, limit, given)
 }
@@ -146,7 +146,6 @@ fn fragment_from_args(
     let context = kw.value(ruby, "context")?;
     /* Read before the backing document is made, so a bad value costs nothing. */
     let limit = crate::glue::kwargs::parse_limits(
-        ruby,
         kw.value(ruby, "max_tree_depth")?,
         kw.value(ruby, "max_amplification")?,
     )?;
