@@ -92,8 +92,11 @@
 //!   `static` or a payload's field it is not, and is freed or moved while
 //!   still held. Keep such values on the stack, in a Ruby Array, in a
 //!   wrapped object's slots, or in an [`rb::Opaque`] / [`rb::RbConst`].
-//!   Checked by `ruby_value_on_heap`, which reads the types; a temporary
-//!   handed straight to a call (`f(vec![v])`) is beyond it.
+//!   Checked by `ruby_value_on_heap`, which reads the types of bindings,
+//!   parameters, results, fields, statics and every expression - so a
+//!   temporary handed straight to a call (`f(vec![v])`) too. Beyond it: a
+//!   value behind `dyn Trait` once coerced, and a generic body for the
+//!   type it is called with.
 //! - **A payload is borrowed through its handle.** A [`typed::Typed`]'s
 //!   `data`, not `TypedType::get` / `get_known` over a copy of a `Value`
 //!   (those keep nothing, and serve only a value kept for the whole borrow -

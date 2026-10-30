@@ -106,9 +106,11 @@ declare_lint! {
     /// ### What it does
     /// Reports a Ruby value (a type implementing Makiri's `ReprValue`) inside
     /// a heap container (`Box`, `Vec`, `VecDeque`, `HashMap`, `HashSet`,
-    /// `BTreeMap`, `BTreeSet`, `Rc`, `Arc`, ...), in a `static` or
-    /// `thread_local!`, or directly in the data of a wrapped Ruby object (a
-    /// Makiri `Payload` type).
+    /// `BTreeMap`, `BTreeSet`, `Rc`, `Arc`, ...) - kept in a binding, a
+    /// parameter, a return value, a field or a temporary no binding names
+    /// (`f(vec![v])`) - in a `static` or `thread_local!`, or directly in the
+    /// data of a wrapped Ruby object (a Makiri `Payload` type). A closure
+    /// holds what it captures by value.
     ///
     /// ### Why is this bad?
     /// Ruby's GC finds values by scanning the machine stack. A value kept on
@@ -361,6 +363,7 @@ impl<'tcx> LateLintPass<'tcx> for MakiriLints {
     }
 
     fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
+        value_on_heap::check_expr(cx, expr);
         boundaries::check_expr(cx, expr);
         discarded::check_expr(cx, expr);
         gvl_proof::check_expr(cx, expr);

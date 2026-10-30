@@ -181,8 +181,11 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   see it (a `Vec`, a `Box`, a static or `thread_local!`, a `Payload` type's
   own field) - is `rake dylint`'s `ruby_value_on_heap`,
   which reads the types; it is why raw `VALUE`s stay in `nupur/src/raw/` and
-  `nupur/src/typed/`, since a lint sees a `VALUE` only as an integer. What it
-  cannot see is a temporary handed straight to a call (`f(vec![v])`).
+  `nupur/src/typed/`, since a lint sees a `VALUE` only as an integer. It
+  reads every expression's type too, so a temporary handed straight to a
+  call (`f(vec![v])`) or a closure boxed with a value it captured is
+  reported; what it cannot see is a value behind `dyn Trait` once coerced
+  and a generic body instantiated with a Ruby value.
   `rb_data_type_t` is built from a zeroed value with only `dmark`, `dfree`,
   `dsize` and the flags set (`DataType::new`), and a size assertion stops the
   build on a callback table nobody has read: it is 5 words up to Ruby 4.0 and 12

@@ -9,9 +9,21 @@
 //! extension lives by ("Ruby objects must be kept on the stack", as magnus put
 //! it), left to the extension; this lint checks it, by type.
 //!
+//! It reads the type of every place a value is kept: a binding, a parameter,
+//! a return type, a field, a static - and every expression, so a temporary
+//! that is never bound (`f(vec![v])`, `Box::new(move || v)` before it is
+//! made a `Box<dyn Fn>`) is reported too. An expression is reported once,
+//! at the outermost one that holds the container, and not at all where its
+//! value goes straight into a place that is itself checked (a `let`'s
+//! initialiser, a function's result). A closure holds what it captures by
+//! value.
+//!
 //! What is not reported: a value behind a reference or a raw pointer (the
 //! value itself is elsewhere), and one inside `bridge::rb::Opaque`, which is
-//! registered as a mark root. The values a wrapped object keeps alive are its
+//! registered as a mark root. Nor what the types do not show: a value behind
+//! `dyn Trait` once coerced (its expression before the coercion is checked),
+//! a generic function's body for the `T` it is called with, or a raw `VALUE`
+//! (an integer to the lint, which is why those stay in `nupur`). The values a wrapped object keeps alive are its
 //! slots, which `nupur::typed` owns and marks - outside the payload, so a
 //! payload holds none at all.
 
@@ -20,7 +32,7 @@ use clippy_utils::diagnostics::span_lint_and_help;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_hir::intravisit::FnKind;
-use rustc_hir::{Body, FnDecl, Item, ItemKind, LetStmt};
+use rustc_hir::{Body, Expr, ExprKind, FnDecl, Item, ItemKind, LetStmt, Node};
 use rustc_lint::LateContext;
 use rustc_middle::ty::{self, Ty, TypeVisitableExt};
 use rustc_span::Span;
@@ -93,6 +105,12 @@ fn holds_value<'tcx>(
         }
         ty::Tuple(tys) => tys.iter().any(|t| holds_value(cx, t, repr, seen)),
         ty::Array(t, _) | ty::Slice(t) => holds_value(cx, *t, repr, seen),
+        /* What a closure captures by value is its fields. */
+        ty::Closure(_, args) => args
+            .as_closure()
+            .upvar_tys()
+            .iter()
+            .any(|t| holds_value(cx, t, repr, seen)),
         _ => false,
     }
 }
@@ -129,6 +147,11 @@ fn on_heap<'tcx>(
         }
         ty::Tuple(tys) => tys.iter().find_map(|t| on_heap(cx, t, repr, seen)),
         ty::Array(t, _) | ty::Slice(t) => on_heap(cx, *t, repr, seen),
+        ty::Closure(_, args) => args
+            .as_closure()
+            .upvar_tys()
+            .iter()
+            .find_map(|t| on_heap(cx, t, repr, seen)),
         _ => None,
     }
 }
@@ -138,16 +161,20 @@ fn check_ty<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>, span: Span, what: &str) 
         return;
     };
     if let Some(container) = on_heap(cx, ty, repr, &mut HashSet::new()) {
-        span_lint_and_help(
-            cx,
-            RUBY_VALUE_ON_HEAP,
-            span,
-            format!("{what} keeps a Ruby value in `{container}`, where the GC does not see it"),
-            None,
-            "keep Ruby values on the stack or in a Ruby Array; for a wrapped object, \
-             in one of its slots (`TypedType`'s `roots`)",
-        );
+        report(cx, container, span, what);
     }
+}
+
+fn report<'tcx>(cx: &LateContext<'tcx>, container: Ty<'tcx>, span: Span, what: &str) {
+    span_lint_and_help(
+        cx,
+        RUBY_VALUE_ON_HEAP,
+        span,
+        format!("{what} keeps a Ruby value in `{container}`, where the GC does not see it"),
+        None,
+        "keep Ruby values on the stack or in a Ruby Array; for a wrapped object, \
+         in one of its slots (`TypedType`'s `roots`)",
+    );
 }
 
 /// Whether the ADT `did` implements a wrapped-object data trait.
@@ -261,5 +288,75 @@ pub(crate) fn check_fn<'tcx>(
     let sig = cx.tcx.fn_sig(did).instantiate_identity().skip_binder();
     if let rustc_hir::FnRetTy::Return(hir) = decl.output {
         check_ty(cx, sig.output(), hir.span, "this return type");
+    }
+}
+
+/// A value-producing expression whose type keeps a Ruby value on the heap -
+/// a temporary no binding names. A place (a binding, a field, a static, an
+/// index or a dereference of one) is not: the storage it reads was checked
+/// where it was declared.
+pub(crate) fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
+    let (Some(repr), _) = traits(cx) else {
+        return;
+    };
+    if expr.is_syntactic_place_expr() {
+        return;
+    }
+    let typeck = cx.typeck_results();
+    let Some(container) = on_heap(cx, typeck.expr_ty(expr), repr, &mut HashSet::new()) else {
+        return;
+    };
+    if reported_elsewhere(cx, expr, repr) {
+        return;
+    }
+    /* `vec![v]` is std's expansion, where a lint is suppressed: reported
+     * where the macro was called. */
+    report(
+        cx,
+        container,
+        expr.span.source_callsite(),
+        "this expression",
+    );
+}
+
+/// Whether `expr`'s value goes straight into what is reported in its place:
+/// an enclosing expression that holds the container too (reported there,
+/// once), a `let`'s binding, a function's result (its return type), or an
+/// assignment to a place (checked where it is declared).
+fn reported_elsewhere<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>, repr: DefId) -> bool {
+    let mut id = expr.hir_id;
+    loop {
+        match cx.tcx.parent_hir_node(id) {
+            /* A block's value is its tail; a statement's is dropped. */
+            Node::Block(b) if b.expr.is_some_and(|e| e.hir_id == id) => id = b.hir_id,
+            Node::Expr(p) => {
+                return match p.kind {
+                    /* A function's result is its return type; a closure's
+                     * has none that is checked. */
+                    ExprKind::Ret(_) => matches!(
+                        cx.tcx.def_kind(cx.tcx.hir_enclosing_body_owner(p.hir_id)),
+                        DefKind::Fn | DefKind::AssocFn
+                    ),
+                    ExprKind::Assign(lhs, rhs, _) => {
+                        rhs.hir_id == id && lhs.is_syntactic_place_expr()
+                    }
+                    _ => {
+                        !p.is_syntactic_place_expr()
+                            && on_heap(
+                                cx,
+                                cx.typeck_results().expr_ty(p),
+                                repr,
+                                &mut HashSet::new(),
+                            )
+                            .is_some()
+                    }
+                };
+            }
+            Node::LetStmt(l) => return l.init.is_some_and(|e| e.hir_id == id),
+            /* A function's body (its return type is checked), a static's or
+             * a const's initialiser (the item is). */
+            Node::Item(_) | Node::ImplItem(_) | Node::TraitItem(_) => return true,
+            _ => return false,
+        }
     }
 }
