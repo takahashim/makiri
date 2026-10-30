@@ -2,7 +2,7 @@
 name = "nupur"
 version = "0.0.1"
 edition = "2021"
-rust-version = "1.84"
+rust-version = "1.95"
 publish = false
 description = "The Ruby binding layer under the Makiri extension: values, exceptions, method trampolines, TypedData and the GVL, over rb-sys"
 

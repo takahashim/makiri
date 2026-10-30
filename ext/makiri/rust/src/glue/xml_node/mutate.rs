@@ -65,7 +65,13 @@ fn element_for<'a>(ruby: &Ruby, this: &'a mut XmlSelf) -> Result<Editing<'a>, Er
 
 /// `element[name] = value` -> value.
 pub fn aset(ruby: &Ruby, mut this: XmlSelf, name: Value, val: Value) -> Result<Value, Error> {
-    let edit = element_for(ruby, &mut this)?;
+    aset_on(ruby, &mut this, name, val)
+}
+
+/// [`aset`] on a receiver the caller holds, so a loop of writes converts it
+/// once.
+fn aset_on(ruby: &Ruby, this: &mut XmlSelf, name: Value, val: Value) -> Result<Value, Error> {
+    let edit = element_for(ruby, this)?;
     let nv = verified_name(ruby, name, "attribute name")?;
     let vv = verified_data(ruby, val, "attribute value")?;
     let (name, value) = (nv.as_bytes(), vv.as_bytes());
@@ -275,9 +281,9 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
          * a Symbol, a value must be a String), after the pairs are out of
          * the Hash (`hash::each_pair`). */
         /* `rb_el` was wrapped just above, so it converts. */
+        let mut el_self = <XmlSelf as crate::bridge::rb::TryConvert>::try_convert(ruby, rb_el)?;
         crate::bridge::hash::each_pair(ruby, h, |k, v| {
-            let el_self = <XmlSelf as crate::bridge::rb::TryConvert>::try_convert(ruby, rb_el)?;
-            aset(ruby, el_self, k, v)?;
+            aset_on(ruby, &mut el_self, k, v)?;
             Ok(())
         })?;
     }

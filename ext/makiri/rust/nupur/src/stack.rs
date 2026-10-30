@@ -9,10 +9,10 @@ use crate::rb::Ruby;
 /// close to exhausted?" (`ruby_stack_check`), as a plain function pointer for
 /// an engine that knows nothing of Ruby to ask from its recursion counters.
 ///
-/// Handed out only for a token: the function reads the current Ruby thread's
-/// bookkeeping, so it is for code that runs where the token came from - a
-/// registered method, with the GVL held - which the extension's engine calls
-/// it from (none may in a GVL-released body).
+/// Handed out only for a token. The function reads the calling thread's own
+/// stack bounds, so it may be asked from a GVL-released body too (Makiri's
+/// XML parse asks it from its DTD content-model check); a thread Ruby does
+/// not run answers "room left".
 pub fn stack_probe(_: &Ruby) -> fn() -> bool {
     stack_low
 }

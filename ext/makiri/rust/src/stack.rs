@@ -106,7 +106,7 @@ impl Depth {
         if self.level >= self.max {
             return Err(TooDeep::Limit);
         }
-        if self.level % STACK_CHECK_EVERY == 0 && exhausted() {
+        if self.level.is_multiple_of(STACK_CHECK_EVERY) && exhausted() {
             return Err(TooDeep::StackLow);
         }
         Ok(Depth {

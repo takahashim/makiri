@@ -21,6 +21,8 @@
 
 ### Changed
 
+* A source install needs Rust 1.95 or newer (it was 1.84). Binary gems
+  need no toolchain.
 * The extension no longer depends on magnus: it is built on rb-sys alone,
   with its own layer for Ruby values, method definitions and raising C
   calls. Every C call that can raise runs under `rb_protect`, and no Ruby
