@@ -752,6 +752,28 @@ impl Adoption<'_> {
     }
 }
 
+/// `FrozenError` when the node `key` names is a fragment and one of its
+/// children is frozen: an insertion splices a fragment's children, relinking
+/// each. A child with no wrapper cannot have been frozen, so only the node
+/// table is asked ([`check_node_frozen`]), and an insertion of anything but
+/// a fragment asks nothing.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        raw_node_crossing,
+        reason = "a fragment child, as the node table's key; it does not escape"
+    )
+)]
+fn check_fragment_children_frozen(rb_doc: Value, key: HtmlNodeKey) -> Result<(), Error> {
+    with_html_node(rb_doc, key, |n| {
+        if n.node_type() != NodeType::DocumentFragment {
+            return Ok(());
+        }
+        core::iter::successors(n.first_child(), |c| c.next())
+            .try_for_each(|c| check_node_frozen(rb_doc, RawNode::from(c)))
+    })?
+}
+
 /// `node.add_child(other)` and its siblings: put `rb_incoming` at `place`
 /// relative to the receiver - moved within the document, or adopted from its
 /// own - and hand back what is now in the tree: the argument, or for an adopted
@@ -773,10 +795,10 @@ pub fn insert(
      * an adoption removes it from its own document - so a frozen argument is a
      * frozen node being modified. The receiver check alone let it through, which
      * made `a.remove` raise and `span.add_child(a)` not, for the same effect on
-     * `a`. Reaches the nodes the caller NAMED; a fragment's children are not
-     * checked, though a frozen one's wrapper is in the node table, where
-     * `check_node_frozen` would find it. */
+     * `a`. A fragment's children are relinked too - the fragment is spliced -
+     * so each is held to the same rule. */
     rb_incoming.check_frozen()?;
+    check_fragment_children_frozen(incoming_doc, key)?;
     /* The argument resolved against its own Document - the checked boundary -
      * and kept as a reference: in the receiver's document it is read through
      * the edit's own borrow, never through a second one. */

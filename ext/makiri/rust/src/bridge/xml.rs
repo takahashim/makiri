@@ -927,10 +927,16 @@ fn incoming_ref(ruby: &Ruby, arg: Value) -> Result<(NodeId, Value), Error> {
      * frozen node being modified, which the receiver check alone let through:
      * `a.remove` raised and `b.add_child(a)` did not, for the same effect on `a`.
      *
-     * This reaches the nodes the caller NAMED. A fragment argument splices its
-     * children, which are not checked, though a frozen one's wrapper is in the
-     * node table, where `check_node_frozen` would find it. */
+     * A fragment argument splices its children, relinking each, so each is
+     * held to the same rule; a child with no wrapper cannot have been frozen,
+     * so only the node table is asked (`check_node_frozen`). */
     arg.check_frozen()?;
+    let handle = doc_known(document);
+    let doc = xml_read(&handle)?;
+    if doc.type_(id) == Some(ArenaKind::DocumentFragment) {
+        core::iter::successors(doc.first_child(id), |&c| doc.next(c))
+            .try_for_each(|c| crate::bridge::wrapper::check_node_frozen(document, c))?;
+    }
     Ok((id, document))
 }
 
