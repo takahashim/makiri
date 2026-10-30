@@ -13,7 +13,6 @@ use crate::bridge::ruby::makiri_error;
 use crate::nupur::string::{read_utf8, read_utf8_within, ReadError};
 use crate::nupur::utf8_copy::Utf8Copy;
 
-use super::*;
 use crate::bridge::ruby::{name_arg, string_arg};
 
 /* ---- the checked-text types ----
@@ -120,7 +119,7 @@ pub fn text_check(
     bytes: &[u8],
 ) -> TextVerdict {
     /* The cached coderange reads flags; it never scans and never allocates. */
-    crate::cutf8::text_verdict(bytes, known_utf8(ruby, coderange_str))
+    crate::cutf8::text_verdict(bytes, coderange_str.known_utf8(ruby))
 }
 
 /// Why a String in another encoding was refused ([`ReadError::NoUtf8Form`]).

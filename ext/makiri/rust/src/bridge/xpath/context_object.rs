@@ -130,7 +130,7 @@ impl XPathCtxSelf {
          * context, `NoMemoryError`): a failure there leaves the context node
          * as it was. After it no Ruby has run, so no evaluate can have begun,
          * and the engine takes the node: the two never disagree. */
-        crate::bridge::rb::value::ivar_set(
+        crate::bridge::rb::object::ivar_set(
             self.value(),
             crate::bridge::wrapper::ivar_node(),
             rb_node,
@@ -142,7 +142,7 @@ impl XPathCtxSelf {
 
     /// The keepalive Document.
     fn document(&self) -> Value {
-        crate::bridge::rb::value::ivar_get(self.value(), crate::bridge::wrapper::ivar_document())
+        crate::bridge::rb::object::ivar_get(self.value(), crate::bridge::wrapper::ivar_document())
     }
 
     /// Evaluate `expr`, parsed once and cached.

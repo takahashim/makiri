@@ -127,8 +127,8 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   **Three objects have a slot, each one**: a node wrapper (its Document,
   `NodeWrapperType`), a Document (its node table, `DocType`), a NodeSet (its
   Document, `NodeSetType`) - the reads too hot for an ivar. Every other value
-  a wrapper keeps alive is a hidden ivar of its object (`raw::ivar_set` /
-  `rb::value::ivar_get`, names without `@`, so Ruby code cannot see them): an
+  a wrapper keeps alive is a hidden ivar of its object (`rb::object::ivar_set` /
+  `rb::object::ivar_get`, names without `@`, so Ruby code cannot see them): an
   XPathContext's Document and node (`#node=` is an ivar write), a Document's
   errors. The node table - one wrapper per node, so a node navigated to
   twice is the SAME object - is a Ruby Hash from the node's index in its
@@ -164,7 +164,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   `fill`. A `&T` keeps its object alive to the type checker only - a
   non-embedded payload is its own malloc'd block, which the stack scan does
   not take for the object - so the handle holds the VALUE in an
-  `rb::value::Kept`, whose `Drop` hands it to `keep_alive` (an empty `asm!`
+  `rb::kept::Kept`, whose `Drop` hands it to `keep_alive` (an empty `asm!`
   with the VALUE as an input operand; a `read_volatile` of it on the targets
   without a stable `asm!`, a weaker contract and unchecked there; the
   premises that make either enough are stated there) after the last borrow. Borrow from the handle, never through
@@ -772,7 +772,8 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            same way, since its proof is of the shipped binary
   nupur/                   the Ruby binding layer, a crate of its own over rb-sys
                            (`rb/` - values, errors, trampolines, classes, the
-                           rooted globals - `raw` (the C calls that can raise,
+                           rooted globals, `object` (ivars, hiding, class
+                           checks) and `kept` (what a handle holds) - `raw` (the C calls that can raise,
                            private to nupur), `typed` (the public types, the GC
                            callbacks, the data type, `External`), `string`
                            (`read`: copying reads, the String's encoding as a
@@ -1028,7 +1029,7 @@ bad bytes and the DOM is always valid UTF-8. The validation is a dedicated
 validate-only scan (Unicode well-formed table + word-at-a-time ASCII); it is
 skipped entirely when the String's cached coderange (read via `ENC_CODERANGE`,
 no forced scan) already proves it valid - `parse_html`'s `assume_valid` and
-`nupur::encoding::known_utf8`. The **programmatic APIs are strict**:
+`RString::known_utf8` (nupur). The **programmatic APIs are strict**:
 `ruby_verified_text` (`bridge/string/view.rs`) raises `Makiri::Error` for **invalid
 UTF-8 everywhere** at the XPath/CSS/mutation boundaries (expr, selector,
 attribute name/value, `content=`, `create_*`, variable/namespace) -

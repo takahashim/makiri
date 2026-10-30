@@ -53,18 +53,16 @@ impl RString {
         v.extend_from_slice(src);
         Ok(src.len())
     }
-}
 
-/* ---- the String's encoding, as a reader takes it ---- */
+    /* ---- the String's encoding, as a reader takes it ---- */
 
-impl RString {
     /// Whether this String's text is read as UTF-8 bytes with no transcode -
     /// its encoding UTF-8, US-ASCII or ASCII-8BIT
     /// ([`Encoding::is_utf8_ascii_or_binary`]) - asked of the String itself, by
     /// index and with no call on the common path: the index is read from the String's
     /// flags, where Ruby keeps it inline for every encoding below
     /// `RUBY_ENCODING_INLINE_MAX` (the builtin three are 0-2), and compared
-    /// with the builtin indices, looked up once. Every strict read asks, so it
+    /// with the builtin indices (`encoding`'s one table of them). Every strict read asks, so it
     /// is on the hot path: `rb_enc_get` + `rb_utf8_encoding` cost Makiri's
     /// `Node#[]` ~13%.
     #[cfg_attr(
@@ -78,7 +76,6 @@ impl RString {
         use rb_sys::ruby_encoding_consts::{
             RUBY_ENCODING_INLINE_MAX, RUBY_ENCODING_MASK, RUBY_ENCODING_SHIFT,
         };
-        static BUILTIN: std::sync::OnceLock<[c_int; 3]> = std::sync::OnceLock::new();
         // SAFETY: `self` is a live String - a heap object, whose flags word is
         // the first field of its `RBasic` and readable; reading it runs no Ruby.
         let flags = unsafe { (*(self.as_raw() as *const rb_sys::RBasic)).flags };
@@ -93,15 +90,24 @@ impl RString {
         } else {
             inline
         };
-        // SAFETY: Ruby's immutable builtin encoding indices.
-        let builtin = BUILTIN.get_or_init(|| unsafe {
-            [
-                rb_sys::rb_utf8_encindex(),
-                rb_sys::rb_usascii_encindex(),
-                rb_sys::rb_ascii8bit_encindex(),
-            ]
-        });
-        builtin.contains(&index)
+        crate::encoding::reads_as_utf8_index(index)
+    }
+
+    /// Whether Ruby already knows this String to be valid UTF-8, from its
+    /// cached coderange: a read of its flags, which never scans and never
+    /// allocates. Only a hint - for code that stays safe whatever it says (a
+    /// reader that would otherwise repair or check the bytes itself). A wrong
+    /// coderange (another C extension's, a Ruby bug) must never decide what a
+    /// `&str` holds: that is [`crate::utf8_copy::Utf8Copy`]'s own check.
+    pub fn known_utf8(self, ruby: &Ruby) -> bool {
+        match self.enc_coderange() {
+            /* Every byte < 0x80 in an ASCII-compatible encoding. */
+            crate::rb::Coderange::SevenBit => true,
+            /* Valid for its own encoding, which has to be UTF-8 for that to
+             * mean valid UTF-8. */
+            crate::rb::Coderange::Valid => Encoding::of(self) == Encoding::utf8(ruby),
+            _ => false,
+        }
     }
 }
 
@@ -164,23 +170,6 @@ pub fn to_utf8(
         Ok(utf8) => Ok(Transcode::Transcoded(utf8)),
         Err(e) if e.is_kind_of(ruby, crate::rb::Builtin::EncodingError) => Ok(Transcode::Fault(e)),
         Err(e) => Err(e),
-    }
-}
-
-/// Whether Ruby already knows `s` to be valid UTF-8, from its cached
-/// coderange: a read of its flags, which never scans and never allocates.
-/// Only a hint - for code that stays safe whatever it says (a reader that
-/// would otherwise repair or check the bytes itself). A wrong coderange
-/// (another C extension's, a Ruby bug) must never decide what a `&str`
-/// holds: that is [`crate::utf8_copy::Utf8Copy`]'s own check.
-pub fn known_utf8(ruby: &Ruby, s: RString) -> bool {
-    match s.enc_coderange() {
-        /* Every byte < 0x80 in an ASCII-compatible encoding. */
-        crate::rb::Coderange::SevenBit => true,
-        /* Valid for its own encoding, which has to be UTF-8 for that to mean
-         * valid UTF-8. */
-        crate::rb::Coderange::Valid => Encoding::of(s) == Encoding::utf8(ruby),
-        _ => false,
     }
 }
 

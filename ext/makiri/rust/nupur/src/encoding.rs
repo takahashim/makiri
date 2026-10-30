@@ -18,11 +18,16 @@ pub struct Encoding(*mut rb_sys::rb_encoding);
 
 /// Ruby's three builtin encodings, read once: C globals Ruby sets at boot and
 /// never moves, so a comparison with one is a load rather than a call into
-/// libruby each time.
+/// libruby each time. Kept as the encodings and as their indices - one
+/// table, so the two ways of asking which encodings are read as UTF-8 bytes
+/// ([`Encoding::is_utf8_ascii_or_binary`], and a String's own by its index,
+/// [`reads_as_utf8_index`]) cannot disagree.
 struct Builtins {
     utf8: *mut rb_sys::rb_encoding,
     usascii: *mut rb_sys::rb_encoding,
     ascii8bit: *mut rb_sys::rb_encoding,
+    /// The same three, as encoding indices.
+    indices: [c_int; 3],
 }
 
 // SAFETY: the pointers are Ruby's process-lifetime encodings, only compared
@@ -47,8 +52,20 @@ fn builtins() -> &'static Builtins {
             utf8: rb_sys::rb_utf8_encoding(),
             usascii: rb_sys::rb_usascii_encoding(),
             ascii8bit: rb_sys::rb_ascii8bit_encoding(),
+            indices: [
+                rb_sys::rb_utf8_encindex(),
+                rb_sys::rb_usascii_encindex(),
+                rb_sys::rb_ascii8bit_encindex(),
+            ],
         }
     })
+}
+
+/// [`Encoding::is_utf8_ascii_or_binary`] for an encoding by its index - what
+/// a String's flags carry ([`RString::reads_as_utf8_bytes`](crate::rb::RString::reads_as_utf8_bytes)).
+#[inline]
+pub(crate) fn reads_as_utf8_index(index: c_int) -> bool {
+    builtins().indices.contains(&index)
 }
 
 /// What a transcode ([`Encoding::encode`]) does with a byte sequence that is
@@ -159,7 +176,7 @@ impl Encoding {
 
     /// UTF-8 or US-ASCII: text in it is already UTF-8, character for
     /// character. What a serialized String needs no transcoding into.
-    pub fn is_utf8_compatible(self, ruby: &crate::rb::Ruby) -> bool {
+    pub fn is_utf8_or_ascii(self, ruby: &crate::rb::Ruby) -> bool {
         self == Encoding::utf8(ruby) || self.is_usascii()
     }
 
@@ -173,7 +190,7 @@ impl Encoding {
     /// A String's own is [`RString::reads_as_utf8_bytes`](crate::rb::RString::reads_as_utf8_bytes),
     /// which reads its flags rather than look its encoding up.
     pub fn is_utf8_ascii_or_binary(self, ruby: &crate::rb::Ruby) -> bool {
-        self.is_utf8_compatible(ruby) || self.is_ascii8bit()
+        self.is_utf8_or_ascii(ruby) || self.is_ascii8bit()
     }
 
     /// A copy of `str` tagged with this encoding instead of its own: its

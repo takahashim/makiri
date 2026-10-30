@@ -109,7 +109,7 @@ impl core::fmt::Display for ExceptionText<'_> {
             return f.write_str("error");
         };
         /* An attribute read: it runs no Ruby and raises nothing. */
-        let Some(r) = RString::from_value(crate::rb::value::ivar_get(self.1, id)) else {
+        let Some(r) = RString::from_value(crate::rb::object::ivar_get(self.1, id)) else {
             return f.write_str("error");
         };
         // SAFETY: written out at once; formatting runs no Ruby.

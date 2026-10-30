@@ -15,7 +15,9 @@ pub mod class;
 pub mod convert;
 pub mod error;
 pub mod global;
+pub(crate) mod kept;
 pub mod method;
+pub mod object;
 pub mod ruby;
 pub mod value;
 

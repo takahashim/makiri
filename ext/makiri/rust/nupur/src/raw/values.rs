@@ -101,7 +101,7 @@ pub(crate) fn hash_new(_: &Ruby) -> Result<RHash, Error> {
 pub(crate) fn hidden_hash_new(ruby: &Ruby) -> Result<RHash, Error> {
     let h = hash_new(ruby)?;
     // SAFETY: the Hash just made, referenced only from this frame.
-    unsafe { crate::rb::value::obj_hide(crate::rb::ReprValue::as_value(h)) };
+    unsafe { crate::rb::object::obj_hide(crate::rb::ReprValue::as_value(h)) };
     Ok(h)
 }
 
