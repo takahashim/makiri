@@ -1,6 +1,6 @@
 //! [`IntTable`]: a Ruby Hash from small non-negative integers to values, kept
-//! by one object as its private table - a wrapper cache, say, from a node's
-//! index to the one wrapper made for it. A key is a `u32` that must be a
+//! by one object as its private table - a cache, say, from an index to the
+//! one wrapper made for it. A key is a `u32` that must be a
 //! Fixnum: up to 2^30 - 1 on Windows, whose `long` is 32 bits.
 //!
 //! A Ruby Hash rather than a Rust map, so the GC marks its values and moves

@@ -71,27 +71,32 @@ UNSAFE_ISLANDS = {
   "no_unwind.rs" => 2,
   "nupur/abi.rs" => 1,
   "nupur/describe.rs" => 4,
-  "nupur/encoding.rs" => 9,
+  "nupur/encoding.rs" => 6,
   "nupur/gvl.rs" => 3,
   "nupur/no_unwind.rs" => 2,
   "nupur/raw/check.rs" => 4,
   "nupur/raw/data.rs" => 4,
-  "nupur/raw/define.rs" => 16,
+  "nupur/raw/define.rs" => 21,
+  "nupur/raw/exception.rs" => 5,
   "nupur/raw/iterate.rs" => 6,
-  "nupur/raw/mod.rs" => 17,
+  "nupur/raw/mod.rs" => 1,
   "nupur/raw/protect.rs" => 13,
   "nupur/raw/string.rs" => 11,
   "nupur/raw/symbol.rs" => 3,
-  "nupur/raw/values.rs" => 15,
+  "nupur/raw/values.rs" => 21,
   "nupur/rb/class.rs" => 1,
   "nupur/rb/global.rs" => 2,
   "nupur/rb/method.rs" => 17,
   "nupur/rb/ruby.rs" => 5,
   "nupur/rb/value.rs" => 27,
   "nupur/stack.rs" => 1,
-  "nupur/string.rs" => 7,
-  "nupur/typed.rs" => 36,
-  "utf8_copy.rs" => 1,
+  "nupur/string/make.rs" => 5,
+  "nupur/string/read.rs" => 5,
+  "nupur/typed/callbacks.rs" => 10,
+  "nupur/typed/data_type.rs" => 12,
+  "nupur/typed/external.rs" => 1,
+  "nupur/typed/mod.rs" => 13,
+  "nupur/utf8_copy.rs" => 1,
 }.freeze
 
 # Files whose safety is compiler-enforced. Checked by containment, so adding one
@@ -166,7 +171,7 @@ STATIC_MUT_COUNTS = {}.freeze
 # (lints/makiri_lints/src/boundaries.rs), on resolved paths:
 # `raw_ruby_outside_bridge` (`rb_sys::` outside bridge/, a raw `VALUE` outside
 # the files that are the typed values), `raising_call_outside_protect` (whose
-# `call` is private to `bridge::raw`, so it also pins where the raising calls
+# `call` is private to `nupur::raw`, so it also pins where the raising calls
 # are), `runs_callers_ruby`, `raw_node_crossing` and `ruby_surface_in_bridge`,
 # each sanctioned site an `allow` with its reason where it is made.
 # `Value::from_raw` is `pub(in crate::bridge)`, so the compiler holds that one.
@@ -219,7 +224,7 @@ TEXT_CHECKED = %w[lexbor/].freeze
 # and a real OOM there is Ruby's `NoMemoryError` rather than an abort.
 INFALLIBLE_ALLOC = /\.to_owned\(\)|\.to_vec\(\)|String::from\(|\bformat!\(|\.to_string\(\)|from_utf8_lossy|\.into_owned\(\)|\bvec!\[|CString::new/
 # Where the gate looks: the engine, and the Ruby layer over it.
-INFALLIBLE_ALLOC_DIRS = (ENGINE_DIRS + %w[bridge/ nupur/ glue/ init.rs lib.rs caught.rs css_cache.rs utf8_copy.rs
+INFALLIBLE_ALLOC_DIRS = (ENGINE_DIRS + %w[bridge/ nupur/ glue/ init.rs lib.rs caught.rs css_cache.rs
                                           compat.rs doc_cell.rs engine_error.rs gvl.rs source_lines.rs
                                           stack.rs]).freeze
 INFALLIBLE_ALLOC_COUNTS = {}.freeze

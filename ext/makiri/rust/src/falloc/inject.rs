@@ -1,7 +1,7 @@
 //! The injection counters the failure sweeps arm: one for the `rake oom`
 //! sweep's allocation failures (`script/check_alloc_failures.rb`), one for
 //! its Ruby-raise sweep (`script/check_raise_injection.rb`), which makes a
-//! raising C call of `bridge::raw` raise `NoMemoryError` in place of its
+//! raising C call of `nupur::raw` raise `NoMemoryError` in place of its
 //! allocation.
 //!
 //! The counters are atomic: a parse consults the allocation one under
@@ -103,7 +103,7 @@ pub fn raise_inject_call_count() -> u64 {
 }
 
 /// Count a raising C call, and answer whether it is the armed one -
-/// `bridge::raw`'s allocating wrappers ask, once per call.
+/// `nupur::raw`'s allocating wrappers ask, once per call.
 pub fn raise_inject_should_raise() -> bool {
     RAISE.consult()
 }

@@ -123,7 +123,7 @@ fn alloc_inject_calls() -> Result<u64, Error> {
 }
 
 /// `Makiri.__raise_inject(n)` - arm "the nth raising C call raises
-/// `NoMemoryError` in place of its allocation" (`bridge::raw`'s allocating
+/// `NoMemoryError` in place of its allocation" (`nupur::raw`'s allocating
 /// wrappers; `script/check_raise_injection.rb`).
 fn raise_inject(nth: Value) -> Result<(), Error> {
     let nth = crate::bridge::ruby::integer_arg(nth)?.to_i64()?;
@@ -259,12 +259,12 @@ fn panic_probe(ruby: &Ruby, kind: Value) -> Result<(), Error> {
 /// `Makiri.__drop_exit { ... }` - yield once and drop what the block's exit
 /// or exception came back as: a method that loses an `Err`, which the lints
 /// keep out of the extension, and so made by nupur
-/// (`raw::yield_dropping_error_for_test`). A dropped `throw`, `break` or
+/// (`rb::method::yield_dropping_error_for_test`). A dropped `throw`, `break` or
 /// thread kill must still be resumed - by the trampoline, as the method
 /// returns (`spec/pending_exit_spec.rb`) - never lost, nor left pending for
 /// another method or thread. Any build.
 fn drop_exit(ruby: &Ruby) {
-    crate::bridge::raw::yield_dropping_error_for_test(ruby);
+    crate::bridge::rb::method::yield_dropping_error_for_test(ruby);
 }
 
 /// `Makiri::XML.__decode(str)` - the strict input decode in isolation, without
@@ -274,6 +274,7 @@ fn xml_decode(ruby: &Ruby, str: Value) -> Result<Value, Error> {
     /* decode-only: no arena, no budget */
     crate::bridge::xml_decode::xml_decode_input(ruby, s, None)
         .and_then(|d| crate::bridge::string::utf8_str(ruby, d.as_slice()))
+        .map(crate::bridge::rb::ReprValue::as_value)
 }
 
 /* ------------------------------------------------------------------ *
@@ -323,12 +324,15 @@ pub extern "C" fn Init_makiri() {
 }
 
 /// Before anything touches the interpreter's structs: a binary built for
-/// another Ruby misreads them (`check_running_ruby_api`). Its refusal is a
+/// another Ruby misreads them (`nupur::abi::check_running_api`). Its refusal is a
 /// `LoadError`, with nothing defined yet; anything that stops `init` after
 /// it is `fatal` (`run_init`).
 fn check(ruby: &Ruby) -> Result<(), Error> {
-    crate::bridge::ruby::check_running_ruby_api()?;
-    crate::bridge::ruby::check_raise_state(ruby)
+    crate::nupur::abi::check_running_api(
+        "makiri",
+        "`bundle exec rake clean compile` in a checkout, or reinstall the gem",
+    )?;
+    crate::nupur::abi::check_raise_state(ruby)
 }
 
 fn init(ruby: &Ruby) -> Result<(), Error> {
@@ -336,9 +340,13 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     crate::no_unwind::self_test();
     #[cfg(nupur_no_unwind)]
     crate::nupur::no_unwind::self_test();
-    /* The raise sweep's answer, for `nupur::raw`'s allocating calls. */
+    /* The OOM sweep's answers, for `nupur::raw`'s allocating calls and a
+     * checked copy's heap allocation. */
     #[cfg(feature = "alloc-inject")]
-    crate::nupur::raw::set_raise_injector(crate::falloc::raise_inject_should_raise);
+    crate::nupur::inject::install(crate::nupur::inject::Injectors {
+        raise: crate::falloc::raise_inject_should_raise,
+        alloc: crate::falloc::allocation_should_fail,
+    });
     let makiri = ruby.define_module("Makiri")?;
     crate::bridge::wrapper::init_ivars(ruby)?;
 

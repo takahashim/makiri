@@ -127,7 +127,7 @@ pub trait Module: ReprValue {
         dylint_lib = "makiri_lints",
         allow(
             runs_callers_ruby,
-            reason = "XML::Namespace.new's, over bridge::raw::call_method"
+            reason = "the one way to call a method; each caller's own allow says why"
         )
     )]
     fn call_method(self, ruby: &Ruby, name: &str, args: &[Value]) -> Result<Value, Error> {
@@ -185,6 +185,6 @@ impl Object for RModule {}
 
 /// Freeze `v` (`rb_obj_freeze`); a failed allocation of its frozen shape is
 /// `Err` (`NoMemoryError`).
-pub fn freeze(v: Value) -> Result<(), Error> {
-    crate::raw::obj_freeze(v)
+pub fn freeze(v: impl ReprValue) -> Result<(), Error> {
+    crate::raw::obj_freeze(v.as_value())
 }

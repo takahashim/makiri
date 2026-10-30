@@ -66,9 +66,14 @@ pub mod falloc;
 /// `Buf`, the capped byte buffer more than one subsystem writes into.
 pub mod cbuf;
 
-/// `Utf8Copy`: owned bytes checked to be UTF-8 - what the bridge's checked
-/// views of a Ruby String are, so a `&str` rests on no Ruby-side flag.
-pub mod utf8_copy;
+/// `nupur::utf8_copy`, the checked copy behind the bridge's views of a Ruby
+/// String, included here in the test build as well: it depends on std alone,
+/// and Miri runs its tests in this crate's Ruby-free build (`rake miri`),
+/// which nupur, built over rb-sys, cannot be.
+#[cfg(test)]
+#[path = "../nupur/src/utf8_copy.rs"]
+#[allow(dead_code, reason = "included for its tests; the API is nupur's")]
+mod utf8_copy;
 
 /// The bodies that must not unwind (an `extern "C"` function's, a `Drop`
 /// run from the GC), and the build that checks they cannot.

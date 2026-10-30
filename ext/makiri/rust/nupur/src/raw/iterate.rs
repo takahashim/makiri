@@ -10,7 +10,7 @@ use super::*;
     dylint_lib = "makiri_lints",
     allow(
         runs_callers_ruby,
-        reason = "NodeSet#each's block, the point of the method"
+        reason = "rb_yield: the wrapper `rb::method::yield_value` is, and its callers allow it"
     )
 )]
 pub fn yield_value(_: &Ruby, v: Value) -> Result<Value, Error> {
@@ -21,10 +21,7 @@ pub fn yield_value(_: &Ruby, v: Value) -> Result<Value, Error> {
 }
 
 /// [`yield_value`], and what the block's exit or exception came back as
-/// DROPPED: the suite's stand-in for a method that loses an `Err` (the
-/// extension's `Makiri.__drop_exit`), so it can check that the trampoline
-/// still resumes the exit (`spec/pending_exit_spec.rb`). Here, not in the
-/// extension, which forbids dropping one; nothing else calls it.
+/// DROPPED (`rb::method::yield_dropping_error_for_test`).
 #[doc(hidden)]
 #[cfg_attr(
     dylint_lib = "makiri_lints",

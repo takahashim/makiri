@@ -74,7 +74,7 @@ task :oom do
   end
   sh(run_env, "#{FileUtils::RUBY} -Ilib script/check_alloc_failures.rb")
   # The same build carries the Ruby-raise hook: every allocating C call of
-  # `bridge::raw` raises in turn, and no document may be left borrowed.
+  # `nupur::raw` raises in turn, and no document may be left borrowed.
   sh(run_env, "#{FileUtils::RUBY} -Ilib script/check_raise_injection.rb")
   puts "(injection build left in place; run `rake clean compile` to restore a normal build)"
 end

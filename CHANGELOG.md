@@ -38,6 +38,16 @@
   String subclass raises `TypeError`, since hashing it would run the
   subclass's `#hash`.
 
+### Fixed
+
+* An XML document declaring `encoding="US-ASCII"` must hold ASCII alone: a
+  byte past it raises `Makiri::XML::SyntaxError`, where it was read as
+  UTF-8. A String tagged US-ASCII still claims no encoding, and is read as
+  UTF-8 when the document declares none.
+* An XML declaration naming Ruby's binary encoding (`BINARY`,
+  `ASCII-8BIT`) is an unknown encoding, as a name XML does not register is;
+  the document was read as UTF-8.
+
 ## [0.17.0.rc2] - 2026-10-24
 
 ### Added

@@ -13,7 +13,7 @@
 //! The arena is reached through `XmlSelf::read`, a guard. A node is wrapped
 //! after the read (`XmlView::wrap`), and a String (`str_from_read`), a NodeSet,
 //! an Array or a joined text is built with it held; every allocation
-//! returns `Err` on failure (`bridge::raw`), so the guard drops either way. The
+//! returns `Err` on failure (`nupur::raw`), so the guard drops either way. The
 //! attribute-name lookups that need a Ruby string's bytes live in
 //! `bridge::xml::find_attribute`.
 
@@ -55,7 +55,7 @@ pub fn name(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     })?;
     match name {
         Some(name) => Ok(name),
-        None => utf8_str(ruby, b""),
+        None => utf8_str(ruby, b"").map(|s| s.as_value()),
     }
 }
 
@@ -143,7 +143,7 @@ pub fn content(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
         let value = str_from_read(ruby, d, StrKind::Utf8, |d| Some(d.value(d.id)))?;
         return match value {
             Some(value) => Ok(value),
-            None => utf8_str(ruby, b""),
+            None => utf8_str(ruby, b"").map(|s| s.as_value()),
         };
     }
 

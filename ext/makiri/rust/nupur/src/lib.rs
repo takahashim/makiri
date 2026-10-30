@@ -4,9 +4,9 @@
 //!
 //! It knows nothing of the extension it serves - a crate of its own, which
 //! does not depend on the extension - and what it needs of the extension
-//! (the exception a broken invariant raises, the raise sweep's hook) is
+//! (the exception a broken invariant raises, the OOM sweep's hooks) is
 //! registered at `Init_` ([`rb::error::INTERNAL_ERROR`],
-//! `raw::set_raise_injector`). Every `unsafe` the extension needs to talk to
+//! `inject::install`). Every `unsafe` the extension needs to talk to
 //! Ruby is here, each with its contract stated. The crate denies
 //! `unsafe_code`, and the files that need it carry an `allow` each.
 //!
@@ -30,7 +30,10 @@
 //!   the free callback. One is made only of a [`rb::DataClass`], a class
 //!   defined without an allocator, so Ruby cannot make one with no payload.
 //! - **A String is read by copying** ([`string`]): no slice of one is handed
-//!   out.
+//!   out. Read as text ([`string::read_utf8`]), it is a copy checked to be
+//!   UTF-8 by std's validator over the copy itself ([`utf8_copy`]), never by
+//!   the String's cached coderange, which another C extension could leave
+//!   wrong.
 //! - **A C integer is converted in one place** ([`int`]): a `long` is 32
 //!   bits on Windows, and the conversions are written once over either
 //!   width and tested at both; everything else converts with `From` /
@@ -132,7 +135,7 @@ mod lint_probe;
 pub mod rb;
 
 /// Every Ruby C call that can raise, each under `rb_protect`.
-pub mod raw;
+pub(crate) mod raw;
 
 /// Every conversion between Rust's integer widths and C's `long` - the
 /// layer's own: what it hands an extension is in Rust's widths.
@@ -152,6 +155,13 @@ pub mod encoding;
 
 /// A Ruby String's bytes, read and written by copying.
 pub mod string;
+
+/// Owned bytes checked to be UTF-8 (`Utf8Copy`), std alone.
+pub mod utf8_copy;
+
+/// The OOM sweep's hooks, installed together (`rake oom`).
+#[cfg(feature = "alloc-inject")]
+pub mod inject;
 
 /// A private table from small integers to values ([`table::IntTable`]).
 pub mod table;

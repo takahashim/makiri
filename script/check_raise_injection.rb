@@ -11,7 +11,7 @@
 # every such call raise.
 #
 # With the extension built under MAKIRI_ALLOC_INJECT=1, each allocating C call
-# of `bridge::raw` consults a hook that can be armed to raise `NoMemoryError`
+# of `nupur::raw` consults a hook that can be armed to raise `NoMemoryError`
 # in place of the nth call. For each workload we count the calls a disarmed run
 # makes and record its result, then re-run it once per call with that call
 # raising, and verify after each run:
@@ -20,7 +20,7 @@
 #   - no document it touched is left borrowed (`Makiri.__borrowed?`);
 #   - every such document still reads and edits.
 #
-# Every raising call of `bridge::raw` is protected now, so each injected raise
+# Every raising call of `nupur::raw` is protected now, so each injected raise
 # comes back as `Err`; the sweep checks that each such `Err` is answered
 # cleanly. The Arrays, Hashes and numbers a method builds, and the exception
 # it raises, go through `raw` too.

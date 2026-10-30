@@ -1,25 +1,55 @@
 //! `Utf8Copy`: an owned copy of some bytes, made only once the copy is
 //! checked to be UTF-8 - so it can be read as a `&str` with no further check.
 //!
-//! The bridge's checked views of a Ruby String (`RubyText`, `RubyData`) are
-//! this copy, which is why it is Ruby-free: the one claim a `&str` rests on -
+//! A String read as text (`string::read_utf8`) is this copy, which is why it
+//! is Ruby-free: the one claim a `&str` rests on -
 //! these bytes are UTF-8 - is made here, by std's validator over the copy
 //! itself, and depends on nothing a Ruby String says about itself (its cached
 //! coderange, which another C extension or a Ruby bug could leave wrong).
 //! The fields are private, so nothing outside this module can change the
 //! bytes once they are checked.
+//!
+//! It depends on std alone, so the extension's Ruby-free test build includes
+//! this same file (`#[path]`), where Miri runs its tests without a Ruby
+//! (`rake miri`). A copy's heap allocation is fallible, and the extension's
+//! OOM sweep can fail it ([`set_alloc_injector`]).
 
 #![allow(unsafe_code)]
 
-use crate::cbuf::OwnedBuf;
+/// The function that answers whether the next heap copy fails, registered
+/// by an extension's OOM sweep ([`set_alloc_injector`]).
+#[cfg(feature = "alloc-inject")]
+static ALLOC_INJECTOR: std::sync::OnceLock<fn() -> bool> = std::sync::OnceLock::new();
 
-/// Up to this many bytes a copy lives inline, on the stack: a selector, an
-/// expression or a name allocates nothing.
+/// Register the OOM sweep's answer, once (nupur's `inject::install`, which
+/// registers the raise half with it); a second registration is ignored.
+#[cfg(feature = "alloc-inject")]
+pub(crate) fn set_alloc_injector(fails: fn() -> bool) {
+    let _ = ALLOC_INJECTOR.set(fails);
+}
+
+/// Room for exactly `len` more bytes in the empty `v`, or `false`: a heap
+/// copy's one allocation, which the OOM sweep can fail.
+fn reserve_exact(v: &mut Vec<u8>, len: usize) -> bool {
+    #[cfg(feature = "alloc-inject")]
+    if ALLOC_INJECTOR.get().is_some_and(|fails| fails()) {
+        return false;
+    }
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "std's fallible reserve: this module depends on std alone, and the sweep's hook is above"
+    )]
+    v.try_reserve_exact(len).is_ok()
+}
+
+/// Up to this many bytes a copy lives inline, on the stack: a short argument
+/// - a name, a query - allocates nothing.
 pub const INLINE: usize = 64;
 
 enum Bytes {
-    Inline { len: u8, buf: [u8; INLINE] },
-    Heap(OwnedBuf),
+    /* A `usize` length, so no conversion stands between `INLINE` and it. */
+    Inline { len: usize, buf: [u8; INLINE] },
+    Heap(Vec<u8>),
 }
 
 /// Why no [`Utf8Copy`] was made.
@@ -34,7 +64,7 @@ pub enum CopyError {
 /// Bytes that are UTF-8, owned.
 pub struct Utf8Copy(Bytes);
 
-/// Why [`Utf8Copy::filled`] made no copy: [`CopyError`]'s reasons, or the
+/// Why [`Utf8Copy::from_source`] made no copy: [`CopyError`]'s reasons, or the
 /// caller's own refusal of the bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FillError<P> {
@@ -47,7 +77,7 @@ pub enum FillError<P> {
 /// What a [`Utf8Copy`] is copied from: a thing of known length that copies
 /// itself out - into a buffer as given, or appended to a `Vec` whose room is
 /// already reserved for it, which it must not grow. A byte slice is one; a
-/// Ruby String is another (the bridge's, over `RString::copy_to` /
+/// Ruby String is another (`string::read_utf8`'s, over `RString::copy_to` /
 /// `append_to`), which hands no slice of itself out.
 pub trait Source {
     /// How many bytes there are.
@@ -116,12 +146,13 @@ impl Utf8Copy {
             if n != len {
                 return Err(FillError::Copy(CopyError::Oom));
             }
-            Bytes::Inline { len: n as u8, buf }
+            Bytes::Inline { len: n, buf }
         } else {
-            Bytes::Heap(
-                OwnedBuf::reserved(len, |v| src.append_into(v))
-                    .ok_or(FillError::Copy(CopyError::Oom))?,
-            )
+            let mut v = Vec::new();
+            if !reserve_exact(&mut v, len) || !src.append_into(&mut v) {
+                return Err(FillError::Copy(CopyError::Oom));
+            }
+            Bytes::Heap(v)
         };
         let copy = Utf8Copy(bytes);
         if let Some(p) = refuse(copy.as_bytes()) {
@@ -138,8 +169,8 @@ impl Utf8Copy {
     /// The bytes.
     pub fn as_bytes(&self) -> &[u8] {
         match &self.0 {
-            Bytes::Inline { len, buf } => buf.get(..usize::from(*len)).unwrap_or(&[]),
-            Bytes::Heap(b) => b.as_slice(),
+            Bytes::Inline { len, buf } => buf.get(..*len).unwrap_or(&[]),
+            Bytes::Heap(b) => b,
         }
     }
 
@@ -155,6 +186,7 @@ impl Utf8Copy {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_methods)] /* test inputs */
     use super::*;
 
     #[test]

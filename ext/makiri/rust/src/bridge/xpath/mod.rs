@@ -11,7 +11,7 @@
 #![forbid(unsafe_code)]
 
 use crate::bridge::rb::Ruby;
-use crate::bridge::rb::{Error, Value};
+use crate::bridge::rb::{Error, ReprValue, Value};
 
 use crate::bridge::html::{html_node_key, with_html_node};
 use crate::bridge::node_set::FreshSet;
@@ -232,8 +232,8 @@ fn val_to_ruby(ruby: &Ruby, v: ValRef<'_>, document: Value) -> Result<Value, Err
         }
         /* The bytes are the value's own, and valid UTF-8 - the engine builds
          * a Text only from input the text contract has passed. */
-        ValRef::String(t) => crate::bridge::string::utf8_str(ruby, t.as_slice())?,
-        ValRef::Number(d) => crate::bridge::build::float(ruby, d)?,
+        ValRef::String(t) => crate::bridge::string::utf8_str(ruby, t.as_slice())?.as_value(),
+        ValRef::Number(d) => crate::bridge::build::float(ruby, d)?.as_value(),
         ValRef::Boolean(b) => crate::bridge::ruby::boolean(ruby, b),
     })
 }

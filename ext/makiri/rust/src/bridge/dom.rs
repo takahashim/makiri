@@ -17,7 +17,7 @@
 //!
 //! A guard is a `Drop`, so a raise that `longjmp`s past one would leave its
 //! borrow counted for good. None does: every raising call returns `Err`
-//! (`bridge::raw`), and `rake oom`'s raise sweep checks that no document is
+//! (`nupur::raw`), and `rake oom`'s raise sweep checks that no document is
 //! left borrowed.
 
 #![forbid(unsafe_code)]

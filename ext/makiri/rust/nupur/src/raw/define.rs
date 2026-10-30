@@ -113,3 +113,50 @@ pub fn gc_register_mark_object(v: Value) -> Result<(), Error> {
         rb_sys::rb_gc_register_mark_object(v)
     })
 }
+
+/// The constant `name` of `outer` (`rb_const_get`): raises `NameError` for
+/// none, and an autoload runs Ruby code - for a class the extension's own
+/// Ruby defines.
+pub fn const_get(ruby: &Ruby, outer: Value, name: &core::ffi::CStr) -> Result<Value, Error> {
+    let id = intern_cstr(ruby, name)?.as_raw();
+    let outer = outer.as_raw();
+    let v = call(|| unsafe { rb_sys::rb_const_get(outer, id) })?;
+    // SAFETY: the constant's value, live while it is bound.
+    Ok(unsafe { Value::from_raw(v) })
+}
+
+/// `recv.name(*args)` (`rb_funcallv`): the caller's Ruby, which is why each
+/// call of it is allowed where it is made (`rake dylint`'s
+/// `runs_callers_ruby`), with the reason it may run there.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        runs_callers_ruby,
+        reason = "rb_funcallv: the wrapper `Module::call_method` is, and its callers allow it"
+    )
+)]
+pub fn call_method(
+    ruby: &Ruby,
+    recv: Value,
+    name: &core::ffi::CStr,
+    args: &[Value],
+) -> Result<Value, Error> {
+    let id = intern_cstr(ruby, name)?.as_raw();
+    let argc = c_int::try_from(args.len())
+        .map_err(|_| crate::rb::error::arg_error("too many arguments"))?;
+    let recv = recv.as_raw();
+    /* `Value` is transparent over `VALUE`, so the slice is the C array. */
+    let argv = args.as_ptr() as *const VALUE;
+    let v = call(|| unsafe { rb_sys::rb_funcallv(recv, id, argc, argv) })?;
+    // SAFETY: what the method returned, live on this frame.
+    Ok(unsafe { Value::from_raw(v) })
+}
+
+/// `rb_module_new`: an anonymous module. Raises `NoMemoryError`.
+pub fn module_new(_: &Ruby) -> Result<RModule, Error> {
+    let v = call(|| unsafe {
+        injected_raise();
+        rb_sys::rb_module_new()
+    })?;
+    typed(v, RModule::from_value, "a C call made no Module")
+}

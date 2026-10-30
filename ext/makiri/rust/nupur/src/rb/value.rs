@@ -68,6 +68,14 @@ pub trait ReprValue: Copy {
         api.special_const_p(v) || unsafe { api.frozen_p(v) }
     }
 
+    /// `Ok` unfrozen, and Ruby's own `FrozenError` frozen - the message
+    /// naming the receiver, `#receiver` set - returned, not raised. The
+    /// normal case, an unfrozen value, makes no call.
+    #[inline]
+    fn check_frozen(self) -> Result<(), Error> {
+        crate::raw::check_frozen(self.as_value())
+    }
+
     /// An instance of `class` or of a class deriving from it? Reads the
     /// ancestry, runs no Ruby (`rb_obj_is_kind_of`).
     #[inline]
@@ -356,6 +364,16 @@ impl Range {
     pub fn values(self) -> Result<(Value, Value, bool), Error> {
         crate::raw::range_values(self)
     }
+
+    /// The part of a collection of `count` elements this Range selects, as
+    /// `Array#[]` reads one (`rb_range_beg_len`): the start and the length,
+    /// `None` for a start outside the collection, `RangeError` for a bound
+    /// too large, and a `TypeError` for an end that is not an Integer or
+    /// nil - whose `to_int` the C would run.
+    #[inline]
+    pub fn beg_len(self, count: usize) -> Result<Option<(usize, usize)>, Error> {
+        crate::raw::range_beg_len(self, count)
+    }
 }
 
 impl Integer {
@@ -605,6 +623,12 @@ pub fn identity_word(v: impl ReprValue) -> usize {
 pub struct Id(rb_sys::ID);
 
 impl Id {
+    /// The interned name `name` (`rb_intern`); a new name grows the symbol
+    /// table, so it can raise `NoMemoryError`.
+    pub fn intern(ruby: &Ruby, name: &core::ffi::CStr) -> Result<Id, Error> {
+        crate::raw::intern_cstr(ruby, name)
+    }
+
     #[inline]
     pub(crate) const fn from_raw(id: rb_sys::ID) -> Id {
         Id(id)
@@ -632,6 +656,13 @@ impl Id {
 pub fn ivar_get(obj: Value, id: Id) -> Value {
     // SAFETY: a live object; the read raises nothing.
     unsafe { Value::from_raw(rb_sys::rb_attr_get(obj.as_raw(), id.as_raw())) }
+}
+
+/// Set the hidden ivar `id` (a name without `@`, so Ruby code cannot see it)
+/// of `obj` to `v`: `FrozenError` for a frozen object, and `NoMemoryError`.
+#[inline]
+pub fn ivar_set(obj: Value, id: Id, v: impl ReprValue) -> Result<(), Error> {
+    crate::raw::ivar_set(obj, id, v.as_value())
 }
 
 /// `rb_obj_hide`: take `v`'s class away, so `ObjectSpace` does not list it.

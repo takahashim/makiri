@@ -8,7 +8,7 @@
 #![forbid(unsafe_code)]
 
 use crate::bridge::rb::Ruby;
-use crate::bridge::rb::{Error, Value};
+use crate::bridge::rb::{Error, ReprValue, Value};
 use crate::bridge::ruby::makiri_error;
 
 use crate::html_dom::html::{
@@ -348,7 +348,7 @@ impl HtmlView<'_> {
         };
         let Some(raw) = target else {
             drop(self);
-            return utf8_str(ruby, b"");
+            return utf8_str(ruby, b"").map(|s| s.as_value());
         };
         let node = self.read.node(raw);
         if !matches!(
@@ -365,7 +365,7 @@ impl HtmlView<'_> {
             )?;
             return match text {
                 Some(text) => Ok(text),
-                None => utf8_str(ruby, b""),
+                None => utf8_str(ruby, b"").map(|s| s.as_value()),
             };
         }
         let p = self.read.parsed();
@@ -568,7 +568,7 @@ pub struct HtmlEdit<'a> {
 /// Clear the receiver for an edit. Convert every argument after this and
 /// before [`HtmlEdit::with_tree`].
 pub fn edit<'a>(ruby: &Ruby, this: &'a mut HtmlSelf) -> Result<HtmlEdit<'a>, Error> {
-    crate::bridge::ruby::check_frozen(this.value)?;
+    this.value.check_frozen()?;
     check_attr_owner_frozen(this)?;
     /* Before any argument is converted: see `account_growth`. */
     crate::bridge::wrapper::account_growth(ruby, this.document);
@@ -653,7 +653,7 @@ impl<'a> HtmlEdit<'a> {
         kind: EditKind,
         f: impl FnOnce(&mut HtmlDocMut<'_>, RawNode) -> R,
     ) -> Result<R, Error> {
-        crate::bridge::ruby::check_frozen(self.this.value)?;
+        self.this.value.check_frozen()?;
         check_attr_owner_frozen(self.this)?;
         record_edit(self.this.document, kind);
         /* The receiver is not frozen - checked just now - and the guard refuses any other
@@ -743,7 +743,7 @@ pub fn insert(
      * `a`. Reaches the nodes the caller NAMED; a fragment's children cannot be
      * checked, because frozenness lives on the Ruby object and there is no map
      * from a node back to its wrapper. */
-    crate::bridge::ruby::check_frozen(rb_incoming)?;
+    rb_incoming.check_frozen()?;
     /* The argument resolved against its own Document - the checked boundary -
      * and kept as a reference: in the receiver's document it is read through
      * the edit's own borrow, never through a second one. */

@@ -70,7 +70,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   `caught::PanicLatch` is that, and it is deliberately the same shape the
   callbacks already used for the node cap and OOM. The build that ships
   installs it in two: `bridge::gvl`'s trampoline (which carries the whole
-  parser) and `bridge::raw::hash_foreach`'s `rb_hash_foreach` callback, which
+  parser) and `nupur::raw::hash_foreach`'s `rb_hash_foreach` callback, which
   answers "stop" for a latched panic or an error and never raises from inside
   the walk. For the same reason a Hash is walked only through
   `nupur::hash::hash_foreach` over it (`RHash` has no walk of its own, so
@@ -78,9 +78,9 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   Lexbor callbacks carry it too (`lexbor::selectors`' traversal,
   `lexbor::chunks::chunk_cb`, `tree_guard::hook_token_cb`).
   Two `extern "C"` functions have no latch ON PURPOSE. The GC callbacks in
-  `nupur/src/typed.rs` run where nothing can be raised and a half-freed object is
+  `nupur/src/typed/callbacks.rs` run where nothing can be raised and a half-freed object is
   worse than a stop, so they keep aborting - keep their bodies trivial. The
-  `rb_protect` thunk of `bridge::raw::call` holds one C call and the `Copy`
+  `rb_protect` thunk of `nupur::raw::call` holds one C call and the `Copy`
   values it reads (`F: Copy`, `T: Copy`), so there is no Rust there to panic
   and no `catch_unwind` for a raise to cross; keep it that way. The one C
   call that calls back into Rust is `rb_hash_foreach`, and its callback is
@@ -179,7 +179,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   see it (a `Vec`, a `Box`, a static or `thread_local!`, a `Payload` type's
   own field) - is `rake dylint`'s `ruby_value_on_heap`,
   which reads the types; it is why raw `VALUE`s stay in `nupur/src/raw/` and
-  `nupur/src/typed.rs`, since a lint sees a `VALUE` only as an integer. What it
+  `nupur/src/typed/`, since a lint sees a `VALUE` only as an integer. What it
   cannot see is a temporary handed straight to a call (`f(vec![v])`).
   `rb_data_type_t` is built from a zeroed value with only `dmark`, `dfree`,
   `dsize` and the flags set (`DataType::new`), and a size assertion stops the
@@ -200,8 +200,9 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   growth - borrowed from the `FreshSet` that owns the new set, never with a
   lifetime of its own.)
 
-  **Every C call that can raise is a wrapper in `nupur/src/raw/` (`bridge::raw`), and every
-  wrapper runs it under `rb_protect` and returns `Result`.** A raise is a
+  **Every C call that can raise is a wrapper in `nupur/src/raw/` (`nupur::raw`,
+  private to nupur: an extension reaches each through a value-level API), and
+  every wrapper runs it under `rb_protect` and returns `Result`.** A raise is a
   `longjmp` over every Rust frame up to the nearest `rb_protect`, and crossing
   a frame with a `Drop` or a `catch_unwind` is undefined behaviour; so each
   wrapper hands its one C call to `raw::call`, whose `extern "C"` thunk is the
@@ -271,7 +272,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   whose `fill` writes front to back through an `Unwritten` and must reach
   the end. A raw `VALUE` - an integer to
   Rust, which no lint can tell from a `u64` in a `Vec` - is spelled only in
-  `raw/`, `int.rs`, `typed.rs` and the `bridge::rb` files that are the typed values
+  `raw/`, `int.rs`, `typed/` and the `bridge::rb` files that are the typed values
   (`rake dylint`'s `raw_ruby_outside_bridge`, which also fails on any
   `rb_sys::` outside `bridge/`), so
   everything else holds typed values; `TypedType::wrap` is safe for that
@@ -521,7 +522,8 @@ bundle exec rake oom               # OOM-injection sweep: rebuilds with
                                    # Prefix with MAKIRI_SANITIZE=address to combine ASan.
 bundle exec rake miri              # the Ruby-free unsafe modules' tests (utf8_copy, falloc,
                                    # cbuf, ptr_table) under Miri, strict provenance (nightly + miri;
-                                   # CI: verify.yml)
+                                   # CI: verify.yml). utf8_copy is nupur's, std-only, and
+                                   # included in this crate's test build (`#[path]`) for it
 bundle exec rake verus             # Verus proofs (ext/makiri/rust/verus/): falloc's
                                    # grow_capacity, ptr_table's probing and
                                    # load factor, cbuf's Buf (content, ceiling,
@@ -715,7 +717,7 @@ by the check that concluded "every undefined symbol is legitimate".
   `falloc` `Vec`, reported to the GC the same way as it grows and given back
   in its `Drop` - exactly the bytes held, where `ruby_xrealloc2`, which it
   used to be, was counted ~20% over them. Their failure is `NoMemoryError`, Ruby's own, which
-  `bridge::raw`'s protected calls hand back as `Err`. An exception message
+  `nupur::raw`'s protected calls hand back as `Err`. An exception message
   allocates nothing at all: a `bridge::rb::Error` holds a `&'static str` or a
   `format_args!` written into `crate::msg::Msg` (256 bytes, inline; longer is
   cut with `...`), and the exception is made only when the trampoline raises
@@ -770,8 +772,14 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            same way, since its proof is of the shipped binary
   nupur/                   the Ruby binding layer, a crate of its own over rb-sys
                            (`rb/` - values, errors, trampolines, classes, the
-                           rooted globals - `raw` (the C calls that can raise),
-                           `typed`, `string` (copying reads, in-place writes),
+                           rooted globals - `raw` (the C calls that can raise,
+                           private to nupur), `typed` (the public types, the GC
+                           callbacks, the data type, `External`), `string`
+                           (`read`: copying reads, the String's encoding as a
+                           reader takes it, `read_utf8`; `make`: a copy, an
+                           in-place write, an interned name), `encoding` (the
+                           `Encoding` value and `encode`),
+                           `utf8_copy` (the checked copy, std alone),
                            `table`, `build`, `args` (a call's arguments: their
                            type checks, `scan` and `Kwargs`), `hash` (the
                            latched Hash walk), `describe`, `encoding`,
@@ -785,8 +793,10 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            extension (no dependency), which names it as
                            `crate::nupur` (`extern crate`); what it needs of
                            Makiri is registered at Init_ (`INTERNAL_ERROR`,
-                           `set_raise_injector`). `bridge` re-exports its
-                           modules, so `bridge::raw` etc. still resolve. The
+                           and the OOM sweep's two hooks together,
+                           `inject::install`). `bridge` re-exports its
+                           public modules, so `bridge::rb` etc. still
+                           resolve; `raw` is crate-private. The
                            macros' helpers (`finish`, `finish_cary`,
                            `run_init`) are `unsafe fn`: only the macros'
                            expansion can call them, so nothing else makes a
@@ -808,10 +818,6 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            else Ruby-free is `forbid(unsafe_code)`
     doc_cell.rs            `DocCell`: a Document's content behind counted
                            read/write guards (Ruby-free; `bridge::dom` wraps it)
-    utf8_copy.rs           `Utf8Copy`: owned bytes checked by std's `from_utf8` over
-                           the copy itself - what a checked view of a Ruby String
-                           (`RubyText` / `RubyData`) is, so a `&str` never rests on
-                           a String's cached coderange
     cbuf.rs                `Buf`: the owned, capped, growable byte buffer
     cutf8.rs               the one UTF-8 validator + strict 1-codepoint decoder
     utf8_input.rs          HTML input sanitiser: invalid UTF-8 -> U+FFFD, per
@@ -821,11 +827,10 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            its value and method layer over rb-sys (`Value` and the
                            class-checked handles, `Error`, the `method!` /
                            `function!` trampolines, class definitions), which
-                           replaced magnus under its names; `raw` is every
-                           raising C call Makiri makes. It is also where
-                           the C calls that can raise (`nupur/src/raw/`) and the
-                           wrap-then-store constructor live; a raise becomes `Err`
-                           there. `rake unsafe:boundaries` pins that boundary:
+                           replaced magnus under its names. The C calls that
+                           can raise are nupur's own (`nupur/src/raw/`,
+                           private to it), as is the wrap-then-store
+                           constructor; a raise becomes `Err` there. `rake unsafe:boundaries` pins that boundary:
                            the crate denies `unsafe_code` (`lib.rs`), so every
                            file that needs it carries an `allow` and the script
                            holds each one's count exactly - a new file fails even
@@ -1008,7 +1013,7 @@ document), and the Encoding Standard's decoders (`encoding_rs`, into a
 encoding the Standard has no label for (UTF-32, CP51932) is transcoded by
 Ruby as before (`DocumentSource`, over `html::encoding::transport_for`). Fragment parsing takes text, so
 it has no sniffing: there the input String's encoding is honoured
-(`ruby_to_utf8_value`, `bridge/string/encoding.rs`): UTF-8 / US-ASCII /
+(`nupur::string::to_utf8`, replacing): UTF-8 / US-ASCII /
 ASCII-8BIT pass through untouched (the UTF-8 common case is one read of the
 encoding index from the String's flags - no call, no transcode, no copy), any
 other encoding (Shift_JIS, EUC-JP, ISO-8859-1, ...) is
@@ -1023,7 +1028,7 @@ bad bytes and the DOM is always valid UTF-8. The validation is a dedicated
 validate-only scan (Unicode well-formed table + word-at-a-time ASCII); it is
 skipped entirely when the String's cached coderange (read via `ENC_CODERANGE`,
 no forced scan) already proves it valid - `parse_html`'s `assume_valid` and
-`ruby_str_known_valid_utf8`. The **programmatic APIs are strict**:
+`nupur::encoding::known_utf8`. The **programmatic APIs are strict**:
 `ruby_verified_text` (`bridge/string/view.rs`) raises `Makiri::Error` for **invalid
 UTF-8 everywhere** at the XPath/CSS/mutation boundaries (expr, selector,
 attribute name/value, `content=`, `create_*`, variable/namespace) -
@@ -1042,14 +1047,20 @@ contract, but its NUL refusal is `ArgumentError`, like every other name
 refusal there (the DOM's InvalidCharacterError), so a caller mapping
 `ArgumentError` to a DOMException misses none. Removers and readers keep
 `ruby_verified_text`. **The strict inputs honour the String's encoding
-too** (`utf8_strict`): a String not in UTF-8 / US-ASCII / ASCII-8BIT is
+too** (`nupur::string::read_utf8`, over `nupur::string::to_utf8`): a
+String not in UTF-8 / US-ASCII / ASCII-8BIT is
 transcoded to UTF-8 first, with NO replacement - a character or byte it
 cannot convert is `Makiri::Error` ("could not be converted to UTF-8"), never
 repaired - and any other raise in the transcode (`NoMemoryError`, an
-interrupt) is passed through as it is. A length cap (`ruby_try_verified_text`)
+interrupt) is passed through as it is. Every reader's transcode - a
+fragment's, a strict view's, the XML decode's - is that one function, which
+alone tells the String's fault (an `EncodingError`, `Transcode::Fault`, with
+the caller's `$!` kept) from what is passed on; each reader words the fault
+itself. A length cap (`ruby_try_verified_text`, over
+`nupur::string::read_utf8_within`)
 is on the UTF-8. Both checked views (`RubyText`, `RubyData`) deref to
 `&str`, and each OWNS A COPY of the (UTF-8) String's bytes, taken with no
-Ruby between the read and the copy (`crate::utf8_copy::Utf8Copy`; up to 64
+Ruby between the read and the copy (`nupur::utf8_copy::Utf8Copy`; up to 64
 bytes inline, so a UTF-8 selector or expression allocates nothing; one in
 another encoding allocates its transcode) and checked after - its UTF-8 by
 std's `from_utf8` over the copy, ALWAYS: the cached coderange is not
@@ -1082,7 +1093,7 @@ What converts with `to_s` is `lib/`'s, outside the extension: the parse
 entries (`String(source)`, an IO's `read`) and `XML::Builder`. `rake
 dylint`'s `runs_callers_ruby` fails on every call that would run the caller's
 Ruby, by resolved path; `NodeSet#each`'s `yield` (through
-`bridge::raw::yield_value`, over `rb_yield`) and `XML::Namespace.new`
+`rb::method::yield_value`, over `rb_yield`) and `XML::Namespace.new`
 (`Module::call_method`, over `rb_funcallv`) are the two allowed, each wrapper
 along the way an allow with its reason. A registered method's parameters are held to it by
 type: `bridge::rb::TryConvert` exists only for `Value`, `bool` and Makiri's

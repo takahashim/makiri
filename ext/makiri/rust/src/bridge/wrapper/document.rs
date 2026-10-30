@@ -574,9 +574,9 @@ pub(in crate::bridge) fn ivar_node() -> crate::bridge::rb::Id {
 /// the first names.
 pub fn init_ivars(ruby: &Ruby) -> Result<(), Error> {
     let _ = IVARS.set(Ivars {
-        document: crate::bridge::raw::intern_cstr(ruby, c"makiri_document")?,
-        errors: crate::bridge::raw::intern_cstr(ruby, c"makiri_errors")?,
-        node: crate::bridge::raw::intern_cstr(ruby, c"makiri_node")?,
+        document: crate::bridge::rb::Id::intern(ruby, c"makiri_document")?,
+        errors: crate::bridge::rb::Id::intern(ruby, c"makiri_errors")?,
+        node: crate::bridge::rb::Id::intern(ruby, c"makiri_node")?,
     });
     Ok(())
 }
@@ -590,7 +590,7 @@ pub(in crate::bridge) fn check_node_frozen(
     source: impl NodeHandleSource,
 ) -> Result<(), Error> {
     match cached_node(rb_doc, &source)? {
-        Some(wrapper) => crate::bridge::ruby::check_frozen(wrapper),
+        Some(wrapper) => crate::bridge::rb::ReprValue::check_frozen(wrapper),
         None => Ok(()),
     }
 }

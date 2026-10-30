@@ -122,12 +122,14 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
     );
     let buf = out.map_err(|f| failure_error(f, "serialize"))?;
     /* A failed allocation is `Err`, and `buf` (and `enc_name`) drop. */
-    let mut str = crate::bridge::string::utf8_rstring(ruby, buf.as_slice())?;
+    let mut str = crate::bridge::string::utf8_str(ruby, buf.as_slice())?;
     drop(buf);
 
     if let Some(enc) = to_enc {
-        if enc.needs_transcode(ruby) {
-            str = enc.encode_charref(str)?;
+        /* Text already UTF-8 or US-ASCII needs no transcode; anything else
+         * writes what it has no form for as a character reference. */
+        if !enc.is_utf8_compatible(ruby) {
+            str = enc.encode(str, crate::nupur::encoding::Unconvertible::HexCharRef)?;
         }
     }
     Ok(str.as_value())
@@ -137,7 +139,7 @@ fn canonicalize(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Val
     let comments = Kwargs::scan(ruby, args)?.flag(ruby, "comments")?;
     let buf = xml_serialize::canonicalize(&*this.read()?, this.id, comments)
         .map_err(|f| failure_error(f, "canonicalize"))?;
-    Ok(crate::bridge::string::utf8_rstring(ruby, buf.as_slice())?.as_value())
+    Ok(crate::bridge::string::utf8_str(ruby, buf.as_slice())?.as_value())
 }
 
 fn no_serialize(_rb_self: Value, _args: &[Value]) -> Result<Value, Error> {

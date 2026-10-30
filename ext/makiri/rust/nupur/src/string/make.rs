@@ -1,60 +1,20 @@
-//! A Ruby String's bytes, read and written by copying: the layer hands no
-//! slice of a String out.
-//!
-//! Reading is [`RString::copy_to`] (into a caller's buffer) and
-//! [`RString::append_to`] (into a `Vec`'s reserved room, never growing it),
-//! each a read and a copy with nothing run between, so nothing Ruby does
-//! afterwards - a GC, the String rewritten or grown - reaches what the caller
-//! holds. Writing is [`utf8_str_filled`]: a String made at its full length
-//! and written front to back in place, through an [`Unwritten`].
+//! Making a Ruby String: a copy of some bytes ([`utf8_str`]), one written
+//! in place front to back ([`utf8_str_filled`]) - from several slices at once
+//! ([`utf8_str_from_slices`]) - and a frozen, interned name
+//! ([`interned_utf8`]).
 
 #![allow(unsafe_code)]
 
 use crate::rb::value::AsRawValue;
 use crate::rb::{Error, RString, Ruby};
 
-/// [`RString::append_to`]'s refusal: the buffer had too little spare room.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NoRoom;
-
-impl RString {
-    /// Copy the bytes from `offset` (none past the end) into `dst`, as many
-    /// as both hold, and say how many.
-    ///
-    /// The String's buffer is read and copied out of in one step, with
-    /// nothing run in between, and no slice of it is handed out: a caller
-    /// owns what it reads, so nothing Ruby does afterwards - a GC, the String
-    /// rewritten or grown - can reach it.
-    #[inline]
-    pub fn copy_to(self, _ruby: &Ruby, offset: usize, dst: &mut [u8]) -> usize {
-        // SAFETY: read and copied out at once; nothing runs while it is held.
-        let src = unsafe { self.as_slice() }.get(offset..).unwrap_or(&[]);
-        let n = src.len().min(dst.len());
-        if let (Some(d), Some(s)) = (dst.get_mut(..n), src.get(..n)) {
-            d.copy_from_slice(s);
-        }
-        n
-    }
-
-    /// Append the bytes from `offset` (none past the end) to `v`, whose spare
-    /// capacity must already hold them - the caller reserved it, fallibly -
-    /// and say how many. Nothing is allocated here: when the room is short,
-    /// `v` is left as it was and the answer is [`NoRoom`]. The read is
-    /// [`copy_to`](Self::copy_to)'s, in one step after the room is checked.
-    #[inline]
-    pub fn append_to(self, _ruby: &Ruby, offset: usize, v: &mut Vec<u8>) -> Result<usize, NoRoom> {
-        // SAFETY: as `copy_to` - read and copied out at once.
-        let src = unsafe { self.as_slice() }.get(offset..).unwrap_or(&[]);
-        if v.capacity() - v.len() < src.len() {
-            return Err(NoRoom);
-        }
-        #[allow(
-            clippy::disallowed_methods,
-            reason = "the room was checked above, so it cannot grow"
-        )]
-        v.extend_from_slice(src);
-        Ok(src.len())
-    }
+/// A UTF-8 String holding a copy of `bytes`; a failed allocation is `Err`
+/// (`NoMemoryError`).
+///
+/// `bytes` must be valid UTF-8 (the String is tagged so without a check).
+/// Bytes that were not would make a wrong String, never a memory error.
+pub fn utf8_str(ruby: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
+    crate::raw::utf8_str_new(ruby, bytes)
 }
 
 /// A UTF-8 String of exactly `len` bytes, written by `fill` straight into
@@ -221,4 +181,42 @@ fn copy_small<T: Copy>(dst: &mut [T], src: &[T]) {
         8..=16 => two::<8, T>(dst, src),
         _ => dst.copy_from_slice(src),
     }
+}
+
+/// Join `slices`, totalling `total` bytes, into one UTF-8 String: one
+/// allocation of exactly `total` and one copy run into it
+/// ([`utf8_str_filled`]), with no intermediate buffer.
+///
+/// `total` is the caller's bookkeeping, and is held to it both ways: a slice
+/// that would run past it, and a sum that falls short of it, are an internal
+/// error rather than a String past or short of its allocation. The bytes are
+/// tagged UTF-8 without a check; bytes that were not would make a wrong
+/// String, never a memory error.
+pub fn utf8_str_from_slices<'a>(
+    ruby: &Ruby,
+    slices: impl Iterator<Item = &'a [u8]>,
+    total: usize,
+) -> Result<RString, Error> {
+    utf8_str_filled(ruby, total, |out| {
+        for s in slices {
+            /* `push` writes nothing past the String's end. */
+            if !out.push(s) {
+                return Err(crate::rb::error::internal_error(
+                    "a String's slices ran past their total",
+                ));
+            }
+        }
+        /* A short sum is `utf8_str_filled`'s to refuse. */
+        Ok(())
+    })
+}
+
+/// A frozen, deduplicated UTF-8 String of `bytes` - Ruby's own `-"name"`
+/// (`rb_enc_interned_str`), so every read of one name answers the same
+/// object and allocates nothing once Ruby has it. For names, never for
+/// character data a caller may expect to edit. Safe with any bytes: they are
+/// copied, and bytes that were not UTF-8 would make a wrong String, never a
+/// memory error.
+pub fn interned_utf8(ruby: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
+    crate::raw::enc_interned_str(ruby, bytes, crate::encoding::Encoding::utf8(ruby))
 }

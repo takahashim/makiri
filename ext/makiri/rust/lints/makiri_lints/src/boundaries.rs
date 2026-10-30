@@ -12,8 +12,8 @@
 //!   could reach Ruby.
 //! - `infallible_allocation`: no allocation that aborts on OOM.
 //! - `raising_call_outside_protect`: a C function that can raise is called
-//!   only inside `bridge::raw::call`'s closure (which is private to
-//!   `bridge::raw`, so that is also where every raising call is).
+//!   only inside `nupur::raw::call`'s closure (which is private to
+//!   `nupur::raw`, so that is also where every raising call is).
 //! - `raw_ruby_outside_bridge`: Ruby's C API is named only in `bridge/`, and
 //!   a raw `VALUE` only in the files that are the typed values.
 //! - `runs_callers_ruby`: a call that would run the caller's Ruby code, each
@@ -109,7 +109,9 @@ const ENGINE: &[&str] = &[
     "text",
     "token",
     "utf8_input",
-    "utf8_copy",
+    /* nupur's one Ruby-free module, read as `makiri::nupur::...` (`path_of`):
+     * the checked copy, which Miri runs without a Ruby. */
+    "nupur::utf8_copy",
     "css_match",
 ];
 
@@ -152,9 +154,10 @@ const VALUE_HOMES: &[&str] = &[
 /// and Ruby's C API.
 fn ruby_layer(path: &str) -> bool {
     path.starts_with("rb_sys::")
-        || ["bridge", "glue", "init", "nupur"]
+        || (["bridge", "glue", "init", "nupur"]
             .iter()
             .any(|m| path == format!("makiri::{m}") || path.starts_with(&format!("makiri::{m}::")))
+            && !in_engine(path))
 }
 
 /// The function an expression calls, when it can be named: a path call or
@@ -369,11 +372,14 @@ fn runs_callers_ruby(path: &str) -> bool {
         .iter()
         .any(|p| name.starts_with(p));
     }
+    /* By the path each is defined at (`path_of`), not the one it is
+     * re-exported under: the raw wrappers are in `raw`'s submodules. */
     matches!(
         path,
-        "makiri::nupur::raw::call_method"
-            | "makiri::nupur::raw::yield_value"
+        "makiri::nupur::raw::define::call_method"
+            | "makiri::nupur::raw::iterate::yield_value"
             | "makiri::nupur::rb::class::Module::call_method"
+            | "makiri::nupur::rb::method::yield_value"
     )
 }
 

@@ -495,7 +495,7 @@ pub fn node_set_from(
 
 /// A NodeSet over `document` of the nodes `each` lists from `read`, a document
 /// read guard, built while the read is held. A failed allocation is `Err`
-/// (`bridge::raw`), so the guard drops either way.
+/// (`nupur::raw`), so the guard drops either way.
 pub fn node_set_from_read<G>(
     ruby: &Ruby,
     read: G,
