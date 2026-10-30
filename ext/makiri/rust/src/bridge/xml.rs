@@ -2,8 +2,8 @@
 //!
 //! A Ruby XML node is an arena [`NodeId`] behind a TypedData wrapper; turning a
 //! `Value` into that id, and running the Ruby-free mutation primitives over the
-//! arena, is the same kind of unsafe boundary the HTML side has - so it lives
-//! here, under `bridge`, and the glue layer stays free of it.
+//! arena, is the same boundary the HTML side has - so it lives here, under
+//! `bridge`, and the glue layer stays free of it.
 //!
 //! The rules themselves (name well-formedness, the XML character class,
 //! namespace resolution, what may be a child of what) live in the Ruby-free
@@ -237,10 +237,11 @@ impl XmlSelf {
     }
 
     /// The arena behind the receiver's Document, borrowed for reading: a
-    /// counted borrow, so it must not be held across a call that can raise
-    /// (`rake unsafe:boundaries`) - read what is needed, drop it, then build
-    /// the Ruby result. The receiver is a method argument, which keeps its
-    /// Document alive; the view borrows `self`, so it ends with the call.
+    /// counted borrow, which an edit of the same document refuses while it
+    /// is held. A Ruby result may be built with it held: every allocation
+    /// that can raise returns `Err`, so the guard drops on the way out
+    /// ([`XmlView::set`]). The receiver is a method argument, which keeps
+    /// its Document alive; the view borrows `self`, so it ends with the call.
     pub fn read(&self) -> Result<XmlView<'_>, Error> {
         Ok(XmlView {
             read: xml_read(&self.document)?,
@@ -268,8 +269,8 @@ impl core::ops::Deref for XmlView<'_> {
 }
 
 impl XmlView<'_> {
-    /// The node `f` finds from the receiver's, wrapped - after the read is
-    /// over, since wrapping allocates.
+    /// The node `f` finds from the receiver's, wrapped. The read ends before
+    /// the wrap, which needs nothing of it but the node's id and type.
     pub fn wrap(
         self,
         ruby: &Ruby,
@@ -296,17 +297,6 @@ impl XmlView<'_> {
             f(view, view.id, &mut |n| out(n.into()));
         })
     }
-}
-
-/// The XML arena behind `document`, for a WRITE: refused, by the guard, while
-/// any read of it is held.
-///
-/// A write - a new node, a new byte span - can grow the arena's vectors under
-/// the slices a reader borrowed. Every path that hands out a `&mut` goes
-/// through here, so the one guard covers the factories and the imports as
-/// well as the tree edits.
-fn arena_mut(document: &DocHandle) -> Result<XmlWrite<'_>, Error> {
-    xml_write(document)
 }
 
 /// A mutation's or translation's `Result` with its failure as the Ruby
@@ -383,7 +373,7 @@ xml and xmlns take only their own)"
 /// nine sites that correctly skip the index invalidation and eight that must
 /// not, with nothing but a reader's judgement telling them apart.
 ///
-/// Refused while a read of the document is held (see [`arena_mut`]). The
+/// Refused while a read of the document is held (`wrapper::xml_write`). The
 /// `&mut` lives for `f` alone, and `f` must not run Ruby:
 /// the arena is `Vec`s, so Ruby code that read or wrote this same document
 /// meanwhile would alias the borrow. That is why a method converts and checks
@@ -394,7 +384,7 @@ pub fn with_arena_for_new_node<R>(
     f: impl FnOnce(&mut XmlDoc) -> R,
 ) -> Result<R, Error> {
     let document = doc_known(document);
-    let mut write = arena_mut(&document)?;
+    let mut write = xml_write(&document)?;
     Ok(f(&mut write))
 }
 
@@ -411,7 +401,7 @@ pub fn with_arena_for_new_node<R>(
 ///
 /// [`with_arena_for_new_node`] stays for the FACTORIES, which build a detached node -
 /// not in the tree, so not in the index, and with no receiver to freeze. The
-/// HTML side has the same pair, `edit` and `HtmlEdit::node`; XML had the `&mut`
+/// HTML side has the same pair, `edit` and `HtmlEdit::with_tree`; XML had the `&mut`
 /// gate and the invalidate gate as two separate calls, and whether a site needed
 /// the second was a judgement the reader had to make at each of seventeen.
 pub struct Editing<'a> {
@@ -514,7 +504,7 @@ impl Editing<'_> {
         if let Some(also) = also {
             record_edit_in(self.document, also);
         }
-        let mut write = arena_mut(self.document)?;
+        let mut write = xml_write(self.document)?;
         write.invalidate_name_index();
         Ok(f(&mut write, id))
     }
@@ -537,8 +527,8 @@ fn check_attr_owner_frozen(document: &DocHandle, id: NodeId) -> Result<(), Error
     }
 }
 
-/// The receiver cleared for an edit - not frozen, its document not under
-/// evaluation. The name index is dropped later, by [`Editing::with_arena`].
+/// The receiver cleared for an edit - not frozen, nor an Attr whose owner is.
+/// The name index is dropped later, by [`Editing::with_arena`].
 pub fn begin_edit<'a>(ruby: &Ruby, this: &'a mut XmlSelf) -> Result<Editing<'a>, Error> {
     this.value.check_frozen()?;
     check_attr_owner_frozen(&this.document, this.id)?;
@@ -740,7 +730,7 @@ pub fn fragment_into(
     let source = crate::bridge::ruby::string_arg(source)?;
     let src = xml_decode_input(ruby, source, Some(max_bytes))?;
     let parsed = {
-        let mut xdoc = arena_mut(&handle)?;
+        let mut xdoc = xml_write(&handle)?;
         tree::parse_fragment(&mut xdoc, src.as_slice(), inherit_doc_ns)
     };
     let frag = parsed.map_err(|status| parse_status_error(status, Unit::Fragment))?;
@@ -890,7 +880,7 @@ pub fn insert(
         let (mark, copied) = {
             /* Two distinct arenas (the documents differ): the target
              * written, the source read through its own write. */
-            let mut dst = arena_mut(target)?;
+            let mut dst = xml_write(target)?;
             (dst.mark(), import_subtree(&mut dst, &sdoc, src))
         };
         let copy = xml_mut_result(copied)?;
@@ -938,10 +928,8 @@ fn incoming_ref(ruby: &Ruby, arg: Value) -> Result<(NodeId, Value), Error> {
      * `a.remove` raised and `b.add_child(a)` did not, for the same effect on `a`.
      *
      * This reaches the nodes the caller NAMED. A fragment argument splices its
-     * children, and those cannot be checked: frozenness is a property of a Ruby
-     * object and the arena has no map from a node back to its wrapper (see
-     * CLAUDE.md on why a per-node wrapper cache was rejected). A child the caller
-     * never named is out of reach by construction, not by choice. */
+     * children, which are not checked, though a frozen one's wrapper is in the
+     * node table, where `check_node_frozen` would find it. */
     arg.check_frozen()?;
     Ok((id, document))
 }
@@ -962,10 +950,10 @@ pub fn import_copy(
             let src = xml_node_unwrap(ruby, node_v)?;
             let copied = if crate::bridge::ruby::same_value(src_document, rb_self) {
                 /* Same arena: the single-`&mut` clone path. */
-                clone_node(&mut *arena_mut(&doc_known(rb_self))?, src, deep)
+                clone_node(&mut *xml_write(&doc_known(rb_self))?, src, deep)
             } else {
                 let (target, source) = (doc_known(rb_self), doc_known(src_document));
-                let mut dst = arena_mut(&target)?;
+                let mut dst = xml_write(&target)?;
                 let read = xml_read(&source)?;
                 copy_node_from(&mut dst, &read, src, deep)
             };
@@ -976,7 +964,7 @@ pub fn import_copy(
              * receiver's arena, another document. */
             let copied = with_arg_node(ruby, node_v, |src| {
                 Ok::<_, Error>(cross_html_to_xml(
-                    &mut *arena_mut(&doc_known(rb_self))?,
+                    &mut *xml_write(&doc_known(rb_self))?,
                     src,
                     deep,
                 ))

@@ -22,7 +22,7 @@ use crate::xpath::ctx::ContextError;
 use super::*;
 
 /* ================================================================== *
- * the XPathContext wrapper and the Ruby custom-function bridge        *
+ * the XPathContext wrapper                                            *
  * ================================================================== */
 
 /// An `XPathContext` is typically reused to run the same handful of expressions
@@ -294,7 +294,7 @@ fn cached_ast<'c>(
      * nothing. The AST is borrowed from the map AFTER the insert, not through
      * a pointer taken before it: moving the `Box` into the map asserts unique
      * ownership of the AST, which a pointer derived earlier does not survive
-     * (the same Stacked Borrows hazard `wrapper::Content` avoids). */
+     * (Stacked Borrows). */
     #[allow(clippy::disallowed_methods, reason = "the slot was reserved above")]
     let ast = cache.0.entry(owned_key).or_insert(ast);
     Ok((QueryAst::Cached(ast), added))

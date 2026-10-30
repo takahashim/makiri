@@ -49,8 +49,9 @@ impl EditState {
 }
 
 /// A Document wrapper's data: the parsed content (owned - GC frees it), the
-/// mutation gate's count, and the node table. The parse-warning Array is a
-/// hidden ivar of the object (`Document#errors` is read rarely).
+/// edit versions, what was reported to the GC, and the child-position memo.
+/// The node table is the object's slot 0 ([`DocType`]), and the
+/// parse-warning Array a hidden ivar (`Document#errors` is read rarely).
 ///
 /// Read and written through `&DocData` only - every field that changes is a
 /// cell - so a method may hold one while another reads it (a wrapper made
@@ -63,13 +64,8 @@ pub struct DocData {
     content: OnceCell<Body>,
     /* The node table is not here: it is the object's slot 0 ([`DocType`],
      * read by `node_table`). */
-    /// The mutation gate and the edit versions ([`EditState`]).
+    /// The edit versions ([`EditState`]).
     pub(super) edits: Cell<EditState>,
-    /// The node table: one Ruby wrapper per node, so navigating to the same
-    /// node twice gives the SAME object. Without it every navigation made a
-    /// fresh wrapper, and everything that lives on a Ruby object was lost:
-    /// `equal?`, an instance variable, a singleton method, `freeze`.
-    ///
     /// What the GC has been told about the content, which lives outside
     /// Ruby's allocator ([`account_document`]): the free callback takes back
     /// exactly that, and [`account_growth`] compares against it.
@@ -177,10 +173,9 @@ pub type DocHandle = crate::bridge::typed::Typed<DocData, 1>;
 pub static DOC_TYPE: DocType = TypedType::base(c"Makiri::Document");
 
 /// HTML and XML Documents share the layout and the GC functions but are wrapped
-/// under DISTINCT types deriving from the base, so `html_doc_unwrap` - which
-/// reinterprets the handle as an HTML document - raises TypeError on an XML
-/// Document through Ruby's own type machinery rather than relying on an assert
-/// that NDEBUG erases.
+/// under DISTINCT types deriving from the base, so an HTML-only check
+/// ([`html_doc_check`], `HTML_DOC_TYPE.check`) raises TypeError on an XML
+/// Document through Ruby's own type machinery.
 pub static HTML_DOC_TYPE: DocType = TypedType::derived(c"Makiri::HTML::Document", &DOC_TYPE);
 pub static XML_DOC_TYPE: DocType = TypedType::derived(c"Makiri::XML::Document", &DOC_TYPE);
 
@@ -339,10 +334,11 @@ fn body_known(doc: &DocHandle) -> Result<&Body, Error> {
 fn held_error(held: Conflict) -> Error {
     match held {
         Conflict::ByEdit => internal_error("a Document was read while an edit held it"),
-        /* A reader a Ruby call left suspended (a Fiber). */
-        Conflict::ByRead => makiri_error(
-            "cannot modify a document while a read of it is in progress (suspended in Ruby)",
-        ),
+        /* A read still held when an edit begins - a copy of the receiver's,
+         * say; no Ruby code runs under a read, so none is left suspended. */
+        Conflict::ByRead => {
+            makiri_error("cannot modify a document while a read of it is in progress")
+        }
     }
 }
 
@@ -379,6 +375,11 @@ pub fn xml_read(doc: &DocHandle) -> Result<XmlRead<'_>, Error> {
 }
 
 /// `rb_doc`'s XML arena, borrowed for an edit, as [`html_write`].
+///
+/// A write - a new node, a new byte span - can grow the arena's vectors under
+/// the slices a reader borrowed, so it is refused while any read is held.
+/// Every `&mut` to an XML arena is one of these - a tree edit's, a factory's
+/// and an import's alike - so the one guard covers them all.
 pub(in crate::bridge) fn xml_write(doc: &DocHandle) -> Result<XmlWrite<'_>, Error> {
     match body_known(doc)? {
         Body::Xml(c) => XmlWrite::of(c).map_err(held_error),

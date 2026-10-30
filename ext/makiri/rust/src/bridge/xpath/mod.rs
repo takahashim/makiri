@@ -5,8 +5,8 @@
 //! The engine (`xpath/`) is generic over `Dom` and names no representation, and
 //! `glue/query.rs` must not name an HTML or XML type either. This module sits
 //! between them: it is the one place that knows both backends exist, and it
-//! turns a Ruby node into the right context with the raw-pointer work the
-//! backend's lifetime contract needs.
+//! turns a Ruby node into the right context, the node checked to be the
+//! document's.
 
 #![forbid(unsafe_code)]
 
@@ -36,16 +36,13 @@ pub use context_object::{XPathCtx, XPathCtxSelf};
 
 /// An engine error as the Ruby exception it maps to.
 ///
-/// Returned rather than raised: `rb_raise` longjmps past every Rust destructor
-/// on the way (see `glue/mod.rs`), so each caller hands this back as `Err` and
-/// the method's trampoline raises once its frames - and the context they own -
-/// are gone.
+/// Returned, as every error is, for the method's trampoline to raise once its
+/// frames - and the context they own - are gone.
 ///
 /// Built lazily - a class and a Rust message, no Ruby object - so making one
-/// allocates nothing Ruby could raise `NoMemoryError` from: the callers build
-/// it while they still own the parse error, the context and the AST, which a
-/// raise here would leak. `Error::raise` makes the exception (a UTF-8
-/// message) when it raises.
+/// allocates nothing, and a caller may make it while it still holds the parse
+/// error, the context and the AST. `Error::raise` makes the exception (a
+/// UTF-8 message) when it raises.
 pub fn xpath_error(err: &XPathError) -> Error {
     let class = match err.status {
         ErrorKind::Syntax => &EXC_XPATH_SYNTAX_ERROR,
@@ -287,8 +284,8 @@ pub fn evaluate_query(
 ///
 /// The AST and the context - owned (`Cx`, a query's throwaway) or borrowed
 /// (`&Cx`, an `XPathContext`'s) - are dropped BEFORE the conversion, which
-/// allocates Ruby objects and so may raise or collect: the value owns its data
-/// and references neither, so nothing is held that a raise would leak.
+/// allocates Ruby objects and so may collect: the value owns its data and
+/// references neither, so they need not live through it.
 pub fn evaluate_to_ruby<C: core::borrow::Borrow<Cx>>(
     ruby: &Ruby,
     ctx: C,
@@ -315,8 +312,7 @@ pub fn query_result(
     if answer == Answer::First {
         if let ValRef::NodeSet(set) = value.get() {
             /* Only the first node is wrapped - no NodeSet, no `#first` call.
-             * The pointer is the document's, so the value is freed before the
-             * wrap, which allocates and so can raise past this frame. */
+             * The value is freed before the wrap, which needs only the word. */
             let first = set.as_slice().first().map(|&n| NodeWord::of_token(n));
             drop(value);
             return match first {

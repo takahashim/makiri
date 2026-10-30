@@ -2,8 +2,8 @@
 //! and back, the checked receiver (`HtmlSelf`), and the tree and attribute
 //! edits the node methods make.
 //!
-//! A value read out of a Ruby wrapper becomes a live arena handle here, and
-//! the conversion is unsafe; the arena side (`html::dom`) stays Ruby-free.
+//! A value read out of a Ruby wrapper becomes a live arena handle here,
+//! through a checked lookup; the arena side (`html::dom`) stays Ruby-free.
 
 #![forbid(unsafe_code)]
 
@@ -201,9 +201,10 @@ pub(in crate::bridge) fn html_node_key(
 ///
 /// The field is the receiver's opaque key, not a raw pointer: a long-lived
 /// wrapper stores one, and a Document receiver's key is minted for the call.
-/// `node()` resolves it against the receiver's document without a check - the
-/// receiver's own Document, kept alive by the argument, is what makes that
-/// sound - while `with_node` is the checked boundary.
+/// Its view resolves it against the receiver's document without a check
+/// ([`HtmlView::node`]) - the receiver's own Document, kept alive by the
+/// argument, is what makes that sound - while [`with_arg_node`] is the
+/// checked boundary for a node argument.
 pub struct HtmlSelf {
     pub value: Value,
     key: HtmlNodeKey,
@@ -235,9 +236,11 @@ impl HtmlSelf {
     ///
     /// The receiver is a method argument, which Ruby keeps reachable for the
     /// call and which keeps its document alive; the view borrows `self`, so
-    /// it ends with the call. It is a counted borrow, so it must not be held
-    /// across a call that can raise (`rake unsafe:boundaries`): read what is
-    /// needed, drop it, then build the Ruby result.
+    /// it ends with the call. It is a counted borrow, which an edit of the
+    /// same document refuses while it is held. A Ruby result may be built
+    /// with it held: every allocation that can raise returns `Err`, so the
+    /// guard drops on the way out ([`HtmlView::text`],
+    /// [`node_set_from_read`](crate::bridge::node_set::node_set_from_read)).
     #[inline]
     #[cfg_attr(
         dylint_lib = "makiri_lints",
@@ -277,8 +280,9 @@ pub struct HtmlView<'a> {
 }
 
 impl HtmlView<'_> {
-    /// The node `f` finds from the receiver's, wrapped - after the read is
-    /// over, since wrapping allocates.
+    /// The node `f` finds from the receiver's, wrapped. The read ends before
+    /// the wrap, which needs nothing of it: the found node leaves as a
+    /// [`RawNode`], and the wrap mints its key in a read of its own.
     #[cfg_attr(
         dylint_lib = "makiri_lints",
         allow(
@@ -407,10 +411,10 @@ impl HtmlView<'_> {
 
 /// Run `f` over the HTML node (or Document node) `v` wraps, resolved against
 /// `v`'s own Document - the checked boundary for a node ARGUMENT, as
-/// [`HtmlSelf::with_node`] is for a receiver. The handle lives only as long
-/// as `f`, inside the document's borrow ([`with_html_node`]), so `f` must not
-/// run Ruby or wrap a node of that document (wrapping mints a key, which
-/// borrows the document again): hand a [`RawNode`] out and wrap after.
+/// [`HtmlSelf::read`] is for a receiver. The handle lives only as long as
+/// `f`, inside the document's borrow ([`with_html_node`]), so `f` must not
+/// run Ruby code, and a node it finds leaves as a [`RawNode`], to be wrapped
+/// after.
 ///
 /// `Err(TypeError)` for anything that is not an HTML node or HTML Document.
 pub fn with_arg_node<R>(
@@ -550,8 +554,8 @@ pub(in crate::bridge) fn node_ref(rb_doc: Value, key: HtmlNodeKey) -> Result<Raw
  * structural mutation                                                *
  * ------------------------------------------------------------------ */
 
-/// The receiver cleared for an edit - not frozen, its document not under
-/// evaluation - and the PROOF of it: [`edit`] is the only way to build one and
+/// The receiver cleared for an edit (not frozen, nor an Attr whose owner
+/// is), and the PROOF of it: [`edit`] is the only way to build one and
 /// [`HtmlEdit::with_tree`] (or its attribute and data twins) the only way to spend
 /// it, ONCE - they take `self`. The XML side's `Editing`, spent the same way.
 ///
@@ -746,9 +750,9 @@ pub fn insert(
      * an adoption removes it from its own document - so a frozen argument is a
      * frozen node being modified. The receiver check alone let it through, which
      * made `a.remove` raise and `span.add_child(a)` not, for the same effect on
-     * `a`. Reaches the nodes the caller NAMED; a fragment's children cannot be
-     * checked, because frozenness lives on the Ruby object and there is no map
-     * from a node back to its wrapper. */
+     * `a`. Reaches the nodes the caller NAMED; a fragment's children are not
+     * checked, though a frozen one's wrapper is in the node table, where
+     * `check_node_frozen` would find it. */
     rb_incoming.check_frozen()?;
     /* The argument resolved against its own Document - the checked boundary -
      * and kept as a reference: in the receiver's document it is read through

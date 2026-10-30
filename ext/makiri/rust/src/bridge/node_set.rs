@@ -22,15 +22,16 @@
 //! (It was `ruby_xrealloc2`'s, behind a proven `RawVec`; the `Vec` measured
 //! 5-10% faster on large sets, and Ruby counted the reallocations ~20% over
 //! the bytes held, so it collected more often than the memory called for.) The glue builds a set through
-//! `node_set_with_fill`, `node_set_from` or `node_set_of_nodes`, all over
-//! the Document's opaque `VALUE`; the [`Fill`] handle carries the "this is a
-//! NodeSet" invariant so its pushes are safe.
+//! [`FreshSet`], [`node_set_from`], [`node_set_from_read`] or
+//! [`node_set_of_nodes`], all over the Document's opaque `VALUE`; the
+//! [`Fill`] handle carries the "this is a NodeSet" invariant so its pushes
+//! are safe.
 //!
 //! Mutation goes through a `RefCell`, and every borrow failure becomes a Ruby
-//! error rather than a panic: a panic would reach Ruby as `fatal` (the crate
-//! unwinds, it no longer aborts), which is still the wrong answer for an
-//! aliasing mistake a Ruby caller can provoke - this codebase fails closed by
-//! raising an ordinary error.
+//! error rather than a panic: a panic would reach Ruby as
+//! `Makiri::InternalError`, a broken invariant, which is the wrong answer for
+//! an aliasing mistake a Ruby caller can provoke - this codebase fails closed
+//! by raising an ordinary error.
 
 #![forbid(unsafe_code)]
 
@@ -254,12 +255,12 @@ impl NodeVec {
 
 /// Only the node array is mutable, and only it is behind the cell.
 ///
-/// That split is load-bearing, not tidiness. `mark` must reach `document` on
-/// every GC, and a GC can happen *while a push holds the mutable borrow* -
-/// `ruby_xrealloc2` is an allocation, so it is a GC point. If `document` lived
-/// inside the cell, `mark` would find it busy, fail to mark the Document, and
-/// the arena holding every node in this set could be collected underneath it.
-/// Fields that never change after construction belong outside the cell.
+/// A GC can happen *while a push holds the mutable borrow* - a growth reports
+/// its bytes to the GC, which may collect - and the size and free callbacks
+/// read the set then: they take no `&mut`, and read a busy cell as empty.
+/// The Document is not a field at all but the object's slot 0, which `nupur`
+/// marks without a borrow. Fields that never change after construction belong
+/// outside the cell.
 ///
 /// A [`TypedType`] like every other wrapped struct of Makiri's, but not an
 /// embedded one: a fill holds `&NodeSet` across the set's own growth, which
@@ -540,7 +541,7 @@ impl NodeSetSelf {
     /// The node at `i`, wrapped; `None` past the end.
     ///
     /// O(1): the one word is read under a short borrow that is released
-    /// before the wrap, which allocates and so can run arbitrary Ruby.
+    /// before the wrap, which needs nothing of it.
     pub fn at(&self, ruby: &Ruby, i: usize) -> Result<Option<Value>, Error> {
         let node = self.read()?.as_slice().get(i).copied();
         node.map(|n| wrap_doc_node(ruby, self.kind, n, self.document()))

@@ -1,20 +1,18 @@
 //! The HTML Document: parsing one, its read-only accessors, and import/clone.
-//! Fragments are `bridge::fragment`'s; the wrapper and its mutation gate are
-//! `bridge::wrapper`'s.
+//! Fragments are `bridge::fragment`'s; the wrapper is `bridge::wrapper`'s.
 //!
 //! The arena work is `html`'s; what lives here is the part that must touch
 //! raw Ruby values and arena handles together - copying the source out of a
-//! Ruby String before the wrapper allocation, releasing the GVL for the parse,
-//! and minting the wrapper. Keeping it here is what lets `glue/html_doc.rs` be
+//! Ruby String, releasing the GVL for the parse, and minting the wrapper. Keeping it here is what lets `glue/html_doc.rs` be
 //! ordinary safe orchestration.
 //!
 //! # Parsing releases the GVL
 //!
 //! `parse_html` and everything under it is Ruby-free, and a freshly parsed
-//! document is not yet shared, so nothing can race it. The source is copied into
-//! a C buffer BEFORE the wrapper is allocated: allocating the wrapper is a GC
-//! point, and the copy must not straddle one while holding a borrowed pointer
-//! into a Ruby String's backing store.
+//! document is not yet shared, so nothing can race it. The wrapper is made
+//! first, hidden (`new_html_document`), and the source is copied out of the
+//! Ruby String inside its fill (`DocumentSource`): the parse reads that copy
+//! with the GVL released, and nothing borrows the String.
 
 #![forbid(unsafe_code)]
 
@@ -193,8 +191,8 @@ pub fn document_errors(rb_doc: Value) -> Value {
 pub fn import_node(ruby: &Ruby, rb_self: Value, node_v: Value, deep: bool) -> Result<Value, Error> {
     crate::bridge::html::check_owning_doc(&rb_self)?;
 
-    /* An XML node is TRANSLATED across representations (mkr -> lxb) into a
-     * detached lxb subtree owned by this document. */
+    /* An XML node is TRANSLATED across representations (XML arena -> HTML
+     * arena) into a detached subtree owned by this document. */
     if node_repr(node_v) == NodeRepr::Xml {
         let xml_doc = xml_node_document(ruby, node_v)?;
         let src = xml_node_unwrap(ruby, node_v)?;

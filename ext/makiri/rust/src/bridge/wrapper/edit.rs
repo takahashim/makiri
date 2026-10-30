@@ -40,8 +40,8 @@ pub enum EditKind {
 ///   `tree_version` the child lists, `attribute_version` the attributes;
 /// - a changed one may be conservative: an edit that then fails, or stops
 ///   part-way, still moved it;
-/// - it is recorded once the edit's refusals are past - the frozen check, the
-///   evaluation guard - and its arguments converted, immediately BEFORE the
+/// - it is recorded once the edit's refusals are past - the frozen checks -
+///   and its arguments converted, immediately BEFORE the
 ///   change, with the representation's indexes dropped at the same point;
 /// - no Ruby runs between the record and the change, so nothing can read the
 ///   tree in between and cache it under the new number.
@@ -115,8 +115,9 @@ pub trait ChildListHost: crate::bridge::rb::TryConvert {
         list: ChildList,
         f: impl for<'a> FnOnce(Children<'a, Self::Tree<'a>>) -> R,
     ) -> Result<R, Error>;
-    /// The child a token names, as its Ruby wrapper; None is nil. Called
-    /// once the read the token came from is over, since wrapping allocates.
+    /// The child a token names, as its Ruby wrapper; None is nil. A token,
+    /// not a node: it is called once the read the token came from is over,
+    /// and a node handle does not outlive that read.
     fn wrap_child(&self, ruby: &Ruby, token: Option<usize>) -> Result<Option<Value>, Error>;
 
     /// How many children are in `list`.
