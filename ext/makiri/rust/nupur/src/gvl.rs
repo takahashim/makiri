@@ -44,8 +44,10 @@ use core::ffi::c_void;
 ///   nothing (a trap handler that returned), the call is simply made again.
 ///
 /// A non-local exit already pending (`raw`'s `PENDING_JUMP`) is answered
-/// at once, the body not run: releasing the GVL would let another thread's
-/// method see it, or forget it, before this one's trampoline resumes it.
+/// at once, the body not run: releasing the GVL would let this thread run
+/// interrupts - a trap handler's Ruby among them - whose raises overwrite the
+/// error info Ruby resumes the exit from, and could move the Ruby thread to
+/// another native thread, which does not see it pending.
 pub fn without_gvl<F: FnOnce() -> R + Send, R>(
     ruby: &crate::rb::Ruby,
     f: F,

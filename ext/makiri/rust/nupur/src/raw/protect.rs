@@ -45,35 +45,43 @@ pub(crate) fn set_raise_injector(armed: fn() -> bool) {
     let _ = RAISE_INJECTOR.set(armed);
 }
 
-/// A non-local exit that is not an exception (a `break` or `throw` out of a
-/// block, a thread kill) a protected call came back with, not yet resumed by
-/// the trampoline: its `rb_protect` state, 0 for none.
-///
-/// Ruby resumes such an exit (`rb_jump_tag`) from what it left in the
-/// thread's error info - the throw data, a kill's marker - and every raise
-/// overwrites that. So once one is pending, no protected call runs C at
-/// all, each answering the same exit, [`keeping_errinfo`] puts nothing back,
-/// and the GVL is not released ([`crate::gvl::without_gvl`] answers the exit
-/// too). The trampoline resumes it however the method ends - an `Err` of
-/// another kind, or an `Ok` from a method that dropped the exit's `Err` -
-/// so it is resumed on the thread that caught it, and none is left behind
-/// for the next method. A global, not a thread's: nothing between the exit
-/// and its resumption can release the GVL (only a C call can, and none
-/// runs), so no other Ruby thread reads it meanwhile.
-static PENDING_JUMP: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
+thread_local! {
+    /// A non-local exit that is not an exception (a `break` or `throw` out of a
+    /// block, a thread kill) a protected call came back with, not yet resumed by
+    /// the trampoline: its `rb_protect` state, 0 for none.
+    ///
+    /// Ruby resumes such an exit (`rb_jump_tag`) from what it left in the
+    /// thread's error info - the throw data, a kill's marker - and every raise
+    /// overwrites that. So once one is pending, no protected call runs C at
+    /// all, each answering the same exit, [`keeping_errinfo`] puts nothing back,
+    /// and the GVL is not released ([`crate::gvl::without_gvl`] answers the exit
+    /// too). The trampoline resumes it however the method ends - an `Err` of
+    /// another kind, or an `Ok` from a method that dropped the exit's `Err` -
+    /// so it is resumed on the thread that caught it, and none is left behind
+    /// for the next method.
+    ///
+    /// The native thread's own, not the process's: two Ractors run their
+    /// methods at once, each under its own GVL, and a global would let one
+    /// forget the other's exit or resume it on the wrong thread. Nothing between
+    /// the exit and its resumption can release the GVL (only a C call can, and
+    /// none runs), so the Ruby thread that caught it is still on this native
+    /// thread when it is resumed - with M:N threads too, which switch only where
+    /// the GVL is released.
+    static PENDING_JUMP: core::cell::Cell<c_int> = const { core::cell::Cell::new(0) };
+}
 
 /// Forget a pending exit: a new method starts. The trampoline resumes every
 /// exit before its method returns, so none is pending here; this is the
 /// belt to that brace.
 #[inline]
 pub(crate) fn reset_pending_exit() {
-    PENDING_JUMP.store(0, core::sync::atomic::Ordering::Relaxed);
+    PENDING_JUMP.set(0);
 }
 
 /// The exit pending, as the `Err` that resumes it, or `None`.
 #[inline]
 pub(crate) fn pending_exit() -> Option<Error> {
-    match PENDING_JUMP.load(core::sync::atomic::Ordering::Relaxed) {
+    match PENDING_JUMP.get() {
         0 => None,
         state => Some(Error::jump(state)),
     }
@@ -276,6 +284,6 @@ fn caught(state: c_int) -> Error {
             return Error::exception(exc);
         }
     }
-    PENDING_JUMP.store(state, core::sync::atomic::Ordering::Relaxed);
+    PENDING_JUMP.set(state);
     Error::jump(state)
 }
