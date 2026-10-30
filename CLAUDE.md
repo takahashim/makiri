@@ -787,42 +787,19 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            are 12-14% faster than the one-crate build, which
                            never had LTO either). `rake no_unwind` builds the
                            same way, since its proof is of the shipped binary
-  nupur/                   the Ruby binding layer, a crate of its own over rb-sys
-                           (`rb/` - values, errors, trampolines, classes, the
-                           rooted globals, `object` (ivars, hiding, class
-                           checks) and `kept` (what a handle holds) - `raw` (the C calls that can raise,
-                           private to nupur), `typed` (the public types, the GC
-                           callbacks, the data type, `External`), `string`
-                           (`read`: copying reads, the String's encoding as a
-                           reader takes it, `read_utf8`; `make`: a copy, an
-                           in-place write, an interned name), `encoding` (the
-                           `Encoding` value and `encode`),
-                           `utf8_copy` (the checked copy, std alone),
-                           `table`, `build`, `args` (a call's arguments: their
-                           type checks, `scan` and `Kwargs`), `hash` (the
-                           latched Hash walk), `describe`, `encoding`,
-                           `int` (every C-integer conversion),
-                           `gvl`, `stack`, `abi`, `msg`, `caught`, and its own
-                           `no_unwind` sites, under `--cfg nupur_no_unwind`).
-                           Its `lib.rs` states what it guarantees and what an
-                           extension must uphold (a Ruby value kept where the
-                           GC's stack scan sees it, which the lints check):
-                           every `unsafe` that talks to Ruby. It cannot name the
-                           extension (no dependency), which names it as
-                           `crate::nupur` (`extern crate`); what it needs of
-                           Makiri is registered at Init_ (`INTERNAL_ERROR`,
-                           and the OOM sweep's two hooks together,
-                           `inject::install`). `bridge` re-exports its
-                           public modules, so `bridge::rb` etc. still
-                           resolve; `raw` is crate-private. The
-                           macros' helpers (`finish`, `finish_cary`,
-                           `run_init`) are `unsafe fn`, and
-                           `gvl_token_outside_entry` holds each to its one
-                           place - a trampoline's expansion, the `Init_`
-                           function - so nothing else makes a `Ruby` token. A function on a no_unwind site's path
-                           is `#[inline]`, or the proof cannot see into it
-                           across the crate. `notes/nupur_crate_plan.ja.md` is
-                           its plan
+  nupur/                   the Ruby binding layer, a crate of its own over rb-sys.
+                           `nupur/src/lib.rs` is the one statement of what it
+                           guarantees, what an extension must uphold and what
+                           checks each (its module list is there too); read it
+                           before touching the boundary. What matters here:
+                           it cannot name the extension (no dependency), which
+                           names it `crate::nupur` and registers what it needs
+                           at Init_ (`INTERNAL_ERROR`, `inject::install`);
+                           `bridge` re-exports its public modules, and `raw`
+                           is private to it; a function on a no_unwind site's
+                           path is `#[inline]`, or the proof cannot see into
+                           it across the crate. `test/` is its own extension
+                           and specs (`rake nupur:spec`)
   build.rs                 bindgen over Lexbor's own headers -> the layout and
                            constants the crate reads (never transcribed by hand)
   src/
