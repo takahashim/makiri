@@ -1,7 +1,7 @@
 name: Verify
 
 on:
-  # Up to ten minutes of proofs, over the Ruby-free engine only - so they run
+  # A few minutes of proofs, over the Ruby-free engine only - so they run
   # when that engine (or how it is built) changes, not on every push, and then
   # only the groups whose code changed (see "Pick the proof groups").
   push:

@@ -559,9 +559,10 @@ bundle exec rake verus             # Verus proofs (ext/makiri/rust/verus/): fall
                                    # assume_specification, assume) is pinned
                                    # (VERUS_TRUSTED)
 bundle exec rake kani              # Kani proofs over the Ruby-free core (needs cargo-kani).
-                                   # The successor to the C-era CBMC harnesses: the
-                                   # allocator, cbuf, UTF-8 validate/decode.
-                                   # KANI_GROUPS=alloc,utf8,xml,xpath picks groups
+                                   # The successor to the C-era CBMC harnesses: UTF-8
+                                   # validate/decode, XML characters, XPath numbers
+                                   # (the allocator and cbuf are Verus's now).
+                                   # KANI_GROUPS=utf8,xml,xpath picks groups
                                    # (rakelib/rust.rake's KANI_GROUPS, with the code each
                                    # depends on); CI runs only the groups whose
                                    # code changed (`rake kani:groups`), and all of
