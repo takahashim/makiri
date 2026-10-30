@@ -54,12 +54,26 @@ pub fn record_edit(rb_doc: Value, kind: EditKind) {
 
 /// `Document#tree_version`: how many child-list edits the document has seen.
 /// `TypeError` for a non-Document.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        unheld_payload_borrow,
+        reason = "rb_doc is the method's receiver, which Ruby keeps for the call"
+    )
+)]
 pub fn tree_version(rb_doc: Value) -> Result<u64, Error> {
     Ok(DOC_TYPE.get(&rb_doc)?.edits.get().tree_version)
 }
 
 /// `Document#attribute_version`: how many attribute edits the document has
 /// seen. `TypeError` for a non-Document.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        unheld_payload_borrow,
+        reason = "rb_doc is the method's receiver, which Ruby keeps for the call"
+    )
+)]
 pub fn attribute_version(rb_doc: Value) -> Result<u64, Error> {
     Ok(DOC_TYPE.get(&rb_doc)?.edits.get().attribute_version)
 }

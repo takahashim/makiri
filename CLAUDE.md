@@ -168,7 +168,9 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   with the VALUE as an input operand; a `read_volatile` of it on the targets
   without a stable `asm!`, a weaker contract and unchecked there; the
   premises that make either enough are stated there) after the last borrow. Borrow from the handle, never through
-  a copy of its `Value`; `get` / `get_known` hold nothing and serve only a
+  a copy of its `Value` (`rake dylint`'s `forgotten_handle` refuses a forgotten
+  handle, and `unheld_payload_borrow` makes each bare borrow an allow with its
+  reason); `get` / `get_known` hold nothing and serve only a
   value kept for the whole borrow - by Ruby (a receiver, an argument, a
   slot's value: `html_read` and its kin, over a node's Document), or by a
   `Typed` handle the caller holds across the call (`new_html_document` /
@@ -442,6 +444,10 @@ bundle exec rake lexbor            # the reference Lexbor (script/build_lexbor.r
                                    # and depend on it
 bundle exec rake spec
 bundle exec rake rust:test         # Ruby-free core tests, Lexbor-feature tests, fuzz-crate check
+bundle exec rake nupur:spec        # nupur alone: its test extension (nupur/test/ext, a
+                                   # cdylib over the layer and nothing of Makiri's) and
+                                   # the specs beside it - trampolines, panics, exits,
+                                   # slots under GC, checked String reads, arguments
 bundle exec rake lint              # cargo clippy --all-features -D warnings + cargo fmt --check
 bundle exec rake unsafe:boundaries # reviewed unsafe islands and safe-module boundaries
 bundle exec rake dylint            # the crate's own lints (lints/makiri_lints), on the
@@ -475,7 +481,11 @@ bundle exec rake dylint            # the crate's own lints (lints/makiri_lints),
                                    # Ruby calls in: `get_unchecked` - crate-private
                                    # - in `rb::method`, `finish` in a `method!` /
                                    # `function!` expansion, `run_init` in an
-                                   # `extern "C" fn Init_*`)
+                                   # `extern "C" fn Init_*`), unheld_payload_borrow
+                                   # (every `TypedType::get` / `get_known`, each an
+                                   # allow saying why its value is kept; a bare type
+                                   # check is `ensure`), forgotten_handle (a `Typed` /
+                                   # `Kept` given to `mem::forget` or `ManuallyDrop`)
                                    # (a sanctioned site is an allow with its reason);
                                    # then their self-test
                                    # (src/lint_probe.rs). Needs the nightly
@@ -777,42 +787,19 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            are 12-14% faster than the one-crate build, which
                            never had LTO either). `rake no_unwind` builds the
                            same way, since its proof is of the shipped binary
-  nupur/                   the Ruby binding layer, a crate of its own over rb-sys
-                           (`rb/` - values, errors, trampolines, classes, the
-                           rooted globals, `object` (ivars, hiding, class
-                           checks) and `kept` (what a handle holds) - `raw` (the C calls that can raise,
-                           private to nupur), `typed` (the public types, the GC
-                           callbacks, the data type, `External`), `string`
-                           (`read`: copying reads, the String's encoding as a
-                           reader takes it, `read_utf8`; `make`: a copy, an
-                           in-place write, an interned name), `encoding` (the
-                           `Encoding` value and `encode`),
-                           `utf8_copy` (the checked copy, std alone),
-                           `table`, `build`, `args` (a call's arguments: their
-                           type checks, `scan` and `Kwargs`), `hash` (the
-                           latched Hash walk), `describe`, `encoding`,
-                           `int` (every C-integer conversion),
-                           `gvl`, `stack`, `abi`, `msg`, `caught`, and its own
-                           `no_unwind` sites, under `--cfg nupur_no_unwind`).
-                           Its `lib.rs` states what it guarantees and what an
-                           extension must uphold (a Ruby value kept where the
-                           GC's stack scan sees it, which the lints check):
-                           every `unsafe` that talks to Ruby. It cannot name the
-                           extension (no dependency), which names it as
-                           `crate::nupur` (`extern crate`); what it needs of
-                           Makiri is registered at Init_ (`INTERNAL_ERROR`,
-                           and the OOM sweep's two hooks together,
-                           `inject::install`). `bridge` re-exports its
-                           public modules, so `bridge::rb` etc. still
-                           resolve; `raw` is crate-private. The
-                           macros' helpers (`finish`, `finish_cary`,
-                           `run_init`) are `unsafe fn`, and
-                           `gvl_token_outside_entry` holds each to its one
-                           place - a trampoline's expansion, the `Init_`
-                           function - so nothing else makes a `Ruby` token. A function on a no_unwind site's path
-                           is `#[inline]`, or the proof cannot see into it
-                           across the crate. `notes/nupur_crate_plan.ja.md` is
-                           its plan
+  nupur/                   the Ruby binding layer, a crate of its own over rb-sys.
+                           `nupur/src/lib.rs` is the one statement of what it
+                           guarantees, what an extension must uphold and what
+                           checks each (its module list is there too); read it
+                           before touching the boundary. What matters here:
+                           it cannot name the extension (no dependency), which
+                           names it `crate::nupur` and registers what it needs
+                           at Init_ (`INTERNAL_ERROR`, `inject::install`);
+                           `bridge` re-exports its public modules, and `raw`
+                           is private to it; a function on a no_unwind site's
+                           path is `#[inline]`, or the proof cannot see into
+                           it across the crate. `test/` is its own extension
+                           and specs (`rake nupur:spec`)
   build.rs                 bindgen over Lexbor's own headers -> the layout and
                            constants the crate reads (never transcribed by hand)
   src/

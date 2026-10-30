@@ -24,16 +24,16 @@ use rustc_lint::LateContext;
 use rustc_span::Span;
 
 use crate::GVL_TOKEN_OUTSIDE_ENTRY;
-use crate::boundaries::{callee, is_extension, module_of, path_of};
+use crate::paths::{callee, is_extension, module_of, path_of};
 
 /// `Ruby::get_unchecked`, as `path_of` spells it: an inherent `impl` block
 /// is an unnamed part of the path.
-const GET_UNCHECKED: &str = "makiri::nupur::rb::ruby::get_unchecked";
+const GET_UNCHECKED: &str = "nupur::rb::ruby::get_unchecked";
 const TRAMPOLINES: &[&str] = &[
-    "makiri::nupur::rb::method::finish",
-    "makiri::nupur::rb::method::finish_cary",
+    "nupur::rb::method::finish",
+    "nupur::rb::method::finish_cary",
 ];
-const RUN_INIT: &str = "makiri::nupur::rb::method::run_init";
+const RUN_INIT: &str = "nupur::rb::method::run_init";
 /// The macros of nupur's whose expansion is a trampoline, by name: a
 /// `#[macro_export]` macro is named at the crate's root but defined where it
 /// is written, so it is matched by its crate and its name.
@@ -48,11 +48,10 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
     };
     let target = path_of(cx, did);
     let allowed = if target == GET_UNCHECKED {
-        module_of(cx, expr.hir_id) == "makiri::nupur::rb::method"
+        module_of(cx, expr.hir_id) == "nupur::rb::method"
     } else if TRAMPOLINES.contains(&target.as_str()) {
         /* `finish_cary` is `finish` for an arity -1 method, beside it. */
-        from_trampoline_macro(cx, expr.span)
-            || module_of(cx, expr.hir_id) == "makiri::nupur::rb::method"
+        from_trampoline_macro(cx, expr.span) || module_of(cx, expr.hir_id) == "nupur::rb::method"
     } else if target == RUN_INIT {
         in_init_function(cx, expr)
     } else {
@@ -78,7 +77,7 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
 fn from_trampoline_macro(cx: &LateContext<'_>, span: Span) -> bool {
     span.macro_backtrace().any(|expn| {
         expn.macro_def_id.is_some_and(|m| {
-            path_of(cx, m).starts_with("makiri::nupur::")
+            path_of(cx, m).starts_with("nupur::")
                 && TRAMPOLINE_MACROS.contains(&cx.tcx.item_name(m).as_str())
         })
     })

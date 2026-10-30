@@ -338,7 +338,7 @@ impl RHash {
 }
 
 /// A Hash key whose lookup runs no Ruby: hashed and compared in C. A String
-/// is one only when its class is String itself ([`plain_key`]): Ruby takes
+/// is one only when its class is String itself (`plain_key`): Ruby takes
 /// the C path for two Strings only then, and calls `eql?` - the caller's
 /// Ruby - for a subclass's instance, so the lookup refuses one.
 pub trait HashKey: ReprValue {}

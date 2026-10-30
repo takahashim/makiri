@@ -8,7 +8,7 @@ use crate::rb::{Error, RArray, RHash, Ruby, Value};
 /// `h`'s pairs, each handed to `f` in turn; the first `Err` stops the walk
 /// and is returned.
 ///
-/// Over [`crate::raw::hash_foreach`], which latches a panic in `f` rather
+/// Over `crate::raw::hash_foreach`, which latches a panic in `f` rather
 /// than let it unwind into `rb_hash_foreach`'s C frames, and resumes it once
 /// they are gone, where the method's trampoline makes it the internal error.
 /// `f`'s own error is kept here rather than raised from inside the walk.

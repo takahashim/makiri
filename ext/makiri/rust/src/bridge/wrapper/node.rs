@@ -257,7 +257,7 @@ pub fn node_token_in(ruby: &Ruby, rb_node: Value, document: Value) -> Result<Tok
 )]
 pub fn node_raw(ruby: &Ruby, rb_node: Value) -> Result<NodeWord, Error> {
     if crate::bridge::ruby::is_kind_of(ruby, rb_node, &CLASS_DOCUMENT) {
-        DOC_TYPE.get(&rb_node)?; /* TypeError for a non-Document */
+        DOC_TYPE.ensure(rb_node)?; /* TypeError for a non-Document */
         return Ok(match DocKind::of(rb_node) {
             DocKind::Xml => xml_read(&rb_node)?.doc_node().into(),
             DocKind::Html => RawNode::from(html_read(&rb_node)?.doc().as_node()).into(),

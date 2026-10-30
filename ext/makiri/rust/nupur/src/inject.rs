@@ -1,5 +1,5 @@
 //! The hooks an extension's OOM sweep installs, both at once: the raise
-//! half (an allocating call of [`crate::raw`] raises `NoMemoryError`) and the
+//! half (an allocating call of `crate::raw` raises `NoMemoryError`) and the
 //! allocation half (a checked copy's heap buffer, [`crate::utf8_copy`],
 //! fails). One call taking both, so an extension cannot arm one and leave the
 //! other half of the sweep failing nothing.

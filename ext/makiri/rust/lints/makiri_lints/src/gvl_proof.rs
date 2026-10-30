@@ -26,7 +26,7 @@ use rustc_lint::LateContext;
 use rustc_middle::ty::{self, Ty};
 
 use crate::FFI_WITHOUT_GVL_PROOF;
-use crate::boundaries::{NUPUR, callee, path_of};
+use crate::paths::{NUPUR, callee, path_of};
 
 /// The layer's handles that exist only where a token or a Ruby value did.
 const PROOF_TYPES: &[&str] = &["Ruby", "Encoding", "Typed", "Unwritten"];

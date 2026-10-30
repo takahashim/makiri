@@ -1,0 +1,24 @@
+# nupur's own test extension: a few methods over the layer, loaded by the
+# specs beside it (`rake nupur:spec`), so the layer is checked without
+# Makiri. A workspace of its own, as `fuzz/` and `lints/` are.
+[package]
+name = "nupur_test"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+nupur = { path = "../.." }
+rb-sys = { version = "0.9" }
+
+[profile.release]
+panic = "unwind"
+
+[profile.dev]
+panic = "unwind"
+
+[workspace]

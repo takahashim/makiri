@@ -13,7 +13,7 @@
 //! # What the layer guarantees
 //!
 //! - **No raise crosses Rust.** Every C call that can raise runs under
-//!   `rb_protect` ([`raw`]) and comes back as `Err`; a method's `Err` is
+//!   `rb_protect` (`raw`) and comes back as `Err`; a method's `Err` is
 //!   raised by its trampoline ([`rb::method::finish`]) once every Rust frame
 //!   of the method has returned.
 //! - **No panic reaches C.** A trampoline catches a panic and raises the
@@ -40,7 +40,7 @@
 //!   UTF-8 by std's validator over the copy itself ([`utf8_copy`]), never by
 //!   the String's cached coderange, which another C extension could leave
 //!   wrong.
-//! - **A C integer is converted in one place** ([`int`]): a `long` is 32
+//! - **A C integer is converted in one place** (`int`): a `long` is 32
 //!   bits on Windows, and the conversions are written once over either
 //!   width and tested at both; everything else converts with `From` /
 //!   `TryFrom` and names no `long`.
@@ -56,9 +56,10 @@
 //!   same way, and hands the object out only once it is complete and shown.
 //!
 //! Several of these rest on checks of this crate's own code, not on its
-//! types alone. In Makiri they are `rake dylint` (`lints/makiri_lints`),
-//! `rake no_unwind` and `rake unsafe:boundaries`; a copy of this layer
-//! elsewhere needs its own:
+//! types alone. In Makiri they are `rake dylint` (`lints/makiri_lints`,
+//! whose first group is the layer's and names only `nupur::` paths, so a
+//! copy changes its `paths::EXTENSION` alone), `rake no_unwind` and
+//! `rake unsafe:boundaries`; a copy of this layer elsewhere needs its own:
 //!
 //! - every C call that can raise is inside `raw::call` -
 //!   `raising_call_outside_protect` and `unraising_call_in_raw`, over a
@@ -71,6 +72,12 @@
 //! - no Ruby error is dropped - `discarded_ruby_error`;
 //! - no C `long` is cast outside `int` - `c_integer_outside_int`;
 //! - each file's count of `unsafe` is pinned - `rake unsafe:boundaries`.
+//!
+//! Its behaviour is checked without Makiri too: `test/ext` is an extension
+//! of a few methods over the layer alone, and `test/spec` the specs that load
+//! it (`rake nupur:spec`) - a panic in a method, below the GVL release and in
+//! a Hash walk, a block's exits, a slot under collection and compaction, a
+//! checked String read and its `$!`.
 //!
 //! # What the extension must uphold
 //!
@@ -92,7 +99,9 @@
 //!   (those keep nothing, and serve only a value kept for the whole borrow -
 //!   by Ruby, as a receiver, an argument or a slot's value is, or by a handle
 //!   the caller holds across the call), and the handle is not `mem::forget`ed.
-//!   Checked by review.
+//!   Checked by `unheld_payload_borrow` (every `get` / `get_known` an `allow`
+//!   with the reason its value is kept) and `forgotten_handle`; a type check
+//!   that borrows nothing is `TypedType::ensure`.
 //! - **A GVL-released body runs no Ruby.** [`gvl::without_gvl`]'s `Send`
 //!   bound keeps a token and a value out of it, but not a call of a layer
 //!   function that needs neither (making an [`rb::Error`], say) - harmless
@@ -134,69 +143,69 @@
  * message's lookup, allowed there with its reason. */
 #![cfg_attr(dylint_lib = "makiri_lints", deny(discarded_ruby_error))]
 
-/// The lints' self-test for this crate (`rake dylint`).
+// The lints' self-test for this crate (`rake dylint`).
 #[cfg(nupur_lint_probe)]
 mod lint_probe;
 
-/// The value and method layer: `Value` and the class-checked handles,
-/// `Error`, the `method!` / `function!` trampolines, class definitions.
+// The value and method layer: `Value` and the class-checked handles,
+// `Error`, the `method!` / `function!` trampolines, class definitions.
 pub mod rb;
 
-/// Every Ruby C call that can raise, each under `rb_protect`.
+// Every Ruby C call that can raise, each under `rb_protect`.
 pub(crate) mod raw;
 
-/// Every conversion between Rust's integer widths and C's `long` - the
-/// layer's own: what it hands an extension is in Rust's widths.
+// Every conversion between Rust's integer widths and C's `long` - the
+// layer's own: what it hands an extension is in Rust's widths.
 pub(crate) mod int;
 
-/// TypedData: wrapping a Rust value as a Ruby object, and its GC hooks.
+// TypedData: wrapping a Rust value as a Ruby object, and its GC hooks.
 pub mod typed;
 
-/// Running a body with the GVL released.
+// Running a body with the GVL released.
 pub mod gvl;
 
-/// Building Ruby values: Arrays, Hashes, numbers, Symbols, UTF-8 Strings.
+// Building Ruby values: Arrays, Hashes, numbers, Symbols, UTF-8 Strings.
 pub mod build;
 
-/// A Ruby encoding, as Strings are read and converted by it.
+// A Ruby encoding, as Strings are read and converted by it.
 pub mod encoding;
 
-/// A Ruby String's bytes, read and written by copying.
+// A Ruby String's bytes, read and written by copying.
 pub mod string;
 
-/// Owned bytes checked to be UTF-8 (`Utf8Copy`), std alone.
+// Owned bytes checked to be UTF-8 (`Utf8Copy`), std alone.
 pub mod utf8_copy;
 
-/// The OOM sweep's hooks, installed together (`rake oom`).
+// The OOM sweep's hooks, installed together (`rake oom`).
 #[cfg(feature = "alloc-inject")]
 pub mod inject;
 
-/// A private table from small integers to values ([`table::IntTable`]).
+// A private table from small integers to values ([`table::IntTable`]).
 pub mod table;
 
-/// Reading a method's arguments: a type check each, no conversion; the
-/// separation of positional arguments and keywords; keywords by name.
+// Reading a method's arguments: a type check each, no conversion; the
+// separation of positional arguments and keywords; keywords by name.
 pub mod args;
 
-/// Walking a Hash's pairs.
+// Walking a Hash's pairs.
 pub mod hash;
 
-/// Ruby values written into a message without a call.
+// Ruby values written into a message without a call.
 pub mod describe;
 
-/// The Ruby API version, built against and running.
+// The Ruby API version, built against and running.
 pub mod abi;
 
-/// The native-stack check, for a token.
+// The native-stack check, for a token.
 pub mod stack;
 
-/// `Msg`: an exception message written into a fixed buffer on the stack,
-/// so an error path allocates nothing.
+// `Msg`: an exception message written into a fixed buffer on the stack,
+// so an error path allocates nothing.
 pub mod msg;
 
-/// Catching a panic at a C boundary and re-raising it past one.
+// Catching a panic at a C boundary and re-raising it past one.
 pub mod caught;
 
-/// The layer's bodies that must not unwind, and the build that checks they
-/// cannot (`rake no_unwind`).
+// The layer's bodies that must not unwind, and the build that checks they
+// cannot (`rake no_unwind`).
 pub mod no_unwind;

@@ -30,7 +30,7 @@ use rustc_hir::{Expr, ExprKind, HirId, Node};
 use rustc_lint::LateContext;
 use std::ops::ControlFlow;
 
-use crate::boundaries::{callee, is_extension, module_of, path_of};
+use crate::paths::{callee, is_extension, module_of, path_of};
 use crate::{RAISING_CALL_OUTSIDE_PROTECT, UNRAISING_CALL_IN_RAW};
 
 /// Ruby's C functions that raise nothing, whatever a caller of the layer
@@ -93,17 +93,14 @@ const REVIEWED: &[(&str, &str)] = &[(
 )];
 
 /// Where the protection, `$!` and the raises on purpose live.
-const PROTECT: &str = "makiri::nupur::raw::protect";
+const PROTECT: &str = "nupur::raw::protect";
 
 /// The modules held to `unraising_call_in_raw`: `raw` itself, and the
 /// self-test's stand-in.
-const RAW: &[&str] = &["makiri::nupur::raw", "makiri::nupur::lint_probe::raw"];
+const RAW: &[&str] = &["nupur::raw", "nupur::lint_probe::raw"];
 
 /// The protected call, and the self-test's stand-in.
-const CALL: &[&str] = &[
-    "makiri::nupur::raw::protect::call",
-    "makiri::nupur::lint_probe::raw::call",
-];
+const CALL: &[&str] = &["nupur::raw::protect::call", "nupur::lint_probe::raw::call"];
 
 /// A function of rb-sys, by name, when `path` names one.
 fn rb_sys_function(path: &str) -> Option<&str> {

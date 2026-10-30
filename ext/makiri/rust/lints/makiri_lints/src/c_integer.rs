@@ -28,22 +28,18 @@ use rustc_lint::LateContext;
 use rustc_middle::ty;
 
 use crate::C_INTEGER_OUTSIDE_INT;
-use crate::boundaries::{module_of, path_of};
+use crate::paths::{NUPUR, module_of, ours, path_of, within};
 
 /// Whether code in `module` is held to the rule: the binding layer and the
 /// extension's Ruby boundary, bar the module that converts. The self-tests'
 /// probes are in both crates.
 fn held(module: &str) -> bool {
-    let Some(rest) = module.strip_prefix("makiri::") else {
-        return false;
-    };
-    let under = |m: &str| rest == m || rest.starts_with(&format!("{m}::"));
-    if under("nupur::int") {
+    if !ours(module) || within(module, "nupur::int") {
         return false;
     }
-    ["nupur", "bridge", "glue", "init", "lint_probe"]
+    [NUPUR, "bridge", "glue", "init", "lint_probe"]
         .iter()
-        .any(|m| under(m))
+        .any(|m| within(module, m))
 }
 
 pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {

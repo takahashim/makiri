@@ -7,7 +7,7 @@
 //! callbacks (`callbacks`) are the one monomorphised bridge from Ruby's GC to it, so
 //! no other module writes an `extern "C"` GC function.
 //!
-//! What an object holds is an [`Envelope`]: the payload `T`, and `N` slots
+//! What an object holds is an `Envelope`: the payload `T`, and `N` slots
 //! for the Ruby values the object keeps alive. The slots are this module's,
 //! written once - in the same step as the payload, right after the object's
 //! allocation - and never again, and the mark callback marks every one of
@@ -18,7 +18,7 @@
 //! where no mark reaches it, have no code to happen in.
 //!
 //! The envelope is the object's data, made with the object by
-//! `rb_data_typed_object_zalloc` ([`wrap_built`]) - in the object's own slot
+//! `rb_data_typed_object_zalloc` (`wrap_built`) - in the object's own slot
 //! for an embedded type, from `xcalloc` otherwise - and the free callback runs
 //! the payload's `Drop` in place before the memory goes back: freeing alone
 //! would skip the destructor, and with it everything the payload owns.
@@ -194,6 +194,14 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
         unsafe { rb_sys::rb_typeddata_is_kind_of(v.as_raw(), self.raw.as_ptr()) != 0 }
     }
 
+    /// `Ok` for an object of this type (or one deriving from it), else Ruby's
+    /// own `TypeError` - a type check that borrows nothing, for a caller that
+    /// only needs to refuse another kind of value.
+    #[inline]
+    pub fn ensure(&'static self, v: Value) -> Result<(), Error> {
+        typed_data(v, &self.raw).map(|_| ())
+    }
+
     /// The payload behind `v`, or Ruby's own `TypeError`, for a `v` kept for
     /// the whole borrow - by Ruby (a receiver, an argument, a slot's value),
     /// or by a [`Typed`] handle the caller holds across it; anything else - an
@@ -254,7 +262,7 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
     /// The payload is built, and the roots held, before the object exists:
     /// they are on this frame through the allocation - where the GC's stack
     /// scan keeps the roots alive and in place - and both are written into
-    /// the object right after it, with nothing run between ([`wrap_built`]).
+    /// the object right after it, with nothing run between (`wrap_built`).
     ///
     /// The object comes back as a [`Typed`]: nothing but this frame refers
     /// to it yet, and the handle holds it while its data is borrowed.
