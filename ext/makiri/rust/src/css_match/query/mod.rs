@@ -14,7 +14,7 @@ use super::plan::QueryPlan;
 use super::positions::Positions;
 use super::scratch::{recycle, Scratch, SCRATCH_KEEP};
 use super::simple::{check_simple, SimpleCheck, SimpleEnv};
-use super::{Budget, MatchFailure};
+use super::{Budget, MatchFailure, QueryShape};
 
 mod chain;
 mod has;
@@ -92,15 +92,18 @@ pub(super) struct Query<'c, 'p, 'd, N: CssNode<'d>> {
 }
 
 impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
-    /// A query over `compiled`, walking `walk_in` when given (its plan,
-    /// [`QueryPlan::new`]), under a work budget of `limit` steps.
+    /// A query of `shape` over `compiled` (a walking one's plan,
+    /// [`QueryPlan::new`]).
     pub(super) fn new(
         compiled: &'c Compiled<'p>,
-        walk_in: Option<N::Doc>,
-        scope: Option<N>,
-        limit: usize,
+        shape: QueryShape<'d, N>,
         scratch: &mut Scratch<N::Host>,
     ) -> Result<Self, MatchFailure> {
+        let QueryShape {
+            walk_in,
+            scope,
+            limit,
+        } = shape;
         Ok(Query {
             compiled,
             plan: QueryPlan::new(compiled, walk_in, scratch)?,

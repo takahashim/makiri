@@ -334,20 +334,12 @@ pub fn matches_any<'d, N: CssNode<'d>>(
     ns: &Namespaces<'_>,
     node: N,
 ) -> Result<bool, MatchFailure> {
-    with_query(
-        scratch,
-        groups,
-        ns,
-        None,
-        Some(node),
-        DEFAULT_WORK_BUDGET,
-        |query| {
-            if node.element().is_none() {
-                return Ok(false);
-            }
-            query.matches_top(node)
-        },
-    )
+    with_query(scratch, groups, ns, QueryShape::one(node), |query| {
+        if node.element().is_none() {
+            return Ok(false);
+        }
+        query.matches_top(node)
+    })
 }
 
 /// What `:scope` is for a query made from `root`: `root` itself when it is
@@ -371,22 +363,51 @@ fn scope_of<'d, N: CssNode<'d>>(root: N) -> Option<N> {
     None
 }
 
+/// The two kinds of query: one that walks a subtree, and one that tests a
+/// single node (`matches?`).
+struct QueryShape<'d, N: CssNode<'d>> {
+    /// The document walked, whose names the plan resolves; `None` for one
+    /// node, where resolving costs more than it saves.
+    walk_in: Option<N::Doc>,
+    /// What `:scope` matches.
+    scope: Option<N>,
+    /// The work budget, in steps.
+    limit: usize,
+}
+
+impl<'d, N: CssNode<'d>> QueryShape<'d, N> {
+    /// A walk of `root`'s subtree under `limit` steps.
+    fn walking(root: N, limit: usize) -> Self {
+        QueryShape {
+            walk_in: Some(root.owner_document()),
+            scope: scope_of(root),
+            limit,
+        }
+    }
+
+    /// `node` alone, which is its own `:scope`.
+    fn one(node: N) -> Self {
+        QueryShape {
+            walk_in: None,
+            scope: Some(node),
+            limit: DEFAULT_WORK_BUDGET,
+        }
+    }
+}
+
 /// Compile `groups` ([`compile`]: a selector it refuses is refused before
-/// any node is matched), make a query over it - walking `walk_in` when
-/// given - and run `f`; every table and stack goes back to `scratch`
+/// any node is matched), make a query of `shape` over it and run `f`; every table and stack goes back to `scratch`
 /// whatever `f` answers. The one place the entry points borrow and return
 /// a [`Scratch`].
 fn with_query<'d, N: CssNode<'d>, R, E: From<MatchFailure>>(
     scratch: &mut Scratch<N::Host>,
     groups: Lists<'_>,
     ns: &Namespaces<'_>,
-    walk_in: Option<N::Doc>,
-    scope: Option<N>,
-    limit: usize,
+    shape: QueryShape<'d, N>,
     f: impl FnOnce(&mut Query<'_, '_, 'd, N>) -> Result<R, E>,
 ) -> Result<R, E> {
     let compiled = compile(&mut scratch.tables, groups, ns)?;
-    let answer = match Query::new(&compiled, walk_in, scope, limit, scratch) {
+    let answer = match Query::new(&compiled, shape, scratch) {
         Ok(mut query) => {
             let answer = f(&mut query);
             query.finish(scratch);
@@ -447,14 +468,11 @@ fn select_all_with_limit<'d, N: CssNode<'d>>(
     ns: &Namespaces<'_>,
     limit: usize,
 ) -> Result<Vec<N>, QueryFailure> {
-    let walk_in = Some(root.owner_document());
     with_query(
         scratch,
         groups,
         ns,
-        walk_in,
-        scope_of(root),
-        limit,
+        QueryShape::walking(root, limit),
         |query| {
             let mut out = Vec::new();
             let stopped = each_match(query, root, |n| {
@@ -498,14 +516,11 @@ pub fn select_first<'d, N: CssNode<'d>>(
     groups: Lists<'_>,
     ns: &Namespaces<'_>,
 ) -> Result<Option<N>, MatchFailure> {
-    let walk_in = Some(root.owner_document());
     with_query(
         scratch,
         groups,
         ns,
-        walk_in,
-        scope_of(root),
-        DEFAULT_WORK_BUDGET,
+        QueryShape::walking(root, DEFAULT_WORK_BUDGET),
         |query| each_match(query, root, ControlFlow::Break),
     )
 }
