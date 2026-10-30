@@ -393,7 +393,7 @@ impl<T: Payload + 'static, const N: usize> TypedType<T, N> {
             .try_for_each(|&(id, v)| crate::raw::ivar_set(obj, id, v));
         // SAFETY: the object just made, of ours; hiding writes only its class
         // field, which the reveal below restores.
-        unsafe { rb_sys::rb_obj_hide(obj.as_raw()) };
+        unsafe { crate::rb::object::obj_hide(obj) };
         written?;
         fill(made.data())?;
         crate::raw::obj_reveal(obj, crate::rb::ReprValue::as_value(klass))?;

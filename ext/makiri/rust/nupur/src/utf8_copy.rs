@@ -149,7 +149,7 @@ impl Utf8Copy {
             Bytes::Inline { len: n, buf }
         } else {
             let mut v = Vec::new();
-            if !reserve_exact(&mut v, len) || !src.append_into(&mut v) {
+            if !reserve_exact(&mut v, len) || !src.append_into(&mut v) || v.len() != len {
                 return Err(FillError::Copy(CopyError::Oom));
             }
             Bytes::Heap(v)

@@ -3,7 +3,9 @@
 //!
 //! It stands where magnus stood, under the names magnus gave them, and holds
 //! only what is used: a `Value` and the class-checked handles over it
-//! ([`value`]), [`Error`] ([`error`]), what a method takes and returns
+//! ([`value`]), what an object is asked outside a method call - its hidden
+//! ivars, its hiding, its class ([`object`]) - and what a handle holds
+//! (`kept`), [`Error`] ([`error`]), what a method takes and returns
 //! ([`convert`]), the trampolines `method!` / `function!` expand to
 //! ([`method`]) and class and module definitions ([`class`]). Every C call it
 //! makes that can raise is a `raw` wrapper under `rb_protect`, and

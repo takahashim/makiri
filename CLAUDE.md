@@ -248,7 +248,8 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   rules out, `rb_obj_is_kind_of` with a non-class, is an `allow` at its
   site saying so), and `unraising_call_in_raw` holds `raw` to what it is: a
   call of Ruby's C in `raw` outside `call` (a read that raises nothing is
-  `rb::value`'s, or `rb::method`'s for the current frame), or a `call` that
+  `rb::value`'s, `rb::object`'s for an object's ivars and class, or
+  `rb::method`'s for the current frame), or a `call` that
   protects nothing, is the table and the code disagreeing. `call` is
   `raw::protect`'s, with the rest of the protection - `$!` taken and kept,
   a `break` / `throw` pending until the trampoline resumes it - and the

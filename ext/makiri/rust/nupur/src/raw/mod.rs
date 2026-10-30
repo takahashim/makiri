@@ -28,7 +28,8 @@
 //! one table in the lints (`makiri_lints`' `NON_RAISING`, every function
 //! not in it taken to raise), and `rake dylint` fails on a call of Ruby's C
 //! in this module outside [`call`] - a read that raises nothing belongs with
-//! the values (`rb::value`, `rb::method` for the current frame) - and on a
+//! the values (`rb::value`, `rb::object` for an object's ivars and class,
+//! `rb::method` for the current frame) - and on a
 //! `call` that protects nothing. The protection itself, `$!` and the calls
 //! that raise on purpose are [`protect`]'s, the one part held to neither.
 

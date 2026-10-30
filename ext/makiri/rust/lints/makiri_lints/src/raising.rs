@@ -20,7 +20,7 @@
 //!   that says why.
 //! - `unraising_call_in_raw`: what `nupur::raw` holds, read from the code. A
 //!   call of Ruby's C in `raw` outside `call` (a read that raises nothing
-//!   belongs with the values, `rb::value`), and a `call` whose closure calls
+//!   belongs with the values, `rb::value` / `rb::object`), and a `call` whose closure calls
 //!   nothing that can raise (a protection that protects nothing): each is
 //!   the table and the code disagreeing about a function.
 
@@ -60,8 +60,8 @@ const NON_RAISING: &[&str] = &[
     /* An object's class field, written: hiding. (Showing it again,
      * `rb_obj_reveal`, is not here: its write barrier can allocate.) */
     "rb_obj_hide",
-    /* Encodings: the builtin three and their indices, and a lookup by index
-     * (NULL for none). */
+    /* Encodings: the builtin three and their indices, an encoding's index,
+     * and a lookup by index (NULL for none). */
     "rb_utf8_encoding",
     "rb_usascii_encoding",
     "rb_ascii8bit_encoding",
@@ -69,6 +69,7 @@ const NON_RAISING: &[&str] = &[
     "rb_usascii_encindex",
     "rb_ascii8bit_encindex",
     "rb_enc_from_index",
+    "rb_enc_to_index",
 ];
 
 /// Functions the survey finds a path for, which a person has read and finds
@@ -158,7 +159,7 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
             format!("`{what}` is called in `raw` outside `call`"),
             None,
             "`raw` holds the C calls made inside call(|| ...); a read that raises nothing \
-             belongs with the values (rb::value), and the protection itself in raw::protect",
+             belongs with the values (rb::value, or rb::object for an object's ivars and class), and the protection itself in raw::protect",
         );
     }
 }

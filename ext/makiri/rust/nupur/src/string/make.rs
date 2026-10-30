@@ -59,10 +59,9 @@ pub fn utf8_str_filled(
     /* Armed before `fill` runs, so whatever ends it early - an `Err`, or a
      * panic unwinding through this frame to the trampoline - empties the
      * String on the way out; disarmed only once the String is whole. */
-    let s = str.as_raw();
     // SAFETY: the String just made, referenced only from this frame; hiding
     // writes only its class field, which the reveal below restores.
-    unsafe { rb_sys::rb_obj_hide(s) };
+    unsafe { crate::rb::object::obj_hide(crate::rb::ReprValue::as_value(str)) };
     let unfilled = EmptyUnlessFilled(str);
     let mut w = Unwritten { buf, at: 0 };
     let filled = fill(&mut w).and_then(|()| {
