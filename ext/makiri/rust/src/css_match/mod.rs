@@ -176,6 +176,7 @@
 
 mod compile;
 pub mod dom;
+mod lang;
 mod ns;
 mod nth_of;
 mod plan;

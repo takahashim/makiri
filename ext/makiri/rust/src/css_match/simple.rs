@@ -1,19 +1,21 @@
 //! One simple selector's verdict at one node ([`check_simple`]): type, id,
 //! class, attribute and the plain pseudo-classes answered here, the ones
-//! that nest a selector list deferred to a task (`query`). Names are
-//! resolved once per query ([`Name`]).
+//! that nest a selector list deferred to a task (`query`). What an element
+//! IS is `state`'s (and `:lang()`, `lang`'s), and a name resolved once per
+//! query is `plan`'s ([`Name`]).
 
-use crate::selectors::ast::{AttrMatch, FunctionArg, LangRanges, PseudoClass, Simple};
+use crate::selectors::ast::{AttrMatch, FunctionArg, PseudoClass, Simple};
 use core::ffi::c_long;
 
 use super::compile::{Nest, Step};
-use super::dom::{CssAttr, CssDoc, CssElement, CssNode, Host};
+use super::dom::{CssAttr, CssDoc, CssElement, CssNode};
+use super::lang::lang_matches;
 use super::ns::{Namespaces, NsTest};
+use super::plan::Name;
 use super::positions::{sibling_position, Positions};
-use super::scratch::Table;
 use super::state::{
-    has_state_attr, is_any_link, is_blank, is_checked, is_disabled, is_empty, is_enabled,
-    is_lexbor_whitespace, is_placeholder_shown, is_read_write, is_required, is_root,
+    has_state_attr, is_any_link, is_blank, is_checked, is_defined, is_disabled, is_empty,
+    is_enabled, is_lexbor_whitespace, is_placeholder_shown, is_read_write, is_required, is_root,
 };
 use super::tree::{next_position_sibling, prev_position_sibling};
 use super::{Budget, MatchFailure};
@@ -175,118 +177,6 @@ fn rare_pseudo_matches<'d, N: CssNode<'d>>(pc: PseudoClass, node: N, budget: &Bu
         PseudoClass::Scope => budget.scope() == Some(node.table_key()),
         _ => is_defined(node),
     }
-}
-
-/// `:lang()`: the element's language (the nearest `lang` - or, in XML,
-/// `xml:lang` - of it and its ancestors) matched by any of the ranges.
-#[inline(never)]
-#[cold]
-fn lang_matches<'d, N: CssNode<'d>>(node: N, ranges: LangRanges<'_>) -> bool {
-    language_of(node).is_some_and(|tag| ranges.iter().any(|range| extended_filter(range, tag)))
-}
-
-/// The language of the element `node`: the value of the first `lang` on it
-/// or an ancestor - in an XML document `xml:lang`, then `lang` on an XHTML
-/// element. An empty value is a language of its own ("unknown"), which stops
-/// the climb. `None` when no element up the tree gives one.
-fn language_of<'d, N: CssNode<'d>>(node: N) -> Option<&'d [u8]> {
-    let mut at = Some(node);
-    while let Some(n) = at {
-        if let Some(el) = n.element() {
-            let lang = if <N::Host as Host>::RESOLVES_NAMES {
-                el.get_attribute(b"lang")
-            } else {
-                el.get_attribute(b"xml:lang").or_else(|| {
-                    if n.is_html() {
-                        el.get_attribute(b"lang")
-                    } else {
-                        None
-                    }
-                })
-            };
-            if lang.is_some() {
-                return lang;
-            }
-        }
-        at = n.parent();
-    }
-    None
-}
-
-/// RFC 4647 section 3.3.2, extended filtering, as Selectors 4 uses it: does
-/// the language range `range` match the language tag `tag`, ignoring ASCII
-/// case? `*` as a subtag matches any (a tag's first one included), and a
-/// range's subtags need only be found in order in the tag, never past a
-/// single-character one. An empty range matches only an empty tag, and a
-/// tag that is empty matches nothing else.
-fn extended_filter(range: &[u8], tag: &[u8]) -> bool {
-    if range.is_empty() || tag.is_empty() {
-        return range.is_empty() && tag.is_empty();
-    }
-    let mut ranges = range.split(|&b| b == b'-');
-    let mut tags = tag.split(|&b| b == b'-');
-    let (Some(first_range), Some(first_tag)) = (ranges.next(), tags.next()) else {
-        return false;
-    };
-    if first_range != b"*" && !first_range.eq_ignore_ascii_case(first_tag) {
-        return false;
-    }
-    for subrange in ranges {
-        if subrange == b"*" {
-            continue;
-        }
-        loop {
-            let Some(subtag) = tags.next() else {
-                return false;
-            };
-            if subrange.eq_ignore_ascii_case(subtag) {
-                break;
-            }
-            if subtag.len() == 1 {
-                return false;
-            }
-        }
-    }
-    true
-}
-
-/// `:defined`: false for an HTML element whose name is a valid custom
-/// element name - the document has no registry, so none is ever defined - and
-/// true for every other element.
-fn is_defined<'d, N: CssNode<'d>>(node: N) -> bool {
-    node.element()
-        .is_some_and(|el| !(node.is_html() && is_custom_element_name(el.dom_local_name())))
-}
-
-/// HTML's "valid custom element name": a lower-case ASCII letter first, a
-/// hyphen somewhere, only PCENChars, and not one of the eight names the
-/// SVG and MathML vocabularies reserve.
-fn is_custom_element_name(name: &[u8]) -> bool {
-    const RESERVED: [&[u8]; 8] = [
-        b"annotation-xml",
-        b"color-profile",
-        b"font-face",
-        b"font-face-src",
-        b"font-face-uri",
-        b"font-face-format",
-        b"font-face-name",
-        b"missing-glyph",
-    ];
-    let Ok(text) = core::str::from_utf8(name) else {
-        return false;
-    };
-    let pcen = |c: char| {
-        matches!(c,
-            '-' | '.' | '0'..='9' | '_' | 'a'..='z' | '\u{B7}'
-            | '\u{C0}'..='\u{D6}' | '\u{D8}'..='\u{F6}' | '\u{F8}'..='\u{37D}'
-            | '\u{37F}'..='\u{1FFF}' | '\u{200C}'..='\u{200D}' | '\u{203F}'..='\u{2040}'
-            | '\u{2070}'..='\u{218F}' | '\u{2C00}'..='\u{2FEF}' | '\u{3001}'..='\u{D7FF}'
-            | '\u{F900}'..='\u{FDCF}' | '\u{FDF0}'..='\u{FFFD}' | '\u{10000}'..='\u{EFFFF}')
-    };
-    text.starts_with(|c: char| c.is_ascii_lowercase())
-        && text.contains('-')
-        && text.chars().all(pcen)
-        && !RESERVED.contains(&name)
 }
 
 fn plain_pseudo_matches<'d, N: CssNode<'d>>(
@@ -463,59 +353,6 @@ pub(super) fn check_simple<'d, N: CssNode<'d>>(
     })
 }
 
-/// A simple selector's name resolved in the document a walking query walks,
-/// the first time a candidate reaches it, and kept for the rest of the
-/// query - Lexbor's own lazily set `entry->id` - for the kinds that look a
-/// name up on every candidate. Lexbor keys element and attribute names by
-/// their ASCII lower-cased form, so an id match is exactly the case-folded
-/// comparison the byte path makes (a type selector), or a necessary
-/// condition that the adapter then confirms (an attribute:
-/// `attr_by_resolved_name`).
-///
-/// A resolved name - tag id or attribute id - is used WITHOUT asking each
-/// node for its document, as Lexbor's `entry->id` is: every node a walking
-/// query reaches - the walk itself, a combinator's climb, `:has()`'s search,
-/// `of S`'s siblings - is in the walked tree, so of the walked document,
-/// since Makiri never moves a node between documents (inserting one from
-/// another document inserts a copy, `bridge::html::insert`). The attribute
-/// side is `attr_by_resolved_name`'s precondition, asserted in debug builds.
-/// The per-node check this replaced read `owner_document` on every
-/// candidate, which cost `css("li")` ~10% on a document not in cache.
-pub(super) enum Name<H: Host> {
-    /// Not looked up yet.
-    Unresolved,
-    /// Nothing to look up: not a type or attribute selector.
-    None,
-    /// A type selector's tag id in the walked document; `None`: no element
-    /// of the document has the name.
-    Tag(Option<H::TagId>),
-    /// An attribute selector's name.
-    Attr(H::AttrName),
-}
-
-impl<H: Host> Clone for Name<H> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<H: Host> Copy for Name<H> {}
-
-impl<H: Host> Name<H> {
-    pub(super) fn resolve<'d, D: CssDoc<'d, Host = H>>(sel: &Step<'_>, doc: D) -> Name<H> {
-        match sel.simple {
-            Simple::Type => Name::Tag(doc.tag_id(sel.name)),
-            /* An attribute in a namespace is found by scanning
-             * (`attr_value_in`), not by a resolved name. */
-            Simple::Attribute(_) if !sel.ns.is_uri() => Name::Attr(doc.resolve_attr_name(sel.name)),
-            _ => Name::None,
-        }
-    }
-}
-
-/// A query's [`Name`]s, by simple-selector index: one per simple
-/// selector, each resolved when it is first reached.
-pub(super) type Names<H> = Table<Name<H>>;
-
 /// `lxb_selectors_match_element` through [`Name`]: one id comparison in a
 /// walking query (the node is of the walked document - [`Name`]'s doc),
 /// [`name_eq`] otherwise; either way confirmed by [`written_case_holds`].
@@ -636,31 +473,5 @@ mod anb_tests {
         assert!(!anb_matches(0, min, 1));
         assert!(!anb_matches(0, max, 1));
         assert!(anb_matches(0, 3, 3));
-    }
-}
-
-#[cfg(test)]
-mod lang_tests {
-    use super::extended_filter as f;
-
-    #[test]
-    fn extended_filtering_follows_rfc_4647() {
-        assert!(f(b"en", b"en-US"));
-        assert!(f(b"EN", b"en-us"));
-        assert!(f(b"en-US", b"en-US"));
-        assert!(!f(b"en-GB", b"en-US"));
-        assert!(!f(b"e", b"en"));
-        assert!(f(b"*-US", b"en-US"));
-        assert!(!f(b"*-GB", b"en-US"));
-        assert!(f(b"*", b"en"));
-        // A subtag of the range is found later in the tag, not past a singleton.
-        assert!(f(b"zh-TW", b"zh-Hant-TW"));
-        assert!(f(b"de-1996", b"de-DE-1996"));
-        assert!(!f(b"en-US", b"en-a-US"));
-        // Empty: only each other.
-        assert!(f(b"", b""));
-        assert!(!f(b"", b"en"));
-        assert!(!f(b"en", b""));
-        assert!(!f(b"*", b""));
     }
 }

@@ -6,10 +6,10 @@
 //! it.
 
 use super::compile::{Compiled, Step};
-use super::dom::{CssNode, Host};
-use super::scratch::Scratch;
-use super::simple::{Name, Names};
+use super::dom::{CssDoc, CssNode, Host};
+use super::scratch::{Scratch, Table};
 use super::MatchFailure;
+use crate::selectors::ast::Simple;
 
 pub(super) struct QueryPlan<'d, N: CssNode<'d>> {
     /// The simple selectors' names, resolved in the walked document.
@@ -95,3 +95,56 @@ impl<'d, N: CssNode<'d>> QueryPlan<'d, N> {
         }
     }
 }
+
+/// A simple selector's name resolved in the document a walking query walks,
+/// the first time a candidate reaches it, and kept for the rest of the
+/// query - Lexbor's own lazily set `entry->id` - for the kinds that look a
+/// name up on every candidate. Lexbor keys element and attribute names by
+/// their ASCII lower-cased form, so an id match is exactly the case-folded
+/// comparison the byte path makes (a type selector), or a necessary
+/// condition that the adapter then confirms (an attribute:
+/// `attr_by_resolved_name`).
+///
+/// A resolved name - tag id or attribute id - is used WITHOUT asking each
+/// node for its document, as Lexbor's `entry->id` is: every node a walking
+/// query reaches - the walk itself, a combinator's climb, `:has()`'s search,
+/// `of S`'s siblings - is in the walked tree, so of the walked document,
+/// since Makiri never moves a node between documents (inserting one from
+/// another document inserts a copy, `bridge::html::insert`). The attribute
+/// side is `attr_by_resolved_name`'s precondition, asserted in debug builds.
+/// The per-node check this replaced read `owner_document` on every
+/// candidate, which cost `css("li")` ~10% on a document not in cache.
+pub(super) enum Name<H: Host> {
+    /// Not looked up yet.
+    Unresolved,
+    /// Nothing to look up: not a type or attribute selector.
+    None,
+    /// A type selector's tag id in the walked document; `None`: no element
+    /// of the document has the name.
+    Tag(Option<H::TagId>),
+    /// An attribute selector's name.
+    Attr(H::AttrName),
+}
+
+impl<H: Host> Clone for Name<H> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<H: Host> Copy for Name<H> {}
+
+impl<H: Host> Name<H> {
+    pub(super) fn resolve<'d, D: CssDoc<'d, Host = H>>(sel: &Step<'_>, doc: D) -> Name<H> {
+        match sel.simple {
+            Simple::Type => Name::Tag(doc.tag_id(sel.name)),
+            /* An attribute in a namespace is found by scanning
+             * (`attr_value_in`), not by a resolved name. */
+            Simple::Attribute(_) if !sel.ns.is_uri() => Name::Attr(doc.resolve_attr_name(sel.name)),
+            _ => Name::None,
+        }
+    }
+}
+
+/// A query's [`Name`]s, by simple-selector index: one per simple
+/// selector, each resolved when it is first reached.
+pub(super) type Names<H> = Table<Name<H>>;
