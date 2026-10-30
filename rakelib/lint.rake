@@ -52,7 +52,7 @@ end
 DYLINT = %w[cargo dylint --path lints/makiri_lints --no-deps --
             --no-default-features --features ruby].freeze
 # The binding layer, a workspace member of its own: the same lints, which
-# read its items as `makiri::nupur::...` (`boundaries::path_of`).
+# read its items as `nupur::...` (`paths::path_of`).
 # With `alloc-inject` on, so the raise sweep's hook (`set_raise_injector`,
 # the armed path of `injected_raise`) is linted too: nupur has no code that
 # only a build without it compiles.

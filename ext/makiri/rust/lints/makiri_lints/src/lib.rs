@@ -1,27 +1,45 @@
 #![feature(rustc_private)]
 #![warn(unused_extern_crates)]
 
-//! Makiri's own lint over its Ruby boundary:
+//! The lints over the binding layer and the extension built on it, in two
+//! groups. Paths are named as [`paths`] spells them: the layer's items by
+//! its own crate name (`nupur::...`), the extension's by its path inside
+//! [`paths::EXTENSION`].
 //!
-//! - `ruby_value_on_heap` ([`value_on_heap`]): a Ruby value kept where Ruby's
-//!   GC cannot see it.
-//! - The layer boundaries ([`boundaries`]): `ruby_layer_in_engine`,
-//!   `unguarded_no_unwind_site`, `ruby_in_gvl_released_body`,
-//!   `infallible_allocation`,
-//!   `raw_ruby_outside_bridge`, `runs_callers_ruby`, `raw_node_crossing`,
-//!   `ruby_surface_in_bridge`, `discarded_ruby_error`.
-//! - `ffi_without_gvl_proof` ([`gvl_proof`]): a call into Ruby's C API from a
-//!   binding-layer function with no proof of the GVL in its signature.
-//! - `c_integer_outside_int` ([`c_integer`]): an integer `as` cast, or a C
-//!   `long` named, at the Ruby boundary outside `nupur::int`.
+//! # The layer's guarantees (nupur)
+//!
+//! What `nupur/src/lib.rs` promises an extension, and what a copy of the
+//! layer under another extension takes with it - these name only `nupur::`
+//! and rb-sys paths:
+//!
 //! - `raising_call_outside_protect` and `unraising_call_in_raw`
 //!   ([`raising`]): one table of the C functions that cannot raise, every
 //!   other taken to, and what `nupur::raw` holds checked against it.
+//! - `unguarded_no_unwind_site` ([`no_unwind_site`]): every `extern "C"`
+//!   function and `Drop` runs under `no_unwind::must_not_unwind`.
+//! - `ffi_without_gvl_proof` ([`gvl_proof`]): a call into Ruby's C API from a
+//!   layer function with no proof of the GVL in its signature.
 //! - `gvl_token_outside_entry` ([`entry`]): the GVL's token made anywhere but
 //!   the entries Ruby calls.
 //! - `forgotten_handle` and `unheld_payload_borrow` ([`handles`]): a handle
 //!   that holds a wrapped object forgotten, and a payload borrowed through a
 //!   bare `Value` with no reason the value is kept.
+//! - `discarded_ruby_error` ([`discarded`]): an `Err` of a Ruby error thrown
+//!   away rather than handled with `Error::rescue`.
+//! - `ruby_value_on_heap` ([`value_on_heap`]): a Ruby value kept where Ruby's
+//!   GC cannot see it.
+//! - `c_integer_outside_int` ([`c_integer`]): an integer `as` cast, or a C
+//!   `long` named, at the Ruby boundary outside `nupur::int`.
+//! - From [`boundaries`]: `raw_ruby_outside_bridge`'s half that holds a raw
+//!   `VALUE` to the layer's files, `runs_callers_ruby` and
+//!   `ruby_in_gvl_released_body`.
+//!
+//! # The extension's own layout (Makiri)
+//!
+//! Where Makiri draws its own lines - its engine, its glue and bridge, its
+//! allocation policy - in [`boundaries`]: `ruby_layer_in_engine`,
+//! `infallible_allocation`, `raw_ruby_outside_bridge`'s half that holds
+//! rb-sys to `bridge/`, `raw_node_crossing`, `ruby_surface_in_bridge`.
 //!
 //! (A second lint, `converted_argument`, checked that no registered method
 //! took a type magnus would convert with the caller's Ruby. Since
@@ -39,9 +57,12 @@ extern crate rustc_span;
 
 mod boundaries;
 mod c_integer;
+mod discarded;
 mod entry;
 mod gvl_proof;
 mod handles;
+mod no_unwind_site;
+mod paths;
 mod raising;
 mod value_on_heap;
 
@@ -318,7 +339,7 @@ impl<'tcx> LateLintPass<'tcx> for MakiriLints {
 
     fn check_local(&mut self, cx: &LateContext<'tcx>, local: &'tcx LetStmt<'tcx>) {
         value_on_heap::check_local(cx, local);
-        boundaries::check_local(cx, local);
+        discarded::check_local(cx, local);
     }
 
     fn check_fn(
@@ -331,7 +352,7 @@ impl<'tcx> LateLintPass<'tcx> for MakiriLints {
         did: LocalDefId,
     ) {
         value_on_heap::check_fn(cx, kind, decl, body, span, did);
-        boundaries::check_fn(cx, kind, body, span, did);
+        no_unwind_site::check_fn(cx, kind, body, span, did);
     }
 
     fn check_path(&mut self, cx: &LateContext<'tcx>, path: &Path<'tcx>, hir_id: HirId) {
@@ -341,6 +362,7 @@ impl<'tcx> LateLintPass<'tcx> for MakiriLints {
 
     fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         boundaries::check_expr(cx, expr);
+        discarded::check_expr(cx, expr);
         gvl_proof::check_expr(cx, expr);
         c_integer::check_expr(cx, expr);
         raising::check_expr(cx, expr);
@@ -354,7 +376,7 @@ impl<'tcx> LateLintPass<'tcx> for MakiriLints {
 /// Whether `did` is the extension's or its binding layer's (the crate
 /// `nupur`, where `ReprValue`, `Payload` and `Opaque` are defined).
 pub fn ours(cx: &LateContext<'_>, did: DefId) -> bool {
-    did.is_local() || cx.tcx.crate_name(did.krate).as_str() == boundaries::NUPUR
+    did.is_local() || cx.tcx.crate_name(did.krate).as_str() == paths::NUPUR
 }
 
 #[derive(Default)]

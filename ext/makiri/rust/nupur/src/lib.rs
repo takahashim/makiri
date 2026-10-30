@@ -56,9 +56,10 @@
 //!   same way, and hands the object out only once it is complete and shown.
 //!
 //! Several of these rest on checks of this crate's own code, not on its
-//! types alone. In Makiri they are `rake dylint` (`lints/makiri_lints`),
-//! `rake no_unwind` and `rake unsafe:boundaries`; a copy of this layer
-//! elsewhere needs its own:
+//! types alone. In Makiri they are `rake dylint` (`lints/makiri_lints`,
+//! whose first group is the layer's and names only `nupur::` paths, so a
+//! copy changes its `paths::EXTENSION` alone), `rake no_unwind` and
+//! `rake unsafe:boundaries`; a copy of this layer elsewhere needs its own:
 //!
 //! - every C call that can raise is inside `raw::call` -
 //!   `raising_call_outside_protect` and `unraising_call_in_raw`, over a

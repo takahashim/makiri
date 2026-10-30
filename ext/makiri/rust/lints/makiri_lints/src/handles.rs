@@ -19,15 +19,15 @@ use rustc_hir::Expr;
 use rustc_lint::LateContext;
 use rustc_middle::ty::{self, Ty};
 
-use crate::boundaries::{callee, is_extension, path_of};
+use crate::paths::{callee, is_extension, path_of};
 use crate::{FORGOTTEN_HANDLE, UNHELD_PAYLOAD_BORROW};
 
 /// The handles whose `Drop` keeps an object alive, by their paths.
-const HANDLES: &[&str] = &["makiri::nupur::typed::Typed", "makiri::nupur::rb::kept::Kept"];
+const HANDLES: &[&str] = &["nupur::typed::Typed", "nupur::rb::kept::Kept"];
 
 /// `TypedType::get` / `get_known`, as `path_of` spells them: an inherent
 /// `impl` block is an unnamed part of the path.
-const BARE_BORROWS: &[&str] = &["makiri::nupur::typed::get", "makiri::nupur::typed::get_known"];
+const BARE_BORROWS: &[&str] = &["nupur::typed::get", "nupur::typed::get_known"];
 
 /// What leaks a value without running its `Drop`.
 const FORGETS: &[&str] = &["core::mem::forget", "core::mem::manually_drop::new"];
