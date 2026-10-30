@@ -20,7 +20,7 @@
 use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, RString};
 
-use super::string::{prefix, ruby_string_bytes_from, text_check, Encoding};
+use super::string::{claims_no_encoding, prefix, ruby_string_bytes_from, text_check, Encoding};
 use crate::cbuf::OwnedBuf;
 use crate::init::{EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 use crate::xml::encoding_sniff::{sniff, SNIFF_WINDOW};
@@ -29,21 +29,6 @@ use crate::xml::encoding_sniff::{sniff, SNIFF_WINDOW};
 /// US-ASCII (a subset of UTF-8 and of the single-byte encodings).
 fn compatible(a: Encoding, b: Encoding) -> bool {
     a == b || a.is_usascii() || b.is_usascii()
-}
-
-/// Whether a String's own tag claims no encoding for the document it holds:
-/// ASCII-8BIT, and US-ASCII - as the HTML document reader has it
-/// (`Encoding::kind`). A String
-/// tagged either is decoded by what its bytes declare (the BOM, then
-/// `encoding=`), and validated as UTF-8 when they declare nothing.
-///
-/// US-ASCII is in that group because it is what a String gets with no claim
-/// behind it - `File.read` under `LANG=C` - not a promise about the bytes: a
-/// UTF-16 file with its BOM, or a Latin-1 one declaring ISO-8859-1, read that
-/// way was validated as UTF-8 and refused, where the same bytes tagged
-/// ASCII-8BIT decoded.
-fn claims_no_encoding(tag: Encoding) -> bool {
-    tag.is_ascii8bit() || tag.is_usascii()
 }
 
 /// Phase 1: the input's single effective byte encoding (XML 1.0 Appendix F).
@@ -115,13 +100,17 @@ fn declared_encoding(ruby: &Ruby, name: &[u8]) -> Result<Option<Encoding>, Error
     if crate::xml::encoding_names::is_ruby_special(name) {
         return Ok(None);
     }
-    if let Some(e) = Encoding::find(ruby, name)? {
-        return Ok(Some(e));
-    }
-    match crate::xml::encoding_names::ruby_name(name) {
-        Some(n) => Encoding::find(ruby, n),
-        None => Ok(None),
-    }
+    let found = match Encoding::find(ruby, name)? {
+        Some(e) => Some(e),
+        None => match crate::xml::encoding_names::ruby_name(name) {
+            Some(n) => Encoding::find(ruby, n)?,
+            None => None,
+        },
+    };
+    /* ASCII-8BIT is Ruby's "no encoding" (`BINARY`, `ASCII-8BIT`), not an
+     * IANA charset: a document naming it names nothing XML can decode by,
+     * and would otherwise be read as UTF-8. */
+    Ok(found.filter(|e| !e.is_ascii8bit()))
 }
 
 /// A `Makiri::XML::SyntaxError` carrying `msg`.
@@ -139,7 +128,7 @@ fn strict_utf8(ruby: &Ruby, str: RString, eff: Encoding) -> Result<RString, Erro
     use crate::nupur::encoding::Unconvertible;
     use crate::nupur::string::Transcode;
     match crate::nupur::string::to_utf8(ruby, str, Some(eff), Unconvertible::Raise)? {
-        Transcode::Utf8(s) => Ok(s),
+        Transcode::AsIs(s) | Transcode::Transcoded(s) => Ok(s),
         Transcode::Fault(e) => Err(syntax_error(format_args!(
             "XML input could not be decoded to UTF-8: {}",
             e.wording(ruby)
@@ -170,6 +159,12 @@ pub fn xml_decode_input(
 ) -> Result<OwnedBuf, Error> {
     let eff = effective_encoding(ruby, str)?;
     let s = strict_utf8(ruby, str, eff)?;
+    /* US-ASCII is read as UTF-8 bytes, so it needs no transcode; but as an
+     * effective encoding it is a declaration's (a String's own US-ASCII
+     * claims none, and no BOM names it), and a document declaring US-ASCII
+     * holds ASCII alone (§4.3.3: bytes the declared encoding cannot read are
+     * a fatal error). */
+    let ascii_only = eff.is_usascii();
     let off = bom_len(ruby, s);
     let len = s.len() - off;
 
@@ -192,6 +187,11 @@ pub fn xml_decode_input(
     let bytes = ruby_string_bytes_from(ruby, s, off)?;
     if let Some(problem) = text_check(ruby, s, bytes.as_slice()).problem() {
         return Err(syntax_error(format_args!("XML input {problem}")));
+    }
+    if ascii_only && !bytes.as_slice().is_ascii() {
+        return Err(syntax_error(
+            "XML input declared US-ASCII holds a byte outside ASCII",
+        ));
     }
     Ok(bytes)
 }

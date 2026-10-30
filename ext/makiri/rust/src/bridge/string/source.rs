@@ -46,14 +46,15 @@ impl HtmlSource {
     ) -> Result<HtmlSource, Error> {
         use crate::nupur::encoding::Unconvertible;
         use crate::nupur::string::Transcode;
-        let src = match crate::nupur::string::to_utf8(ruby, s, read_as, Unconvertible::Replace)? {
-            Transcode::Utf8(src) => src,
-            Transcode::Fault(e) => return Err(e),
-        };
-        /* A transcode replaced every invalid or unmappable byte, so its result
-         * is valid UTF-8 whatever its coderange says. */
-        let transcoded = !crate::bridge::ruby::same_value(src, s);
-        let known_valid = transcoded || known_utf8(ruby, src);
+        let (src, known_valid) =
+            match crate::nupur::string::to_utf8(ruby, s, read_as, Unconvertible::Replace)? {
+                /* Ruby's cached verdict on the bytes, only a hint. */
+                Transcode::AsIs(src) => (src, known_utf8(ruby, src)),
+                /* The transcode replaced every invalid or unmappable byte, so
+                 * its result is valid UTF-8 whatever its coderange says. */
+                Transcode::Transcoded(src) => (src, true),
+                Transcode::Fault(e) => return Err(e),
+            };
         let bytes = ruby_string_bytes(ruby, src)?;
         Ok(HtmlSource { bytes, known_valid })
     }
@@ -119,7 +120,7 @@ impl DocumentSource {
         use crate::html::encoding::{transport_for, Transport, UTF_8};
         let own = Encoding::of(s);
         let enc = match given {
-            Some(GivenEncoding::Label(e)) => return Self::declared(ruby, s, own, e),
+            Some(GivenEncoding::Label(e)) => return Self::declared(ruby, s, e),
             Some(GivenEncoding::Ruby(e)) => e,
             None => own,
         };
@@ -138,7 +139,7 @@ impl DocumentSource {
                 },
                 transport: None,
             }),
-            Transport::Declared(e) => Self::declared(ruby, s, own, e),
+            Transport::Declared(e) => Self::declared(ruby, s, e),
         }
     }
 
@@ -146,13 +147,12 @@ impl DocumentSource {
     fn declared(
         ruby: &crate::bridge::rb::Ruby,
         s: RString,
-        own: Encoding,
         e: &'static crate::html::encoding::Encoding,
     ) -> Result<DocumentSource, Error> {
-        /* Ruby's own verdict counts only for bytes it holds as UTF-8. */
-        let known_valid = e == crate::html::encoding::UTF_8
-            && own.is_utf8_compatible(ruby)
-            && known_utf8(ruby, s);
+        /* Ruby's own verdict (`known_utf8`, which counts it only for bytes
+         * it holds as UTF-8) is of use only where the bytes are read as
+         * UTF-8. */
+        let known_valid = e == crate::html::encoding::UTF_8 && known_utf8(ruby, s);
         Ok(DocumentSource {
             source: HtmlSource {
                 bytes: ruby_string_bytes(ruby, s)?,

@@ -10,7 +10,7 @@ use crate::bridge::rb::ReprValue;
 use crate::bridge::rb::{Error, RString, Value};
 use crate::bridge::ruby::makiri_error;
 
-use crate::nupur::string::{read_utf8_within, ReadError};
+use crate::nupur::string::{read_utf8, read_utf8_within, ReadError};
 use crate::nupur::utf8_copy::Utf8Copy;
 
 use super::*;
@@ -58,18 +58,23 @@ pub type RubyText = RubyStr<TextContract>;
 pub type RubyData = RubyStr<DataContract>;
 
 impl<C: Checked> RubyStr<C> {
-    /// A checked view of `s` (`nupur::string::read_utf8_within`): read in
-    /// its own encoding, held to `max_bytes`, its copy put to `check` (the
-    /// contract's own rule: a NUL) and then checked to be UTF-8. The order is
-    /// the error's: a NUL is reported before invalid UTF-8.
+    /// A checked view of `s` (`nupur::string::read_utf8`): read in its own
+    /// encoding, held to `max_bytes` when there is a cap
+    /// (`read_utf8_within`), its copy put to `check` (the contract's own
+    /// rule: a NUL) and then checked to be UTF-8. The order is the error's: a
+    /// NUL is reported before invalid UTF-8.
     fn acquire<P>(
         ruby: &Ruby,
         s: RString,
-        max_bytes: usize,
+        max_bytes: Option<usize>,
         check: impl FnOnce(&[u8]) -> Option<P>,
     ) -> Result<Self, ReadError<P>> {
+        let bytes = match max_bytes {
+            None => read_utf8(ruby, s, check)?,
+            Some(max) => read_utf8_within(ruby, s, max, check)?,
+        };
         Ok(RubyStr {
-            bytes: read_utf8_within(ruby, s, max_bytes, check)?,
+            bytes,
             contract: core::marker::PhantomData,
         })
     }
@@ -131,10 +136,9 @@ fn text_error(what: &str, problem: &str) -> Error {
     makiri_error(format_args!("{what} {problem}"))
 }
 
-/// The error for a checked view [`read_utf8_within`] refused: what each
-/// reader words its own way - its check's refusal, invalid UTF-8 - by
-/// `refused` and `not_utf8`, and the rest alike. With no cap (`usize::MAX`)
-/// `TooLong` cannot come back.
+/// The error for a checked view [`read_utf8`] refused: what each reader words
+/// its own way - its check's refusal, invalid UTF-8 - by `refused` and
+/// `not_utf8`, and the rest alike. With no cap `TooLong` cannot come back.
 fn read_error<P>(
     r: ReadError<P>,
     what: &str,
@@ -202,7 +206,7 @@ fn verified_text_raising(
 ) -> Result<RubyText, Error> {
     use crate::cutf8::TextVerdict;
     let s = name_arg(in_)?;
-    RubyText::acquire(ruby, s, usize::MAX, |b| {
+    RubyText::acquire(ruby, s, None, |b| {
         b.contains(&0).then_some(TextVerdict::HasNul)
     })
     .map_err(|r| {
@@ -222,7 +226,7 @@ fn verified_text_raising(
 /// lets NUL through - in place of the text one.
 pub fn ruby_verified_data(ruby: &Ruby, in_: Value, what: &str) -> Result<RubyData, Error> {
     let s = string_arg(in_)?;
-    RubyData::acquire(ruby, s, usize::MAX, |_| None::<core::convert::Infallible>).map_err(|r| {
+    RubyData::acquire(ruby, s, None, |_| None::<core::convert::Infallible>).map_err(|r| {
         read_error(
             r,
             what,
@@ -277,7 +281,7 @@ pub fn ruby_try_verified_text(
     sv: RString,
     max_bytes: usize,
 ) -> Result<RubyText, TextRefusal> {
-    RubyText::acquire(ruby, sv, max_bytes, |b| {
+    RubyText::acquire(ruby, sv, Some(max_bytes), |b| {
         b.contains(&0)
             .then(|| TextVerdict::HasNul.reason().unwrap_or_default())
     })

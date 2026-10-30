@@ -435,6 +435,24 @@ RSpec.describe "Makiri::XML minimal parse" do
       end
     end
 
+    it "rejects a declaration of Ruby's binary encoding, which names no charset" do
+      %w[BINARY ASCII-8BIT binary].each do |name|
+        expect { Makiri::XML(%(<?xml version="1.0" encoding="#{name}"?><r>caf\xC3\xA9</r>).b) }
+          .to raise_error(Makiri::XML::SyntaxError, /unknown encoding: #{name}/)
+      end
+    end
+
+    it "holds a document declaring US-ASCII to ASCII (XML 1.0 4.3.3)" do
+      expect(Makiri::XML(%(<?xml version="1.0" encoding="US-ASCII"?><r>cafe</r>).b).root.text).to eq("cafe")
+      expect { Makiri::XML(%(<?xml version="1.0" encoding="US-ASCII"?><r>caf\xC3\xA9</r>).b) }
+        .to raise_error(Makiri::XML::SyntaxError, /declared US-ASCII/)
+    end
+
+    it "reads a String tagged US-ASCII, which claims no encoding, as UTF-8 when nothing is declared" do
+      src = "<r>caf\xC3\xA9</r>".dup.force_encoding("US-ASCII")
+      expect(Makiri::XML(src).root.text).to eq("café")
+    end
+
     it "rejects a declaration naming an encoding Ruby does not know, whatever the String's encoding" do
       src = "<?xml version='1.0' encoding='no-such-encoding'?><r>x</r>"
       [src, src.b, src.encode("US-ASCII")].each do |s|

@@ -57,48 +57,52 @@ impl RString {
 
 /* ---- the String's encoding, as a reader takes it ---- */
 
-/// [`Encoding::reads_as_utf8_bytes`](crate::encoding::Encoding::reads_as_utf8_bytes) for `s`'s encoding, by index and
-/// with no call on the common path: the index is read from the String's
-/// flags, where Ruby keeps it inline for every encoding below
-/// `RUBY_ENCODING_INLINE_MAX` (the builtin three are 0-2), and compared
-/// with the builtin indices, looked up once. Every strict read asks, so it
-/// is on the hot path: `rb_enc_get` + `rb_utf8_encoding` cost Makiri's
-/// `Node#[]` ~13%.
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        raising_call_outside_protect,
-        reason = "rb_enc_get_index raises for a File or a Symbol, as rb_enc_get; `s` is a String, and a String's index is an ivar read when it is not inline"
-    )
-)]
-pub fn reads_as_utf8_bytes(_: &Ruby, s: RString) -> bool {
-    use rb_sys::ruby_encoding_consts::{
-        RUBY_ENCODING_INLINE_MAX, RUBY_ENCODING_MASK, RUBY_ENCODING_SHIFT,
-    };
-    static BUILTIN: std::sync::OnceLock<[c_int; 3]> = std::sync::OnceLock::new();
-    // SAFETY: `s` is a live String - a heap object, whose flags word is
-    // the first field of its `RBasic` and readable; reading it runs no Ruby.
-    let flags = unsafe { (*(s.as_raw() as *const rb_sys::RBasic)).flags };
-    /* Seven bits, which a `c_int` holds. */
-    let bits =
-        (crate::int::word(flags) & RUBY_ENCODING_MASK as usize) >> RUBY_ENCODING_SHIFT as u32;
-    let inline = c_int::try_from(bits).unwrap_or(c_int::MAX);
-    let index = if inline == RUBY_ENCODING_INLINE_MAX as c_int {
-        // SAFETY: as above; the lookup reads an instance variable and
-        // raises nothing.
-        unsafe { rb_sys::rb_enc_get_index(s.as_raw()) }
-    } else {
-        inline
-    };
-    // SAFETY: Ruby's immutable builtin encoding indices.
-    let builtin = BUILTIN.get_or_init(|| unsafe {
-        [
-            rb_sys::rb_utf8_encindex(),
-            rb_sys::rb_usascii_encindex(),
-            rb_sys::rb_ascii8bit_encindex(),
-        ]
-    });
-    builtin.contains(&index)
+impl RString {
+    /// Whether this String's text is read as UTF-8 bytes with no transcode -
+    /// its encoding UTF-8, US-ASCII or ASCII-8BIT
+    /// ([`Encoding::is_utf8_ascii_or_binary`]) - asked of the String itself, by
+    /// index and with no call on the common path: the index is read from the String's
+    /// flags, where Ruby keeps it inline for every encoding below
+    /// `RUBY_ENCODING_INLINE_MAX` (the builtin three are 0-2), and compared
+    /// with the builtin indices, looked up once. Every strict read asks, so it
+    /// is on the hot path: `rb_enc_get` + `rb_utf8_encoding` cost Makiri's
+    /// `Node#[]` ~13%.
+    #[cfg_attr(
+        dylint_lib = "makiri_lints",
+        allow(
+            raising_call_outside_protect,
+            reason = "rb_enc_get_index raises for a File or a Symbol, as rb_enc_get; `s` is a String, and a String's index is an ivar read when it is not inline"
+        )
+    )]
+    pub fn reads_as_utf8_bytes(self, _: &Ruby) -> bool {
+        use rb_sys::ruby_encoding_consts::{
+            RUBY_ENCODING_INLINE_MAX, RUBY_ENCODING_MASK, RUBY_ENCODING_SHIFT,
+        };
+        static BUILTIN: std::sync::OnceLock<[c_int; 3]> = std::sync::OnceLock::new();
+        // SAFETY: `self` is a live String - a heap object, whose flags word is
+        // the first field of its `RBasic` and readable; reading it runs no Ruby.
+        let flags = unsafe { (*(self.as_raw() as *const rb_sys::RBasic)).flags };
+        /* Seven bits, which a `c_int` holds. */
+        let bits =
+            (crate::int::word(flags) & RUBY_ENCODING_MASK as usize) >> RUBY_ENCODING_SHIFT as u32;
+        let inline = c_int::try_from(bits).unwrap_or(c_int::MAX);
+        let index = if inline == RUBY_ENCODING_INLINE_MAX as c_int {
+            // SAFETY: as above; the lookup reads an instance variable and
+            // raises nothing.
+            unsafe { rb_sys::rb_enc_get_index(self.as_raw()) }
+        } else {
+            inline
+        };
+        // SAFETY: Ruby's immutable builtin encoding indices.
+        let builtin = BUILTIN.get_or_init(|| unsafe {
+            [
+                rb_sys::rb_utf8_encindex(),
+                rb_sys::rb_usascii_encindex(),
+                rb_sys::rb_ascii8bit_encindex(),
+            ]
+        });
+        builtin.contains(&index)
+    }
 }
 
 /// What [`to_utf8`] made of a String.
@@ -107,9 +111,13 @@ pub fn reads_as_utf8_bytes(_: &Ruby, s: RString) -> bool {
     reason = "an Error holds its message inline (`crate::msg::Msg`), so it is never boxed"
 )]
 pub enum Transcode {
-    /// Text read as UTF-8 bytes: the String itself, or the new String its
-    /// transcode made (on this frame, where the GC keeps it).
-    Utf8(RString),
+    /// The String itself: its bytes are read as UTF-8 bytes already, and are
+    /// whatever they are - checking them is the reader's.
+    AsIs(RString),
+    /// The new String the transcode made (on this frame, where the GC keeps
+    /// it). Under [`Unconvertible::Replace`] it is valid UTF-8, every
+    /// invalid or unmappable sequence replaced.
+    Transcoded(RString),
     /// The String's own fault: the transcode raised an `EncodingError` - no
     /// converter, an invalid byte sequence, a character with no UTF-8 form
     /// under [`Unconvertible::Raise`]. Handled: the caller's `$!` is as it
@@ -137,11 +145,11 @@ pub fn to_utf8(
     on: Unconvertible,
 ) -> Result<Transcode, Error> {
     let as_utf8 = match read_as {
-        None => reads_as_utf8_bytes(ruby, s),
-        Some(enc) => enc.reads_as_utf8_bytes(ruby),
+        None => s.reads_as_utf8_bytes(ruby),
+        Some(enc) => enc.is_utf8_ascii_or_binary(ruby),
     };
     if as_utf8 {
-        return Ok(Transcode::Utf8(s));
+        return Ok(Transcode::AsIs(s));
     }
     /* `$!` is read and put back only here, where a transcode runs: it costs
      * a call into libruby, and a raise that is passed on replaces it anyway. */
@@ -153,7 +161,7 @@ pub fn to_utf8(
         Encoding::utf8(ruby).encode(input, on)
     });
     match made {
-        Ok(utf8) => Ok(Transcode::Utf8(utf8)),
+        Ok(utf8) => Ok(Transcode::Transcoded(utf8)),
         Err(e) if e.is_kind_of(ruby, crate::rb::Builtin::EncodingError) => Ok(Transcode::Fault(e)),
         Err(e) => Err(e),
     }
@@ -226,8 +234,17 @@ pub fn read_utf8_within<P>(
     check: impl FnOnce(&[u8]) -> Option<P>,
 ) -> Result<crate::utf8_copy::Utf8Copy, ReadError<P>> {
     use crate::utf8_copy::{CopyError, FillError, Utf8Copy};
+    /* A transcode's UTF-8 is at least a quarter of its source - no encoding
+     * takes more than four bytes a character, nor UTF-8 fewer than one - so a
+     * String that cannot fit is refused before it is transcoded, whatever
+     * its size. (A stateful encoding's escapes make no character, so one
+     * padded with them past four times the cap is refused even so: the
+     * closed direction.) */
+    if s.len() / 4 > max_bytes {
+        return Err(ReadError::TooLong);
+    }
     let s = match to_utf8(ruby, s, None, Unconvertible::Raise).map_err(ReadError::Raised)? {
-        Transcode::Utf8(s) => s,
+        Transcode::AsIs(s) | Transcode::Transcoded(s) => s,
         Transcode::Fault(_handled) => return Err(ReadError::NoUtf8Form),
     };
     if s.len() > max_bytes {
