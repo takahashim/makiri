@@ -67,8 +67,9 @@ pub(super) const GROWTH_MIN_BYTES: usize = 512 * 1024;
 /// so at the start of an edit, before any argument is converted, and after a
 /// loan, whose arguments were copies.
 pub fn account_growth(ruby: &crate::bridge::rb::Ruby, rb_doc: Value) {
-    if doc_data_known(&doc_known(rb_doc)).grown_enough() {
-        account_document(ruby, rb_doc);
+    let doc = doc_known(rb_doc);
+    if doc_data_known(&doc).grown_enough() {
+        account_data(ruby, doc.data());
     }
 }
 
