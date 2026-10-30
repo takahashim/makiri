@@ -29,8 +29,14 @@ RSpec.describe "native stack guard" do
     # These specs compare the child's stdout byte for byte, so folding stderr
     # in (as xml_html_boundary_spec.rb does, for a different noise source)
     # would prefix it. stderr is returned for the failure message instead.
+    # RUBY_FREE_AT_EXIT is inherited, not dropped: under spec:valgrind
+    # ruby_memcheck tells a leak from a live object only by Ruby freeing
+    # everything at exit, so a String of ours still alive in the child at exit
+    # (`doc.to_xml` below) is otherwise reported "definitely lost"
+    # (rakelib/valgrind.rake). Its warning goes to stderr, which is not
+    # compared.
     out, err, status = Open3.capture3(
-      { "RUBY_FREE_AT_EXIT" => nil }.merge(env),
+      { "RUBY_FREE_AT_EXIT" => ENV.fetch("RUBY_FREE_AT_EXIT", nil) }.merge(env),
       RbConfig.ruby, "-I#{lib}", "-e", %(require "makiri"\n#{code})
     )
     [status, out, err]
@@ -143,13 +149,9 @@ RSpec.describe "native stack guard" do
   # recursed once per nested list.
   describe "stylesheet selector text, inside a small Fiber" do
     it "writes deeply nested selector lists back in full" do
-      # The child keeps RUBY_FREE_AT_EXIT when spec:valgrind sets it: ruby_memcheck
-      # tells a leak from a live object only by Ruby freeing everything at exit,
-      # and these selector texts are tens of KB of heap Strings our extension
-      # made - without the teardown, each one still alive at exit is reported
-      # "definitely lost". (stderr's free-at-exit warning is not compared.)
-      env = { "RUBY_FIBER_MACHINE_STACK_SIZE" => "131072",
-              "RUBY_FREE_AT_EXIT" => ENV.fetch("RUBY_FREE_AT_EXIT", nil) }
+      # These selector texts are tens of KB of heap Strings our extension made,
+      # which is why the child keeps RUBY_FREE_AT_EXIT (`run_isolated`).
+      env = { "RUBY_FIBER_MACHINE_STACK_SIZE" => "131072" }
       status, out, err = run_isolated(env, <<~RUBY)
         [":is(" * 5000, ":not(" * 5000, ":has(" + ":is(" * 4999, ":nth-child(1 of " * 5000].each do |open|
           sel = open + ".a\\\\:b" + ")" * 5000
