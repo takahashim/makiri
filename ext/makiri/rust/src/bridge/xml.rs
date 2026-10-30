@@ -578,35 +578,6 @@ pub fn verified_data(
     fits_xml_node(crate::bridge::string::ruby_verified_data(ruby, v, what)?)
 }
 
-/// [`verified_data`] for an optional argument: `nil` is `None`.
-pub fn verified_data_opt(
-    ruby: &Ruby,
-    v: Value,
-    what: &str,
-) -> Result<Option<crate::bridge::string::RubyData>, Error> {
-    if v.is_nil() {
-        return Ok(None);
-    }
-    verified_data(ruby, v, what).map(Some)
-}
-
-/// [`verified_name`] for an optional argument: `nil` is `None`.
-pub fn verified_name_opt(ruby: &Ruby, v: Value, what: &str) -> Result<Option<RubyText>, Error> {
-    if v.is_nil() {
-        return Ok(None);
-    }
-    verified_name(ruby, v, what).map(Some)
-}
-
-/// [`verified_text`] for an optional argument: `nil` is `None` - the same
-/// shape as `bridge::string::ruby_verified_text_opt`.
-pub fn verified_text_opt(ruby: &Ruby, v: Value, what: &str) -> Result<Option<RubyText>, Error> {
-    if v.is_nil() {
-        return Ok(None);
-    }
-    verified_text(ruby, v, what).map(Some)
-}
-
 /* ------------------------------------------------------------------ */
 /* documents: parsing, readers, fragments                             *
  * ------------------------------------------------------------------ */

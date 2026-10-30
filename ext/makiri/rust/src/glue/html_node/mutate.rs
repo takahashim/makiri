@@ -24,8 +24,7 @@ use crate::bridge::html::{
     check_owning_doc, edit, insert, new_node, wrap_html_node, HtmlEdit, HtmlSelf,
 };
 use crate::bridge::string::{
-    namespace_arg, ruby_verified_data, ruby_verified_name, ruby_verified_text,
-    ruby_verified_text_opt, HtmlSource,
+    namespace_arg, optional, ruby_verified_data, ruby_verified_name, ruby_verified_text, HtmlSource,
 };
 use crate::dom_rules::{self, TextContent};
 use crate::glue::node::{dom_extract as extract, DOCUMENT_NOT_REMOVABLE};
@@ -469,7 +468,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
     }
 
     let verified = |v: Option<Value>, what: &'static str| match v {
-        Some(v) => ruby_verified_text_opt(ruby, v, what),
+        Some(v) => optional(v, |v| ruby_verified_text(ruby, v, what)),
         None => Ok(None),
     };
     let pv = verified(rb_pub, "doctype public id")?;
