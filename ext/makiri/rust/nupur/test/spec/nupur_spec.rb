@@ -59,6 +59,49 @@ RSpec.describe "nupur" do
     end
   end
 
+  describe "in several Ractors at once" do
+    # Each Ractor runs methods under its own GVL, so a pending exit kept for
+    # the whole process would be forgotten, or resumed, by another Ractor's
+    # method running between its catch and its resumption.
+    def in_ractors(count, code)
+      previous = Warning[:experimental]
+      Warning[:experimental] = false
+      ractors = Array.new(count) { Ractor.new(code) { |source| eval(source) } } # rubocop:disable Security/Eval
+      ractors.map { |r| r.respond_to?(:value) ? r.value : r.take }
+    ensure
+      Warning[:experimental] = previous
+    end
+
+    it "resumes each Ractor's exit in that Ractor" do
+      results = in_ractors(4, <<~RUBY)
+        kept = 0
+        20_000.times do |i|
+          kept += 1 if catch(:out) { NupurTest.drop_exit { throw :out, :kept }; :lost } == :kept
+          NupurTest.yield_each(2) { |j| break j } if i.odd?
+          NupurTest.echo(i)
+        end
+        kept
+      RUBY
+      expect(results).to eq([20_000] * 4)
+    end
+
+    it "cannot share, copy or move a wrapped object to another Ractor" do
+      holder = NupurTest::Holder.new("x")
+      expect { Ractor.make_shareable(holder) }.to raise_error(Ractor::Error)
+      [false, true].each do |move|
+        previous = Warning[:experimental]
+        Warning[:experimental] = false
+        ractor = Ractor.new { Ractor.receive }
+        expect { ractor.send(holder, move: move) }.to raise_error(StandardError)
+        ractor.send(nil)
+        ractor.respond_to?(:value) ? ractor.value : ractor.take
+      ensure
+        Warning[:experimental] = previous
+      end
+      expect(holder.held).to eq("x")
+    end
+  end
+
   describe "a wrapped object" do
     it "keeps its slot's value alive and in place across collections" do
       holders = Array.new(50) { |i| NupurTest::Holder.new("held #{i}" * 3) }

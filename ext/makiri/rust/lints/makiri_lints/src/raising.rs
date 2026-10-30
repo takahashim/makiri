@@ -53,6 +53,9 @@ const NON_RAISING: &[&str] = &[
     "rb_keyword_given_p",
     "ruby_native_thread_p",
     "ruby_stack_check",
+    /* The running thread's extension config, written: methods defined from
+     * here on may be called from any Ractor. */
+    "rb_ext_ractor_safe",
     /* A check: false for a value of any other type. */
     "rb_typeddata_is_kind_of",
     /* Reads of an object: an Array element (nil past the end). */

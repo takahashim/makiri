@@ -6,24 +6,50 @@
 
 use std::sync::OnceLock;
 
+use super::class::DataClass;
 use super::error::{Builtin, Error};
 use super::ruby::Ruby;
-use super::value::{ExceptionClass, ReprValue, Value};
+use super::value::{ExceptionClass, RClass, RModule, ReprValue, Value};
+
+/// A kind of value every Ractor may read: a class or a module, which Ruby
+/// makes shareable as it creates one (`FL_SHAREABLE`, `class_alloc`). What a
+/// static may keep - [`Opaque`], [`RbConst`] - since a static is read from
+/// whichever Ractor runs the method, each under its own GVL; a String or an
+/// Array kept there would be one Ractor's object read by another. Sealed: an
+/// extension cannot add a kind.
+pub trait Shareable: ReprValue + sealed::Sealed {}
+
+mod sealed {
+    pub trait Sealed {}
+}
+
+macro_rules! shareable {
+    ($($t:ty),*) => {
+        $(
+            impl sealed::Sealed for $t {}
+            impl Shareable for $t {}
+        )*
+    };
+}
+
+shareable!(RClass, RModule, ExceptionClass, DataClass);
 
 /// A value kept for the rest of the process: registered with the GC as a
 /// mark root, so it is never collected or moved, and readable from any
-/// thread that holds the GVL ([`Opaque::get`]). What the class table in
+/// thread that holds its Ractor's GVL ([`Opaque::get`]) - a [`Shareable`]
+/// value, so from any Ractor. What the class table in
 /// an extension's `Init_` registers are made of.
 #[derive(Clone, Copy)]
 pub struct Opaque<T>(T);
 
 // SAFETY: an `Opaque` is read only through `Opaque::get`, which takes the
-// GVL's proof; the value itself is pinned and rooted by `register`.
-unsafe impl<T: ReprValue> Send for Opaque<T> {}
+// GVL's proof; the value itself is pinned and rooted by `register`, and is
+// `Shareable`, so a thread of any Ractor may read it.
+unsafe impl<T: Shareable> Send for Opaque<T> {}
 // SAFETY: as `Send`.
-unsafe impl<T: ReprValue> Sync for Opaque<T> {}
+unsafe impl<T: Shareable> Sync for Opaque<T> {}
 
-impl<T: ReprValue> Opaque<T> {
+impl<T: Shareable> Opaque<T> {
     /// `v`, rooted with the GC for the rest of the process.
     pub fn register(v: T) -> Result<Opaque<T>, Error> {
         crate::raw::gc_register_mark_object(v.as_value())?;
@@ -64,7 +90,10 @@ impl<T: ReprValue> RbConst<T> {
 
     /// Record `v`, rooted for the rest of the process. `Init_` is the only
     /// writer, and a second write is refused rather than replacing the first.
-    pub fn set(&self, v: T) -> Result<(), Error> {
+    pub fn set(&self, v: T) -> Result<(), Error>
+    where
+        T: Shareable,
+    {
         const TWICE: &str = "a constant handle was set twice";
         /* Refused before the value is rooted: a root is never released, so
          * rooting one the cell then turns away would keep it for good. (The
