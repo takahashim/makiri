@@ -544,9 +544,9 @@ pub(in crate::bridge) fn cached_node(
 
 /// The hidden ivars' names, interned at `Init_makiri` ([`init_ivars`]).
 struct Ivars {
-    document: crate::bridge::rb::Id,
-    errors: crate::bridge::rb::Id,
-    node: crate::bridge::rb::Id,
+    document: crate::bridge::rb::HiddenId,
+    errors: crate::bridge::rb::HiddenId,
+    node: crate::bridge::rb::HiddenId,
 }
 
 static IVARS: std::sync::OnceLock<Ivars> = std::sync::OnceLock::new();
@@ -564,17 +564,17 @@ fn ivars() -> &'static Ivars {
 }
 
 /// The hidden ivar an XPathContext keeps its Document in.
-pub(in crate::bridge) fn ivar_document() -> crate::bridge::rb::Id {
+pub(in crate::bridge) fn ivar_document() -> crate::bridge::rb::HiddenId {
     ivars().document
 }
 
 /// The hidden ivar a Document keeps its parse-warning Array in.
-pub(in crate::bridge) fn ivar_errors() -> crate::bridge::rb::Id {
+pub(in crate::bridge) fn ivar_errors() -> crate::bridge::rb::HiddenId {
     ivars().errors
 }
 
 /// The hidden ivar an XPathContext keeps its context node in.
-pub(in crate::bridge) fn ivar_node() -> crate::bridge::rb::Id {
+pub(in crate::bridge) fn ivar_node() -> crate::bridge::rb::HiddenId {
     ivars().node
 }
 
@@ -582,9 +582,9 @@ pub(in crate::bridge) fn ivar_node() -> crate::bridge::rb::Id {
 /// the first names.
 pub fn init_ivars(ruby: &Ruby) -> Result<(), Error> {
     let _ = IVARS.set(Ivars {
-        document: crate::bridge::rb::Id::intern(ruby, c"makiri_document")?,
-        errors: crate::bridge::rb::Id::intern(ruby, c"makiri_errors")?,
-        node: crate::bridge::rb::Id::intern(ruby, c"makiri_node")?,
+        document: crate::bridge::rb::HiddenId::intern(ruby, c"makiri_document")?,
+        errors: crate::bridge::rb::HiddenId::intern(ruby, c"makiri_errors")?,
+        node: crate::bridge::rb::HiddenId::intern(ruby, c"makiri_node")?,
     });
     Ok(())
 }

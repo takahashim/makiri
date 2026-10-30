@@ -55,6 +55,14 @@
 //!   keeps the object where the GC sees it until the last borrow is over,
 //!   wherever the object came from; `wrap_hidden` lends it to its `fill` the
 //!   same way, and hands the object out only once it is complete and shown.
+//! - **Two Ractors may run the layer at once.** Each runs its methods under
+//!   its own GVL, so nothing of the layer's is shared but what any Ractor
+//!   may read: a static keeps only a [`rb::Shareable`] value (a class or a
+//!   module), a pending exit is the native thread's own, and a wrapped
+//!   object never leaves its Ractor - its type is never one Ruby may make
+//!   shareable, and its class, having no allocator, cannot be copied or
+//!   moved to another. An extension opts in at `Init_`
+//!   ([`rb::method::declare_ractor_safe`]).
 //!
 //! Several of these rest on checks of this crate's own code, not on its
 //! types alone. In Makiri they are `rake dylint` (`lints/makiri_lints`,
@@ -110,6 +118,13 @@
 //! - **Nothing runs the caller's Ruby unasked** - a `to_s`, a block, a
 //!   method call. Checked by `runs_callers_ruby`, with each sanctioned call
 //!   an `allow` stating why.
+//! - **Declared Ractor-safe, the extension's own state is too.** What the
+//!   layer keeps is safe across Ractors; what the extension keeps - its
+//!   statics, whatever its methods take the GVL to serialise (now only one
+//!   Ractor's threads) - is its own to show, and a class of its wrapped
+//!   objects defines no Marshal hook, through which Ruby would copy one to
+//!   another Ractor. Checked by review alone, and by specs that run its
+//!   methods in several Ractors at once.
 //! - **The GVL's token is made only where Ruby calls in.** [`rb::method::run_init`]
 //!   is called from the extension's `extern "C" fn Init_*` alone, and
 //!   [`rb::method::finish`] from the `method!` / `function!` expansions alone;

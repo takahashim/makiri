@@ -205,6 +205,9 @@ fn check(ruby: &Ruby) -> Result<(), Error> {
 }
 
 fn init(ruby: &Ruby) -> Result<(), Error> {
+    /* Every method below may be called from any Ractor: the specs run some
+     * in several at once. */
+    nupur::rb::method::declare_ractor_safe(ruby);
     let m = ruby.define_module("NupurTest")?;
     let internal = m.define_error("InternalError", ruby.exception_exception())?;
     INTERNAL.set(internal)?;

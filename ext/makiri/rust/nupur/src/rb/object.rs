@@ -8,19 +8,20 @@
 use rb_sys::VALUE;
 
 use super::error::Error;
-use super::value::{AsRawValue, Id, RClass, RModule, ReprValue, Value};
+use super::value::{AsRawValue, HiddenId, RClass, RModule, ReprValue, Value};
 
 /// `rb_attr_get`: a hidden ivar's value, or nil. Runs no Ruby code (an
-/// attribute read, not a method call), and raises nothing in the main Ractor.
+/// attribute read, not a method call), and raises nothing in any Ractor (a
+/// [`HiddenId`] is a name the Ractor checks do not apply to).
 #[inline]
 #[cfg_attr(
     dylint_lib = "makiri_lints",
     allow(
         raising_call_outside_protect,
-        reason = "rb_attr_get raises RactorIsolationError only for a non-main Ractor reading an unshareable ivar; the extension is not declared Ractor-safe, so Ruby refuses every method of it outside the main Ractor first (spec/ractor_spec.rb)"
+        reason = "rb_attr_get raises only RactorIsolationError, and only for an @ name (rb_is_instance_id) of a class, a module or a shareable object read from another Ractor; a HiddenId is never an @ name"
     )
 )]
-pub fn ivar_get(obj: Value, id: Id) -> Value {
+pub fn ivar_get(obj: Value, id: HiddenId) -> Value {
     // SAFETY: a live object; the read raises nothing.
     unsafe { Value::from_raw(rb_sys::rb_attr_get(obj.as_raw(), id.as_raw())) }
 }
@@ -28,7 +29,7 @@ pub fn ivar_get(obj: Value, id: Id) -> Value {
 /// Set the hidden ivar `id` (a name without `@`, so Ruby code cannot see it)
 /// of `obj` to `v`: `FrozenError` for a frozen object, and `NoMemoryError`.
 #[inline]
-pub fn ivar_set(obj: Value, id: Id, v: impl ReprValue) -> Result<(), Error> {
+pub fn ivar_set(obj: Value, id: HiddenId, v: impl ReprValue) -> Result<(), Error> {
     crate::raw::ivar_set(obj, id, v.as_value())
 }
 

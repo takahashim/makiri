@@ -19,6 +19,14 @@
   Makiri itself, on its own copy of the bytes, rather than trusted on the
   String's cached coderange, which another C extension could leave wrong.
 
+### Added
+
+* Makiri can be used outside the main Ractor. Each Ractor parses, queries,
+  edits and writes its own documents, in parallel with the others: XPath,
+  which holds the GVL and so does not scale across threads, scales across
+  Ractors. A Document, a node, a NodeSet or an XPathContext cannot be
+  shared with, copied to or moved to another Ractor.
+
 ### Changed
 
 * A source install needs Rust 1.95 or newer (it was 1.84). Binary gems

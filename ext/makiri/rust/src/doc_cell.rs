@@ -30,7 +30,9 @@
 //! ```
 //!
 //! And the cell itself is not shared between threads (a Document's content is
-//! reached under the GVL, from the thread that holds it):
+//! reached under the GVL of the one Ractor it belongs to, from the thread
+//! that holds it - a Document is never shareable, so no other Ractor reaches
+//! it):
 //!
 //! ```compile_fail,E0277
 //! use makiri::doc_cell::DocCell;

@@ -69,6 +69,10 @@ impl DataType {
          * values are its slots, marked pinned. */
         t.parent = parent;
         t.data = core::ptr::null_mut();
+        /* Never `RUBY_TYPED_FROZEN_SHAREABLE`: an object made shareable could
+         * be read from two Ractors at once, and a payload's cells (a borrow
+         * count, a cache) are not atomic. Without it Ruby refuses to make one
+         * shareable. */
         t.flags = if embedded {
             FREE_IMMEDIATELY | EMBEDDABLE
         } else {
@@ -238,6 +242,24 @@ mod tests {
         };
         assert!(words[3..].iter().all(|&w| w == 0), "{words:?}");
         assert_eq!(ty.0.flags, VALUE::from(FREE_IMMEDIATELY_FLAG));
+    }
+
+    /// Neither kind of type is one Ruby may make shareable.
+    #[test]
+    fn no_type_is_frozen_shareable() {
+        const SHAREABLE: VALUE =
+            rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_FROZEN_SHAREABLE as VALUE;
+        for embedded in [false, true] {
+            let ty = DataType::new(
+                c"nupur::test".as_ptr(),
+                core::ptr::null(),
+                Some(mark),
+                Some(free),
+                Some(size),
+                embedded,
+            );
+            assert_eq!(ty.0.flags & SHAREABLE, 0);
+        }
     }
 
     const FREE_IMMEDIATELY_FLAG: u32 =

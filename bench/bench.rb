@@ -239,3 +239,47 @@ end
 threaded("threaded parse throughput", "docs") { |_| Makiri::HTML(HTML) }
 threaded("threaded xpath throughput", "queries",
          setup: -> { Makiri::HTML(HTML) }) { |doc| doc.xpath("//li").length }
+
+# --- Ractor throughput ----------------------------------------------------
+#
+# The same two workloads, each worker a Ractor with a GVL of its own. XPath
+# holds its Ractor's GVL, so it scales here where it stays flat on threads;
+# each Ractor parses its own Document, since none can be shared.
+
+# Run +work+ (:parse or :xpath) in a loop in +n+ Ractors for +duration+
+# seconds; returns total ops/sec.
+def ractor_throughput(n, work, duration: 2.0)
+  ractors = Array.new(n) do
+    Ractor.new(HTML, work, duration) do |html, kind, secs|
+      doc = Makiri::HTML(html)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + secs
+      c = 0
+      while Process.clock_gettime(Process::CLOCK_MONOTONIC) < deadline
+        kind == :parse ? Makiri::HTML(html) : doc.xpath("//li").length
+        c += 1
+      end
+      c
+    end
+  end
+  # Ruby 4.0 renamed Ractor#take to #value.
+  ractors.sum { |r| r.respond_to?(:value) ? r.value : r.take } / duration
+end
+
+def in_ractors(title, unit, work)
+  previous = Warning[:experimental]
+  Warning[:experimental] = false
+  puts "== #{title} (#{NCORES} cores) =="
+  base = nil
+  [1, NCORES].each do |n|
+    ips = ractor_throughput(n, work)
+    base ||= ips
+    scale = n == 1 ? "" : format("  (%.2fx vs 1 Ractor)", ips / base)
+    puts format("  makiri  %2d ractors: %12.1f %s/s%s", n, ips, unit, scale)
+  end
+  puts
+ensure
+  Warning[:experimental] = previous
+end
+
+in_ractors("Ractor parse throughput", "docs", :parse)
+in_ractors("Ractor xpath throughput", "queries", :xpath)

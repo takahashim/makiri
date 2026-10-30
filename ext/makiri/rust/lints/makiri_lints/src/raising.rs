@@ -53,6 +53,9 @@ const NON_RAISING: &[&str] = &[
     "rb_keyword_given_p",
     "ruby_native_thread_p",
     "ruby_stack_check",
+    /* The running thread's extension config, written: methods defined from
+     * here on may be called from any Ractor. */
+    "rb_ext_ractor_safe",
     /* A check: false for a value of any other type. */
     "rb_typeddata_is_kind_of",
     /* Reads of an object: an Array element (nil past the end). */
@@ -78,7 +81,7 @@ const NON_RAISING: &[&str] = &[
 /// (`any`), so a path through one is no proof; its `typed` reading (a callee
 /// whose type matches the call's) drops those, and what is left is a path the
 /// source shows is not taken. A function that CAN raise, but not where the
-/// extension calls it (`rb_attr_get` outside the main Ractor, `rb_gc_mark` when
+/// extension calls it (`rb_attr_get` with an `@` name, `rb_gc_mark` when
 /// memory runs out), is not here: the crate-wide table would let a new call
 /// site inherit what was true of the old, so each such call carries its own
 /// `allow` and reason. `check_non_raising.rb` fails an entry the survey no

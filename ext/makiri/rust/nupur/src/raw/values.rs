@@ -29,7 +29,7 @@ pub(crate) fn ary_push(a: RArray, v: Value) -> Result<(), Error> {
 /// see it): raises `FrozenError` for a frozen object and
 /// `NoMemoryError`.
 #[inline]
-pub fn ivar_set(obj: Value, id: Id, v: Value) -> Result<(), Error> {
+pub fn ivar_set(obj: Value, id: crate::rb::HiddenId, v: Value) -> Result<(), Error> {
     let (o, v, id) = (obj.as_raw(), v.as_raw(), id.as_raw());
     call(|| unsafe {
         injected_raise();

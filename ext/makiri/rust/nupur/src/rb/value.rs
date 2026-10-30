@@ -528,6 +528,37 @@ impl Id {
     }
 }
 
+/// The name of a hidden instance variable: an [`Id`] interned from a name
+/// that does not start with `@`, so no Ruby code can read or write it.
+///
+/// What the ivar reads and writes take ([`crate::rb::object::ivar_get`],
+/// [`crate::rb::object::ivar_set`]): Ruby's Ractor checks on an ivar - of a
+/// class or module, or of a shareable object, from another Ractor - apply to
+/// an `@` name alone (`rb_is_instance_id`, in every release from 3.3), so
+/// with one of these the read raises nothing in any Ractor.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(transparent)]
+pub struct HiddenId(Id);
+
+impl HiddenId {
+    /// The hidden name `name` (`rb_intern`): `ArgumentError` for one that
+    /// starts with `@`, and `NoMemoryError` as [`Id::intern`].
+    pub fn intern(ruby: &Ruby, name: &core::ffi::CStr) -> Result<HiddenId, Error> {
+        if name.to_bytes().first() == Some(&b'@') {
+            return Err(Error::new(
+                crate::rb::Builtin::ArgumentError,
+                "a hidden ivar's name does not start with @",
+            ));
+        }
+        Id::intern(ruby, name).map(HiddenId)
+    }
+
+    #[inline]
+    pub(crate) const fn as_raw(self) -> rb_sys::ID {
+        self.0.as_raw()
+    }
+}
+
 /* ---- a C read that raises nothing (so it is not `raw`'s, which holds the
  * calls that can) ---- */
 

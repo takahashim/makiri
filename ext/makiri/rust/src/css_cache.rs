@@ -21,9 +21,10 @@
 //!
 //! # One per thread
 //!
-//! The cache and the matcher's kept stacks are thread-local: Ruby runs one
-//! thread at a time under the GVL, so a per-thread engine is reached by one
-//! query at a time all the same, and being the thread's alone it needs to be
+//! The cache and the matcher's kept stacks are thread-local: a query never
+//! releases the GVL, so a per-thread engine is reached by one query at a
+//! time - from whichever Ractor the thread is in, each Ractor's threads under
+//! a GVL of their own - and being the thread's alone it needs to be
 //! neither `Send` nor `Sync` - the stacks hold DOM node handles, which are
 //! neither. (It was one process-global behind a GVL-keyed cell, which needed
 //! the stacks' node vectors to be `Send` and a type that made them so.) Each

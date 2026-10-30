@@ -26,11 +26,11 @@ pub mod value;
 pub use class::{freeze, DataClass, Module, Object};
 pub use convert::{IntoValue, ReturnValue, TryConvert};
 pub use error::{Builtin, Error, ErrorClass, Message, Rescued};
-pub use global::{Opaque, RbConst};
+pub use global::{Opaque, RbConst, Shareable};
 pub use ruby::Ruby;
 pub use value::{
-    Coderange, ExceptionClass, Float, HashKey, Id, Integer, RArray, RClass, RHash, RModule,
-    RString, Range, ReprValue, Symbol, Value,
+    Coderange, ExceptionClass, Float, HashKey, HiddenId, Id, Integer, RArray, RClass, RHash,
+    RModule, RString, Range, ReprValue, Symbol, Value,
 };
 
 /// The traits a method's module brings into scope with `use ...::prelude::*`.

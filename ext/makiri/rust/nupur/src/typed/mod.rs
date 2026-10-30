@@ -380,7 +380,7 @@ impl<T: Payload + 'static, const N: usize> TypedType<T, N> {
         klass: crate::rb::DataClass,
         data: T,
         roots: [R; N],
-        ivars: &[(crate::rb::Id, Value)],
+        ivars: &[(crate::rb::HiddenId, Value)],
         fill: impl FnOnce(&T) -> Result<(), Error>,
     ) -> Result<Typed<T, N>, Error> {
         let made = self.wrap(ruby, klass, data, roots)?;

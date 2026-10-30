@@ -418,6 +418,24 @@ pub fn keyword_given(_: &Ruby) -> bool {
     unsafe { rb_sys::rb_keyword_given_p() != 0 }
 }
 
+/// `rb_ext_ractor_safe(true)`: every method the running `Init_` defines from
+/// here on may be called from any Ractor, where Ruby would refuse it outside
+/// the main one (`Ractor::UnsafeError`). Ruby keeps the declaration for the
+/// `require` that runs this `Init_` alone. Raises nothing and runs no Ruby.
+///
+/// The layer's part holds already: what it keeps for the process is
+/// [`Shareable`](super::Shareable), a non-local exit is pending per thread,
+/// and no wrapped object can leave its Ractor (it is never shareable, and,
+/// its class having no allocator, cannot be copied or moved to another). The
+/// extension's part is its own: its statics, what its methods assume the GVL
+/// serialises (only one Ractor's threads now), and no Marshal hook on a
+/// class of wrapped objects, through which a Ractor would copy one.
+pub fn declare_ractor_safe(_: &Ruby) {
+    // SAFETY: under the GVL (`&Ruby`); sets the running thread's extension
+    // config.
+    unsafe { rb_sys::rb_ext_ractor_safe(true) }
+}
+
 /// What the extension's `Init_` runs its two phases through.
 ///
 /// `check` runs first and defines nothing - a check that the binary suits
