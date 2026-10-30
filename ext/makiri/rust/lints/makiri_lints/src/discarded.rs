@@ -91,6 +91,11 @@ fn report_discarded(cx: &LateContext<'_>, span: Span, how: &str) {
 }
 
 pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
+    /* The two crates alone, as `check_local`: a build script or a test
+     * target is not held to it. */
+    if !is_extension(cx) {
+        return;
+    }
     if let ExprKind::MethodCall(seg, receiver, ..) = expr.kind
         && DISCARDING.contains(&seg.ident.name.as_str())
         && is_ruby_result(cx, cx.typeck_results().expr_ty(receiver))

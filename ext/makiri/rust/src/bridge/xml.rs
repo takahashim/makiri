@@ -506,13 +506,13 @@ impl Editing<'_> {
     ) -> Result<R, Error> {
         let id = self.id;
         self.receiver.check_frozen()?;
-        check_attr_owner_frozen(self.document.value(), id)?;
+        check_attr_owner_frozen(self.document, id)?;
         /* Recorded once both refusals are past and BEFORE the change, with no
          * Ruby run in between (`record_edit`): an edit that then fails, or a
          * panic in it, still invalidates what it may have changed. */
-        record_edit(self.document.value(), kind);
+        record_edit_in(self.document, kind);
         if let Some(also) = also {
-            record_edit(self.document.value(), also);
+            record_edit_in(self.document, also);
         }
         let mut write = arena_mut(self.document)?;
         write.invalidate_name_index();
@@ -523,17 +523,16 @@ impl Editing<'_> {
 /// An Attr receiver's edit changes its OWNER's attribute list, so a frozen
 /// owner refuses it as it refuses `delete` - checked with the receiver's own
 /// frozen flag, before and after the arguments are converted.
-fn check_attr_owner_frozen(document: Value, id: NodeId) -> Result<(), Error> {
+fn check_attr_owner_frozen(document: &DocHandle, id: NodeId) -> Result<(), Error> {
     let owner = {
-        let handle = doc_known(document);
-        let doc = xml_read(&handle)?;
+        let doc = xml_read(document)?;
         match (doc.type_(id), doc.parent(id)) {
             (Some(ArenaKind::Attribute), Some(owner)) => Some(owner),
             _ => None,
         }
     };
     match owner {
-        Some(owner) => crate::bridge::wrapper::check_node_frozen(document, owner),
+        Some(owner) => crate::bridge::wrapper::check_node_frozen(document.value(), owner),
         None => Ok(()),
     }
 }
@@ -542,9 +541,9 @@ fn check_attr_owner_frozen(document: Value, id: NodeId) -> Result<(), Error> {
 /// evaluation. The name index is dropped later, by [`Editing::with_arena`].
 pub fn begin_edit<'a>(ruby: &Ruby, this: &'a mut XmlSelf) -> Result<Editing<'a>, Error> {
     this.value.check_frozen()?;
-    check_attr_owner_frozen(this.document(), this.id)?;
+    check_attr_owner_frozen(&this.document, this.id)?;
     /* Before any argument is converted: see `account_growth`. */
-    crate::bridge::wrapper::account_growth(ruby, this.document());
+    crate::bridge::wrapper::account_growth_of(ruby, &this.document);
     /* The `&mut` is given up for a shared borrow of the same life, so the
      * caller's receiver stays borrowed until the edit is spent. */
     let this: &'a XmlSelf = this;

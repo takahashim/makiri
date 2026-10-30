@@ -577,7 +577,7 @@ pub fn edit<'a>(ruby: &Ruby, this: &'a mut HtmlSelf) -> Result<HtmlEdit<'a>, Err
     this.value.check_frozen()?;
     check_attr_owner_frozen(this)?;
     /* Before any argument is converted: see `account_growth`. */
-    crate::bridge::wrapper::account_growth(ruby, this.document());
+    crate::bridge::wrapper::account_growth_of(ruby, &this.document);
     Ok(HtmlEdit { this })
 }
 
@@ -661,7 +661,7 @@ impl<'a> HtmlEdit<'a> {
     ) -> Result<R, Error> {
         self.this.value.check_frozen()?;
         check_attr_owner_frozen(self.this)?;
-        record_edit(self.this.document(), kind);
+        record_edit_in(&self.this.document, kind);
         /* The receiver is not frozen - checked just now - and the guard refuses any other
          * read still held. `f` runs no Ruby (this method's contract with its
          * callers), and the guard goes with it. `edit` drops the indexes. */
@@ -709,7 +709,7 @@ fn lend_document<R>(
      * of a megabyte, a fragment imported - so it reports here, after the
      * loan: the arguments were converted to copies before, and what it made
      * is still a bare node, so a collection here can free nothing it needs. */
-    crate::bridge::wrapper::account_growth(ruby, *rb_doc);
+    crate::bridge::wrapper::account_growth_of(ruby, &doc);
     Ok(r)
 }
 
