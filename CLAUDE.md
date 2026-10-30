@@ -444,6 +444,10 @@ bundle exec rake lexbor            # the reference Lexbor (script/build_lexbor.r
                                    # and depend on it
 bundle exec rake spec
 bundle exec rake rust:test         # Ruby-free core tests, Lexbor-feature tests, fuzz-crate check
+bundle exec rake nupur:spec        # nupur alone: its test extension (nupur/test/ext, a
+                                   # cdylib over the layer and nothing of Makiri's) and
+                                   # the specs beside it - trampolines, panics, exits,
+                                   # slots under GC, checked String reads, arguments
 bundle exec rake lint              # cargo clippy --all-features -D warnings + cargo fmt --check
 bundle exec rake unsafe:boundaries # reviewed unsafe islands and safe-module boundaries
 bundle exec rake dylint            # the crate's own lints (lints/makiri_lints), on the

@@ -184,6 +184,13 @@ jobs:
         env:
           THREADING: ${{ (matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4') && '1' || '' }}
 
+      # nupur's guarantees through its own test extension, nothing of
+      # Makiri's (rakelib/nupur.rake). Not on Windows yet: the test crate
+      # has not been built for the MinGW target the extension needs there.
+      - name: nupur's own specs
+        if: runner.os != 'Windows'
+        run: bundle exec rake nupur:spec
+
       - name: Smoke-load the gem
         shell: bash
         run: bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'

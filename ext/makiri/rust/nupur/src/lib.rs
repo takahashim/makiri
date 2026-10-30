@@ -72,6 +72,12 @@
 //! - no C `long` is cast outside `int` - `c_integer_outside_int`;
 //! - each file's count of `unsafe` is pinned - `rake unsafe:boundaries`.
 //!
+//! Its behaviour is checked without Makiri too: `test/ext` is an extension
+//! of a few methods over the layer alone, and `test/spec` the specs that load
+//! it (`rake nupur:spec`) - a panic in a method, below the GVL release and in
+//! a Hash walk, a block's exits, a slot under collection and compaction, a
+//! checked String read and its `$!`.
+//!
 //! # What the extension must uphold
 //!
 //! The types do not carry these; a crate using the layer keeps them, by
