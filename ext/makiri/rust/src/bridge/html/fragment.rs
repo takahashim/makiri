@@ -29,7 +29,7 @@ use crate::init::CLASS_NODE;
 /// A fragment-parse failure as `Makiri::Error`.
 fn fragment_error(e: FragmentError, limit: ParseLimits) -> Error {
     match e {
-        FragmentError::Guard(stop) => crate::bridge::doc::guard_error(stop, limit),
+        FragmentError::Guard(stop) => crate::bridge::html::document::guard_error(stop, limit),
         _ => makiri_error(e.message()),
     }
 }

@@ -53,7 +53,9 @@ pub mod wrapper;
 /// The bridge steps that differ between the two HTML DOMs.
 pub mod dom;
 
-/// The HTML front door: arena nodes to Ruby and back, and the HTML edits.
+/// The HTML front door: arena nodes to Ruby and back, the HTML edits, the
+/// Document (`html::document`: parsing, its readers, import/clone) and the
+/// fragment pipeline (`html::fragment`).
 #[cfg(feature = "html-dom")]
 pub mod html;
 
@@ -61,15 +63,6 @@ pub mod html;
 /// counterpart of `html`).
 #[cfg(feature = "html-dom")]
 pub mod xml;
-
-/// The Ruby <-> Document seam: parsing (GVL-released), the Document readers, the
-/// fragment pipeline, and cross-document import/clone.
-#[cfg(feature = "html-dom")]
-pub mod doc;
-
-/// The Ruby-facing fragment entry points (`Document#fragment`, `Node#parse`).
-#[cfg(feature = "html-dom")]
-pub mod fragment;
 
 /// `Makiri::NodeSet`'s wrapper type (opaque node pointers + a Document
 /// keepalive) and the safe fill handle over it.
@@ -94,5 +87,3 @@ pub mod string;
 
 /// The TypedData objects and their GC callbacks.
 pub use crate::nupur::typed;
-
-pub mod xml_decode;

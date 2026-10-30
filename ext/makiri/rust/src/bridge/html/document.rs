@@ -1,5 +1,5 @@
 //! The HTML Document: parsing one, its read-only accessors, and import/clone.
-//! Fragments are `bridge::fragment`'s; the wrapper is `bridge::wrapper`'s.
+//! Fragments are `bridge::html::fragment`'s; the wrapper is `bridge::wrapper`'s.
 //!
 //! The arena work is `html`'s; what lives here is the part that must touch
 //! raw Ruby values and arena handles together - copying the source out of a

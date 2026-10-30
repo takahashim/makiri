@@ -4,7 +4,7 @@
 //! Pure byte reading, and byte reading only: [`sniff`] answers with the mark and
 //! the declared NAME. Turning a name into a Ruby `Encoding`, and deciding
 //! between those and the String's own tag, is the bridge's
-//! (`bridge::xml_decode`), which runs its lookups only after these scans are
+//! (`bridge::xml::decode`), which runs its lookups only after these scans are
 //! done - so no GC point can fall inside a borrow of the String's bytes. Nothing
 //! here is shaped by how that lookup wants its argument.
 

@@ -19,7 +19,7 @@ use crate::bridge::rb::{prelude::*, Error, Ruby, Value};
 
 use crate::bridge::ruby::{makiri_error, string_arg};
 
-use crate::bridge::fragment::{set_template_inner_html, stage_fragment_in};
+use crate::bridge::html::fragment::{set_template_inner_html, stage_fragment_in};
 use crate::bridge::html::{
     check_owning_doc, edit, insert, new_node, wrap_html_node, HtmlEdit, HtmlSelf,
 };
