@@ -34,6 +34,7 @@ fn doc_s_parse(
 ) -> Result<Value, Error> {
     let limit = crate::glue::kwargs::parse_limits(Some(depth), Some(amplification))?;
     let given = encoding_arg(ruby, encoding)?;
+    let source = crate::bridge::ruby::string_arg(source)?;
     crate::bridge::doc::parse_document(ruby, source, limit, given)
 }
 
@@ -154,7 +155,8 @@ fn fragment_from_args(
     let held = document(ruby)?;
     let document = held.value();
     let at = fragment::resolve_fragment_context(ruby, document, context)?;
-    fragment::build_fragment(ruby, document, a.required(0), at, limit)
+    let html = crate::bridge::ruby::string_arg(a.required(0))?;
+    fragment::build_fragment(ruby, document, html, at, limit)
 }
 
 /// `DocumentFragment.parse(html, context: ..., max_tree_depth: ...,
@@ -178,10 +180,11 @@ fn node_parse(ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Value, Erro
     /* The element itself is the context, read whole as `inner_html=`
      * reads it. No keyword here, as in Nokogiri: the default limit. */
     let at = fragment::ContextArg::element(ruby, this.value)?;
+    let html = crate::bridge::ruby::string_arg(rb_html)?;
     let frag = fragment::build_fragment(
         ruby,
         this.document(),
-        rb_html,
+        html,
         at,
         fragment::ParseLimits::DEFAULT,
     )?;

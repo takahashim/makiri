@@ -6,17 +6,17 @@
 //! into a [`TransientFragment`] that owns a throwaway arena document, and
 //! nothing in the target document changes until the parse has succeeded. The
 //! fragment parser and the import primitives are [`crate::html_dom::fragment`]'s;
-//! reading the Ruby arguments is the glue's.
+//! reading the Ruby arguments - the list, and each one's type - is the glue's.
 
 #![forbid(unsafe_code)]
 
 use crate::bridge::rb::Ruby;
-use crate::bridge::rb::{prelude::*, Error, Value};
+use crate::bridge::rb::{prelude::*, Error, RString, Value};
 
 use crate::bridge::ruby::makiri_error;
 
 use crate::bridge::html::{html_node_key, with_html_node, wrap_html_node};
-use crate::bridge::ruby::{is_kind_of, string_arg};
+use crate::bridge::ruby::is_kind_of;
 use crate::bridge::string::{ruby_verified_text, HtmlSource};
 use crate::bridge::wrapper::{doc_known, html_doc_check, html_read, new_html_document, DocHandle};
 pub use crate::html_dom::fragment::FragmentTag;
@@ -220,12 +220,12 @@ pub fn set_template_inner_html(
 pub fn build_fragment(
     ruby: &Ruby,
     document: Value,
-    rb_html: Value,
+    rb_html: RString,
     at: ContextArg,
     limit: ParseLimits,
 ) -> Result<Value, Error> {
-    /* A String only, transcoded to UTF-8 (a Ruby allocation, which may raise). */
-    let src = HtmlSource::from_ruby(ruby, string_arg(rb_html)?)?;
+    /* Transcoded to UTF-8 (a Ruby allocation, which may raise). */
+    let src = HtmlSource::from_ruby(ruby, rb_html)?;
     /* The element is read now, after the conversion, as `inner_html=` reads
      * it inside its edit. */
     let context = match at {

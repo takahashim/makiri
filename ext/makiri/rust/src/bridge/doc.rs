@@ -73,11 +73,10 @@ pub fn tree_depth_error(limit: ParseLimits) -> Error {
 /// A tree deeper than `limit` fails the parse (see `html_dom::tree_guard`).
 pub fn parse_document(
     ruby: &Ruby,
-    source: Value,
+    s: RString,
     limit: ParseLimits,
     given: Option<crate::bridge::string::GivenEncoding>,
 ) -> Result<Value, Error> {
-    let s = crate::bridge::ruby::string_arg(source)?;
     /* The wrapper is made with no content, so a failed parse still frees
      * cleanly through GC - and first, before this frame owns the source's
      * copy: the wrapper's allocation can raise. This entry is

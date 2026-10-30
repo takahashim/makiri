@@ -14,6 +14,12 @@
 //! `rake unsafe:boundaries` holds that: no method is defined, and no argument
 //! list scanned, in this layer.
 //!
+//! An argument's TYPE is the glue's to check: a function here that needs a
+//! String takes an `RString`. A String's CONTENT is checked where it is read
+//! (`string::ruby_verified_*`, a type and a content check in one), in either
+//! layer - here when the check belongs at a point this layer decides: after a
+//! node-type test that answers nil without it, or before a cache is borrowed.
+//!
 //! A failure comes back as `Err(crate::bridge::rb::Error)` rather than as a
 //! raise: every raising C call is `nupur::raw`'s, which turns its raise into
 //! an `Err` there.

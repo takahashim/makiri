@@ -1,6 +1,7 @@
 //! `Makiri::XPathContext`: the wrapped object that holds a context and the
-//! compiled ASTs it has parsed, and the operations on it. The Ruby methods - argument
-//! reading, registration - are `glue::xpath_context`'s.
+//! compiled ASTs it has parsed, and the operations on it. The Ruby methods - the
+//! argument list and each argument's type, registration - are
+//! `glue::xpath_context`'s.
 
 #![forbid(unsafe_code)]
 
@@ -243,12 +244,16 @@ impl XPathCtx {
     }
 
     /// Bind `$name` to the String `value` for every later evaluate.
-    pub fn register_variable(&self, ruby: &Ruby, name: Value, value: Value) -> Result<(), Error> {
+    pub fn register_variable(
+        &self,
+        ruby: &Ruby,
+        name: Value,
+        sv: crate::bridge::rb::RString,
+    ) -> Result<(), Error> {
         const BUSY: &str = "cannot register a variable while the context is evaluating";
         const FAILED: &str = "failed to register variable";
         /* The value gets the stricter engine-string check, which adds the
          * byte cap on top of the no-NUL / valid-UTF-8 contract. */
-        let sv = crate::bridge::ruby::string_arg(value)?;
         let nv = ruby_verified_text(ruby, name, "variable name")?;
         let vv =
             ruby_try_verified_text(ruby, sv, self.ctx.limits().max_string_bytes).map_err(|r| {

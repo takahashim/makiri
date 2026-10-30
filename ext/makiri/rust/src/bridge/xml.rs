@@ -18,7 +18,7 @@
 
 use crate::bridge::rb::Ruby;
 
-use crate::bridge::rb::{prelude::*, Error, Value};
+use crate::bridge::rb::{prelude::*, Error, RString, Value};
 use crate::bridge::ruby::makiri_error;
 
 use crate::bridge::dom::{XmlRead, XmlWrite};
@@ -635,8 +635,11 @@ impl Unit {
 /// Runs the strict decode under the GVL first (invalid UTF-8, an undecodable
 /// byte or a NUL all raise), which leaves the document in a buffer of its
 /// own: the parse reads that, and no Ruby String, with the GVL released.
-pub fn parse_xml_document(ruby: &Ruby, source: Value, limits: ParseLimits) -> Result<Value, Error> {
-    let source = crate::bridge::ruby::string_arg(source)?;
+pub fn parse_xml_document(
+    ruby: &Ruby,
+    source: RString,
+    limits: ParseLimits,
+) -> Result<Value, Error> {
     let src = xml_decode_input(ruby, source, Some(limits.budget()))?;
     /* The wrapper before the parse: its allocation can fail, and `src`, an
      * owned copy, is dropped on the way out if it does. */
@@ -693,12 +696,11 @@ pub fn new_empty_xml_document(ruby: &Ruby) -> Result<DocHandle, Error> {
 pub fn fragment_into(
     ruby: &Ruby,
     document: Value,
-    source: Value,
+    source: RString,
     inherit_doc_ns: bool,
 ) -> Result<NodeId, Error> {
     let handle = doc_known(document);
     let max_bytes = xml_read(&handle)?.max_bytes();
-    let source = crate::bridge::ruby::string_arg(source)?;
     let src = xml_decode_input(ruby, source, Some(max_bytes))?;
     let parsed = {
         let mut xdoc = xml_write(&handle)?;
