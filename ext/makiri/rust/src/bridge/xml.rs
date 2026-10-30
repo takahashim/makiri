@@ -160,7 +160,7 @@ impl ChildListHost for XmlSelf {
 /// through the XML TypedData type, which fails with TypeError for an HTML node.
 pub fn xml_node_unwrap(ruby: &Ruby, rb_self: Value) -> Result<NodeId, Error> {
     if crate::bridge::ruby::is_kind_of(ruby, rb_self, &CLASS_XML_DOCUMENT) {
-        XML_DOC_TYPE.get(&rb_self)?; /* TypeError for any other Document */
+        XML_DOC_TYPE.ensure(rb_self)?; /* TypeError for any other Document */
         return Ok(xml_read(&rb_self)?.doc_node());
     }
     let nd = crate::bridge::wrapper::read_node(&XML_NODE_TYPE, rb_self)?;
@@ -179,7 +179,7 @@ fn wrapper_without_node() -> Error {
 
 /// `Err(TypeError)` unless `rb_doc` is an XML Document.
 pub fn xml_doc_check(rb_doc: Value) -> Result<(), Error> {
-    XML_DOC_TYPE.get(&rb_doc).map(|_| ())
+    XML_DOC_TYPE.ensure(rb_doc)
 }
 
 /// The keepalive Document of an XML node. XML-strict: it rejects an HTML node
@@ -211,7 +211,7 @@ impl crate::bridge::rb::TryConvert for XmlSelf {
          * Document come from the same place ([`xml_node_unwrap`] and
          * [`xml_node_document`] each ask, for the callers that need one). */
         if crate::bridge::ruby::is_kind_of(ruby, value, &CLASS_XML_DOCUMENT) {
-            XML_DOC_TYPE.get(&value)?; /* TypeError for any other Document */
+            XML_DOC_TYPE.ensure(value)?; /* TypeError for any other Document */
             return Ok(XmlSelf {
                 value,
                 id: xml_read(&value)?.doc_node(),

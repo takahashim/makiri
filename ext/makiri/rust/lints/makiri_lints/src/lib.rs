@@ -19,6 +19,9 @@
 //!   other taken to, and what `nupur::raw` holds checked against it.
 //! - `gvl_token_outside_entry` ([`entry`]): the GVL's token made anywhere but
 //!   the entries Ruby calls.
+//! - `forgotten_handle` and `unheld_payload_borrow` ([`handles`]): a handle
+//!   that holds a wrapped object forgotten, and a payload borrowed through a
+//!   bare `Value` with no reason the value is kept.
 //!
 //! (A second lint, `converted_argument`, checked that no registered method
 //! took a type magnus would convert with the caller's Ruby. Since
@@ -38,6 +41,7 @@ mod boundaries;
 mod c_integer;
 mod entry;
 mod gvl_proof;
+mod handles;
 mod raising;
 mod value_on_heap;
 
@@ -71,6 +75,8 @@ pub fn register_lints(sess: &Session, lint_store: &mut LintStore) {
         C_INTEGER_OUTSIDE_INT,
         UNRAISING_CALL_IN_RAW,
         GVL_TOKEN_OUTSIDE_ENTRY,
+        FORGOTTEN_HANDLE,
+        UNHELD_PAYLOAD_BORROW,
     ]);
     lint_store.register_late_lint_pass(Box::new(|_| Box::new(MakiriLints)));
 }
@@ -253,6 +259,33 @@ declare_lint! {
 }
 
 declare_lint! {
+    /// ### What it does
+    /// Reports a `typed::Typed` or `rb::kept::Kept` handed to `mem::forget`
+    /// or wrapped in `ManuallyDrop`.
+    ///
+    /// ### Why is this bad?
+    /// The handle's `Drop` is what keeps its object where the GC's stack scan
+    /// sees it until after the last borrow of the object's data; forgotten,
+    /// the object can be collected while its data is read.
+    pub FORGOTTEN_HANDLE,
+    Deny,
+    "a Typed or Kept handle forgotten, so the object it holds may be collected"
+}
+
+declare_lint! {
+    /// ### What it does
+    /// Reports every call of `TypedType::get` / `get_known`.
+    ///
+    /// ### Why is this bad?
+    /// They borrow a payload from a bare `Value`, which keeps nothing: sound
+    /// only for a value Ruby keeps for the whole borrow. Each call is allowed
+    /// where it is made, with that reason, or borrows through a `Typed`.
+    pub UNHELD_PAYLOAD_BORROW,
+    Deny,
+    "a payload borrowed through a bare Value, with no reason it is kept"
+}
+
+declare_lint! {
     pub DISCARDED_RUBY_ERROR,
     Deny,
     "a Result of a Ruby error whose Err is thrown away"
@@ -274,6 +307,8 @@ declare_lint_pass!(MakiriLints => [
     C_INTEGER_OUTSIDE_INT,
     UNRAISING_CALL_IN_RAW,
     GVL_TOKEN_OUTSIDE_ENTRY,
+    FORGOTTEN_HANDLE,
+    UNHELD_PAYLOAD_BORROW,
 ]);
 
 impl<'tcx> LateLintPass<'tcx> for MakiriLints {
@@ -310,6 +345,7 @@ impl<'tcx> LateLintPass<'tcx> for MakiriLints {
         c_integer::check_expr(cx, expr);
         raising::check_expr(cx, expr);
         entry::check_expr(cx, expr);
+        handles::check_expr(cx, expr);
     }
 }
 

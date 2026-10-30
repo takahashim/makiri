@@ -143,7 +143,7 @@ impl core::ops::DerefMut for Cx {
 /// for as long as the context lives, and each evaluate borrows it
 /// ([`Cx::run`]).
 pub fn context_for(ruby: &Ruby, rb_node: Value, document: Value) -> Result<Cx, Error> {
-    DOC_TYPE.get(&document)?; /* TypeError for a non-Document */
+    DOC_TYPE.ensure(document)?; /* TypeError for a non-Document */
     if DocKind::of(document) == DocKind::Xml {
         /* The context NODE: `xml_node_unwrap` resolves a Document receiver to
          * its arena's document node, and any other node to itself. */

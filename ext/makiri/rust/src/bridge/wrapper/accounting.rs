@@ -23,6 +23,13 @@ use super::*;
 /// which a local `Value` does not keep (a new Document is reported through
 /// its handle, [`account_data`]); nothing borrowed from a Ruby String may be
 /// held across the call.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        unheld_payload_borrow,
+        reason = "its contract: rb_doc is a receiver or a node's slot value, which Ruby keeps for the call (a new Document goes through account_data, over its handle)"
+    )
+)]
 pub(super) fn account_document(ruby: &crate::bridge::rb::Ruby, rb_doc: Value) {
     account_data(ruby, DOC_TYPE.get_known(&rb_doc));
 }

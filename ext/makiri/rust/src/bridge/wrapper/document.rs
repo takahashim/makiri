@@ -320,6 +320,13 @@ fn new_document(
 /// keepalive Document, or a Document method's receiver). Every Document that
 /// Ruby can reach has one (`new_document` shows it only once the content is in),
 /// so its absence is a broken invariant.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        unheld_payload_borrow,
+        reason = "rb_doc is a node's keepalive Document (a slot value) or a Document method's receiver, kept by Ruby for the call"
+    )
+)]
 fn body_known(rb_doc: &Value) -> Result<&Body, Error> {
     DOC_TYPE
         .get_known(rb_doc)
@@ -383,6 +390,13 @@ pub(in crate::bridge) fn xml_write(rb_doc: &Value) -> Result<XmlWrite<'_>, Error
 /// Whether `rb_doc`'s content is borrowed right now - by a read or an edit.
 /// Between Ruby calls it never is, unless a raise skipped a guard's release:
 /// what `Makiri.__borrowed?` answers the raise sweep.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        unheld_payload_borrow,
+        reason = "rb_doc is the test hook's argument, which Ruby keeps for the call"
+    )
+)]
 pub fn document_borrowed(rb_doc: Value) -> Result<bool, Error> {
     Ok(match DOC_TYPE.get(&rb_doc)?.content.get() {
         Some(Body::Html(c)) => c.is_borrowed(),
@@ -393,7 +407,7 @@ pub fn document_borrowed(rb_doc: Value) -> Result<bool, Error> {
 
 /// `Err(TypeError)` unless `rb_doc` is an HTML Document.
 pub fn html_doc_check(rb_doc: Value) -> Result<(), Error> {
-    HTML_DOC_TYPE.get(&rb_doc).map(|_| ())
+    HTML_DOC_TYPE.ensure(rb_doc)
 }
 
 /// Run `f` over the parsed document of a VALUE known to be an HTML Document,
@@ -597,6 +611,13 @@ pub(in crate::bridge) fn check_node_frozen(
 
 /// A Document's wrapper data, for the fields that are the wrapper's own
 /// rather than the content's - every one of them a cell, so this is shared.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        unheld_payload_borrow,
+        reason = "callers hand a receiver or a node's slot value, which Ruby keeps for the call"
+    )
+)]
 pub(super) fn doc_data_known(rb_doc: &Value) -> &DocData {
     DOC_TYPE.get_known(rb_doc)
 }

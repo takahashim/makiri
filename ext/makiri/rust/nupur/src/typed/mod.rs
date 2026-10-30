@@ -194,6 +194,14 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
         unsafe { rb_sys::rb_typeddata_is_kind_of(v.as_raw(), self.raw.as_ptr()) != 0 }
     }
 
+    /// `Ok` for an object of this type (or one deriving from it), else Ruby's
+    /// own `TypeError` - a type check that borrows nothing, for a caller that
+    /// only needs to refuse another kind of value.
+    #[inline]
+    pub fn ensure(&'static self, v: Value) -> Result<(), Error> {
+        typed_data(v, &self.raw).map(|_| ())
+    }
+
     /// The payload behind `v`, or Ruby's own `TypeError`, for a `v` kept for
     /// the whole borrow - by Ruby (a receiver, an argument, a slot's value),
     /// or by a [`Typed`] handle the caller holds across it; anything else - an

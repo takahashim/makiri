@@ -168,7 +168,9 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   with the VALUE as an input operand; a `read_volatile` of it on the targets
   without a stable `asm!`, a weaker contract and unchecked there; the
   premises that make either enough are stated there) after the last borrow. Borrow from the handle, never through
-  a copy of its `Value`; `get` / `get_known` hold nothing and serve only a
+  a copy of its `Value` (`rake dylint`'s `forgotten_handle` refuses a forgotten
+  handle, and `unheld_payload_borrow` makes each bare borrow an allow with its
+  reason); `get` / `get_known` hold nothing and serve only a
   value kept for the whole borrow - by Ruby (a receiver, an argument, a
   slot's value: `html_read` and its kin, over a node's Document), or by a
   `Typed` handle the caller holds across the call (`new_html_document` /
@@ -475,7 +477,11 @@ bundle exec rake dylint            # the crate's own lints (lints/makiri_lints),
                                    # Ruby calls in: `get_unchecked` - crate-private
                                    # - in `rb::method`, `finish` in a `method!` /
                                    # `function!` expansion, `run_init` in an
-                                   # `extern "C" fn Init_*`)
+                                   # `extern "C" fn Init_*`), unheld_payload_borrow
+                                   # (every `TypedType::get` / `get_known`, each an
+                                   # allow saying why its value is kept; a bare type
+                                   # check is `ensure`), forgotten_handle (a `Typed` /
+                                   # `Kept` given to `mem::forget` or `ManuallyDrop`)
                                    # (a sanctioned site is an allow with its reason);
                                    # then their self-test
                                    # (src/lint_probe.rs). Needs the nightly

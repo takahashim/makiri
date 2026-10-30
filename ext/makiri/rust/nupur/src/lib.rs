@@ -92,7 +92,9 @@
 //!   (those keep nothing, and serve only a value kept for the whole borrow -
 //!   by Ruby, as a receiver, an argument or a slot's value is, or by a handle
 //!   the caller holds across the call), and the handle is not `mem::forget`ed.
-//!   Checked by review.
+//!   Checked by `unheld_payload_borrow` (every `get` / `get_known` an `allow`
+//!   with the reason its value is kept) and `forgotten_handle`; a type check
+//!   that borrows nothing is `TypedType::ensure`.
 //! - **A GVL-released body runs no Ruby.** [`gvl::without_gvl`]'s `Send`
 //!   bound keeps a token and a value out of it, but not a call of a layer
 //!   function that needs neither (making an [`rb::Error`], say) - harmless
