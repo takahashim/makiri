@@ -95,7 +95,7 @@ impl core::fmt::Display for ClassName {
 const EXCEPTION_MESSAGE_MAX: usize = 255;
 
 /// `exc`'s message, for wording another error with it: up to the first NUL,
-/// at most [`EXCEPTION_MESSAGE_MAX`] bytes, invalid UTF-8 replaced. "error"
+/// at most `EXCEPTION_MESSAGE_MAX` bytes, invalid UTF-8 replaced. "error"
 /// for a message that is not a String - this runs on error paths, so it must
 /// not raise itself.
 pub struct ExceptionText<'a>(pub &'a Ruby, pub Value);

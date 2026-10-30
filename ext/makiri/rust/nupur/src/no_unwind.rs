@@ -93,7 +93,7 @@ sites! {
     DropUnfilled => "nupur_unwinds_drop_unfilled",
     /// `rb::kept::Kept`'s `Drop`, which hands its value to `keep_alive`.
     DropKept => "nupur_unwinds_drop_kept",
-    /// The check's own control ([`self_test`]): a body that CAN unwind, so a
+    /// The check's own control (`self_test`): a body that CAN unwind, so a
     /// check build that still works leaves exactly this symbol undefined.
     SelfTest => "nupur_unwinds_self_test",
 }

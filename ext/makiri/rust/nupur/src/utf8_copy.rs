@@ -12,7 +12,7 @@
 //! It depends on std alone, so the extension's Ruby-free test build includes
 //! this same file (`#[path]`), where Miri runs its tests without a Ruby
 //! (`rake miri`). A copy's heap allocation is fallible, and the extension's
-//! OOM sweep can fail it ([`set_alloc_injector`]).
+//! OOM sweep can fail it (`set_alloc_injector`).
 
 #![allow(unsafe_code)]
 

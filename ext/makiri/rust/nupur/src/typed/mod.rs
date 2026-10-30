@@ -7,7 +7,7 @@
 //! callbacks (`callbacks`) are the one monomorphised bridge from Ruby's GC to it, so
 //! no other module writes an `extern "C"` GC function.
 //!
-//! What an object holds is an [`Envelope`]: the payload `T`, and `N` slots
+//! What an object holds is an `Envelope`: the payload `T`, and `N` slots
 //! for the Ruby values the object keeps alive. The slots are this module's,
 //! written once - in the same step as the payload, right after the object's
 //! allocation - and never again, and the mark callback marks every one of
@@ -18,7 +18,7 @@
 //! where no mark reaches it, have no code to happen in.
 //!
 //! The envelope is the object's data, made with the object by
-//! `rb_data_typed_object_zalloc` ([`wrap_built`]) - in the object's own slot
+//! `rb_data_typed_object_zalloc` (`wrap_built`) - in the object's own slot
 //! for an embedded type, from `xcalloc` otherwise - and the free callback runs
 //! the payload's `Drop` in place before the memory goes back: freeing alone
 //! would skip the destructor, and with it everything the payload owns.
@@ -262,7 +262,7 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
     /// The payload is built, and the roots held, before the object exists:
     /// they are on this frame through the allocation - where the GC's stack
     /// scan keeps the roots alive and in place - and both are written into
-    /// the object right after it, with nothing run between ([`wrap_built`]).
+    /// the object right after it, with nothing run between (`wrap_built`).
     ///
     /// The object comes back as a [`Typed`]: nothing but this frame refers
     /// to it yet, and the handle holds it while its data is borrowed.

@@ -30,6 +30,14 @@ task lint: :lexbor do
     sh "cargo", "clippy", "--no-default-features", "--features", "ruby", "--", "-D", "warnings"
     sh "cargo", "clippy", "--no-default-features", "--features", "html-dom", "--tests", "--", "-D", "warnings"
     sh "cargo", "fmt", "--all", "--", "--check"
+    # nupur's documentation is what an extension on the layer reads first:
+    # a link that resolves nowhere, or to an item it cannot see, fails.
+    sh({ "RUSTDOCFLAGS" => "-D warnings" }, "cargo", "doc", "-p", "nupur", "--no-deps", "--all-features")
+  end
+  # nupur's test extension is a crate of its own too (rake nupur:spec).
+  Dir.chdir("ext/makiri/rust/nupur/test/ext") do
+    sh "cargo", "fmt", "--", "--check"
+    sh "cargo", "clippy", "--", "-D", "warnings"
   end
   # The fuzz crate is a workspace of its own, which the crate's `--all` does
   # not reach; CI's "Fuzz crate checks" runs these two.

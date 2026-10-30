@@ -1,6 +1,6 @@
 //! [`Error`]: a Ruby exception to raise, or one that was raised.
 //!
-//! Nothing here raises until [`Error::raise`], which only a method's
+//! Nothing here raises until `Error::raise`, which only a method's
 //! trampoline calls, once every Rust frame of the method has returned. Until
 //! then an error is an ordinary value, returned up through `?` with every
 //! destructor on the way run.
