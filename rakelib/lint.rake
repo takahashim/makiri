@@ -34,6 +34,11 @@ task lint: :lexbor do
     # a link that resolves nowhere, or to an item it cannot see, fails.
     sh({ "RUSTDOCFLAGS" => "-D warnings" }, "cargo", "doc", "-p", "nupur", "--no-deps", "--all-features")
   end
+  # The lints are a crate of their own (rake dylint builds them); their
+  # formatting is checked here, with everything else's.
+  Dir.chdir("ext/makiri/rust/lints/makiri_lints") do
+    sh "cargo", "fmt", "--", "--check"
+  end
   # nupur's test extension is a crate of its own too (rake nupur:spec).
   Dir.chdir("ext/makiri/rust/nupur/test/ext") do
     sh "cargo", "fmt", "--", "--check"

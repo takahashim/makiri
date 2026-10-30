@@ -16,8 +16,8 @@ use rustc_hir::Expr;
 use rustc_lint::LateContext;
 use rustc_middle::ty::{self, Ty};
 
-use crate::paths::{callee, is_extension, path_of};
 use crate::FORGOTTEN_HANDLE;
+use crate::paths::{callee, is_extension, path_of};
 
 /// The handles whose `Drop` keeps an object alive, by their paths.
 const HANDLES: &[&str] = &["nupur::typed::Typed", "nupur::rb::kept::Kept"];
