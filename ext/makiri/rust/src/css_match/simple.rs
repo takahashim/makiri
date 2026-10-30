@@ -182,9 +182,9 @@ fn rare_pseudo_matches<'d, N: CssNode<'d>>(pc: PseudoClass, node: N, budget: &Bu
 fn plain_pseudo_matches<'d, N: CssNode<'d>>(
     pc: PseudoClass,
     node: N,
-    budget: &Budget,
-    positions: &mut Positions,
+    env: &mut SimpleEnv<'_, '_>,
 ) -> Result<bool, MatchFailure> {
+    let (budget, positions) = (env.budget, &mut *env.positions);
     Ok(match pc {
         // Not `prev_sibling_element`/`next_sibling_element` - see
         // `counts_toward_child_position`'s doc; a preceding/following
@@ -227,13 +227,12 @@ fn nth_matches<'d, N: CssNode<'d>>(
     from_end: bool,
     of_type: bool,
     anb: Option<crate::selectors::ast::Nth<'_>>,
-    budget: &Budget,
-    positions: &mut Positions,
+    env: &mut SimpleEnv<'_, '_>,
 ) -> Result<bool, MatchFailure> {
     let Some(anb) = anb else {
         return Ok(false);
     };
-    let pos = sibling_position(node, from_end, of_type, budget, positions)?;
+    let pos = sibling_position(node, from_end, of_type, env.budget, env.positions)?;
     Ok(anb_matches(anb.a, anb.b, pos))
 }
 
@@ -264,15 +263,24 @@ pub(super) enum SimpleCheck {
     Deferred,
 }
 
+/// What a simple selector is checked against besides its node: the
+/// selector's namespace prefixes, the query's work budget (and `:scope`),
+/// and the sibling positions a walking query has counted. Made per compound
+/// by [`Query::check_compound`](super::query::Query::check_compound).
+pub(super) struct SimpleEnv<'e, 'n> {
+    pub(super) ns: &'e Namespaces<'n>,
+    pub(super) budget: &'e Budget,
+    pub(super) positions: &'e mut Positions,
+}
+
 #[inline]
 pub(super) fn check_simple<'d, N: CssNode<'d>>(
     sel: &Step<'_>,
     name: Name<N::Host>,
-    ns: &Namespaces<'_>,
     node: N,
-    budget: &Budget,
-    positions: &mut Positions,
+    env: &mut SimpleEnv<'_, '_>,
 ) -> Result<SimpleCheck, MatchFailure> {
+    let ns = env.ns;
     Ok(match sel.simple {
         // `*` matches an ELEMENT, never a text/comment/doctype/PI node -
         // found by the same randomized differential test as
@@ -316,17 +324,13 @@ pub(super) fn check_simple<'d, N: CssNode<'d>>(
             at.value,
             sel.value_ci,
         )),
-        Simple::PseudoClass(pc) => {
-            SimpleCheck::Result(plain_pseudo_matches(pc, node, budget, positions)?)
-        }
+        Simple::PseudoClass(pc) => SimpleCheck::Result(plain_pseudo_matches(pc, node, env)?),
         Simple::PseudoClassFunction(FunctionArg::Nth {
             from_end,
             of_type,
             anb,
         }) => match sel.nest {
-            Nest::None => SimpleCheck::Result(nth_matches(
-                node, from_end, of_type, anb, budget, positions,
-            )?),
+            Nest::None => SimpleCheck::Result(nth_matches(node, from_end, of_type, anb, env)?),
             _ => SimpleCheck::Deferred,
         },
         Simple::PseudoClassFunction(FunctionArg::Selectors { .. }) => SimpleCheck::Deferred,

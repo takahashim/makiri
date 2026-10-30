@@ -13,7 +13,7 @@ use super::dom::CssNode;
 use super::plan::QueryPlan;
 use super::positions::Positions;
 use super::scratch::{recycle, Scratch, SCRATCH_KEEP};
-use super::simple::{check_simple, SimpleCheck};
+use super::simple::{check_simple, SimpleCheck, SimpleEnv};
 use super::{Budget, MatchFailure};
 
 mod chain;
@@ -337,16 +337,14 @@ impl<'c, 'p, 'd, N: CssNode<'d>> Query<'c, 'p, 'd, N> {
             .as_slice()
             .get(from as usize..compound.end as usize)
             .ok_or(MatchFailure::Internal)?;
+        let mut env = SimpleEnv {
+            ns: &compiled.ns,
+            budget: &self.budget,
+            positions: &mut self.positions,
+        };
         for (i, sel) in (from..).zip(steps) {
             let name = self.plan.name(i, sel);
-            match check_simple(
-                sel,
-                name,
-                &compiled.ns,
-                node,
-                &self.budget,
-                &mut self.positions,
-            )? {
+            match check_simple(sel, name, node, &mut env)? {
                 SimpleCheck::Result(true) => {}
                 SimpleCheck::Result(false) => return Ok(Check::Done(false)),
                 SimpleCheck::Deferred => return Ok(Check::Defer(i)),
