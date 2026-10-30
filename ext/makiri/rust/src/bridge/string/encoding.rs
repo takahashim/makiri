@@ -11,7 +11,7 @@ pub use crate::nupur::encoding::Encoding;
 
 /* Reading a String as UTF-8 is nupur's (`nupur::encoding`). */
 pub use crate::nupur::encoding::to_encoding;
-pub use crate::nupur::string::{known_utf8, to_utf8_replacing};
+pub use crate::nupur::string::known_utf8;
 
 /// `v` as an encoding argument: the encoding, and the name to write for it -
 /// the String or Symbol as the caller wrote it, or an `Encoding`'s own name.

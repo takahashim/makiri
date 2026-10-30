@@ -13,6 +13,6 @@ mod read;
 
 pub use make::{interned_utf8, utf8_str, utf8_str_filled, utf8_str_from_slices, Unwritten};
 pub use read::{
-    known_utf8, read_utf8, read_utf8_within, reads_as_utf8_bytes, to_utf8_replacing,
-    to_utf8_strict, NoRoom, ReadError,
+    known_utf8, read_utf8, read_utf8_within, reads_as_utf8_bytes, to_utf8, NoRoom, ReadError,
+    Transcode,
 };

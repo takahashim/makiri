@@ -1,16 +1,14 @@
 //! Ruby objects made from Rust values - Arrays, Hashes, Integers, Floats,
-//! Symbols, UTF-8 Strings - each a protected call of `raw`'s, so a failed
+//! Symbols - each a protected call of `raw`'s, so a failed
 //! allocation is `Err`. The one way a caller makes one: `raw`'s constructors
 //! are the crate's own. Each answers its own type, which every function
 //! taking a value takes as it is (`impl ReprValue`). A String is `string`'s
-//! ([`utf8_str`] here too).
+//! (`string::utf8_str`).
 
 #![forbid(unsafe_code)]
 
 use crate::rb::ReprValue;
 use crate::rb::{Error, Float, Integer, RArray, RHash, Ruby, Symbol, Value};
-
-pub use crate::string::utf8_str;
 
 use super::raw;
 

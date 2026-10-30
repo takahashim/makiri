@@ -5,7 +5,7 @@
 
 /// The bytes an object holds outside Ruby's heap, as reported to the GC -
 /// the one way a report is made, so what was reported is always what the
-/// free callback gives back ([`Payload::reported_external`] answers
+/// free callback gives back ([`Payload::reported_external`](super::Payload::reported_external) answers
 /// [`reported`](Self::reported)).
 ///
 /// Memory Ruby does not allocate is otherwise invisible to it and never
@@ -32,7 +32,7 @@ impl External {
     /// MEMOP_TYPE_REALLOC), but another may collect in the call, so what is
     /// borrowed across it must be what a collection neither frees nor moves:
     /// this payload, whose object its caller keeps (a receiver, a slot's
-    /// value, a [`Typed`] handle) and which compaction does not move - never
+    /// value, a [`Typed`](super::Typed) handle) and which compaction does not move - never
     /// a String's bytes. The new figure is recorded first, for a collection
     /// that reads it.
     pub fn report(&self, _: &crate::rb::Ruby, bytes: usize) {

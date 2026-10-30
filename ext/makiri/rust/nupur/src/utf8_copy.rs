@@ -1,8 +1,8 @@
 //! `Utf8Copy`: an owned copy of some bytes, made only once the copy is
 //! checked to be UTF-8 - so it can be read as a `&str` with no further check.
 //!
-//! The bridge's checked views of a Ruby String (`RubyText`, `RubyData`) are
-//! this copy, which is why it is Ruby-free: the one claim a `&str` rests on -
+//! A String read as text (`string::read_utf8`) is this copy, which is why it
+//! is Ruby-free: the one claim a `&str` rests on -
 //! these bytes are UTF-8 - is made here, by std's validator over the copy
 //! itself, and depends on nothing a Ruby String says about itself (its cached
 //! coderange, which another C extension or a Ruby bug could leave wrong).
@@ -64,7 +64,7 @@ pub enum CopyError {
 /// Bytes that are UTF-8, owned.
 pub struct Utf8Copy(Bytes);
 
-/// Why [`Utf8Copy::filled`] made no copy: [`CopyError`]'s reasons, or the
+/// Why [`Utf8Copy::from_source`] made no copy: [`CopyError`]'s reasons, or the
 /// caller's own refusal of the bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FillError<P> {
@@ -77,7 +77,7 @@ pub enum FillError<P> {
 /// What a [`Utf8Copy`] is copied from: a thing of known length that copies
 /// itself out - into a buffer as given, or appended to a `Vec` whose room is
 /// already reserved for it, which it must not grow. A byte slice is one; a
-/// Ruby String is another (the bridge's, over `RString::copy_to` /
+/// Ruby String is another (`string::read_utf8`'s, over `RString::copy_to` /
 /// `append_to`), which hands no slice of itself out.
 pub trait Source {
     /// How many bytes there are.

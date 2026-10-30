@@ -101,32 +101,62 @@ pub fn reads_as_utf8_bytes(_: &Ruby, s: RString) -> bool {
     builtin.contains(&index)
 }
 
-/// `s` as a UTF-8 String, transcoded by Ruby (`on` deciding what a character it cannot convert
-/// becomes) unless its bytes
-/// are read as UTF-8 already ([`reads_as_utf8_bytes`] -
-/// UTF-8, US-ASCII, ASCII-8BIT), which costs one encoding comparison: no
-/// transcode, no copy, no protected call. The transcode raises - no
-/// converter at all (UTF-7 to UTF-8), or a character it cannot convert under
-/// `on` - and the raise comes back as `Err`.
-fn to_utf8(ruby: &Ruby, s: RString, on: Unconvertible) -> Result<RString, Error> {
-    if reads_as_utf8_bytes(ruby, s) {
-        return Ok(s);
+/// What [`to_utf8`] made of a String.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "an Error holds its message inline (`crate::msg::Msg`), so it is never boxed"
+)]
+pub enum Transcode {
+    /// Text read as UTF-8 bytes: the String itself, or the new String its
+    /// transcode made (on this frame, where the GC keeps it).
+    Utf8(RString),
+    /// The String's own fault: the transcode raised an `EncodingError` - no
+    /// converter, an invalid byte sequence, a character with no UTF-8 form
+    /// under [`Unconvertible::Raise`]. Handled: the caller's `$!` is as it
+    /// was, and the exception is Ruby's own, to word another error with, to
+    /// raise as it is, or to drop - it is an exception the String caused,
+    /// never an exit, so dropping it loses nothing.
+    Fault(Error),
+}
+
+/// `s` as UTF-8 text, read as `read_as`'s bytes - the String's own encoding
+/// for `None` - and transcoded by Ruby where that encoding is not read as
+/// UTF-8 bytes already (UTF-8, US-ASCII, ASCII-8BIT), `on` deciding what an
+/// unconvertible sequence becomes.
+///
+/// The one place a String's transcode is classified: an `EncodingError` is
+/// the String's fault ([`Transcode::Fault`]), handled here with the caller's
+/// `$!` put back; anything else - `NoMemoryError`, an interrupt, every exit,
+/// which no class names - is `Err`, to be passed on. A String already read as
+/// UTF-8 bytes costs a read of its flags (`read_as` `None`) or one encoding
+/// comparison: no protected call, no call into libruby at all.
+pub fn to_utf8(
+    ruby: &Ruby,
+    s: RString,
+    read_as: Option<Encoding>,
+    on: Unconvertible,
+) -> Result<Transcode, Error> {
+    let as_utf8 = match read_as {
+        None => reads_as_utf8_bytes(ruby, s),
+        Some(enc) => enc.reads_as_utf8_bytes(ruby),
+    };
+    if as_utf8 {
+        return Ok(Transcode::Utf8(s));
     }
-    Encoding::utf8(ruby).encode(s, on)
-}
-
-/// `s` as UTF-8 for a strict reader: transcoded with no replacement, so a
-/// character with no UTF-8 form, or a byte that is not one of the encoding's,
-/// is Ruby's `EncodingError` rather than a U+FFFD.
-pub fn to_utf8_strict(ruby: &Ruby, s: RString) -> Result<RString, Error> {
-    to_utf8(ruby, s, Unconvertible::Raise)
-}
-
-/// `s` as UTF-8 for a lenient reader: transcoded with every invalid or
-/// undefined character replaced (U+FFFD), so the content survives. An
-/// encoding Ruby has no converter for is still its `Err`.
-pub fn to_utf8_replacing(ruby: &Ruby, s: RString) -> Result<RString, Error> {
-    to_utf8(ruby, s, Unconvertible::Replace)
+    /* `$!` is read and put back only here, where a transcode runs: it costs
+     * a call into libruby, and a raise that is passed on replaces it anyway. */
+    let made = crate::raw::keeping_errinfo(|| {
+        let input = match read_as {
+            Some(enc) if enc != Encoding::of(s) => enc.relabel(s)?,
+            _ => s,
+        };
+        Encoding::utf8(ruby).encode(input, on)
+    });
+    match made {
+        Ok(utf8) => Ok(Transcode::Utf8(utf8)),
+        Err(e) if e.is_kind_of(ruby, crate::rb::Builtin::EncodingError) => Ok(Transcode::Fault(e)),
+        Err(e) => Err(e),
+    }
 }
 
 /// Whether Ruby already knows `s` to be valid UTF-8, from its cached
@@ -171,8 +201,8 @@ pub enum ReadError<P> {
 }
 
 /// `s`, read in its own encoding and copied as checked UTF-8: a String in
-/// another encoding is transcoded first with no replacement
-/// ([`to_utf8_strict`]), the copy of what it became is put
+/// another encoding is transcoded first with no replacement ([`to_utf8`]),
+/// the copy of what it became is put
 /// to `check` - a reader's own rules, reported ahead of invalid UTF-8 - and
 /// then checked to be UTF-8 by std's validator over the copy itself, never by
 /// the String's cached coderange. Nothing Ruby does afterwards reaches the
@@ -196,15 +226,10 @@ pub fn read_utf8_within<P>(
     check: impl FnOnce(&[u8]) -> Option<P>,
 ) -> Result<crate::utf8_copy::Utf8Copy, ReadError<P>> {
     use crate::utf8_copy::{CopyError, FillError, Utf8Copy};
-    /* The transcode is a fresh String on this frame, so the GC keeps it. An
-     * `EncodingError` is the String's own fault; anything else - every exit
-     * included, which no class names - is passed on. */
-    let s = to_utf8_strict(ruby, s).map_err(|e| {
-        match e.rescue(ruby, &[crate::rb::Builtin::EncodingError]) {
-            Ok(_handled) => ReadError::NoUtf8Form,
-            Err(e) => ReadError::Raised(e),
-        }
-    })?;
+    let s = match to_utf8(ruby, s, None, Unconvertible::Raise).map_err(ReadError::Raised)? {
+        Transcode::Utf8(s) => s,
+        Transcode::Fault(_handled) => return Err(ReadError::NoUtf8Form),
+    };
     if s.len() > max_bytes {
         return Err(ReadError::TooLong);
     }

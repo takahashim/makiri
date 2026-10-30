@@ -1013,7 +1013,7 @@ document), and the Encoding Standard's decoders (`encoding_rs`, into a
 encoding the Standard has no label for (UTF-32, CP51932) is transcoded by
 Ruby as before (`DocumentSource`, over `html::encoding::transport_for`). Fragment parsing takes text, so
 it has no sniffing: there the input String's encoding is honoured
-(`nupur::encoding::to_utf8_replacing`): UTF-8 / US-ASCII /
+(`nupur::string::to_utf8`, replacing): UTF-8 / US-ASCII /
 ASCII-8BIT pass through untouched (the UTF-8 common case is one read of the
 encoding index from the String's flags - no call, no transcode, no copy), any
 other encoding (Shift_JIS, EUC-JP, ISO-8859-1, ...) is
@@ -1047,12 +1047,16 @@ contract, but its NUL refusal is `ArgumentError`, like every other name
 refusal there (the DOM's InvalidCharacterError), so a caller mapping
 `ArgumentError` to a DOMException misses none. Removers and readers keep
 `ruby_verified_text`. **The strict inputs honour the String's encoding
-too** (`nupur::string::read_utf8`, over `nupur::encoding::to_utf8_strict`): a
+too** (`nupur::string::read_utf8`, over `nupur::string::to_utf8`): a
 String not in UTF-8 / US-ASCII / ASCII-8BIT is
 transcoded to UTF-8 first, with NO replacement - a character or byte it
 cannot convert is `Makiri::Error` ("could not be converted to UTF-8"), never
 repaired - and any other raise in the transcode (`NoMemoryError`, an
-interrupt) is passed through as it is. A length cap (`ruby_try_verified_text`, over
+interrupt) is passed through as it is. Every reader's transcode - a
+fragment's, a strict view's, the XML decode's - is that one function, which
+alone tells the String's fault (an `EncodingError`, `Transcode::Fault`, with
+the caller's `$!` kept) from what is passed on; each reader words the fault
+itself. A length cap (`ruby_try_verified_text`, over
 `nupur::string::read_utf8_within`)
 is on the UTF-8. Both checked views (`RubyText`, `RubyData`) deref to
 `&str`, and each OWNS A COPY of the (UTF-8) String's bytes, taken with no

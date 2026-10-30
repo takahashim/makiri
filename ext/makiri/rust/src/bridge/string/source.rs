@@ -14,7 +14,8 @@ use crate::cbuf::OwnedBuf;
 use super::*;
 
 /// A Ruby String as HTML parser input, under the text-input contract: its
-/// encoding honoured ([`to_utf8_replacing`]), its bytes copied out, and
+/// encoding honoured (`nupur::string::to_utf8`, replacing what it cannot
+/// convert), its bytes copied out, and
 /// whether they are already known to be valid UTF-8, so the parser can skip
 /// its sanitisation.
 ///
@@ -31,7 +32,24 @@ pub struct HtmlSource {
 impl HtmlSource {
     /// `s` is a String by type: the caller has coerced it.
     pub fn from_ruby(ruby: &crate::bridge::rb::Ruby, s: RString) -> Result<HtmlSource, Error> {
-        let src = to_utf8_replacing(ruby, s)?;
+        Self::read_as(ruby, s, None)
+    }
+
+    /// [`from_ruby`](Self::from_ruby), its bytes read as `read_as`'s
+    /// whatever the String says (`None`: as its own). Every invalid or
+    /// unmappable byte is replaced; a String whose encoding Ruby cannot
+    /// convert at all raises Ruby's own `EncodingError`, as it was.
+    pub fn read_as(
+        ruby: &crate::bridge::rb::Ruby,
+        s: RString,
+        read_as: Option<Encoding>,
+    ) -> Result<HtmlSource, Error> {
+        use crate::nupur::encoding::Unconvertible;
+        use crate::nupur::string::Transcode;
+        let src = match crate::nupur::string::to_utf8(ruby, s, read_as, Unconvertible::Replace)? {
+            Transcode::Utf8(src) => src,
+            Transcode::Fault(e) => return Err(e),
+        };
         /* A transcode replaced every invalid or unmappable byte, so its result
          * is valid UTF-8 whatever its coderange says. */
         let transcoded = !crate::bridge::ruby::same_value(src, s);
@@ -108,9 +126,8 @@ impl DocumentSource {
         match transport_for(super::encoding_kind(ruby, enc)) {
             Transport::Unlabelled => {
                 /* The bytes are read as `enc`'s, whatever the String says. */
-                let s = if enc == own { s } else { enc.relabel(s)? };
                 Ok(DocumentSource {
-                    source: HtmlSource::from_ruby(ruby, s)?,
+                    source: HtmlSource::read_as(ruby, s, Some(enc))?,
                     transport: Some(UTF_8),
                 })
             }

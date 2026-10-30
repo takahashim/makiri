@@ -136,25 +136,15 @@ fn syntax_error(msg: impl crate::bridge::rb::Message) -> Error {
 /// `Makiri::XML::SyntaxError`. Any other failure (`NoMemoryError`, an
 /// interrupt) is passed through as it is.
 fn strict_utf8(ruby: &Ruby, str: RString, eff: Encoding) -> Result<RString, Error> {
-    if eff.reads_as_utf8_bytes(ruby) {
-        return Ok(str);
-    }
-    let input = if Encoding::of(str) == eff {
-        str
-    } else {
-        eff.relabel(str)?
-    };
-    let strict = crate::nupur::encoding::Unconvertible::Raise;
-    Encoding::utf8(ruby).encode(input, strict).or_else(|e| {
-        /* Worded first, as the message is the raise's own; the error is then
-         * handled only if it is an `EncodingError`, and passed on otherwise. */
-        let refusal = syntax_error(format_args!(
+    use crate::nupur::encoding::Unconvertible;
+    use crate::nupur::string::Transcode;
+    match crate::nupur::string::to_utf8(ruby, str, Some(eff), Unconvertible::Raise)? {
+        Transcode::Utf8(s) => Ok(s),
+        Transcode::Fault(e) => Err(syntax_error(format_args!(
             "XML input could not be decoded to UTF-8: {}",
             e.wording(ruby)
-        ));
-        e.rescue(ruby, &[crate::bridge::rb::Builtin::EncodingError])?;
-        Err(refusal)
-    })
+        ))),
+    }
 }
 
 /// How many bytes of a leading BOM `s` (UTF-8 by now) starts with, 0 for

@@ -102,7 +102,7 @@ impl IntoValue for usize {
 impl IntoValue for &'static str {
     #[inline]
     fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
-        crate::build::utf8_str(ruby, self.as_bytes()).map(ReprValue::as_value)
+        crate::string::utf8_str(ruby, self.as_bytes()).map(ReprValue::as_value)
     }
 }
 
