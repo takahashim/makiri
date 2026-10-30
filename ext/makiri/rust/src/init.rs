@@ -355,6 +355,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     crate::nupur::rb::method::declare_ractor_safe(ruby);
     let makiri = ruby.define_module("Makiri")?;
     crate::bridge::wrapper::init_ivars(ruby)?;
+    crate::bridge::xpath::init_ivars(ruby)?;
 
     // What this binary was built as, for `lib/makiri.rb` to check against the
     // gem it was loaded by and the Ruby it was loaded into - a stale

@@ -32,7 +32,7 @@ use crate::xpath::value::ValRef;
 
 mod context_object;
 
-pub use context_object::{XPathCtx, XPathCtxSelf};
+pub use context_object::{init_ivars, XPathCtx, XPathCtxSelf};
 
 /// An engine error as the Ruby exception it maps to.
 ///

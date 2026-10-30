@@ -117,7 +117,8 @@ FORBID_FILES = %w[
   bridge/node_set.rs bridge/node_wrap.rs bridge/ruby.rs
   bridge/stack.rs bridge/string/build.rs bridge/string/encoding.rs
   bridge/string/source.rs bridge/string/view.rs bridge/wrapper/accounting.rs
-  bridge/wrapper/document.rs bridge/wrapper/edit.rs bridge/wrapper/node.rs
+  bridge/wrapper/child_list.rs bridge/wrapper/document.rs bridge/wrapper/edit.rs
+  bridge/wrapper/ivar.rs bridge/wrapper/node.rs bridge/wrapper/node_table.rs
   bridge/xml.rs bridge/xml_decode.rs bridge/xpath/context_object.rs
   bridge/xpath/mod.rs cbuf.rs child_index.rs
   conformance/mod.rs css/build.rs css/lower.rs

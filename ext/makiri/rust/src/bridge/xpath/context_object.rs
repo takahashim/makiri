@@ -15,7 +15,7 @@ use crate::bridge::typed::{Payload, Typed, TypedType};
 
 use crate::bridge::string::ruby_try_verified_text;
 use crate::bridge::string::{ruby_verified_text, RubyText};
-use crate::bridge::wrapper::{keepalive_document, node_token_in, NotInDocument};
+use crate::bridge::wrapper::{keepalive_document, node_token_in, HiddenIvar, NotInDocument};
 use crate::falloc::{try_to_boxed_slice, Reserve};
 use crate::xpath::ast::Ast;
 use crate::xpath::ctx::ContextError;
@@ -54,8 +54,7 @@ struct AstCache(HashMap<Box<[u8]>, Box<Ast>>);
 /// `Makiri::XPathContext`.
 ///
 /// The two Ruby values it keeps alive - its Document and its context node -
-/// are hidden ivars of the context object (`bridge::wrapper::ivar_document`,
-/// `ivar_node`), so the struct holds none and its GC hooks have nothing to
+/// are hidden ivars of the context object ([`DOCUMENT`], [`NODE`]), so the struct holds none and its GC hooks have nothing to
 /// mark: `#node=` is an ivar write, and an `evaluate` reads the Document
 /// once, a few nanoseconds on work of microseconds.
 ///
@@ -85,6 +84,18 @@ impl Payload for XPathCtx {
     fn reported_external(&self) -> usize {
         self.cache_bytes.reported()
     }
+}
+
+/// The hidden ivar a context keeps its Document in.
+static DOCUMENT: HiddenIvar = HiddenIvar::new(c"makiri_document");
+/// The hidden ivar a context keeps its context node in.
+static NODE: HiddenIvar = HiddenIvar::new(c"makiri_node");
+
+/// Intern the context's hidden ivars' names. From `Init_makiri`, before any
+/// method that reads one is defined.
+pub fn init_ivars(ruby: &Ruby) -> Result<(), Error> {
+    DOCUMENT.intern(ruby)?;
+    NODE.intern(ruby)
 }
 
 /// `Makiri::XPathContext`'s data type.
@@ -131,11 +142,7 @@ impl XPathCtxSelf {
          * context, `NoMemoryError`): a failure there leaves the context node
          * as it was. After it no Ruby has run, so no evaluate can have begun,
          * and the engine takes the node: the two never disagree. */
-        crate::bridge::rb::object::ivar_set(
-            self.value(),
-            crate::bridge::wrapper::ivar_node(),
-            rb_node,
-        )?;
+        crate::bridge::rb::object::ivar_set(self.value(), NODE.id(), rb_node)?;
         self.ctx.set_context_node(token).map_err(|_| {
             crate::bridge::ruby::internal_error("an evaluate began during XPathContext#node=")
         })
@@ -143,7 +150,7 @@ impl XPathCtxSelf {
 
     /// The keepalive Document.
     fn document(&self) -> Value {
-        crate::bridge::rb::object::ivar_get(self.value(), crate::bridge::wrapper::ivar_document())
+        crate::bridge::rb::object::ivar_get(self.value(), DOCUMENT.id())
     }
 
     /// Evaluate `expr`, parsed once and cached.
@@ -208,10 +215,7 @@ impl XPathCtx {
                 /* The Document and the context node, as hidden ivars: ordinary
                  * Ruby references. A write that raises leaves the context hidden,
                  * where no Ruby code can find it without them. */
-                &[
-                    (crate::bridge::wrapper::ivar_document(), document),
-                    (crate::bridge::wrapper::ivar_node(), rb_node),
-                ],
+                &[(DOCUMENT.id(), document), (NODE.id(), rb_node)],
                 /* Complete once its ivars are in: nothing to fill. */
                 |_| Ok(()),
             )
