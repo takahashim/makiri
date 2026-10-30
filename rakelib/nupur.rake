@@ -6,14 +6,20 @@
 # against it. What Makiri's own suite checks through the extension, this
 # checks through the layer alone, for a copy of the layer elsewhere.
 NUPUR_TEST_SRC = File.expand_path("ext/makiri/rust/nupur/test", ROOT)
-NUPUR_TEST_BUILD = File.expand_path("tmp/nupur_test", ROOT)
+# Per Ruby, as rake-compiler keys its own: a Makefile is written for one.
+NUPUR_TEST_BUILD = File.expand_path("tmp/nupur_test/#{RUBY_VERSION}", ROOT)
 
 namespace :nupur do
   desc "Build nupur's test extension (tmp/nupur_test)"
   task :build do
     FileUtils.mkdir_p(NUPUR_TEST_BUILD)
     Dir.chdir(NUPUR_TEST_BUILD) do
-      sh FileUtils::RUBY, File.join(NUPUR_TEST_SRC, "ext", "extconf.rb") unless File.exist?("Makefile")
+      # Configured again when extconf.rb is newer than the Makefile it wrote:
+      # a stale Makefile would build with the old flags and say nothing.
+      extconf = File.join(NUPUR_TEST_SRC, "ext", "extconf.rb")
+      if !File.exist?("Makefile") || File.mtime(extconf) > File.mtime("Makefile")
+        sh FileUtils::RUBY, extconf
+      end
       sh "make"
     end
   end

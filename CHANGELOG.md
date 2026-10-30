@@ -50,9 +50,10 @@
 
 ### Fixed
 
-* An XML document declaring `encoding="US-ASCII"` must hold ASCII alone: a
-  byte past it raises `Makiri::XML::SyntaxError`, where it was read as
-  UTF-8. A String tagged US-ASCII still claims no encoding, and is read as
+* An XML document declaring `encoding="US-ASCII"` must hold ASCII alone,
+  whatever decodes it (a UTF-8 String, a byte order mark, the declaration):
+  a character past ASCII raises `Makiri::XML::SyntaxError`, where it was
+  read. A String tagged US-ASCII still claims no encoding, and is read as
   UTF-8 when the document declares none.
 * An XML declaration naming Ruby's binary encoding (`BINARY`,
   `ASCII-8BIT`) is an unknown encoding, as a name XML does not register is;

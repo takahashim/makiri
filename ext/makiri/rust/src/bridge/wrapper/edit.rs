@@ -49,7 +49,12 @@ pub enum EditKind {
 /// Recording after the change instead would miss an edit that panics, or
 /// fails having changed something, and leave a reader trusting a stale cache.
 pub fn record_edit(rb_doc: Value, kind: EditKind) {
-    doc_data_known(&doc_known(rb_doc)).update_edits(|e| e.record(kind));
+    record_edit_in(&doc_known(rb_doc), kind);
+}
+
+/// [`record_edit`] for a caller that already holds the Document's handle.
+pub fn record_edit_in(doc: &DocHandle, kind: EditKind) {
+    doc_data_known(doc).update_edits(|e| e.record(kind));
 }
 
 /// `Document#tree_version`: how many child-list edits the document has seen.

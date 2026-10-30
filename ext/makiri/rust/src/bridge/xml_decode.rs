@@ -37,8 +37,10 @@ fn compatible(a: Encoding, b: Encoding) -> bool {
 /// declared encoding - unless that claims none ([`claims_no_encoding`]), when
 /// the input is decoded by whatever was detected. Any disagreement between the
 /// three is a fatal `Makiri::XML::SyntaxError`, so the caller only ever sees one
-/// self-consistent answer.
-fn effective_encoding(ruby: &Ruby, str: RString) -> Result<Encoding, Error> {
+/// self-consistent answer. With it, whether the declaration names US-ASCII,
+/// which every other encoding is taken to agree with ([`compatible`]) but
+/// which holds the document to ASCII whatever it is decoded by.
+fn effective_encoding(ruby: &Ruby, str: RString) -> Result<(Encoding, bool), Error> {
     let tag = Encoding::of(str);
     /* The sniff reads a copy of the first bytes; the name lookups - which can
      * allocate - come after. */
@@ -61,6 +63,7 @@ fn effective_encoding(ruby: &Ruby, str: RString) -> Result<Encoding, Error> {
         })?),
     };
     let claimed = !claims_no_encoding(tag);
+    let declares_ascii = decl.is_some_and(|d| d.is_usascii());
 
     if let (Some(b), Some(d)) = (bom, decl) {
         if !compatible(b, d) {
@@ -86,9 +89,12 @@ fn effective_encoding(ruby: &Ruby, str: RString) -> Result<Encoding, Error> {
     }
 
     if claimed {
-        return Ok(tag);
+        return Ok((tag, declares_ascii));
     }
-    Ok(bom.or(decl).unwrap_or_else(|| Encoding::utf8(ruby)))
+    Ok((
+        bom.or(decl).unwrap_or_else(|| Encoding::utf8(ruby)),
+        declares_ascii,
+    ))
 }
 
 /// The encoding an encoding declaration names: Ruby's for an IANA name or
@@ -157,14 +163,15 @@ pub fn xml_decode_input(
     str: RString,
     max_bytes: Option<usize>,
 ) -> Result<OwnedBuf, Error> {
-    let eff = effective_encoding(ruby, str)?;
+    let (eff, declares_ascii) = effective_encoding(ruby, str)?;
     let s = strict_utf8(ruby, str, eff)?;
-    /* US-ASCII is read as UTF-8 bytes, so it needs no transcode; but as an
-     * effective encoding it is a declaration's (a String's own US-ASCII
-     * claims none, and no BOM names it), and a document declaring US-ASCII
+    /* US-ASCII is read as UTF-8 bytes, so it needs no transcode, and every
+     * encoding is taken to agree with it - but a document DECLARING US-ASCII
      * holds ASCII alone (§4.3.3: bytes the declared encoding cannot read are
-     * a fatal error). */
-    let ascii_only = eff.is_usascii();
+     * a fatal error), whatever it is decoded by: the String's own encoding
+     * (a UTF-8 String, the common one), a BOM, or the declaration itself. A
+     * String's own US-ASCII is no declaration: it claims none. */
+    let ascii_only = declares_ascii;
     let off = bom_len(s);
     let len = s.len() - off;
 

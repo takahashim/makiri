@@ -10,7 +10,7 @@ use crate::bridge::rb::ReprValue;
 use crate::bridge::rb::{Error, RString, Value};
 use crate::bridge::ruby::makiri_error;
 
-use crate::nupur::string::{read_utf8, read_utf8_within, ReadError};
+use crate::nupur::string::{read_utf8_within, ReadError};
 use crate::nupur::utf8_copy::Utf8Copy;
 
 use crate::bridge::ruby::{name_arg, string_arg};
@@ -68,10 +68,8 @@ impl<C: Checked> RubyStr<C> {
         max_bytes: Option<usize>,
         check: impl FnOnce(&[u8]) -> Option<P>,
     ) -> Result<Self, ReadError<P>> {
-        let bytes = match max_bytes {
-            None => read_utf8(ruby, s, check)?,
-            Some(max) => read_utf8_within(ruby, s, max, check)?,
-        };
+        /* No cap is `read_utf8`'s own: a cap of `usize::MAX`. */
+        let bytes = read_utf8_within(ruby, s, max_bytes.unwrap_or(usize::MAX), check)?;
         Ok(RubyStr {
             bytes,
             contract: core::marker::PhantomData,
@@ -131,7 +129,7 @@ fn text_error(what: &str, problem: &str) -> Error {
     makiri_error(format_args!("{what} {problem}"))
 }
 
-/// The error for a checked view [`read_utf8`] refused: what each reader words
+/// The error for a checked view `nupur::string::read_utf8` refused: what each reader words
 /// its own way - its check's refusal, invalid UTF-8 - by `refused` and
 /// `not_utf8`, and the rest alike. With no cap `TooLong` cannot come back.
 fn read_error<P>(
