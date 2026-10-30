@@ -16,6 +16,33 @@ fn raising() {
 /// (`raw_ruby_outside_bridge`).
 fn raw_type(_: rb_sys::VALUE) {} //~
 
+/// The GVL's token made outside the entries Ruby calls
+/// (`gvl_token_outside_entry`): the maker outside `rb::method`, a
+/// trampoline's helper outside a `method!` expansion, `run_init` outside an
+/// `Init_` function.
+#[allow(unsafe_code)]
+#[rustfmt::skip] // keeps each marker on the line reported
+mod entry {
+    fn token() {
+        let _ = unsafe { crate::rb::Ruby::get_unchecked() }; //~
+    }
+
+    fn trampoline() -> crate::rb::Value {
+        unsafe { crate::rb::method::finish(|ruby| Ok(ruby.qnil())) } //~
+    }
+
+    fn init(check: fn(&crate::rb::Ruby) -> Result<(), crate::rb::Error>) {
+        unsafe { crate::rb::method::run_init(check, check) } //~
+    }
+}
+
+/// A C global of Ruby's - a raw `VALUE` with no type spelled - outside them
+/// too.
+#[allow(unsafe_code)]
+fn raw_global() -> bool {
+    unsafe { rb_sys::rb_cObject != 0 } //~
+}
+
 /// Ruby's C API from a function holding no proof of the GVL
 /// (`ffi_without_gvl_proof`) - and the same with one, which passes.
 #[allow(unsafe_code)]

@@ -17,6 +17,8 @@
 //! - `raising_call_outside_protect` and `unraising_call_in_raw`
 //!   ([`raising`]): one table of the C functions that cannot raise, every
 //!   other taken to, and what `nupur::raw` holds checked against it.
+//! - `gvl_token_outside_entry` ([`entry`]): the GVL's token made anywhere but
+//!   the entries Ruby calls.
 //!
 //! (A second lint, `converted_argument`, checked that no registered method
 //! took a type magnus would convert with the caller's Ruby. Since
@@ -34,6 +36,7 @@ extern crate rustc_span;
 
 mod boundaries;
 mod c_integer;
+mod entry;
 mod gvl_proof;
 mod raising;
 mod value_on_heap;
@@ -67,6 +70,7 @@ pub fn register_lints(sess: &Session, lint_store: &mut LintStore) {
         FFI_WITHOUT_GVL_PROOF,
         C_INTEGER_OUTSIDE_INT,
         UNRAISING_CALL_IN_RAW,
+        GVL_TOKEN_OUTSIDE_ENTRY,
     ]);
     lint_store.register_late_lint_pass(Box::new(|_| Box::new(MakiriLints)));
 }
@@ -233,6 +237,22 @@ declare_lint! {
 }
 
 declare_lint! {
+    /// ### What it does
+    /// Reports a call of `Ruby::get_unchecked` outside `nupur::rb::method`, of
+    /// `rb::method::finish` / `finish_cary` outside a `method!` / `function!`
+    /// expansion, and of `rb::method::run_init` outside an `extern "C" fn
+    /// Init_*`.
+    ///
+    /// ### Why is this bad?
+    /// Each makes the GVL's token, `Ruby`, which every call into Ruby takes
+    /// as its proof; made where Ruby did not call in with the GVL held, the
+    /// proof is false.
+    pub GVL_TOKEN_OUTSIDE_ENTRY,
+    Deny,
+    "the GVL's token made outside the entries Ruby calls"
+}
+
+declare_lint! {
     pub DISCARDED_RUBY_ERROR,
     Deny,
     "a Result of a Ruby error whose Err is thrown away"
@@ -253,6 +273,7 @@ declare_lint_pass!(MakiriLints => [
     FFI_WITHOUT_GVL_PROOF,
     C_INTEGER_OUTSIDE_INT,
     UNRAISING_CALL_IN_RAW,
+    GVL_TOKEN_OUTSIDE_ENTRY,
 ]);
 
 impl<'tcx> LateLintPass<'tcx> for MakiriLints {
@@ -288,6 +309,7 @@ impl<'tcx> LateLintPass<'tcx> for MakiriLints {
         gvl_proof::check_expr(cx, expr);
         c_integer::check_expr(cx, expr);
         raising::check_expr(cx, expr);
+        entry::check_expr(cx, expr);
     }
 }
 

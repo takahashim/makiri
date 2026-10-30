@@ -34,12 +34,14 @@ macro_rules! globals {
 }
 
 impl Ruby {
-    /// The token, unchecked.
+    /// The token, unchecked: the layer's own, called by the two entries Ruby
+    /// calls with the GVL held (`rb::method`'s `finish` and `run_init`) and
+    /// nowhere else (`rake dylint`'s `gvl_token_outside_entry`).
     ///
     /// # Safety
     /// On a Ruby thread holding the GVL.
     #[inline]
-    pub unsafe fn get_unchecked() -> Ruby {
+    pub(crate) unsafe fn get_unchecked() -> Ruby {
         Ruby(PhantomData)
     }
 

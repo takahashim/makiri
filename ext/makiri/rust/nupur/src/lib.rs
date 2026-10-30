@@ -94,9 +94,11 @@
 //! - **Nothing runs the caller's Ruby unasked** - a `to_s`, a block, a
 //!   method call. Checked by `runs_callers_ruby`, with each sanctioned call
 //!   an `allow` stating why.
-//! - **An `unsafe` call keeps its contract** - [`rb::method::finish`],
-//!   [`rb::method::run_init`], [`rb::Ruby::get_unchecked`] - each stated where
-//!   it is defined.
+//! - **The GVL's token is made only where Ruby calls in.** [`rb::method::run_init`]
+//!   is called from the extension's `extern "C" fn Init_*` alone, and
+//!   [`rb::method::finish`] from the `method!` / `function!` expansions alone;
+//!   the token's own maker is crate-private. Checked by
+//!   `gvl_token_outside_entry`.
 
 #![deny(unsafe_code)]
 /* The casts that lose a value. Where the code is built a C `long` is `i64`
