@@ -35,7 +35,7 @@ pub(crate) unsafe fn utf8_str_unwritten(_: &Ruby, len: usize) -> Result<RString,
 
 /// `rb_enc_interned_str` of `bytes` in `enc`: raises `NoMemoryError`.
 #[inline]
-pub fn enc_interned_str(_: &Ruby, bytes: &[u8], enc: Encoding) -> Result<RString, Error> {
+pub fn enc_interned_str(bytes: &[u8], enc: Encoding) -> Result<RString, Error> {
     let (p, n, e) = (
         bytes.as_ptr() as *const c_char,
         c_len(bytes.len())?,

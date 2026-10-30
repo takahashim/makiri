@@ -194,7 +194,7 @@ impl Encoding {
     /// For an encoding that is not a String's - a declared one, a given one.
     /// A String's own is [`RString::reads_as_utf8_bytes`](crate::rb::RString::reads_as_utf8_bytes),
     /// which reads its flags rather than look its encoding up.
-    pub fn is_utf8_ascii_or_binary(self, _: &crate::rb::Ruby) -> bool {
+    pub fn is_utf8_ascii_or_binary(self) -> bool {
         reads_as_utf8_index(self.index())
     }
 

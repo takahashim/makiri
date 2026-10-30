@@ -217,5 +217,5 @@ pub fn utf8_str_from_slices<'a>(
 /// copied, and bytes that were not UTF-8 would make a wrong String, never a
 /// memory error.
 pub fn interned_utf8(ruby: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
-    crate::raw::enc_interned_str(ruby, bytes, crate::encoding::Encoding::utf8(ruby))
+    crate::raw::enc_interned_str(bytes, crate::encoding::Encoding::utf8(ruby))
 }

@@ -42,7 +42,7 @@ fn effective_encoding(ruby: &Ruby, str: RString) -> Result<Encoding, Error> {
     let tag = Encoding::of(str);
     /* The sniff reads a copy of the first bytes; the name lookups - which can
      * allocate - come after. */
-    let (head, n) = prefix::<SNIFF_WINDOW>(ruby, str);
+    let (head, n) = prefix::<SNIFF_WINDOW>(str);
     let (bom, decl) = sniff(head.get(..n).unwrap_or(&[]));
     let bom = match bom {
         Some(b) => Encoding::find(ruby, b.name().as_bytes())?,
@@ -140,8 +140,8 @@ fn strict_utf8(ruby: &Ruby, str: RString, eff: Encoding) -> Result<RString, Erro
 /// none. §4.3.3: a BOM is the encoding signature, not document content; the
 /// transcode turns any UTF-16/32 BOM into a U+FEFF, so one rule covers every
 /// input.
-fn bom_len(ruby: &Ruby, s: RString) -> usize {
-    let (head, n) = prefix::<3>(ruby, s);
+fn bom_len(s: RString) -> usize {
+    let (head, n) = prefix::<3>(s);
     if n == 3 && head == *b"\xEF\xBB\xBF" {
         3
     } else {
@@ -165,7 +165,7 @@ pub fn xml_decode_input(
      * holds ASCII alone (§4.3.3: bytes the declared encoding cannot read are
      * a fatal error). */
     let ascii_only = eff.is_usascii();
-    let off = bom_len(ruby, s);
+    let off = bom_len(s);
     let len = s.len() - off;
 
     /* Fail closed on an over-budget input BEFORE the copy and the validation
@@ -184,8 +184,8 @@ pub fn xml_decode_input(
      * there is no U+FFFD repair here, unlike the HTML sanitize path. The
      * whole String is consulted for its cached coderange (which covers the
      * stripped prefix too - the BOM is one complete UTF-8 character). */
-    let bytes = ruby_string_bytes_from(ruby, s, off)?;
-    if let Some(problem) = text_check(ruby, s, bytes.as_slice()).problem() {
+    let bytes = ruby_string_bytes_from(s, off)?;
+    if let Some(problem) = text_check(s, bytes.as_slice()).problem() {
         return Err(syntax_error(format_args!("XML input {problem}")));
     }
     if ascii_only && !bytes.as_slice().is_ascii() {

@@ -272,7 +272,8 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   `jump_tag`, `exc_fatal` - which only a trampoline's raise may call); a String made in place is `utf8_str_filled`, safe,
   whose `fill` writes front to back through an `Unwritten` and must reach
   the end. A raw `VALUE` - an integer to
-  Rust, which no lint can tell from a `u64` in a `Vec` - is spelled only in
+  Rust, which no lint can tell from a `u64` in a `Vec` - is spelled, or read
+  from a C global of Ruby's (`rb_cObject`), only in
   `raw/`, `int.rs`, `typed/` and the `bridge::rb` files that are the typed values
   (`rake dylint`'s `raw_ruby_outside_bridge`, which also fails on any
   `rb_sys::` outside `bridge/`), so
@@ -469,7 +470,12 @@ bundle exec rake dylint            # the crate's own lints (lints/makiri_lints),
                                    # extern "C" entries and unsafe fns exempt),
                                    # c_integer_outside_int (an integer `as` or a
                                    # named c_long at the Ruby boundary outside
-                                   # nupur::int)
+                                   # nupur::int), gvl_token_outside_entry (the
+                                   # GVL's token, `Ruby`, made anywhere but where
+                                   # Ruby calls in: `get_unchecked` - crate-private
+                                   # - in `rb::method`, `finish` in a `method!` /
+                                   # `function!` expansion, `run_init` in an
+                                   # `extern "C" fn Init_*`)
                                    # (a sanctioned site is an allow with its reason);
                                    # then their self-test
                                    # (src/lint_probe.rs). Needs the nightly
@@ -800,9 +806,10 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            public modules, so `bridge::rb` etc. still
                            resolve; `raw` is crate-private. The
                            macros' helpers (`finish`, `finish_cary`,
-                           `run_init`) are `unsafe fn`: only the macros'
-                           expansion can call them, so nothing else makes a
-                           `Ruby` token. A function on a no_unwind site's path
+                           `run_init`) are `unsafe fn`, and
+                           `gvl_token_outside_entry` holds each to its one
+                           place - a trampoline's expansion, the `Init_`
+                           function - so nothing else makes a `Ruby` token. A function on a no_unwind site's path
                            is `#[inline]`, or the proof cannot see into it
                            across the crate. `notes/nupur_crate_plan.ja.md` is
                            its plan

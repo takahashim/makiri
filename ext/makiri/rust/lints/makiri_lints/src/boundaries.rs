@@ -15,7 +15,8 @@
 //!   only inside `nupur::raw::call`'s closure (which is private to
 //!   `nupur::raw`, so that is also where every raising call is).
 //! - `raw_ruby_outside_bridge`: Ruby's C API is named only in `bridge/`, and
-//!   a raw `VALUE` only in the files that are the typed values.
+//!   a raw `VALUE` - the type, or a C global of Ruby's, which holds one - only
+//!   in the files that are the typed values.
 //! - `runs_callers_ruby`: a call that would run the caller's Ruby code, each
 //!   one allowed where it is made, with its reason.
 //! - `raw_node_crossing`: a borrowed HTML node handle made a lifetime-free
@@ -184,16 +185,16 @@ pub fn check_path(cx: &LateContext<'_>, path: &Path<'_>, hir_id: HirId) {
     if !is_extension(cx) {
         return;
     }
-    let Res::Def(_, did) = path.res else {
+    let Res::Def(kind, did) = path.res else {
         return;
     };
     report_ruby_layer(cx, did, path.span.source_callsite(), hir_id);
-    report_raw_ruby(cx, did, path.span.source_callsite(), hir_id);
+    report_raw_ruby(cx, kind, did, path.span.source_callsite(), hir_id);
 }
 
 /* ---- raw_ruby_outside_bridge ---- */
 
-fn report_raw_ruby(cx: &LateContext<'_>, did: DefId, span: Span, hir_id: HirId) {
+fn report_raw_ruby(cx: &LateContext<'_>, kind: DefKind, did: DefId, span: Span, hir_id: HirId) {
     let target = path_of(cx, did);
     if !target.starts_with("rb_sys::") {
         return;
@@ -213,7 +214,9 @@ fn report_raw_ruby(cx: &LateContext<'_>, did: DefId, span: Span, hir_id: HirId) 
              raise becomes an Err before it can longjmp past a destructor; add a typed \
              wrapper there",
         );
-    } else if target.ends_with("::VALUE") && !VALUE_HOMES.iter().any(|m| within(&module, m)) {
+    } else if (target.ends_with("::VALUE") || is_value_global(cx, kind, did))
+        && !VALUE_HOMES.iter().any(|m| within(&module, m))
+    {
         span_lint_and_help(
             cx,
             RAW_RUBY_OUTSIDE_BRIDGE,
@@ -224,6 +227,22 @@ fn report_raw_ruby(cx: &LateContext<'_>, did: DefId, span: Span, hir_id: HirId) 
              field; hold a bridge::rb value (Value, RString, ...) instead",
         );
     }
+}
+
+/// A C global of Ruby's that holds a value (`rb_cObject`, `rb_eArgError`):
+/// a raw `VALUE` read without the type being spelled. `VALUE` is an alias of
+/// an unsigned integer, which the type shows; another global (the
+/// `ruby_api_version` array) is not one.
+fn is_value_global(cx: &LateContext<'_>, kind: DefKind, did: DefId) -> bool {
+    matches!(kind, DefKind::Static { .. })
+        && matches!(
+            cx.tcx
+                .type_of(did)
+                .instantiate_identity()
+                .skip_normalization()
+                .kind(),
+            rustc_middle::ty::Uint(_)
+        )
 }
 
 fn report_ruby_layer(cx: &LateContext<'_>, did: DefId, span: Span, hir_id: HirId) {

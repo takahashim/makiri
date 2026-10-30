@@ -115,9 +115,9 @@ pub fn node_hash(ruby: &Ruby, rb_self: Value) -> Result<Value, crate::bridge::rb
 /// A `child_at` / `element_child_at` index argument: None (so nil) for a
 /// negative one, or one too large for any list. Not an Integer is a
 /// `TypeError` (`bridge::ruby::integer_arg`): no `to_int` is called.
-fn child_index_arg(ruby: &Ruby, i: Value) -> Result<Option<usize>, crate::bridge::rb::Error> {
+fn child_index_arg(i: Value) -> Result<Option<usize>, crate::bridge::rb::Error> {
     let i = crate::bridge::ruby::integer_arg(i)?;
-    i.to_usize_within(ruby)
+    i.to_usize_within()
 }
 
 /// `#child_count` (DOM `childNodes.length`): every child node, counted
@@ -138,7 +138,7 @@ pub fn child_at<S: ChildListHost>(
     this: S,
     i: Value,
 ) -> Result<Option<Value>, crate::bridge::rb::Error> {
-    match child_index_arg(ruby, i)? {
+    match child_index_arg(i)? {
         Some(i) => this.child_at(ruby, ChildList::Nodes, i),
         None => Ok(None),
     }
@@ -151,7 +151,7 @@ pub fn element_child_at<S: ChildListHost>(
     this: S,
     i: Value,
 ) -> Result<Option<Value>, crate::bridge::rb::Error> {
-    match child_index_arg(ruby, i)? {
+    match child_index_arg(i)? {
         Some(i) => this.child_at(ruby, ChildList::Elements, i),
         None => Ok(None),
     }

@@ -24,7 +24,13 @@
 //! - **The GVL is a token.** A [`rb::Ruby`] is made only by a trampoline and
 //!   by [`rb::method::run_init`], both `unsafe fn`s only the macros' expansion
 //!   (and the extension's `Init_`) call; everything that calls Ruby takes one,
-//!   or a Ruby value, which exists only where one did.
+//!   or a Ruby value, which exists only where one did. Either is proof
+//!   enough, so a function takes `&Ruby` only when it holds no Ruby value
+//!   (or handle made from one, `self` included) to show. The exceptions say
+//!   more than the GVL: the reads of the running method's own frame
+//!   (`rb::method::block_given`, `keyword_given`, `yield_value`), whose
+//!   token is the method's, and `Opaque::get`, whose value lives in a
+//!   static.
 //! - **A wrapped object's values are its slots** ([`typed`]), marked by the
 //!   layer; a payload holds none. Memory reported to the GC is given back by
 //!   the free callback. One is made only of a [`rb::DataClass`], a class
@@ -94,9 +100,11 @@
 //! - **Nothing runs the caller's Ruby unasked** - a `to_s`, a block, a
 //!   method call. Checked by `runs_callers_ruby`, with each sanctioned call
 //!   an `allow` stating why.
-//! - **An `unsafe` call keeps its contract** - [`rb::method::finish`],
-//!   [`rb::method::run_init`], [`rb::Ruby::get_unchecked`] - each stated where
-//!   it is defined.
+//! - **The GVL's token is made only where Ruby calls in.** [`rb::method::run_init`]
+//!   is called from the extension's `extern "C" fn Init_*` alone, and
+//!   [`rb::method::finish`] from the `method!` / `function!` expansions alone;
+//!   the token's own maker is crate-private. Checked by
+//!   `gvl_token_outside_entry`.
 
 #![deny(unsafe_code)]
 /* The casts that lose a value. Where the code is built a C `long` is `i64`

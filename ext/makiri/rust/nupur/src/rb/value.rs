@@ -423,7 +423,7 @@ impl Integer {
     /// then: any other failure of the conversion is passed on, never read as
     /// "out of range" (for a limit, that would lift it). "Past one" is
     /// decided from the value's size, so no `RangeError` is made and dropped.
-    pub fn to_usize_within(self, _: &Ruby) -> Result<Option<usize>, Error> {
+    pub fn to_usize_within(self) -> Result<Option<usize>, Error> {
         if self.is_negative() {
             return Ok(None);
         }

@@ -2,14 +2,21 @@
 
 use super::*;
 
-/// `rb_define_class_under`: raises `TypeError` when `name` is bound to
-/// something else, or to a class with another superclass.
+/// `rb_define_class_under`, its superclass `sup` or `Object` for `None`:
+/// raises `TypeError` when `name` is bound to something else, or to a class
+/// with another superclass.
 pub fn define_class_under(
     outer: Value,
     name: &core::ffi::CStr,
-    sup: RClass,
+    sup: Option<RClass>,
 ) -> Result<Value, Error> {
-    let (outer, name, sup) = (outer.as_raw(), name.as_ptr(), sup.as_raw());
+    let sup = match sup {
+        Some(c) => c.as_raw(),
+        // SAFETY: `rb_cObject`, a C global Ruby sets once at boot - read
+        // here, in `raw`, where a raw `VALUE` may be spelled.
+        None => unsafe { rb_sys::rb_cObject },
+    };
+    let (outer, name) = (outer.as_raw(), name.as_ptr());
     let v = call(|| unsafe { rb_sys::rb_define_class_under(outer, name, sup) })?;
     // SAFETY: the class just defined, live (it is a constant now).
     Ok(unsafe { Value::from_raw(v) })

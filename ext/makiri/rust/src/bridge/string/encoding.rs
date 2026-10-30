@@ -29,7 +29,7 @@ pub fn encoding_arg(ruby: &Ruby, v: Value) -> Result<(Encoding, crate::cbuf::Own
                 });
         }
     };
-    Ok((e, super::ruby_string_bytes(ruby, name)?))
+    Ok((e, super::ruby_string_bytes(name)?))
 }
 
 /// Whether a String's own tag claims no encoding for the document it holds:
