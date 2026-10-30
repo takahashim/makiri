@@ -239,9 +239,16 @@ pub fn read_utf8_within<P>(
     if s.len() / 4 > max_bytes {
         return Err(ReadError::TooLong);
     }
-    let s = match to_utf8(ruby, s, None, Unconvertible::Raise).map_err(ReadError::Raised)? {
-        Transcode::AsIs(s) | Transcode::Transcoded(s) => s,
-        Transcode::Fault(_handled) => return Err(ReadError::NoUtf8Form),
+    /* The common case, a String already read as UTF-8 bytes, asks its flags
+     * here and skips `to_utf8`'s `Result`, whose `Err` (an `Error`, its
+     * message inline) is a few hundred bytes to move on every read. */
+    let s = if s.reads_as_utf8_bytes() {
+        s
+    } else {
+        match to_utf8(ruby, s, None, Unconvertible::Raise).map_err(ReadError::Raised)? {
+            Transcode::AsIs(s) | Transcode::Transcoded(s) => s,
+            Transcode::Fault(_handled) => return Err(ReadError::NoUtf8Form),
+        }
     };
     if s.len() > max_bytes {
         return Err(ReadError::TooLong);
