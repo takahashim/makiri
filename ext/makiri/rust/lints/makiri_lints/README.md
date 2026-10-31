@@ -1,26 +1,26 @@
 # makiri_lints
 
-Makiri's own lint over its Ruby boundary, checked by type:
+The lints over Makiri's Ruby binding layer (`nupur`) and the extension built
+on it, checked on the compiled code by resolved path and by type, in two
+groups:
 
-- `ruby_value_on_heap`: a Ruby value (a `bridge::rb::ReprValue` type) kept
-  where Ruby's GC cannot see it - in a heap container (`Vec`, `Box`,
-  `HashMap`, ...), in a `static` or `thread_local!`, or directly in the data
-  of a wrapped object (a `bridge::typed::Payload` type) rather than in one of
-  its slots - whether a binding, a parameter, a return value, a field or a
-  temporary no binding names (`f(vec![v])`, a `Box::new(move || v)`) holds
-  it; a closure holds what it captures by value. Not seen: a value behind
-  `dyn Trait` once coerced, a generic body for the type it is called with,
-  a raw `VALUE` (an integer to the lint), and - deliberately - a value
-  behind a reference or a raw pointer, or in `bridge::rb::Opaque` (a
-  registered root).
+- **The layer's guarantees** (they name only `nupur::` and rb-sys paths):
+  `raising_call_outside_protect`, `unraising_call_in_raw`,
+  `unguarded_no_unwind_site`, `ffi_without_gvl_proof`,
+  `gvl_token_outside_entry`, `forgotten_handle`, `discarded_ruby_error`,
+  `ruby_value_on_heap`, `c_integer_outside_int`, `runs_callers_ruby`,
+  `ruby_in_gvl_released_body`, and the layer's half of
+  `raw_ruby_outside_bridge`.
+- **The extension's own layout**: `ruby_layer_in_engine`,
+  `infallible_allocation`, `raw_node_crossing`, `ruby_surface_in_bridge`,
+  and the extension's half of `raw_ruby_outside_bridge`.
 
-A second lint, `converted_argument`, checked that no registered method took a
-type magnus would convert with the caller's Ruby. Since `bridge::rb` replaced
-magnus, its `TryConvert` exists only for `Value`, `bool` and Makiri's receiver
-types, so such a method does not compile, and the lint is gone.
+`src/lib.rs` states each lint and the module that holds it; that module says
+exactly what it reports and what it cannot see.
 
-`src/value_on_heap.rs` says exactly what it reports. Run it with
-`bundle exec rake dylint` from the repository root. It needs the nightly
-`rust-toolchain.toml` pins (with `rustc-dev`) and
-`cargo install cargo-dylint dylint-link`. The task also runs the self-test,
-`src/lint_probe.rs` in the extension crate.
+Run them with `bundle exec rake dylint` from the repository root. It needs
+the nightly `rust-toolchain.toml` pins (with `rustc-dev`) and
+`cargo install cargo-dylint dylint-link`. The task then runs the self-test:
+`src/lint_probe.rs` in the extension crate and `nupur/src/lint_probe.rs` in
+the layer, each line of which ending in `//~` must be reported by exactly the
+lints named after it.
