@@ -406,8 +406,6 @@ pub fn attribute_by_qualified_name(
             .and_then(|el| el.attrs().find(|at| at.qualified_name() == name))
             .map(|at| RawNode::from(at.node()))
     };
-    /* The name is not read past here; wrapping allocates, so it happens after. */
-    drop(nv);
     found
         .map(|at| wrap_html_node(ruby, at, this.document()))
         .transpose()
@@ -506,7 +504,6 @@ pub fn attribute_node_ns(
         let view = this.read()?;
         attr_by_ns(&view, &args).map(|at| RawNode::from(at.node()))
     };
-    drop(args);
     found
         .map(|at| wrap_html_node(ruby, at, this.document()))
         .transpose()

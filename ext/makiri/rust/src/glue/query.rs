@@ -185,8 +185,6 @@ pub fn query_context(
 fn xpath_run(ruby: &Ruby, rb_self: Value, q: QueryArgs, answer: Answer) -> Result<Value, Error> {
     let document = keepalive_document(ruby, rb_self)?;
     let ctx = query_context(ruby, rb_self, document, &q)?;
-    /* Parsed AFTER the namespaces are registered: that step runs Ruby and may
-     * collect, and the borrowed expression bytes must not be live across it. */
     let ast = parse_query(ruby, &ctx, q.text)?;
     evaluate_to_ruby(ruby, ctx, QueryAst::owned(ast), document, answer)
 }

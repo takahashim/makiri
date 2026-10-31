@@ -270,10 +270,6 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
             mutate::set_content(d, el, text)
         })?)?;
     }
-    /* Both views are done with. Drop them before any Ruby runs again (the
-     * wrapper allocation, the attribute loop's), so no borrow of a
-     * Ruby String is held across a GC point. */
-    drop((nv, cv));
     let rb_el = wrap(ruby, el, rb_self)?;
     if let Some(h) = attrs {
         /* Each pair goes through the normal validated setter (a key may be
@@ -322,8 +318,6 @@ pub fn create_element_ns(
     let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
         mutate::new_dom_element_ns(d, qname, sp, ns)
     })?)?;
-    /* Before the wrap, whose allocation can raise past this frame. */
-    drop((nv, qv));
     wrap(ruby, el, rb_self)
 }
 
@@ -354,8 +348,6 @@ pub fn create_loose_dom_element(
     let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
         mutate::new_loose_dom_element(d, qname, sp, ns)
     })?)?;
-    /* Before the wrap, whose allocation can raise past this frame. */
-    drop((qv, lv, pv, nv));
     wrap(ruby, el, rb_self)
 }
 
@@ -384,8 +376,6 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
     let dt = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
         mutate::new_document_type(d, name, pub_id, sys_id)
     })?)?;
-    /* Before the wrap, whose allocation can raise past this frame. */
-    drop((nv, pv, sv));
     wrap(ruby, dt, rb_self)
 }
 
@@ -402,8 +392,6 @@ fn create_chardata(
     let n = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
         mutate::new_chardata(d, type_, bytes)
     })?)?;
-    /* Before the wrap, whose allocation can raise past this frame. */
-    drop(tv);
     wrap(ruby, n, rb_self)
 }
 
@@ -424,8 +412,6 @@ pub fn create_pi(ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Res
     let pi = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
         mutate::new_pi(d, target, data)
     })?)?;
-    /* Before the wrap, whose allocation can raise past this frame. */
-    drop((tg, dt));
     wrap(ruby, pi, rb_self)
 }
 

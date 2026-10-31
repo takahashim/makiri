@@ -59,20 +59,11 @@ fn encoding_arg(ruby: &Ruby, v: Value) -> Result<Option<GivenEncoding>, Error> {
             ),
         )
     };
-    /* No encoding's name is this long, Ruby's or the Standard's; a shorter
-     * one is copied out, so no argument's copy is held across the lookup
-     * (which can autoload an encoding). */
-    let mut name = [0u8; 64];
-    let Some(dst) = name.get_mut(..label.len()) else {
-        return Err(unknown(label.as_bytes()));
-    };
-    dst.copy_from_slice(label.as_bytes());
-    let len = label.len();
-    drop(label);
-    let name = &name[..len];
-    GivenEncoding::resolve(ruby, name)?
+    /* The label is this frame's own copy, so the lookup - which can
+     * autoload an encoding - cannot reach it. */
+    GivenEncoding::resolve(ruby, label.as_bytes())?
         .map(Some)
-        .ok_or_else(|| unknown(name))
+        .ok_or_else(|| unknown(label.as_bytes()))
 }
 
 /// `Document#encoding`: the character encoding the document was read in, by

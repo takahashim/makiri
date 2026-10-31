@@ -179,11 +179,7 @@ fn parse_with_limits(
 pub fn parse_query(ruby: &Ruby, cx: &Cx, expr: Value) -> Result<Box<Ast>, Error> {
     let ev = ruby_verified_text(ruby, expr, "XPath expression")?;
     /* `ev` owns a copy of the String's bytes; the parse reads that copy. */
-    let parsed = parse_with_limits(cx.limits(), ev.text());
-    /* The copy is freed before the error is built, as `rake unsafe:boundaries`
-     * asks of every argument copy. */
-    drop(ev);
-    parsed.map_err(|error| xpath_error(&error))
+    parse_with_limits(cx.limits(), ev.text()).map_err(|error| xpath_error(&error))
 }
 
 /// The compiled expression one evaluation runs: the query's own, or one an
