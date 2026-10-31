@@ -65,6 +65,8 @@ ext/makiri/rust/           the extension (package makiri_rs, lib `makiri`)
                            decoder (`cutf8`, the port of the C one)
     src/utf8_input.rs      HTML input sanitiser: invalid UTF-8 -> U+FFFD, per
                            WHATWG; uses `ceiling_buf` + `utf8_decode` only
+    src/swar.rs            word-at-a-time byte tests (`word`, `has_zero`),
+                           for the tokenizer's `seek4` and the line table
     src/no_unwind.rs       the engine's no_unwind sites and the check's
                            control
     src/xpath/             native XPath 1.0 engine, generic over a `Dom`
@@ -171,6 +173,11 @@ ext/makiri/rust/           the extension (package makiri_rs, lib `makiri`)
                            length, where Kani stopped at 6 bytes
     xml_chars.rs           `xml::chars`' classes: NameStartChar is in
                            NameChar, and NameChar in Char, for every `u32`
+    swar.rs                the tokenizer's `seek4` over `engine/src/swar.rs`:
+                           it skips no byte it looks for and never passes
+                           `end`, whatever the word
+    source_lines.rs        `lines_build`: the line table is exactly 0 and
+                           the offset past each newline, for every input
   fuzz/                    cargo-fuzz harnesses, over the reference crate (as
                            `makiri`) and so the engine. Built on PRs, run
                            nightly; css-match.yml runs the two html_css*

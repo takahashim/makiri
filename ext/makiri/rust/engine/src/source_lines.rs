@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+use crate::swar::word;
 use falloc::VecGrow;
 
 /* ------------------------------------------------------------------ *
@@ -42,14 +43,6 @@ fn newline_mask(w: u64) -> u64 {
     !((x & LOW7).wrapping_add(LOW7) | x | LOW7)
 }
 
-/// The eight bytes of `c` (eight long) as one word, first byte lowest.
-#[inline(always)]
-fn word(c: &[u8]) -> u64 {
-    let mut b = [0u8; 8];
-    b.copy_from_slice(c);
-    u64::from_le_bytes(b)
-}
-
 /// Build the line table over the input. None on allocation failure, which the
 /// caller treats as "no line information" rather than as a parse failure.
 ///
@@ -61,31 +54,47 @@ fn word(c: &[u8]) -> u64 {
 /// and 4x at 6,000, and 9 -> 12 us on a document of one line. (A byte loop,
 /// `iter().position()`, measured about 9% off the whole parse: the scan must
 /// not be a byte at a time.)
+///
+/// `verus/source_lines.rs` proves the table is exactly 0 and the offset past
+/// each newline, in order, for every input; the loops are `while` loops for
+/// it.
 pub fn lines_build(bytes: &[u8]) -> Option<Lines> {
     let mut starts: Vec<usize> = Vec::new();
     starts.falloc_push(0).ok()?;
-    let (chunks, rest) = bytes.as_chunks::<16>();
     let mut base = 0usize;
-    for c in chunks {
-        let (lo, hi) = (newline_mask(word(&c[..8])), newline_mask(word(&c[8..])));
+    let mut rest = bytes;
+    while rest.len() >= 16 {
+        let lo = newline_mask(word(rest));
+        let hi = newline_mask(word(&rest[8..]));
         if lo | hi != 0 {
-            for (off, mut m) in [(0usize, lo), (8, hi)] {
-                while m != 0 {
-                    /* The next line starts past the newline. */
-                    let at = base + off + (m.trailing_zeros() / 8) as usize;
-                    starts.falloc_push(at + 1).ok()?;
-                    m &= m - 1;
-                }
-            }
+            push_starts(&mut starts, base, lo)?;
+            push_starts(&mut starts, base + 8, hi)?;
         }
+        rest = &rest[16..];
         base += 16;
     }
-    for (i, &b) in rest.iter().enumerate() {
-        if b == b'\n' {
-            starts.falloc_push(base + i + 1).ok()?;
+    let mut i = base;
+    while i < bytes.len() {
+        if bytes[i] == b'\n' {
+            starts.falloc_push(i + 1).ok()?;
         }
+        i += 1;
     }
     Some(Lines { starts })
+}
+
+/// Push the start of the line after each newline `m` (a [`newline_mask`])
+/// marks in the word at `at`, lowest first.
+#[inline(always)]
+fn push_starts(starts: &mut Vec<usize>, at: usize, mut m: u64) -> Option<()> {
+    while m != 0 {
+        /* The next line starts past the newline. */
+        starts
+            .falloc_push(at + (m.trailing_zeros() / 8) as usize + 1)
+            .ok()?;
+        m &= m - 1;
+    }
+    Some(())
 }
 
 #[cfg(test)]

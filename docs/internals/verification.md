@@ -219,8 +219,10 @@ factor; `ceiling_buf`'s `Buf` (content, ceiling, fail-closed) with
 `copy_small`; `limits::admit`, the one rule every work budget charges
 through; the strict UTF-8 decoder `decode1` and the XML Char scan built on
 it, against vstd's own statement of UTF-8 (`vstd::utf8`); the XML character
-classes' inclusions (NameStartChar in NameChar in Char); and the XPath
-Number gate `xpath::number::extent`. Each is copied and checked against the
+classes' inclusions (NameStartChar in NameChar in Char); the XPath
+Number gate `xpath::number::extent`; and the word-at-a-time scans, the
+tokenizer's `seek4` and the line table's `lines_build`, whose bit tricks no
+test can cover word by word. Each is copied and checked against the
 source (`verus:sync`).
 
 `VERUS=path/to/verus` names the binary; `rakelib/verus.rake`'s

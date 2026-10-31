@@ -45,6 +45,7 @@ pub use state_text::{rawtext_before, rcdata_before, script_data_before};
 use crate::html::names::Names;
 use crate::html::res::names as res;
 use crate::ptr_table::{mix64, PtrMap, TableKey};
+use crate::swar::{has_zero, word, ONES};
 use falloc::VecGrow;
 
 /// `lxb_html_token_type`: flags on a token.
@@ -876,20 +877,13 @@ pub(crate) fn ncasecmp_first(first: &'static [u8], sec: &[u8]) -> Option<&'stati
 
 /// `lexbor_swar_seek4`: skip whole machine words that hold none of the four
 /// bytes; the caller's byte loop does the rest. Returns a position at or
-/// before the first occurrence.
+/// before the first occurrence, and never past `end` when `data` is not
+/// (`verus/swar.rs` proves both, for every input).
 #[inline]
 pub(crate) fn seek4(input: &[u8], mut data: usize, end: usize, c: [u8; 4]) -> usize {
-    const ONES: u64 = u64::MAX / 0xFF;
-    const HIGH: u64 = ONES * 0x80;
     let end = end.min(input.len());
-    let has_zero = |v: u64| v.wrapping_sub(ONES) & !v & HIGH;
-    while data + 8 <= end {
-        let Some(chunk) = input.get(data..data + 8) else {
-            break;
-        };
-        let mut word = [0u8; 8];
-        word.copy_from_slice(chunk);
-        let bytes = u64::from_le_bytes(word);
+    while data <= end && end - data >= 8 {
+        let bytes = word(&input[data..data + 8]);
         let matches = has_zero(bytes ^ (ONES * c[0] as u64))
             | has_zero(bytes ^ (ONES * c[1] as u64))
             | has_zero(bytes ^ (ONES * c[2] as u64))

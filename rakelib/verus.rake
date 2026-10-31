@@ -3,7 +3,8 @@
 # Verus over the Ruby-free core (ext/makiri/rust/verus/), at every length or
 # size: the growth arithmetic, copied from falloc, the pointer tables, the byte
 # buffer, the work budgets' one rule, the strict UTF-8 decoder with the XML
-# Char scan, the XML character classes, and the XPath Number gate. The copies are checked
+# Char scan, the XML character classes, the XPath Number gate, and the
+# word-at-a-time scans (the tokenizer's seek4, the line table). The copies are checked
 # against the source first - every line only Verus needs ends in `// [verus]`,
 # and the rest of the body must be the source's, token for token - so a
 # change to `grow_capacity` fails here until the proof is redone. VERUS names
@@ -28,6 +29,14 @@ VERUS_COPIES = [
   *%w[extent digits_end].map do |name|
     ["ext/makiri/rust/engine/src/xpath/number.rs", "ext/makiri/rust/verus/xpath_number.rs", name]
   end,
+  *%w[word has_zero].map do |name|
+    ["ext/makiri/rust/engine/src/swar.rs", "ext/makiri/rust/verus/swar.rs", name]
+  end,
+  ["ext/makiri/rust/engine/src/html/tokenizer/mod.rs", "ext/makiri/rust/verus/swar.rs", "seek4"],
+  ["ext/makiri/rust/engine/src/swar.rs", "ext/makiri/rust/verus/source_lines.rs", "word"],
+  *%w[newline_mask lines_build push_starts].map do |name|
+    ["ext/makiri/rust/engine/src/source_lines.rs", "ext/makiri/rust/verus/source_lines.rs", name]
+  end,
   ["ext/makiri/rust/engine/src/ceiling_buf.rs", "ext/makiri/rust/verus/ceiling_buf.rs", "copy_small"],
   # nupur's copy of it, which writes a String in place (`utf8_str_filled`).
   ["ext/makiri/rust/nupur/src/string/make.rs", "ext/makiri/rust/verus/ceiling_buf.rs", "copy_small"],
@@ -37,7 +46,8 @@ VERUS_COPIES = [
   end
 ].freeze
 # The files `rake verus` verifies.
-VERUS_PROOFS = %w[ptr_table.rs ceiling_buf.rs limits.rs utf8.rs xpath_number.rs xml_chars.rs].freeze
+VERUS_PROOFS = %w[ptr_table.rs ceiling_buf.rs limits.rs utf8.rs xpath_number.rs xml_chars.rs swar.rs
+                     source_lines.rs].freeze
 
 # The body of `fn name` in `src` - `Type::name` for the one in `impl ... Type`
 # - as tokens: lines marked `// [verus]` and
@@ -83,7 +93,8 @@ end
 # file's module doc; a new one is a new axiom, and this count moves with it on
 # purpose. The canaries may hold none.
 VERUS_TRUSTED = { "ptr_table.rs" => 4, "ceiling_buf.rs" => 4, "limits.rs" => 0, "utf8.rs" => 0,
-                  "xpath_number.rs" => 0, "xml_chars.rs" => 0 }.freeze
+                  "xpath_number.rs" => 0, "xml_chars.rs" => 0,
+                  "swar.rs" => 0, "source_lines.rs" => 1 }.freeze
 # Verus's `admit()` takes no argument, which tells it from a function named
 # `admit` (`limits.rs`).
 VERUS_TRUST = /#\[verifier::external(?:_body)?\]|\bassume_specification\b|\bassume\(|\badmit\(\s*\)/
