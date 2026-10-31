@@ -2,9 +2,9 @@
 //!
 //! The ONLY layer allowed raw Ruby String access, verified-string minting,
 //! TypedData, and the C calls that raise; everything else receives an
-//! already-checked view. See docs/string_types.md for the type lattice these
-//! functions move values through, and the "Text-input contract" in
-//! docs/internals/subsystems.md for
+//! already-checked view. See the `RubyText` / `RubyData` types in
+//! `string/view.rs` for the type lattice these functions move values through,
+//! and the "Text-input contract" in docs/internals/subsystems.md for
 //! the rules they enforce.
 //!
 //! Primitives the unsafe-free `glue` builds every Ruby method on: this layer

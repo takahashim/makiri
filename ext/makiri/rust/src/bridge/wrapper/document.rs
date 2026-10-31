@@ -160,8 +160,9 @@ impl Payload for DocData {
 /// twice gives the SAME object. Without it every navigation made a fresh
 /// wrapper, and everything that lives on a Ruby object was lost: `equal?`,
 /// an instance variable, a singleton method, `freeze`. A Ruby Hash from the
-/// node's TOKEN (a `NodeId` for XML, an arena node word for HTML, stable for
-/// the document's life: neither arena reuses a node) to its wrapper - a Ruby
+/// node's index in its document (stable for the document's life: neither
+/// arena reuses a node; the document's stamp is checked against the node's
+/// apart from the key, `node_table::table_and_key`) to its wrapper - a Ruby
 /// Hash rather than a Rust map, so the GC marks the wrappers and moves them
 /// itself, and the one slot is all the Document marks. The cost is
 /// Nokogiri's: a wrapper lives as long as its document.

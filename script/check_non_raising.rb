@@ -4,8 +4,8 @@
 # (`NON_RAISING` and `REVIEWED`, ext/makiri/rust/lints/makiri_lints/src/raising.rs).
 #
 # Against the C API raise survey (https://takahashim.github.io/ruby-c-apis/:
-# the call graph of the compiled C, over the latest release of each Ruby since
-# 3.3 and HEAD, Linux and macOS), as vendored in raise_survey.json
+# the call graph of the compiled C, over the first and the latest patch release
+# of each Ruby series since 3.3 and HEAD, Linux and macOS), as vendored in raise_survey.json
 # (`script/update_raise_survey.rb` refreshes it):
 #
 # - a NON_RAISING entry fails unless the survey finds no path to a longjmp

@@ -311,10 +311,10 @@ fn seal_leaves(methods: RModule, leaves: &[DataClass]) -> Result<(), Error> {
 /// name is load-bearing - and the crate's one `#[no_mangle]` item, which is
 /// what keeps every other name out of the export table (`rake symbols`).
 ///
-/// An error from [`init`] is raised, as a `LoadError` or whatever the failing
-/// definition raised, once `init` has returned. A panic is Ruby's `fatal`
-/// rather than `Makiri::InternalError`: that class may not exist yet, and an
-/// extension that stopped half-way through defining itself must not be used.
+/// [`check`]'s refusal is raised as a `LoadError`. An error or a panic from
+/// [`init`] is Ruby's `fatal` rather than `Makiri::InternalError`: that class
+/// may not exist yet, and an extension that stopped half-way through defining
+/// itself must not be used.
 #[allow(non_snake_case, unsafe_code)]
 #[no_mangle]
 pub extern "C" fn Init_makiri() {
@@ -488,7 +488,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
      * 500 can still `rescue Makiri::InternalError`. That is what Ruby's own
      * `fatal` gives, minus the part where it cannot be rescued at all.
      * Every method's trampoline (`bridge::rb::method::finish`) raises it;
-     * see `crate::caught`. */
+     * see `crate::nupur::caught`. */
     let internal = makiri.define_error("InternalError", ruby.exception_exception())?;
     let xpath_syntax = m_xpath.define_error("SyntaxError", err)?;
     let xpath_limit = m_xpath.define_error("LimitExceeded", xpath_syntax)?;
