@@ -108,7 +108,7 @@ UNSAFE_ISLANDS = {
 # The subtree roots in FORBID_ROOTS make whole directories compiler-forbidden:
 # `forbid` is inherited, so a new file under `glue/` or `xpath/` cannot slip in
 # with an `allow`, however few its `unsafe`s.
-FORBID_ROOTS = %w[bridge/mod.rs css/mod.rs glue/mod.rs css_match/mod.rs selectors/mod.rs xml/mod.rs
+FORBID_ROOTS = %w[bridge/mod.rs glue/mod.rs css_match/mod.rs selectors/mod.rs xml/mod.rs
                   xpath/mod.rs].freeze
 
 FORBID_FILES = %w[
@@ -125,45 +125,44 @@ FORBID_FILES = %w[
   bridge/xml/error.rs bridge/xml/insert.rs bridge/xml/mod.rs
   bridge/xml/receiver.rs bridge/xml/strings.rs bridge/xml/wrap.rs
   bridge/xpath/context_object.rs bridge/xpath/mod.rs cbuf.rs
-  child_index.rs conformance/mod.rs css/build.rs
-  css/lower.rs css/mod.rs css_cache.rs
+  child_index.rs conformance/mod.rs css_cache.rs
   css_match/mod.rs cutf8.rs cutf8/verify.rs
   doc_cell.rs dom_rules.rs engine_error.rs
-  falloc/verify.rs glue/css.rs glue/html_doc.rs
-  glue/html_node/css.rs glue/html_node/mutate.rs glue/html_node/read.rs
-  glue/html_node/serialize.rs glue/mod.rs glue/node.rs
-  glue/node_set.rs glue/query.rs glue/xml_doc.rs
-  glue/xml_node/css.rs glue/xml_node/mod.rs glue/xml_node/mutate.rs
-  glue/xml_node/ns.rs glue/xml_node/read.rs glue/xml_node/serialize.rs
-  glue/xpath_context.rs gvl.rs html/dom/mod.rs
-  html/encoding/mod.rs html/mod.rs html/tokenizer/mod.rs
-  html/tree/mod.rs html_dom.rs lexbor/contains_guard.rs
-  limits.rs node_type.rs nupur/args.rs
-  nupur/build.rs nupur/hash.rs nupur/int.rs
-  nupur/msg.rs nupur/rb/class.rs nupur/rb/convert.rs
-  nupur/rb/error.rs nupur/table.rs ptr_table.rs
-  rust_tests.rs selectors/mod.rs selectors/stylesheet.rs
-  selectors/text.rs source_lines.rs stack.rs
-  text.rs token.rs utf8_input.rs
-  xml/arena.rs xml/attr_key.rs xml/chars/expand.rs
-  xml/chars/mod.rs xml/css.rs xml/css_tests.rs
-  xml/dom_name.rs xml/encoding_names.rs xml/encoding_sniff.rs
-  xml/index.rs xml/mod.rs xml/model.rs
-  xml/mutate/attr.rs xml/mutate/copy.rs xml/mutate/edit.rs
-  xml/mutate/factory.rs xml/mutate/insert.rs xml/mutate/mod.rs
-  xml/mutate/ns.rs xml/ns_scope.rs xml/qname.rs
-  xml/selftest.rs xml/serialize/bindings.rs xml/serialize/c14n.rs
-  xml/serialize/mod.rs xml/serialize/out.rs xml/serialize/xml.rs
-  xml/tree/cursor.rs xml/tree/decl.rs xml/tree/dtd.rs
-  xml/tree/mod.rs xml/tree/scope.rs xml/verify.rs
-  xml/xpath.rs xpath/abi.rs xpath/ast.rs
-  xpath/ast_ops.rs xpath/attr_pred.rs xpath/axis.rs
-  xpath/ctx.rs xpath/dom.rs xpath/eval.rs
-  xpath/funcs/css_hooks.rs xpath/funcs/ext.rs xpath/funcs/mod.rs
-  xpath/lex.rs xpath/limits.rs xpath/mod.rs
-  xpath/nodetest.rs xpath/number.rs xpath/order.rs
-  xpath/parse.rs xpath/step_index.rs xpath/str_cache.rs
-  xpath/tests.rs xpath/value.rs xpath/verify.rs
+  glue/css.rs glue/html_doc.rs glue/html_node/css.rs
+  glue/html_node/mutate.rs glue/html_node/read.rs glue/html_node/serialize.rs
+  glue/mod.rs glue/node.rs glue/node_set.rs
+  glue/query.rs glue/xml_doc.rs glue/xml_node/css.rs
+  glue/xml_node/mod.rs glue/xml_node/mutate.rs glue/xml_node/ns.rs
+  glue/xml_node/read.rs glue/xml_node/serialize.rs glue/xpath_context.rs
+  gvl.rs html/dom/mod.rs html/encoding/mod.rs
+  html/mod.rs html/tokenizer/mod.rs html/tree/mod.rs
+  html_dom.rs lexbor/contains_guard.rs limits.rs
+  node_type.rs nupur/args.rs nupur/build.rs
+  nupur/hash.rs nupur/int.rs nupur/msg.rs
+  nupur/rb/class.rs nupur/rb/convert.rs nupur/rb/error.rs
+  nupur/table.rs ptr_table.rs rust_tests.rs
+  selectors/mod.rs selectors/stylesheet.rs selectors/text.rs
+  source_lines.rs stack.rs text.rs
+  token.rs utf8_input.rs xml/arena.rs
+  xml/attr_key.rs xml/chars/expand.rs xml/chars/mod.rs
+  xml/css.rs xml/css_tests.rs xml/dom_name.rs
+  xml/encoding_names.rs xml/encoding_sniff.rs xml/index.rs
+  xml/mod.rs xml/model.rs xml/mutate/attr.rs
+  xml/mutate/copy.rs xml/mutate/edit.rs xml/mutate/factory.rs
+  xml/mutate/insert.rs xml/mutate/mod.rs xml/mutate/ns.rs
+  xml/ns_scope.rs xml/qname.rs xml/selftest.rs
+  xml/serialize/bindings.rs xml/serialize/c14n.rs xml/serialize/mod.rs
+  xml/serialize/out.rs xml/serialize/xml.rs xml/tree/cursor.rs
+  xml/tree/decl.rs xml/tree/dtd.rs xml/tree/mod.rs
+  xml/tree/scope.rs xml/verify.rs xml/xpath.rs
+  xpath/abi.rs xpath/ast.rs xpath/ast_ops.rs
+  xpath/attr_pred.rs xpath/axis.rs xpath/ctx.rs
+  xpath/dom.rs xpath/eval.rs xpath/funcs/ext.rs
+  xpath/funcs/mod.rs xpath/lex.rs xpath/limits.rs
+  xpath/mod.rs xpath/nodetest.rs xpath/number.rs
+  xpath/order.rs xpath/parse.rs xpath/step_index.rs
+  xpath/str_cache.rs xpath/tests.rs xpath/value.rs
+  xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/
@@ -191,7 +190,7 @@ STATIC_MUT_COUNTS = {}.freeze
 LEXBOR_ABI = /crate::lexbor::abi\b|\blxb_[A-Za-z0-9_]+|\bLxb[A-Z][A-Za-z0-9_]*/
 LEXBOR_ABI_COUNTS = {}.freeze
 
-# The engine layers are Ruby-free: `lexbor/`, `xml/`, `xpath/` and `css/` take
+# The engine layers are Ruby-free: `lexbor/`, `xml/`, `xpath/` and `selectors/` take
 # bytes and return their own error types, and the Ruby half of a feature lives in
 # `bridge/` or `glue/`. `lexbor/fragment.rs` and `selectors/stylesheet.rs` once
 # reached back up for a `VALUE`, the String borrow rules and `Makiri::Error` - an
@@ -202,7 +201,7 @@ LEXBOR_ABI_COUNTS = {}.freeze
 # an edit's closure works on), its facade and the child-index walk are
 # engine too: an edit lends `&mut HtmlDocMut` to a closure that must run no
 # Ruby, and this is what keeps what that closure calls Ruby-free.
-ENGINE_DIRS = %w[lexbor/ xml/ xpath/ css/ selectors/ html/ html_dom.rs child_index.rs child_index/ falloc/ cbuf.rs cutf8.rs dom_rules.rs dom_rules/ limits.rs node_type.rs ptr_table.rs text.rs token.rs utf8_input.rs].freeze
+ENGINE_DIRS = %w[lexbor/ xml/ xpath/ selectors/ html/ html_dom.rs child_index.rs child_index/ falloc/ cbuf.rs cutf8.rs dom_rules.rs dom_rules/ limits.rs node_type.rs ptr_table.rs text.rs token.rs utf8_input.rs].freeze
 RUBY_LAYER = /\bcrate::(?:bridge|glue|init)\b|\brb_sys::/
 RUBY_LAYER_COUNTS = {}.freeze
 # The rule for the rest of the engine, and INFALLIBLE_ALLOC's below, are

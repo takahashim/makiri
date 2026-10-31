@@ -4,8 +4,7 @@
 //!   abi.rs        the engine's prelude: the shared names, re-exported
 //!
 //! The error vocabulary (`Error`, `ErrorKind`, the message buffer and sink)
-//! lives at the crate root, in `engine_error`, because the CSS lowering that
-//! feeds the engine writes the same errors.
+//! lives at the crate root, in `engine_error`.
 //!
 //! The front end:
 //!   number.rs     the Number production, read and written
@@ -27,7 +26,7 @@
 //!   nodetest.rs   does a node match a step's test?
 //!   attr_pred.rs  the [@name] / [@name='lit'] predicate shapes
 //!   step_index.rs the //tag and //tag[N] index fast paths
-//!   funcs/        the built-in function library (ext.rs: Nokogiri and CSS hooks)
+//!   funcs/        the built-in function library (ext.rs: Nokogiri's builtins)
 //!   eval.rs       predicates, steps, operators
 //!
 //! An instance binds the contract to one representation, and lives outside this

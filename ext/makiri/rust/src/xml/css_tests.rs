@@ -1,54 +1,22 @@
-//! The CSS matcher over the XML arena (`xml::css`) held to the lowering it is
-//! to replace: `css::compile_owned` turns a selector into XPath, which the
-//! XPath engine evaluates over the same document. Two implementations that
-//! share only the selector parser, so where both answer they must answer
-//! alike.
-//!
-//! Only what the two mean alike is compared. Both are asked from the
-//! document node, where the lowering's scope (descendants of the context)
-//! and the matcher's (the whole tree, descendants returned) coincide. A
-//! bare type selector is the open question - the lowering reads it as no
-//! namespace, the matcher as any - so the documents that hold namespaced
-//! elements are queried with prefixed type selectors only. What the
-//! lowering refuses (the form states, `i`, `of S`) it does not answer, and
-//! the comparison skips.
+//! The CSS matcher over the XML arena (`xml::css`), held to itself and to
+//! fixed answers. Its entry points must agree - `select_all` from the
+//! document node (an index answers a type selector there) against a walk
+//! from the root element, `select_first` against the first of `select_all`,
+//! and `matches_any` on every element - over random documents and selectors;
+//! the fixed selectors keep the answers the matcher and the CSS-to-XPath
+//! lowering it replaced agreed on, while both were built; and what the
+//! lowering never answered is held to Chromium, Firefox and WebKit.
 #![allow(clippy::disallowed_methods)] /* test inputs */
 #![forbid(unsafe_code)]
 
-use crate::css::{compile_owned, CssNs, Form};
 use crate::css_match::dom::CssNode;
 use crate::css_match::{matches_any, select_all, select_first, Namespaces, Scratch};
-use crate::text::VerifiedText;
 use crate::xml::css::{XmlHost, XmlNode};
 use crate::xml::model::{Document, NodeId};
 use crate::xml::tree::parse as xml_parse;
-use crate::xpath::ctx::XPathValue;
-use crate::xpath::limits::Budget;
 
 const NS_S: &[u8] = b"urn:s";
 const BINDINGS: &[(&[u8], &[u8])] = &[(b"s", NS_S)];
-
-/// The lowering's answer from the document node, or `None` where it refuses
-/// the selector or its evaluation fails.
-fn lowered(doc: &Document, selector: &str) -> Option<Vec<NodeId>> {
-    let ctx = crate::xml::xpath::context(doc, doc.doc_node());
-    ctx.register_ns(b"s", NS_S).ok()?;
-    let source = VerifiedText::from_bytes(selector.as_bytes())?;
-    let mut budget = Budget::with_limits(ctx.limits());
-    let ns = CssNs {
-        default_namespace: false,
-    };
-    let ast = compile_owned(source, &ns, Form::Select, &mut budget).ok()?;
-    match ctx.evaluate(&ast).ok()? {
-        XPathValue::NodeSet(set) => Some(
-            set.as_slice()
-                .iter()
-                .filter_map(|t| NodeId::from_token(t.word()))
-                .collect(),
-        ),
-        _ => None,
-    }
-}
 
 /// The matcher's answer from the document node, checked against its own
 /// `select_first` and `matches_any`; `None` where it refuses the selector.
@@ -86,27 +54,24 @@ fn matched(doc: &Document, selector: &str, scratch: &mut Scratch<XmlHost>) -> Op
     Some(all.into_iter().map(XmlNode::id).collect())
 }
 
-/// Compare the two on `selector`: `None` when either refused it, else how
-/// many elements both found.
-fn agree(
-    doc: &Document,
-    src: &str,
-    selector: &str,
-    scratch: &mut Scratch<XmlHost>,
-) -> Option<usize> {
-    let new = matched(doc, selector, scratch)?;
-    /* The lowering's `:empty` is Lexbor's, which counts a processing
-     * instruction and an empty CDATA section; the matcher's is the
-     * browsers' (M10), checked against them below. */
-    if selector.contains(":empty") {
-        return Some(new.len());
+/// [`matched`]'s answer as each element's place among the document's
+/// elements in document order (the root element is 0), so a fixed answer
+/// names the elements found rather than counting them.
+fn found_at(doc: &Document, selector: &str, scratch: &mut Scratch<XmlHost>) -> Option<Vec<usize>> {
+    let found = matched(doc, selector, scratch)?;
+    let root = XmlNode::new(doc, doc.doc_node());
+    let mut at = Vec::new();
+    let (mut n, mut place) = (root, 0);
+    while let Some(next) = n.preorder_next(root) {
+        n = next;
+        if n.element().is_some() {
+            if found.contains(&n.id()) {
+                at.push(place);
+            }
+            place += 1;
+        }
     }
-    let old = lowered(doc, selector)?;
-    assert_eq!(
-        new, old,
-        "the matcher and the lowering disagree on {selector:?} over\n{src}"
-    );
-    Some(new.len())
+    Some(at)
 }
 
 /// A small deterministic generator (xorshift64*).
@@ -280,89 +245,103 @@ fn selector(rng: &mut Rng, namespaced: bool) -> String {
 }
 
 /// Fixed shapes first: each kind of simple selector and combinator, over
-/// one document of each kind.
+/// one document of each kind, with the elements found ([`found_at`]). Up to
+/// `|a` they are the answers the matcher and the lowering agreed on, node for
+/// node, while both were built; the rest are the lowering's own tests',
+/// which the HTML matcher answered alike.
 #[test]
-fn the_matcher_agrees_with_the_lowering_on_fixed_selectors() {
+fn the_matcher_keeps_its_answers_on_fixed_selectors() {
+    /* 0 r, 1 a#x, 2 b, 3 c, 4 a, 5 p, 6 B, 7 b.xy, 8 c */
     let plain = r#"<r><a id="x" class="x y" k="12"><b/><?pi d?><c k="x-y">t</c></a><a/><p><![CDATA[]]></p><B k="X"/><!--c--><b class="xy"><c/></b></r>"#;
+    /* 0 r, 1 s:a, 2 a, 3 s:b, 4 b (urn:s), 5 c (urn:s) */
     let spaced =
         r#"<r xmlns:s="urn:s"><s:a s:k="1" k="2"><a/><s:b/></s:a><b xmlns="urn:s"><c/></b></r>"#;
     let mut scratch = Scratch::new();
     let doc = xml_parse(plain.as_bytes()).expect("parses");
-    for sel in [
-        "a",
-        "B",
-        "b",
-        "*",
-        "a b",
-        "a > b",
-        "b + c",
-        "b ~ c",
-        "r > *",
-        ".x",
-        ".y",
-        ".xy",
-        "#x",
-        "[k]",
-        "[k='12']",
-        "[k^='1']",
-        "[k$='2']",
-        "[k*='2']",
-        "[k|=x]",
-        "[k~=x]",
-        "[class~=y]",
-        ":first-child",
-        ":last-child",
-        ":only-child",
-        ":first-of-type",
-        ":nth-child(2)",
-        ":nth-last-child(odd)",
-        ":nth-of-type(2)",
-        ":empty",
-        ":root",
-        ":not(a)",
-        ":is(a, b)",
-        ":where(c)",
-        "a:has(c)",
-        "a:has(> b)",
-        "b:has(+ c)",
-        ":has(~ c)",
-        "a, b",
-        "[|k]",
-        "*|a",
-        "|a",
-    ] {
-        assert!(
-            agree(&doc, plain, sel, &mut scratch).is_some(),
-            "{sel:?} answered"
-        );
+    let cases: &[(&str, &[usize])] = &[
+        ("a", &[1, 4]),
+        ("B", &[6]),
+        ("b", &[2, 7]),
+        ("*", &[0, 1, 2, 3, 4, 5, 6, 7, 8]),
+        ("a b", &[2]),
+        ("a > b", &[2]),
+        ("b + c", &[3]),
+        ("b ~ c", &[3]),
+        ("r > *", &[1, 4, 5, 6, 7]),
+        (".x", &[1]),
+        (".y", &[1]),
+        (".xy", &[7]),
+        ("#x", &[1]),
+        ("[k]", &[1, 3, 6]),
+        ("[k='12']", &[1]),
+        ("[k^='1']", &[1]),
+        ("[k$='2']", &[1]),
+        ("[k*='2']", &[1]),
+        ("[k|=x]", &[3]),
+        ("[k~=x]", &[]),
+        ("[class~=y]", &[1]),
+        (":first-child", &[0, 1, 2, 8]),
+        (":last-child", &[0, 3, 7, 8]),
+        (":only-child", &[0, 8]),
+        (":first-of-type", &[0, 1, 2, 3, 5, 6, 7, 8]),
+        (":nth-child(2)", &[3, 4]),
+        (":nth-last-child(odd)", &[0, 1, 3, 5, 7, 8]),
+        (":nth-of-type(2)", &[4]),
+        (":root", &[0]),
+        (":not(a)", &[0, 2, 3, 5, 6, 7, 8]),
+        (":is(a, b)", &[1, 2, 4, 7]),
+        (":where(c)", &[3, 8]),
+        ("a:has(c)", &[1]),
+        ("a:has(> b)", &[1]),
+        ("b:has(+ c)", &[2]),
+        (":has(~ c)", &[2]),
+        ("a, b", &[1, 2, 4, 7]),
+        ("[|k]", &[1, 3, 6]),
+        ("*|a", &[1, 4]),
+        ("|a", &[1, 4]),
+        /* A class name holding whitespace, or an empty `~=` token,
+         * represents nothing. */
+        (r".x\ y", &[]),
+        ("[class~='']", &[]),
+        /* `:root` is the document element, not any parentless element. */
+        ("a:root", &[]),
+        /* A negative step: only the leading positions. */
+        ("r > :nth-child(-n+3)", &[1, 4, 5]),
+        ("r > :nth-child(-2n+2)", &[4]),
+        ("r > :nth-child(-2n+1)", &[1]),
+        ("r > :nth-child(-n+0)", &[]),
+    ];
+    for &(sel, want) in cases {
+        let found = found_at(&doc, sel, &mut scratch);
+        assert_eq!(found.as_deref(), Some(want), "{sel:?}");
     }
     let doc = xml_parse(spaced.as_bytes()).expect("parses");
-    for sel in [
-        "s|a",
-        "|a",
-        "*|a",
-        "s|*",
-        "|*",
-        "*|*",
-        "s|a > |a",
-        "s|b",
-        "*|b > *|c",
-        "[s|k]",
-        "[s|k='1']",
-        "[k]",
-        ":not(s|a)",
-        "*|*:first-child",
-    ] {
-        assert!(
-            agree(&doc, spaced, sel, &mut scratch).is_some(),
-            "{sel:?} answered"
-        );
+    let cases: &[(&str, &[usize])] = &[
+        ("s|a", &[1]),
+        ("|a", &[2]),
+        ("*|a", &[1, 2]),
+        ("s|*", &[1, 3, 4, 5]),
+        ("|*", &[0, 2]),
+        ("*|*", &[0, 1, 2, 3, 4, 5]),
+        ("s|a > |a", &[2]),
+        ("s|b", &[3, 4]),
+        ("*|b > *|c", &[5]),
+        ("[s|k]", &[1]),
+        ("[s|k='1']", &[1]),
+        ("[k]", &[1]),
+        (":not(s|a)", &[0, 2, 3, 4, 5]),
+        ("*|*:first-child", &[0, 1, 2, 5]),
+    ];
+    for &(sel, want) in cases {
+        let found = found_at(&doc, sel, &mut scratch);
+        assert_eq!(found.as_deref(), Some(want), "{sel:?}");
     }
 }
 
-/// Random documents and selectors; `MAKIRI_XML_CSS_SEED` picks another run.
+/// Random documents and selectors, each asked of every entry point;
+/// `MAKIRI_XML_CSS_SEED` picks another run.
 #[test]
-fn the_matcher_agrees_with_the_lowering_on_random_selectors() {
+fn the_entry_points_agree_on_random_selectors() {
     let seed = std::env::var("MAKIRI_XML_CSS_SEED")
         .ok()
         .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
@@ -378,28 +357,27 @@ fn the_matcher_agrees_with_the_lowering_on_random_selectors() {
         };
         for _ in 0..40 {
             let sel = selector(&mut rng, namespaced);
-            if let Some(n) = agree(&doc, &src, &sel, &mut scratch) {
+            if let Some(all) = matched(&doc, &sel, &mut scratch) {
                 compared += 1;
-                found += usize::from(n > 0);
+                found += usize::from(!all.is_empty());
             }
         }
     }
-    /* A comparison of two empty answers proves little: most must find
-     * something. */
+    /* An empty answer checks little: most must find something. */
     assert!(
         compared > 3000 && found > compared / 3,
         "{compared} selectors compared, {found} finding something (seed {seed:#x})"
     );
 }
 
-/// What the lowering refuses and the matcher answers, held to what
-/// Chromium, Firefox and WebKit answer over the same XML document
+/// What the lowering never answered, held to what Chromium, Firefox and
+/// WebKit answer over the same XML document
 /// (`spec/conformance/css_browser_cases.rb`'s `xml-xhtml` and `xml-plain`).
 /// An XHTML element in an XML document has the form states, and compares
 /// its names and values as written; `:read-write` (M9) and `:empty` (M10)
 /// are the browsers'.
 #[test]
-fn the_matcher_answers_what_the_lowering_refuses_as_the_browsers_do() {
+fn the_matcher_answers_as_the_browsers_do() {
     let xhtml = r#"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:svg="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><body><form><input id="i1" type="checkbox" checked=""/><input id="i2" type="TEXT" required="" placeholder="p"/><input id="i3" disabled=""/><fieldset disabled=""><input id="i4"/></fieldset><select><option selected="">a</option></select></form><a id="a1" href="x">a</a><a id="a2">b</a><DIV id="D"/><P title="Hello World"/><svg:svg><svg:a xlink:href="x"><svg:path/></svg:a><svg:a href="y"/></svg:svg></body></html>"#;
     let plain = r#"<r><p class="x" title="Hello World"/><p/><q class="x"/><p class="x"/><e><?pi x?></e><e><![CDATA[]]></e><e><!--c--></e><e>t</e></r>"#;
     let doc = xml_parse(xhtml.as_bytes()).expect("parses");

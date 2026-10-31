@@ -87,8 +87,7 @@ pub struct Error {
     pub status: ErrorKind,
     msg: MsgBuf,
     /// Whether [`set_once`](Self::set_once) has already written this slot. A
-    /// shared sink is written by every builder on a failing path - the CSS
-    /// lowering builds both operands of a `binop` before either is `?`-ed - so
+    /// shared sink is written by every builder on a failing path, so
     /// the FIRST failure is kept and later ones cannot overwrite it with a
     /// shallower message (an OOM replacing a real limit, say).
     written: bool,
@@ -164,9 +163,10 @@ pub struct Reported(());
 /// Where a failure is reported: a handle to the run's error slot, or nowhere.
 ///
 /// A cheaply copyable handle to a shared slot, because every layer of the engine
-/// passes it down beside its other handles: a `Budget` keeps one and the CSS
-/// lowering threads the same one through its builders, so the slot has to be
-/// reachable from both without a borrow that would pin the whole budget. `None`
+/// passes it down beside its other handles: a `Budget` keeps one and a
+/// function keeps the same one across calls that take the budget, so the slot
+/// has to be reachable from both without a borrow that would pin the whole
+/// budget. `None`
 /// is [`ErrSink::silent`], so "don't tell me" is visible at the call site rather
 /// than being one more null pointer among the arguments.
 #[derive(Clone)]
@@ -191,7 +191,7 @@ impl ErrSink {
 
 /// Set `err` from a formatted message, formatted straight into the slot.
 ///
-/// The one way the front end (the lexer, the parser, the CSS lowering) reports
+/// The one way the front end (the lexer, the parser) reports
 /// a runtime error. A silent sink skips the formatting as well as the write.
 /// The first failure wins: a path that builds several operands and then checks
 /// them keeps the root cause rather than the last one built.

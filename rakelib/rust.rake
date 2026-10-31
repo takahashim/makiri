@@ -10,13 +10,13 @@
 # prove different things about different code, and which Kani proof replaces
 # which CBMC one - and what changed in the translation - is written down rather
 # than assumed. Not all the answers are "the same property".
-desc "Kani proofs over the Ruby-free core - the allocator, mkr_buf, UTF-8 " \
-     "validate/decode (needs cargo-kani; successor to the C-era CBMC harnesses)"
+desc "Kani proofs over the Ruby-free core - UTF-8 validate/decode, XML " \
+     "characters, XPath numbers (needs cargo-kani; successor to the C-era CBMC harnesses)"
 task :kani do
   # Only the Ruby-free features: anything under glue needs rb-sys -> a live
   # Ruby, which Kani cannot build.
   #
-  #   rake kani                                   # all six
+  #   rake kani                                   # every harness
   #   rake kani HARNESS=accepted_is_utf8          # one
   #   KANI_XML_CHARS_MAX=10 rake kani             # a deeper bound
   #
@@ -32,7 +32,7 @@ task :kani do
   # unconstrained values - so the proof would be about a configuration nobody
   # builds. With it they are the consts the extension actually uses.
   #
-  #   KANI_GROUPS=alloc,utf8 rake kani            # some groups (KANI_GROUPS below)
+  #   KANI_GROUPS=utf8,xml rake kani              # some groups (KANI_GROUPS below)
   #   KANI_JOBS=4 rake kani                       # harnesses in parallel
   argv = ["cargo", "kani", "--no-default-features"]
   harness = ENV["HARNESS"].to_s.strip
@@ -77,19 +77,16 @@ end
 # runs a group only when that code changed (verify.yml; a weekly run takes all
 # of them, to catch a dependency missed here). The paths are the code
 # each group's proofs run - read off the harnesses' `use`s, what the proven
-# functions call, and the modules' `cfg(kani)`: `cbuf` uses only `falloc`,
-# which uses nothing, while `xml::verify` reaches `cutf8` through
-# `xml::chars`. `KANI_SHARED` is what every group depends on - the
+# functions call, and the modules' `cfg(kani)`: `xml::verify` reaches
+# `cutf8` through `xml::chars`. `KANI_SHARED` is what every group depends on - the
 # bounds in lib.rs, the build, this file and the workflow. `kani:groups`
 # fails when a file holding a proof is in no group, so a new harness cannot
 # go unrun.
 RUST_SRC = "ext/makiri/rust/src"
 KANI_GROUPS = {
-  # The allocator and the byte buffer: the slow group (~6 of CI's ~10 min).
-  "alloc" => {
-    harnesses: %w[cbuf::verify:: falloc::verify::],
-    paths: %W[#{RUST_SRC}/cbuf.rs #{RUST_SRC}/cbuf/ #{RUST_SRC}/falloc/]
-  },
+  # (An "alloc" group proved falloc's grow_capacity and cbuf's copy_small,
+  # bounded, in ~6 of CI's ~10 minutes. verus/cbuf.rs proves both at every
+  # size, and cbuf's tests run the rest, so it went.)
   "utf8" => {
     harnesses: %w[cutf8::verify::],
     paths: %W[#{RUST_SRC}/cutf8.rs #{RUST_SRC}/cutf8/]

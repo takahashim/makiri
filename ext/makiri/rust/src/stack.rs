@@ -1,5 +1,5 @@
 //! The native-stack-exhaustion probe, installed by `bridge` and consulted by
-//! the engine's own recursion counters (CSS lowering, XPath parse/eval).
+//! the engine's own recursion counters (XPath parse/eval, `Depth`).
 //!
 //! A recursion depth *count* only bounds the stack IF the caller's own frame
 //! started with a full stack. It does not: Ruby's machine stack is as small as
@@ -9,8 +9,8 @@
 //! unwinding with `longjmp`, which jumps past every Rust frame between the
 //! overflow and the nearest `rb_protect` - skipping `Drop`, so whatever that
 //! frame borrowed (the process-global CSS parser, `GvlCell`'s busy flag) is
-//! never released. See `css::MAX_SELECTOR_NESTING` for the incident this
-//! fixes.
+//! never released: a selector nested a few thousand deep wedged XML's CSS
+//! that way while it ran on a CSS-to-XPath lowering that recursed.
 //!
 //! `ruby_stack_check()` answers the real question - is there room left in
 //! THIS execution context, Fiber included - so checking it at every recursion

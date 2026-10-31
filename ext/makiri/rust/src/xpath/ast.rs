@@ -1,6 +1,5 @@
 //! The compiled AST: expressions, location steps, node tests, axes and
-//! operators, as the parser and the CSS lowering build them and the evaluator
-//! walks them.
+//! operators, as the parser builds them and the evaluator walks them.
 //!
 //! Plain Rust data. Every allocation in it - a boxed operand, a step or
 //! predicate list, a name - is made through `falloc`, which is what lets
@@ -201,20 +200,11 @@ impl Expr {
 pub struct Ast {
     root: Expr,
     memo_slots: u32,
-    /// How many nodes the parser made - 0 when unknown (a CSS lowering).
+    /// How many nodes the parser made - 0 until it says.
     nodes: usize,
 }
 
 impl Ast {
-    /// An AST whose subtrees are not memoized.
-    pub fn new(root: Expr) -> Ast {
-        Ast {
-            root,
-            memo_slots: 0,
-            nodes: 0,
-        }
-    }
-
     /// An AST whose `root` already carries slots `0..memo_slots`.
     pub(crate) fn with_memo_slots(root: Expr, memo_slots: u32) -> Ast {
         Ast {

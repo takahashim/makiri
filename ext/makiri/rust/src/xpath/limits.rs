@@ -57,8 +57,7 @@ impl Default for Limits {
 }
 
 /// A run's caps, what it has charged against them, and the slot its failure is
-/// written to - owned together by the context, the parser or the CSS lowering
-/// doing the run.
+/// written to - owned together by the context or the parser doing the run.
 pub struct Budget {
     pub limits: Limits,
     /// AST nodes built by the current parse.
@@ -68,9 +67,8 @@ pub struct Budget {
     /// The current evaluation (or parse) recursion depth.
     recursion_depth: Cell<usize>,
     /// The failure slot. A shared `RefCell` rather than a plain field so a sink
-    /// is a safe, copyable handle to it: the CSS lowering holds its budget and
-    /// its sink at once, and a function keeps its sink across calls that take
-    /// `&mut` of the rest of the run.
+    /// is a safe, copyable handle to it: a function keeps its sink across
+    /// calls that take `&mut` of the rest of the run.
     err: Rc<RefCell<Error>>,
 }
 
@@ -307,7 +305,7 @@ fn over_recursion(max: usize, err: ErrSink) -> Reported {
     )
 }
 
-/// The deepest AST the parser and the CSS lowering build.
+/// The deepest AST the parser builds.
 ///
 /// Every pass over an AST, its `Drop` included, recurses once per level, so the
 /// depth is what decides how much native stack an expression can make them use.

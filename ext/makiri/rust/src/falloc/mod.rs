@@ -550,8 +550,8 @@ impl<T> OomOption<T> for Option<T> {
 ///
 /// This lives here rather than beside its callers (`cbuf`,
 /// `bridge::node_set`, the proofs) for a reason worth keeping: the arithmetic
-/// is pure, so it can be built under Kani and `cargo test` without Lexbor or
-/// Ruby. Putting it where it can be proved is the difference between a property
+/// is pure, so it can be proved (`verus/cbuf.rs`, at every element size) and
+/// tested without Lexbor or Ruby. Putting it where it can be proved is the difference between a property
 /// that is checked and one that is merely commented.
 pub fn grow_capacity(cap: usize, need: usize, elem: usize) -> Option<usize> {
     need.checked_mul(elem)?;
@@ -591,9 +591,6 @@ pub fn grow_capacity(cap: usize, need: usize, elem: usize) -> Option<usize> {
     }
     Some(nc)
 }
-
-#[cfg(kani)]
-mod verify;
 
 #[cfg(test)]
 mod tests {

@@ -540,8 +540,8 @@ bundle exec rake oom               # OOM-injection sweep: rebuilds with
                                    # borrowed (`Makiri.__borrowed?`) or unusable - the
                                    # runtime check of the guards-across-raises rule.
                                    # Prefix with MAKIRI_SANITIZE=address to combine ASan.
-bundle exec rake miri              # the Ruby-free unsafe modules' tests (utf8_copy, falloc,
-                                   # cbuf, ptr_table) under Miri, strict provenance (nightly + miri;
+bundle exec rake miri              # the Ruby-free unsafe modules' tests (utf8_copy,
+                                   # falloc) under Miri, strict provenance (nightly + miri;
                                    # CI: verify.yml). utf8_copy is nupur's, std-only, and
                                    # included in this crate's test build (`#[path]`) for it
 bundle exec rake verus             # Verus proofs (ext/makiri/rust/verus/): falloc's
@@ -559,9 +559,10 @@ bundle exec rake verus             # Verus proofs (ext/makiri/rust/verus/): fall
                                    # assume_specification, assume) is pinned
                                    # (VERUS_TRUSTED)
 bundle exec rake kani              # Kani proofs over the Ruby-free core (needs cargo-kani).
-                                   # The successor to the C-era CBMC harnesses: the
-                                   # allocator, cbuf, UTF-8 validate/decode.
-                                   # KANI_GROUPS=alloc,utf8,xml,xpath picks groups
+                                   # The successor to the C-era CBMC harnesses: UTF-8
+                                   # validate/decode, XML characters, XPath numbers
+                                   # (the allocator and cbuf are Verus's now).
+                                   # KANI_GROUPS=utf8,xml,xpath picks groups
                                    # (rakelib/rust.rake's KANI_GROUPS, with the code each
                                    # depends on); CI runs only the groups whose
                                    # code changed (`rake kani:groups`), and all of
@@ -834,8 +835,8 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            file that needs it carries an `allow` and the script
                            holds each one's count exactly - a new file fails even
                            where a parent module's `allow` kept rustc quiet - plus
-                           every `forbid` file, which it counts. `glue/**`, `xpath/**`,
-                           `css/**` and `css_match/**` are fully safe
+                           every `forbid` file, which it counts. `glue/**`, `xpath/**`
+                           and `css_match/**` are fully safe
                            (their module roots carry
                            `#![forbid(unsafe_code)]`, which the gate pins);
                            `rake dylint` holds `rb_sys::` to `bridge/` and the
@@ -907,10 +908,6 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            `#![forbid(unsafe_code)]`, Ruby- and Lexbor-free,
                            and naming no host. The compiled-selector cache in
                            front of it, which names both, is `css_cache.rs`
-    css/                   the CSS-to-XPath lowering XML's CSS used to run on,
-                           kept only as the reference the XML matcher is held
-                           to (`xml::css_tests`, the `css` fuzz target; built
-                           under `cfg(test)` or `xml-css-reference`)
     selectors/             the CSS parser ported from Lexbor (its CSS syntax
                            tokenizer, rule/state stacks, selector states, and
                            the stylesheet rule phases and callbacks in
@@ -936,7 +933,8 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            with falloc's `grow_capacity`; `limits.rs`: `admit`, the
                            one rule every work budget charges through
   fuzz/                    cargo-fuzz harnesses (xml/html, xpath/xml_xpath/
-                           html_xpath, css = the XML matcher held to the lowering, html_css = the
+                           html_xpath, css = the XML matcher's entry points held
+                           to each other, html_css = the
                            HTML matcher over an arbitrary document, asserting
                            css and matches? agree, html_css_diff = the same
                            matcher against Lexbor's own engine, html_diff =
@@ -956,7 +954,7 @@ bench/                     Nokogiri-comparison benchmark
 docs/design_doc.ja.md      authoritative design (read this)
 ```
 
-Seven features, and the default is the extension: **`ruby`** (the
+Six features, and the default is the extension: **`ruby`** (the
 Ruby boundary over `nupur` - `bridge`, whose `bridge::rb` is nupur's value
 and method layer - + `glue` + `init`; with it off, neither `nupur` nor
 rb-sys is in the dependency graph), **`html-dom`** (the parser port's
@@ -972,8 +970,9 @@ symbol), **`alloc-inject`** (the `rake oom` hook, off in any normal build),
 `html_css_diff` fuzz target) and **`lexbor-reference`** (`lexbor::tree_diff`,
 `lexbor::selector_diff` and `lexbor::stylesheet_diff`, Lexbor's tree, selector
 lists and stylesheets beside the ports', for the `html_diff`, `selector_diff`
-and `stylesheet_diff` fuzz targets) and **`xml-css-reference`** (the
-CSS-to-XPath lowering `crate::css`, for the `css` fuzz target; no Lexbor). A
+and `stylesheet_diff` fuzz targets). (The CSS-to-XPath lowering XML's CSS ran
+on before `css_match` stayed as the XML matcher's reference, behind
+`xml-css-reference`, until the browser comparison made it redundant.) A
 plain `cargo build` is the shipping
 configuration; `rake rust:test` runs the engine alone, `html-dom` and
 `lexbor`. Lexbor's DOM is not an extension build any more
@@ -989,7 +988,7 @@ rewrites it once the dead bytes outweigh the live ones
 (`html/dom/compact.rs`), so repeated `content=` does not grow a document.
 The engine - `xml`, `xpath`, `falloc`, `cbuf`, `cutf8`, `html` (the
 tokenizer, the tree builder and the arena), `selectors` (the selector
-parser) - is behind no gate at all. So the fuzz crate builds `--no-default-features --features lexbor,css-reference,lexbor-reference,xml-css-reference` and Kani
+parser) - is behind no gate at all. So the fuzz crate builds `--no-default-features --features lexbor,css-reference,lexbor-reference` and Kani
 builds `--no-default-features`. The ~30 features that used to stand here were
 migration scaffolding, one per ported C file, and went with the C.
 
@@ -1219,10 +1218,8 @@ caps) live in `xpath/limits.rs` and fail closed with `Status::Limit`.
 assumes the caller's frame started with a full-sized native stack, which a
 small `Fiber` (`RUBY_FIBER_MACHINE_STACK_SIZE`) or a caller already deep in its
 own recursion does not have - there the count refuses too late, and Ruby's
-`SystemStackError` handling longjmps past `Drop`. (The CSS lowering's
-`Build::enter_selector_nesting` checked the same way while XML's CSS ran on
-it; CSS matching, HTML and XML, keeps nesting on a heap stack and needs no
-check.) Every other recursion in the engine passes a `crate::stack::Depth`
+`SystemStackError` handling longjmps past `Drop`. (CSS matching, HTML and
+XML, keeps nesting on a heap stack and needs no check.) Every other recursion in the engine passes a `crate::stack::Depth`
 down as an argument - the XML writers (`to_xml`, `canonicalize`), the DTD's
 content-model groups, `parse_stylesheet`'s rule nesting - whose `enter`
 refuses both its limit and a low stack (asked every `STACK_CHECK_EVERY`
@@ -1291,7 +1288,7 @@ either), NOT Lexbor's own matcher. Selector PARSING is the parser port
 syntax tokenizer, its rule and state stacks and its selector states, line for
 line, into an owned index-arena AST read through views of the same shape as
 `lexbor::css_parser`'s (`List`, `Lists`, `Selector`, `Simple`, ...), so the
-matcher and the XML lowering read either. `lexbor::selector_diff` holds it to
+matcher reads either. `lexbor::selector_diff` holds it to
 Lexbor's parser view for view (the `selector_diff` fuzz target too); the two
 answers that differ on purpose are `docs/parser_differences.ja.md` S2/S3.
 The glue reaches it through `css_cache`: an adaptive
