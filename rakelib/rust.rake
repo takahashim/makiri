@@ -10,20 +10,14 @@
 # prove different things about different code, and which Kani proof replaces
 # which CBMC one - and what changed in the translation - is written down rather
 # than assumed. Not all the answers are "the same property".
-desc "Kani proofs over the Ruby-free core - UTF-8 validate/decode, XML " \
-     "characters, XPath numbers (needs cargo-kani; successor to the C-era CBMC harnesses)"
+desc "Kani proofs over the Ruby-free core - the UTF-8 decoder against std's " \
+     "validator, XML character classes (needs cargo-kani; successor to the C-era CBMC harnesses)"
 task :kani do
   # The engine alone, with no feature: the extension needs rb-sys -> a live
   # Ruby, which Kani cannot build, and the engine knows no Ruby.
   #
   #   rake kani                                   # every harness
-  #   rake kani HARNESS=accepted_is_utf8          # one
-  #   KANI_XML_CHARS_MAX=10 rake kani             # a deeper bound
-  #
-  # The KANI_*_MAX overrides reach the build through the environment, which `sh`
-  # passes on - but they change a `const`, so cargo must see them as a rebuild
-  # reason; they are listed here so that is visible rather than folklore.
-  #
+  #   rake kani HARNESS=predicate_inclusions      # one
   #   KANI_GROUPS=utf8,xml rake kani              # some groups (KANI_GROUPS below)
   #   KANI_JOBS=4 rake kani                       # harnesses in parallel
   argv = ["cargo", "kani", "-p", "makiri_engine", "--no-default-features"]
@@ -69,8 +63,7 @@ end
 # runs a group only when that code changed (verify.yml; a weekly run takes all
 # of them, to catch a dependency missed here). The paths are the code
 # each group's proofs run - read off the harnesses' `use`s, what the proven
-# functions call, and the modules' `cfg(kani)`: `xml::verify` reaches
-# `utf8_decode` through `xml::chars`. `KANI_SHARED` is what every group depends on - the
+# functions call, and the modules' `cfg(kani)`. `KANI_SHARED` is what every group depends on - the
 # bounds in lib.rs, the build, this file and the workflow. `kani:groups`
 # fails when a file holding a proof is in no group, so a new harness cannot
 # go unrun.
@@ -83,20 +76,17 @@ KANI_GROUPS = {
     harnesses: %w[utf8_decode::verify::],
     paths: %W[#{RUST_SRC}/utf8_decode.rs #{RUST_SRC}/utf8_decode/]
   },
-  # `utf8_decode` too: `xml::chars::decode1` IS `utf8_decode::decode1`, and
-  # `validate_chars` decodes with it, so a change there can change these
-  # proofs' answer - which the utf8 group's own proofs of `decode1` do not
-  # stand in for. Not `falloc`, which `xml::chars` uses only outside what
-  # these prove (`normalize_newlines`).
+  # The character classes alone: no decode is proved here any more. Not
+  # `falloc`, which `xml::chars` uses only outside what this proves
+  # (`normalize_newlines`).
   "xml" => {
     harnesses: %w[xml::verify::],
-    paths: %W[#{RUST_SRC}/xml/chars/ #{RUST_SRC}/xml/verify.rs #{RUST_SRC}/xml/mod.rs
-              #{RUST_SRC}/utf8_decode.rs #{RUST_SRC}/utf8_decode/]
-  },
-  "xpath" => {
-    harnesses: %w[xpath::verify::],
-    paths: %W[#{RUST_SRC}/xpath/number.rs #{RUST_SRC}/xpath/verify.rs #{RUST_SRC}/xpath/mod.rs]
+    paths: %W[#{RUST_SRC}/xml/chars/ #{RUST_SRC}/xml/verify.rs #{RUST_SRC}/xml/mod.rs]
   }
+  # (An "xpath" group proved `xpath::number::extent` up to 6 bytes, and the
+  # utf8 and xml groups held the decoder's contract, the decode chain and
+  # `validate_chars` up to 8: verus/xpath_number.rs and verus/utf8.rs prove
+  # those at every length.)
 }.freeze
 KANI_SHARED = %W[
   #{RUST_SRC}/lib.rs ext/makiri/rust/engine/Cargo.toml ext/makiri/rust/Cargo.toml

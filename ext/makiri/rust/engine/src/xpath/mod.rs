@@ -44,9 +44,6 @@ pub mod lex;
 pub mod number;
 pub mod parse;
 
-#[cfg(kani)]
-mod verify;
-
 #[cfg(test)]
 mod tests;
 

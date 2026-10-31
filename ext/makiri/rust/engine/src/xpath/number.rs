@@ -16,23 +16,34 @@
 
 /// Byte length of the longest prefix of `s` matching the Number production, or
 /// 0 if it does not begin with one ("5." IS a Number, a bare "." is NOT).
+///
+/// Written as index loops, not iterator adaptors, so that Verus can read it:
+/// `verus/xpath_number.rs` proves this body, copied, for every input.
 pub fn extent(s: &[u8]) -> usize {
-    let digits = |s: &[u8]| s.iter().take_while(|b| b.is_ascii_digit()).count();
-    let int = digits(s);
-    match s.get(int) {
-        /* "5." and "5.5" and ".5" - but a '.' with a digit on neither side is
-         * not a Number. */
-        Some(b'.') => {
-            let frac = s.get(int + 1..).map_or(0, digits);
-            if int + frac == 0 {
-                0
-            } else {
-                int + 1 + frac
-            }
+    let int_end = digits_end(s, 0);
+    if int_end < s.len() && s[int_end] == b'.' {
+        let end = digits_end(s, int_end + 1);
+        /* "5." and "5.5" and ".5" - but a '.' with a digit on neither side
+         * (the '.' alone, ending at 1) is not a Number. */
+        if end == 1 {
+            0
+        } else {
+            end
         }
+    } else {
         /* "5", or nothing */
-        _ => int,
+        int_end
     }
+}
+
+/// The index of the first byte at or after `from` that is not an ASCII digit,
+/// `s.len()` when there is none.
+fn digits_end(s: &[u8], from: usize) -> usize {
+    let mut i = from;
+    while i < s.len() && s[i] >= b'0' && s[i] <= b'9' {
+        i += 1;
+    }
+    i
 }
 
 /// Convert bytes the caller has already confirmed match the grammar. Those are

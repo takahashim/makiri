@@ -160,6 +160,15 @@ ext/makiri/rust/           the extension (package makiri_rs, lib `makiri`)
                            memory
     limits.rs              `admit`, the one rule every work budget charges
                            through
+    utf8.rs                for `engine/src/utf8_decode.rs` and
+                           `xml/chars/mod.rs`: `decode1` answers exactly
+                           vstd's well-formed first scalar (`vstd::utf8`),
+                           the chain of decodes accepts exactly `valid_utf8`,
+                           and `validate_chars` only valid UTF-8 - at every
+                           length, where Kani stopped at 8 bytes
+    xpath_number.rs        `xpath::number::extent`: the longest prefix that
+                           is an XPath Number, 0 when none is - at every
+                           length, where Kani stopped at 6 bytes
   fuzz/                    cargo-fuzz harnesses, over the reference crate (as
                            `makiri`) and so the engine. Built on PRs, run
                            nightly; css-match.yml runs the two html_css*

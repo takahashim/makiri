@@ -21,10 +21,12 @@
 //! `.chars()` to decode the same bytes a second time. This decoder validates
 //! and assembles the code point in one pass.
 //!
-//! It gives up nothing in correctness: [`verify::decode1_agrees_with_from_utf8`]
-//! proves it returns exactly what `from_utf8` accepts, for every input the
-//! bound covers. Keep that proof with it - it is what makes a hand-written
-//! decoder as trustworthy as the standard one.
+//! It gives up nothing in correctness: `verus/utf8.rs` proves it answers
+//! exactly vstd's statement of UTF-8 (`valid_first_scalar`, the scalar and
+//! its length) for every input, and [`verify::decode1_agrees_with_from_utf8`]
+//! that it agrees with `from_utf8`, exhaustively over its 4-byte input. Keep
+//! both with it - they are what make a hand-written decoder as trustworthy as
+//! the standard one.
 //!
 //! # What the CBMC proofs covered, and where each part went
 //!
@@ -37,10 +39,11 @@
 //! - **the word-at-a-time scan** (`harness_utf8_words.c`): the subject no
 //!   longer exists. `from_utf8` has its own fast path, which is not ours.
 //! - **scalar range, no surrogates, no overlongs**: `from_utf8`'s contract for
-//!   the validator; proved for the decoder in [`verify::decode1_is_strict`].
+//!   the validator; proved for the decoder in `verus/utf8.rs`.
 //! - **decoder/validator agreement, first code point and whole buffer**:
-//!   [`verify::decode1_agrees_with_from_utf8`] and
-//!   [`verify::chain_consumes_exactly_valid_input`].
+//!   [`verify::decode1_agrees_with_from_utf8`] (against `from_utf8`, 4 bytes),
+//!   and `verus/utf8.rs`'s `all_code_points` (the chain, against vstd's
+//!   `valid_utf8`, every length).
 
 #![forbid(unsafe_code)]
 
@@ -83,15 +86,20 @@ fn decode_multibyte(p: &[u8], b0: u32) -> Option<(u32, usize)> {
     };
     let tail = p.get(1..len)?; /* None when truncated */
     let mut cp = init;
-    for &b in tail {
+    /* An index loop rather than `for`, and the scalar test spelled out rather
+     * than `char::from_u32`: both so that Verus reads this body as it is
+     * (`verus/utf8.rs`), with nothing of std's taken on trust. */
+    let mut i = 0;
+    while i < tail.len() {
+        let b = tail[i];
         if b & 0xC0 != 0x80 {
             return None;
         }
         cp = (cp << 6) | (b as u32 & 0x3F);
+        i += 1;
     }
-    /* `from_u32` refuses exactly what is not a scalar value: past U+10FFFF,
-     * or a surrogate. */
-    if cp < min || char::from_u32(cp).is_none() {
+    /* Overlong, past U+10FFFF, or a surrogate: not a scalar value. */
+    if cp < min || cp > 0x10FFFF || (0xD800..=0xDFFF).contains(&cp) {
         return None;
     }
     Some((cp, len))

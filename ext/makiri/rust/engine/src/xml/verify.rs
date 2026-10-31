@@ -7,28 +7,16 @@
 //! written down rather than assumed: a proof is only evidence about the code
 //! that actually runs.
 //!
+//! That bytes `validate_chars` accepts are UTF-8 was proved here too, up to 8
+//! bytes; `verus/utf8.rs` proves it at every length, against vstd's UTF-8,
+//! and so does the decoder's length contract this file also held.
+//!
 //! Run with `rake kani` (or `cargo kani --no-default-features`).
 
 #![forbid(unsafe_code)]
 #![cfg(kani)]
 
-use crate::kani_bounds::parse_usize;
-
-use super::chars::{decode1, is_char, is_name_char, is_name_start, validate_chars};
-
-/// The longest input these proofs quantify over.
-///
-/// Eight matches the bound the retired CBMC harness used
-/// (`VERIFY_XML_CHARS_MAX`), so the guarantee did not shrink when it changed
-/// languages. The cost grows fast - measured 11s at 4 bytes, 26s at 6, 57s at
-/// 8 - and a minute is what a verification job can pay.
-///
-/// Raise it with `KANI_XML_CHARS_MAX` when a deeper run is worth the wait:
-/// `KANI_XML_CHARS_MAX=10 bundle exec rake kani`.
-const N: usize = match option_env!("KANI_XML_CHARS_MAX") {
-    Some(s) => parse_usize(s),
-    None => 8,
-};
+use super::chars::{is_char, is_name_char, is_name_start};
 
 /// The predicate inclusions, over EVERY u32 - not sampled.
 ///
@@ -45,65 +33,5 @@ fn predicate_inclusions() {
     if is_name_char(c) {
         assert!(is_char(c), "NameChar must be a Char");
         kani::cover!(!is_name_start(c), "a NameChar that cannot start a name");
-    }
-}
-
-/// The load-bearing one: bytes `validate_chars` accepts are valid UTF-8
-/// according to an **independent** implementation.
-///
-/// The C version cross-checked our strict one-codepoint decoder against a
-/// word-at-a-time table scan, and the value was in the two being written
-/// differently - agreement is evidence, not a restatement. The second
-/// implementation here is `core::str::from_utf8`, one we did not write at all.
-///
-/// That is also the reason not to route `validate_chars` through the same
-/// validator: doing so would turn this proof into a tautology.
-#[kani::proof]
-#[kani::unwind(10)]
-fn accepted_is_utf8() {
-    let buf: [u8; N] = kani::any();
-    let len: usize = kani::any();
-    kani::assume(len <= N);
-    let s = &buf[..len];
-    if validate_chars(s) {
-        assert!(
-            core::str::from_utf8(s).is_ok(),
-            "accepted bytes must be UTF-8"
-        );
-        kani::cover!(len == N, "an accepted buffer of the full bound");
-    }
-}
-
-/// The decoder's length contract.
-///
-/// Reading past the slice is not in question here the way it was in C - the
-/// borrow checker settles it - but `validate_chars` advances by the reported
-/// length, so a length of 0 would loop forever and a length past the end would
-/// skip input. Neither is a memory-safety property, so neither comes free.
-#[kani::proof]
-#[kani::unwind(10)]
-fn decode1_length_and_range() {
-    let buf: [u8; N] = kani::any();
-    let len: usize = kani::any();
-    kani::assume(len <= N);
-    let s = &buf[..len];
-    if let Some((cp, bl)) = decode1(s) {
-        assert!(
-            bl >= 1,
-            "a zero-length decode would make validate_chars loop"
-        );
-        assert!(
-            bl <= s.len(),
-            "the consumed length must stay inside the slice"
-        );
-        assert!(
-            cp <= 0x10FFFF,
-            "a decoded value must be a Unicode code point"
-        );
-        assert!(
-            !(0xD800..=0xDFFF).contains(&cp),
-            "surrogates must be rejected"
-        );
-        kani::cover!(bl == 4, "a 4-byte code point decodes");
     }
 }

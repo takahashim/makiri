@@ -216,8 +216,11 @@ includes it through `#[path]`.
 `rake verus` runs the Verus proofs (`ext/makiri/rust/verus/`), which are
 unbounded. They cover falloc's `grow_capacity`; `ptr_table`'s probing and load
 factor; `ceiling_buf`'s `Buf` (content, ceiling, fail-closed) with
-`copy_small`; and `limits::admit`, the one rule every work budget charges
-through. Each is copied and checked against the source (`verus:sync`).
+`copy_small`; `limits::admit`, the one rule every work budget charges
+through; the strict UTF-8 decoder `decode1` and the XML Char scan built on
+it, against vstd's own statement of UTF-8 (`vstd::utf8`); and the XPath
+Number gate `xpath::number::extent`. Each is copied and checked against the
+source (`verus:sync`).
 
 `VERUS=path/to/verus` names the binary; `rakelib/verus.rake`'s
 `VERUS_VERSION` is the version CI uses. CI runs it in `verify.yml`: heavy
@@ -231,11 +234,14 @@ is pinned (`VERUS_TRUSTED`).
 ### `rake kani`
 
 `rake kani` runs the Kani proofs over the Ruby-free core (needs cargo-kani).
-They succeed the C-era CBMC harnesses and cover UTF-8 validate/decode, XML
-characters and XPath numbers; the allocator and `ceiling_buf` are Verus's
-now.
+They succeed the C-era CBMC harnesses. Two are left: `decode1` against
+std's `from_utf8`, exhaustive over its 4-byte input - the tie between vstd's
+UTF-8 and the validator the crate calls, which Verus has no contract for -
+and the XML character classes' inclusions over every `u32`. The allocator,
+`ceiling_buf`, the decoder's own contract, the decode chain,
+`validate_chars` and the XPath Number gate are Verus's now, at every length.
 
-- `KANI_GROUPS=utf8,xml,xpath` picks groups (`rakelib/rust.rake`'s
+- `KANI_GROUPS=utf8,xml` picks groups (`rakelib/rust.rake`'s
   `KANI_GROUPS`, with the code each depends on). CI runs only the groups whose
   code changed (`rake kani:groups`), and all of them weekly.
 - `KANI_JOBS=N` runs N in parallel.

@@ -138,7 +138,8 @@ jobs:
         run: "cargo +nightly miri test -p falloc --lib"
 
   # Verus over ext/makiri/rust/verus/: `falloc::grow_capacity`,
-  # `ptr_table`, `ceiling_buf::Buf` and `limits::admit` (copied, and checked against the source by
+  # `ptr_table`, `ceiling_buf::Buf`, `limits::admit`, the UTF-8 decoder with
+  # the XML Char scan, and `xpath::number::extent` (copied, and checked against the source by
   # `rake verus:sync`), unbounded where Kani is bounded, each with canaries
   # that must fail. Verus is a pinned release
   # (rakelib/verus.rake's VERUS_VERSION) and brings the Rust toolchain it names.
