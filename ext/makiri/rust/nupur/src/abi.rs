@@ -8,8 +8,8 @@
 #![allow(unsafe_code)]
 
 /// The `MAJOR.MINOR` of the Ruby whose headers this extension was compiled
-/// against - its ABI, since a teeny release keeps it. Published as
-/// as a constant by the extension.
+/// against - its ABI, since a teeny release keeps it. Published as a
+/// constant by the extension.
 pub fn ruby_api_version() -> crate::msg::Msg {
     crate::msg::Msg::format(format_args!(
         "{}.{}",

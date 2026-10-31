@@ -494,8 +494,10 @@ bundle exec rake dylint            # the crate's own lints (lints/makiri_lints),
                                    # `ManuallyDrop`; a handle is the only way to a
                                    # payload)
                                    # (a sanctioned site is an allow with its reason);
-                                   # then their self-test
-                                   # (src/lint_probe.rs). Needs the nightly
+                                   # then their self-test (src/lint_probe.rs,
+                                   # nupur/src/lint_probe.rs: each `//~` line
+                                   # reported by exactly the lints it names).
+                                   # Needs the nightly
                                    # rust-toolchain.toml pins + cargo-dylint/dylint-link
 bundle exec rake clean             # wipe the build dir (regenerates the Makefile next compile)
 bundle exec rake clean:lexbor      # wipe vendor/lexbor/{build,dist} (full Lexbor rebuild)
@@ -943,8 +945,9 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            Lexbor's CSS selector lists (`css_parser.rs`; its
                            parse is a reference) and the XPath HTML backend
                            (`xpath.rs`). All of it is the reference the ports
-                           are tested against: nothing here ships, and every
-                           `lxb_*`/`Lxb*` name outside it is 0
+                           are tested against: nothing here ships, and the
+                           build that ships cannot name it (`lexbor` is not
+                           a feature of it)
   verus/                   Verus proofs, each over code copied from the source (lines
                            only Verus needs end in `// [verus]`, and `rake verus:sync`
                            holds the rest to the source token for token):

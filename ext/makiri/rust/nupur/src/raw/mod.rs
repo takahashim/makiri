@@ -15,8 +15,8 @@
 //! typed values (`RString`, `RArray`, `RHash`, `Value`, ...), slices and the
 //! layer's `Encoding`, so a live value of the right kind is the type's
 //! promise, not the caller's - under the rule every Ruby extension keeps, that
-//! a Ruby value stays on the stack (CLAUDE.md, "A VALUE inside a wrapped
-//! object"). One that
+//! a Ruby value stays on the stack (`rake dylint`'s `ruby_value_on_heap`).
+//! One that
 //! takes no Ruby value takes `&Ruby`, the proof it runs on a Ruby thread with
 //! the GVL (`Ruby` is `!Send`, so a GVL-released body cannot carry one). What
 //! still checks a value's kind or a bound is done here, before the C call,

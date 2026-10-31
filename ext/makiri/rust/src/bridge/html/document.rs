@@ -147,9 +147,6 @@ pub fn document_root(ruby: &Ruby, rb_doc: Value) -> Result<Option<Value>, Error>
 }
 
 /// `Document#title`: the document `<title>`, or `""`.
-///
-/// Protected: a collapsed title is this frame's own copy, which the String's
-/// allocation raising past the frame would leak.
 pub fn document_title(ruby: &Ruby, rb_doc: Value) -> Result<RString, Error> {
     let doc = doc_known(rb_doc);
     let read = html_read(&doc)?;

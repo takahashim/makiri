@@ -11,7 +11,7 @@
 //! makes that can raise is a `raw` wrapper under `rb_protect`, and
 //! nothing raises until a method's trampoline has returned from the method
 //! (`method::finish`). So the C functions an extension trusts are the ones
-//! `raw.rs` names, and no other code stands between them and its methods.
+//! `raw/` names, and no other code stands between them and its methods.
 
 pub mod class;
 pub mod convert;
