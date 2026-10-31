@@ -174,7 +174,8 @@ pub trait Dom<'d>: Copy {
 
     /// The attribute `id()` looks an ID up in, or None when the host has no ID
     /// attributes: in XML an ID is an attribute a DTD declares ID-typed, and
-    /// DTDs are refused at parse, so `id()` is the empty node-set there.
+    /// such a declaration (a non-CDATA attribute type) is refused at parse,
+    /// so no attribute is ID-typed and `id()` is the empty node-set there.
     const ID_ATTRIBUTE: Option<&'static [u8]>;
 
     /// The attributes `lang()` reads on each ancestor, in order: XPath 1.0's

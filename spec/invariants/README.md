@@ -54,7 +54,8 @@ demonstration inline:
 * `check_text_input.rb` feeds genuinely injected markup to its detector, in
   three shapes.
 
-For the others the control is external: remove an `mkr_parsed_*_invalidate` call
-from `mkr_invalidate_index` and rebuild, and `check_index_staleness.rb` fires on
-the index you disabled. That is how the checks in this directory were verified
-to have teeth in the first place.
+For the others the control is external: remove a `take()` from
+`HtmlParsed::invalidate_indexes` (`engine/src/html/dom/parsed.rs`) or XML's
+`Document::invalidate_name_index` (`engine/src/xml/index.rs`) and rebuild, and
+`check_index_staleness.rb` fires on the index you disabled. That is how the
+checks in this directory were verified to have teeth in the first place.

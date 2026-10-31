@@ -230,9 +230,9 @@ fn panic_probe(ruby: &Ruby, kind: Value) -> Result<(), Error> {
             panic!("Makiri.__panic(5): panic inside a method body")
         }
         6 => {
-            /* Inside the tokenizer, in the token-done hook every HTML parse
-             * runs: the hook latches it and stops the parse, the parse
-             * re-raises it, and the trampoline makes it
+            /* Inside a real document parse, in the token-done path of its
+             * own token sink: the panic unwinds through the tokenizer and
+             * the tree builder, all Rust, and the trampoline makes it
              * `Makiri::InternalError`. */
             crate::html_dom::post_parse::parse_with_panicking_hook();
         }

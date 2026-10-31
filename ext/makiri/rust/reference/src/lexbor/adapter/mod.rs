@@ -1,13 +1,13 @@
 //! Lexbor's typed handles and compatibility facilities.
 //!
-//! `html` is the one reader of Lexbor's DOM structs: everything else here,
-//! the index builders included, walks the tree through its typed handles.
+//! `html` is the one reader of Lexbor's DOM structs: everything else here
+//! walks the tree through its typed handles.
 //! (What else reads Lexbor memory reads something that is not the DOM:
 //! `arena_bytes` the arena's pool chunks, `source_loc` the tokenizer's tokens,
 //! `tree_guard` the tree builder's stack of open elements.)
 //! Around it, everything Lexbor does not give us and we will not patch it to:
-//! the element (tag-bucket) index, source locations, the text index, the
-//! tree-depth guard, and cross-import.
+//! source locations, the tree-depth guard, the arena's size, the copy into
+//! the parser port's arena, and cross-import.
 
 pub mod arena_bytes;
 /// A Lexbor document copied into the parser port's arena.
