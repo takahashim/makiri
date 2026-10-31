@@ -7,7 +7,7 @@
 use super::error::TreeErrorId as E;
 use super::{AttrAdjust, Found, Ipos, Mode, OrAbort, Tok, TreeBuilder, TreeStatus};
 use crate::compat::{self, Fix};
-use crate::html::dom::{AttrValue, NodeId, NodeName, NodeType};
+use crate::html::dom::{AttrValue, DataKind, NodeId, NodeName};
 use crate::html::res::names as res;
 use crate::html::res::tree as rt;
 use crate::html::tokenizer::TextContent;
@@ -510,7 +510,7 @@ impl TreeBuilder<'_> {
             return self.doc.append_text(p, data).map_err(TreeStatus::from);
         }
         let name = NodeName::html(res::TAG__TEXT);
-        let text = self.doc.create_data(NodeType::Text, name, data)?;
+        let text = self.doc.create_data(DataKind::Text, name, data)?;
         self.insert_node(pos, text, ipos);
         Ok(())
     }
@@ -534,7 +534,7 @@ impl TreeBuilder<'_> {
         };
         let c = self
             .doc
-            .create_data(NodeType::Comment, name, tok.text(tkz))?;
+            .create_data(DataKind::Comment, name, tok.text(tkz))?;
         self.insert_node(pos, c, ipos);
         Ok(c)
     }

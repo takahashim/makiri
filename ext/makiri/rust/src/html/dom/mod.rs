@@ -69,6 +69,25 @@ impl NodeId {
     }
 }
 
+/// The kinds of node whose content is character data ([`Payload::Data`]):
+/// what [`Document::create_data`] makes, and nothing else.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DataKind {
+    Text,
+    Comment,
+    CDataSection,
+}
+
+impl From<DataKind> for NodeType {
+    fn from(kind: DataKind) -> NodeType {
+        match kind {
+            DataKind::Text => NodeType::Text,
+            DataKind::Comment => NodeType::Comment,
+            DataKind::CDataSection => NodeType::CDataSection,
+        }
+    }
+}
+
 /// A node's Lexbor name fields: its local name (an id of the document's
 /// [`Names`]), namespace and prefix (0 for none).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -666,16 +685,12 @@ impl Document {
     /// A new Text, Comment or CDATA node named `name`, holding `data`.
     pub fn create_data(
         &mut self,
-        kind: NodeType,
+        kind: DataKind,
         name: NodeName,
         data: &[u8],
     ) -> Result<NodeId, DomOom> {
-        debug_assert!(matches!(
-            kind,
-            NodeType::Text | NodeType::Comment | NodeType::CDataSection
-        ));
         let span = self.store(data)?;
-        let made = self.push(kind, Payload::Data(span));
+        let made = self.push(kind.into(), Payload::Data(span));
         let id = self.release_on_err(made, &[span])?;
         self.set_names(id, name.local, name.ns, name.prefix);
         Ok(id)

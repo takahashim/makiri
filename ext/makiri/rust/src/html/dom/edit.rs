@@ -9,7 +9,9 @@
 //! Ruby wrapper may still name it.
 
 use super::handle::{has_ascii_uppercase, HtmlDoc, HtmlNode, NsId, RawNode};
-use super::{Document, DomOom, NodeId, NodeName, NodeType, OwnNs, Shortcut, ShortcutRule, HTML_NS};
+use super::{
+    DataKind, Document, DomOom, NodeId, NodeName, NodeType, OwnNs, Shortcut, ShortcutRule, HTML_NS,
+};
 use crate::dom_rules::{self, At, PreInsertError, TextContent, Tree};
 use crate::falloc::VecGrow;
 use crate::html::res::names as res;
@@ -524,7 +526,7 @@ impl<'d> HtmlDocMut<'d> {
 
     fn new_text(&mut self, text: &[u8]) -> Result<NodeId, DomOom> {
         self.d
-            .create_data(NodeType::Text, NodeName::html(res::TAG__TEXT), text)
+            .create_data(DataKind::Text, NodeName::html(res::TAG__TEXT), text)
     }
 
     /// A new Text node (Lexbor names it `#text`, in the HTML namespace).
@@ -535,7 +537,7 @@ impl<'d> HtmlDocMut<'d> {
     /// A new Comment (`!--`, in the HTML namespace).
     pub fn create_comment(&mut self, text: &[u8]) -> Option<RawNode> {
         let name = NodeName::html(res::TAG__EM_COMMENT);
-        let c = self.d.create_data(NodeType::Comment, name, text).ok()?;
+        let c = self.d.create_data(DataKind::Comment, name, text).ok()?;
         Some(self.raw(c))
     }
 
