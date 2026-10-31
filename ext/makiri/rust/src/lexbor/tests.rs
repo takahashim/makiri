@@ -1,8 +1,8 @@
 //! Tests for the Lexbor boundary that need more than the module they cover can
 //! carry: `contains_guard` forbids `unsafe`, so the parser it restricts cannot
 //! be driven from inside it, and test code allocates infallibly, which
-//! `rake unsafe:boundaries` rightly refuses in an engine layer. A `tests.rs` is
-//! where both are allowed.
+//! `clippy.toml` refuses in the engine. A `tests.rs` is where both are
+//! allowed.
 
 #![allow(unsafe_code)]
 #![allow(clippy::disallowed_methods)] /* test fixtures */

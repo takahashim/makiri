@@ -13,7 +13,8 @@
 //! parser, which took a Ruby String, and the stylesheet binding, which built
 //! Ruby hashes - now take bytes and return their own errors, with the Ruby half
 //! in `bridge::string::HtmlSource` and `glue::stylesheet`. Nothing here names a
-//! Ruby type, and `rake unsafe:boundaries` holds it to that.
+//! Ruby type: the fuzz crate builds it without the `ruby` feature, where
+//! naming one would not compile.
 
 #[cfg(all(test, feature = "lexbor"))]
 mod tests;

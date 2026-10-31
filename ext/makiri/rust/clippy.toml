@@ -30,8 +30,7 @@ disallowed-methods = [
   # banned here, because it cannot be: on a `&str` it builds the String of a Ruby
   # exception message, which the glue is right to allocate infallibly on a path
   # that is already raising. The rule is per-LAYER and clippy.toml is crate-wide,
-  # so the layer half lives in `script/check_unsafe_boundaries.rb` ("infallible
-  # allocation inside an engine layer"), beside the other per-layer gates.
+  # so the layer half is `rake dylint`'s `infallible_allocation`.
   { path = "slice::to_vec", reason = "aborts on OOM; use falloc::try_to_vec" },
   { path = "alloc::vec::Vec::with_capacity", reason = "aborts on OOM; use falloc::try_vec_with_capacity" },
   { path = "alloc::vec::Vec::reserve", reason = "aborts on OOM; use Reserve::falloc_reserve" },

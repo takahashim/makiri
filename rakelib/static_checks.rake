@@ -1,15 +1,15 @@
 # frozen_string_literal: true
 
 namespace :unsafe do
-  desc "Check the Rust safe-module and reviewed-global boundaries"
+  desc "Check each file's unsafe count, the forbid files and static mut against the recorded tables"
   task :boundaries do
     sh FileUtils::RUBY, "script/check_unsafe_boundaries.rb"
   end
 
   # Transcribes the unsafe-island counts and the forbid list into the script,
   # so a hand count cannot disagree with the one the check does. It does not
-  # touch the tables that pin a boundary decision (`rb_sys::`, `static mut`,
-  # the raising C API) - those still fail until a person raises them.
+  # touch `static mut`'s table, which pins a boundary decision - that still
+  # fails until a person raises it.
   desc "Rewrite the recorded unsafe islands and forbid list from what is there"
   task :fix do
     sh FileUtils::RUBY, "script/check_unsafe_boundaries.rb", "--fix"
