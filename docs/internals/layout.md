@@ -200,7 +200,9 @@ of the shipped binary.
 - nupur cannot name the extension: it has no dependency on it. The extension
   names it `crate::nupur` and registers what nupur needs from it at Init_
   (`INTERNAL_ERROR`, `inject::install`).
-- `bridge` re-exports nupur's public modules; `raw` is private to nupur.
+- `bridge` re-exports nupur's `rb`, `typed`, `gvl`, `build`, `hash` and
+  `args`; its other public modules are reached as `crate::nupur::...`, and
+  `raw` is private to nupur.
 - A function on a no_unwind site's path is `#[inline]`, or the proof cannot
   see into it across the crate.
 
@@ -236,11 +238,14 @@ These gates hold the boundary:
   every file that needs it carries an `allow`, and the script holds each
   one's count exactly: a new file fails even where a parent module's `allow`
   kept rustc quiet. It also counts every `forbid` file.
-- `glue/**`, `xpath/**` and `css_match/**` are fully safe: their module roots
-  carry `#![forbid(unsafe_code)]`, which the gate pins.
+- `bridge/**` and `glue/**` are fully safe: their module roots carry
+  `#![forbid(unsafe_code)]`, as the engine's root does for the whole engine.
+  The gate pins the roots in `FORBID_ROOTS` (`bridge`, `glue` and the
+  engine's `css_match`, `selectors`, `xml` and `xpath`).
 - `rake dylint` holds `rb_sys::` to `bridge/` and the C calls that can raise
   to `nupur`'s `raw/`.
-- `Value::from_raw` is `pub(in crate::bridge)`.
+- `Value::from_raw` is nupur's, `pub(crate)` and `unsafe`, so the extension
+  cannot make a `Value` from a raw `VALUE`.
 - Making a borrowed HTML handle into a lifetime-free `RawNode` in `bridge/` is
   a `raw_node_crossing`, and each crossing is an allow with its reason.
   `with_html_node` / `HtmlParsed::mint_key` / `resolve` are the checked

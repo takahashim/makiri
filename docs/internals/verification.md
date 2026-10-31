@@ -11,10 +11,12 @@ bundle install
 bundle exec rake compile           # the crate alone - the extension links no Lexbor
 bundle exec rake lexbor            # the reference Lexbor (cmake)
 bundle exec rake spec
+bundle exec rake api:record        # re-record spec/api_surface.txt with an API change
 bundle exec rake rust:test         # the Rust crates' tests
 bundle exec rake nupur:spec        # nupur alone, through its own test extension
 bundle exec rake lint              # cargo clippy -D warnings everywhere + fmt
 bundle exec rake unsafe:boundaries # each file's unsafe count, the forbid files, static mut
+bundle exec rake unsafe:fix        # rewrite the recorded unsafe counts and forbid list
 bundle exec rake dylint            # the crate's own lints, then their self-test
 bundle exec rake clean             # wipe the build dir
 bundle exec rake clean:lexbor      # wipe vendor/lexbor/{build,dist}
@@ -38,12 +40,12 @@ bundle exec rake kani              # Kani proofs over the Ruby-free core
 bundle exec rake bench             # perf vs Nokogiri (bench-only gems; runs outside bundle)
 ```
 
-Requires CRuby >= 3.3 and a **Rust toolchain** (`cargo`); `cmake` only for the
-reference Lexbor (`rake lexbor`). The gem carries none of Lexbor's sources,
-only its LICENSE and NOTICE, which the ports owe it. A source install needs
-cargo too, and `extconf.rb` requires `rb_sys` at install time; that is why
-`rb_sys` is a RUNTIME gemspec dependency. Binary gems are published per
-platform, so most users never compile.
+Requires CRuby >= 3.3, a **Rust toolchain** (`cargo`) and libclang (rb-sys
+runs bindgen); `cmake` only for the reference Lexbor (`rake lexbor`). The gem
+carries none of Lexbor's sources, only its LICENSE and NOTICE, which the ports
+owe it. A source install needs cargo too, and `extconf.rb` requires `rb_sys`
+at install time; that is why `rb_sys` is a RUNTIME gemspec dependency. Binary
+gems are published per platform, so most users never compile.
 
 ## Building and cleaning
 
@@ -78,9 +80,9 @@ reason. The lints:
   wrapped object's data.
 - `ruby_layer_in_engine`, `unguarded_no_unwind_site`,
   `ruby_in_gvl_released_body`, `infallible_allocation`.
-- `raising_call_outside_protect`: any rb-sys fn not in `NON_RAISING`, outside
-  `raw::call`. The tables are held to the C API raise survey, vendored, and to
-  Ruby's headers as rb-sys's bindings carry them
+- `raising_call_outside_protect`: any rb-sys fn in neither `NON_RAISING` nor
+  `REVIEWED`, outside `raw::call`. The tables are held to the C API raise
+  survey, vendored, and to Ruby's headers as rb-sys's bindings carry them
   (`script/check_non_raising.rb`).
 - `unraising_call_in_raw`, `raw_ruby_outside_bridge`, `runs_callers_ruby`,
   `raw_node_crossing`, `ruby_surface_in_bridge`.
@@ -88,8 +90,8 @@ reason. The lints:
   `.ok()` / `.unwrap_or*` / `.is_ok()` / `let _ =` / `let _name =` / an
   Ok-only or `Err(_)` pattern / a `map_err(|_| ..)` / `drop`. It is FORBIDDEN
   in the extension, so no allow: handle the error with `Error::rescue`, which
-  hands every throw/break/kill back. nupur denies it; its one drop is
-  `describe::for_message`.
+  hands every throw/break/kill back. nupur denies it; its drops are
+  `describe::for_message` and the `yield_dropping_error_for_test` hook.
 - `ffi_without_gvl_proof` (in nupur): a safe fn calling `rb_sys::` whose
   signature holds no `&Ruby`, Ruby value or handle made from one. `extern "C"`
   entries and unsafe fns are exempt.
@@ -118,7 +120,8 @@ advisory that does not apply is ignored in `deny.toml` with its reason.
 
 `rake symbols` is THE export gate. `rake no_unwind` is a release build
 proving that no `extern "C"` fn or GC-run `Drop` can unwind
-(`engine/src/no_unwind.rs`). `ruby_boundary.md` explains both.
+(`nupur/src/no_unwind.rs` for nupur's sites, `engine/src/no_unwind.rs` for
+the engine's). `ruby_boundary.md` explains both.
 
 ## `rake diff` and the C baseline
 
@@ -150,9 +153,9 @@ build in place; `rake clean compile` goes back to release.
   ASan harness deadlocks in dyld on macOS, so macOS runs `-s none` (see
   `rakelib/fuzz.rake`).
 - `rake invariants` runs randomized property checks (`spec/invariants/`):
-  namespaces, tree shape, index staleness, serialization, the text-input
-  contract. `INVARIANT_COUNT` tunes the sweep; `invariants:sanitize` runs them
-  under ASan.
+  namespaces, copies (clone/import/adopt/fragment), tree shape, index
+  staleness, serialization, the text-input contract. `INVARIANT_COUNT` tunes
+  the sweep; `invariants:sanitize` runs them under ASan.
 
 ### Fuzzer files
 
@@ -180,7 +183,9 @@ call of nupur's `raw/` raises `NoMemoryError` in turn, and no document may be
 left borrowed (`Makiri.__borrowed?`) or unusable. This is the runtime check of
 the guards-across-raises rule.
 
-Prefix the task with `MAKIRI_SANITIZE=address` to combine it with ASan.
+Prefix the task with `MAKIRI_SANITIZE=address` to combine it with ASan. The
+task leaves the injection build in place; `rake clean compile` goes back to a
+normal build.
 
 ## Proofs: Miri, Verus and Kani
 

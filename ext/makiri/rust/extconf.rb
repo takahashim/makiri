@@ -96,9 +96,8 @@ cargo_target = nil
 #    raise unwinds via __builtin_longjmp, which ASan cannot intercept: a raise
 #    crossing an instrumented frame leaves that frame's stack poison behind, and
 #    a later interceptor in the uninstrumented interpreter trips over the stale
-#    shadow - a spurious report that ASan then aborts on while rendering (see
-#    docs/ci-crash/INVESTIGATION.md). Heap red zones and the arena poisoning in
-#    xml::node are unaffected; only stack-buffer checks are lost.
+#    shadow - a spurious report that ASan then aborts on while rendering. Heap
+#    red zones are unaffected; only stack-buffer checks are lost.
 #  - --target is passed so build scripts and proc macros build for the host
 #    uninstrumented.
 unless sanitize.empty?
@@ -112,8 +111,7 @@ unless sanitize.empty?
     end
     cargo_env["RUSTUP_TOOLCHAIN"] = "nightly"
     rustflags += ["-Zsanitizer=address", "-Cllvm-args=-asan-stack=0"]
-    # Only one ASan runtime may be linked; reference clang's rather than
-    # linking Rust's own copy.
+    # Only one ASan runtime may be linked, and it is rustc's own.
     # NOT -Zexternal-clangrt. That flag says "do not link a runtime, one is
     # already here", and while the C was compiled that was true: `$DLDFLAGS`
     # carried `-fsanitize=address`, so clang linked its runtime into the bundle

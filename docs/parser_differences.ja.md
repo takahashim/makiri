@@ -561,7 +561,7 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 - **M9 `:read-write` と `:read-only`**：HTML Standard の定義に従う。`:read-write` は、readonly 属性が適用される種類（text、search、url、tel、email、password、日付と時刻、number。type がないか不正なら text）の `input` と `textarea` で、readonly 属性がなく無効でないもの、および編集可能な要素（`contenteditable` の `""`、`true`、`plaintext-only` の中。`false` で打ち消し、不正な値は親を継ぐ）に当たり、`:read-only` はそれ以外の要素。Lexbor は readonly 属性のない `input` と `textarea` をすべて書き込み可とするので、チェックボックスやラジオも当たり、編集可能な要素は当たらなかった。Chromium、Firefox、WebKit は前者（`:read-only` は Chromium が文書のほかの要素で異なる）。`Fix::M9`。
 - **M10 `:empty`**：子に要素も、長さのあるテキスト（CDATA 区間を含む）もない要素に当たる。コメントと処理命令は数えない。Chromium、Firefox、WebKit と同じ（Selectors 3 の定義。Selectors 4 の空白の扱いは実装していない）。Lexbor は Comment 以外の子をすべて数えるので、処理命令や空の CDATA 区間だけを持つ要素は空ではなかった。`Fix::M10`。
 
-実装していない疑似クラス（`:lang()`、`:dir()`、`:scope` など）、擬似要素、`[*|a]`（C27）は、`spec/conformance/css_browser_diff.rb`（`rake conformance:css_browsers`）が三つのブラウザと比べて一覧にする。XML の CSS は HTML と同じ照合器で、照合の範囲、接頭辞のない型セレクタ、フォーム状態、エラーの種類はブラウザと一致する。各差は理由のタグ付きで `RULES` に載り、タグのない差と、差でなくなった項目が出ると失敗する。M2、M9、M10 は、このブラウザとの比較で見つけて直した。
+実装していない疑似クラス（`:dir()` など）、擬似要素、`[*|a]`（C27）は、`spec/conformance/css_browser_diff.rb`（`rake conformance:css_browsers`）が三つのブラウザと比べて一覧にする。XML の CSS は HTML と同じ照合器で、照合の範囲、接頭辞のない型セレクタ、フォーム状態、エラーの種類はブラウザと一致する。各差は理由のタグ付きで `RULES` に載り、タグのない差と、差でなくなった項目が出ると失敗する。M2、M9、M10 は、このブラウザとの比較で見つけて直した。
 
 ## オラクル同士の食い違い
 

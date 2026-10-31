@@ -128,6 +128,8 @@ the run:
 - It passes `verify_interceptors=0`/`verify_asan_link_order=0`.
 - `ASAN_OPTIONS` also disables LSan/container/odr checks, because Ruby+Lexbor
   are uninstrumented. Heap errors in our code still fire.
+- It passes `use_sigaltstack=0`: Ruby replaces ASan's alternate signal stack
+  on each thread, and ASan's unmap of it at thread exit aborts the run.
 
 CI runs a separate `sanitize` job on Linux. There is no `undefined` mode any
 more; see `ruby_boundary.md`.
