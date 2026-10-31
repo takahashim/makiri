@@ -114,6 +114,21 @@ pub fn message(payload: &(dyn Any + Send)) -> &str {
     }
 }
 
+/// A caught panic's [`message`], copied into a `Msg` for the exception
+/// raised in its place, and the payload dropped - both [`quietly`], since a
+/// payload's `downcast` and its drop are calls through its vtable, which the
+/// compiler cannot show unwind-free. What the trampolines (`rb::method`'s
+/// `finish` and `run_init`) make of a panic; inlined into them, or
+/// `rake no_unwind` cannot see that the call does not unwind.
+#[inline(always)]
+pub(crate) fn panic_message(payload: Box<dyn Any + Send>) -> crate::msg::Msg {
+    let msg = quietly(crate::msg::Msg::copy("a panic"), || {
+        crate::msg::Msg::copy(message(payload.as_ref()))
+    });
+    quietly((), || drop(payload));
+    msg
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
