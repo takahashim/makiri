@@ -31,8 +31,8 @@ task invariants: :compile do
   end
 end
 
-desc "Run the invariant checks under AddressSanitizer (the text index holds " \
-     "borrowed slices, so staleness there is a memory bug too)"
+desc "Run the invariant checks under AddressSanitizer (memory errors in the " \
+     "arenas, their indexes and edits)"
 task "invariants:sanitize" do
   sanitize = ENV["MAKIRI_SANITIZE"] || "address"
   sh({ "MAKIRI_SANITIZE" => sanitize }, "#{FileUtils::RUBY} -S rake clean compile")

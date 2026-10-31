@@ -27,6 +27,11 @@
 * DOM mutation も基本的な機能をサポート
 * XPath 評価は メモリ/DoS 耐性を持つ。文字列サイズ上限・再帰除去
   (反復トラバーサル)・スタック枯渇回避まで fail-closed で徹底する
+* parse も上限を持つ。HTML parse は木の深さ (`max_tree_depth:`、既定
+  400) と、入力に対して作る文書の大きさ (`max_amplification:`、既定は
+  入力の 256 倍で 64 MiB を下回らない) を制限し、超えたら `Makiri::Error`
+  で拒む。XML の文書は arena の byte 予算 (`max_bytes:`、既定 256 MiB)
+  を持ち、parse だけでなく編集も含めた文書の生涯にわたって数える
 * UTF-8 text-input 契約: HTML parse はブラウザ同様 lenient に
   decode (不正バイト → U+FFFD、parse は失敗しない)、XPath/CSS/DOM
   操作などプログラム API に渡す文字列は valid UTF-8 を要求し、違反は
@@ -69,7 +74,10 @@
   ための変更と分けて、独立した変更として入れる
   (`docs/parser_differences.ja.md` が既知の差分とその分類を持つ)
 * libxml2 互換を売りにすること。libxml2 と HTML5/XPath spec
-  が衝突するときは spec 準拠を優先し、差分は document 化する
+  が衝突するときは spec 準拠を優先し、差分は document 化する。例外は
+  XPath の数値の文字列化 (`string()`) で、XPath 1.0 §4.2 ではなく
+  libxml2 の書き方 (指数表記、有効数字 15 桁) に合わせる。Nokogiri から
+  移る呼び出し側が文字列で比べるため
 
 ## 2. Ruby API 表面
 
@@ -224,7 +232,9 @@ Makiri が内部で扱うテキストは UTF-8 だけとする。入力 String �
 
 XPath の独自関数（Nokogiri の handler）は受け付けない。
 評価中に Ruby のコードは走らず、XPath 1.0 にない関数の呼び出しは
-`XPath::SyntaxError` になる。
+`XPath::SyntaxError` になる。例外は Nokogiri の組み込みの `css-class` と
+`local-name-is` で、Nokogiri の builtin namespace に束縛した接頭辞の下で
+Nokogiri と同じに答える。
 
 引数は変換しない。
 文字列の引数は `String`、名前の引数（属性名、要素名、接頭辞、セレクタ、式）は `String` か `Symbol` に限り、それ以外は `TypeError` にする。
@@ -241,16 +251,19 @@ XPath の独自関数（Nokogiri の handler）は受け付けない。
   stamp と node の添字を 1 語に詰めたもので、document をまたいでも衝突
   しない (Lexbor の node pointer が持っていた性質を保つ)。別の document
   の語を解決しようとすると、別の node を指すのではなく拒む。
-* index アリーナの byte store は追記型で、`set_data` の置き換えが残した
-  死んだ byte を数える。死んだ byte が生きた byte と node 数に応じた
+* HTML の index アリーナの byte store は追記型で、`set_data` の置き換え
+  が残した死んだ byte を数える。死んだ byte が生きた byte と node 数に応じた
   下限の両方を超えたら、編集の開始点 (索引を捨てた直後) で store を
   書き直す。span は添字なので、書き直しで handle は無効にならない。
+  XML のアリーナは書き直さない。置き換えた値や取り外した node の byte は
+  文書が消えるまで残り、`max_bytes:` に数え続ける。詰めるのは `dup` で、
+  今ある中身だけを同じ予算の新しい文書に写す。
 * 木からの取り外しは detach であって destroy ではない。生存している
   Ruby wrapper が取り外し済みの node を指していても dangling しない。
-* 解放順序は「索引・cache → document」に固定する。Lexbor の索引は node
-  とその文字列を borrow するので、document より後に生き残ってはならない。
-  index アリーナの索引は id と span を持ち borrow しないが、同じ hook で
-  捨て、同じ順序で解放する。
+* index アリーナの索引は id と span を持ち、node も文字列も borrow しない
+  ので、document との解放順序は問わない。守るのは、どの編集も何かを
+  変える前に索引を捨てること (`HtmlParsed::edit` → `invalidate_indexes`)
+  である。
 * Ruby wrapper は自分が属する document を GC mark し、wrapper が
   生きている限り arena を keepalive する (HTML/XML 共通)。
 * ラップしたオブジェクトが生かしておく Ruby の値は、Ruby との境界の層が
@@ -258,7 +271,8 @@ XPath の独自関数（Nokogiri の handler）は受け付けない。
   スロットはオブジェクトの確保の直後に payload と一緒に一度だけ書き、
   mark はスロットを全部 pinned で mark する。型ごとの trace を書かないので、
   mark の書き忘れも、オブジェクトになる前に値を入れる誤りも起きない。
-  中身が揃う前のオブジェクトは、作った直後から隠しておき、揃ってから見せる。
+  中身が揃う前のオブジェクトは、class を持つうちに hidden ivar を書いて
+  から隠し、中身を埋めて揃ってから見せる。
 * wrapper は node ごとに 1 つとし、document がその対応表を持つ。同じ
   node を 2 度辿れば同じ Ruby object を返すので、object に載せたもの
   (`equal?`、instance variable、singleton method、`freeze`) が失われない。
@@ -321,14 +335,16 @@ CSS/serialize/読み取りアクセサも GVL を保持する。`spec/threading_
 * export の抑制はソース側で行う。「export される名前を作らない」が
   機構であり、link 後に削る後処理は platform によっては原理的に効かない
   ので保険としてしか使わない。
-* export と未定義シンボルは CI の gate で機械的に検証する。「余計な名前が
-  出ていない」と「未解決の参照が残っていない」の両方を主張する。
+* export は CI の gate (`rake symbols`) で機械的に検証する。export された
+  名前の全体を見て、初期化関数と ABI version のほかに名前が出ていない
+  ことを主張する。
 * abort する確保 API は禁止する。engine の確保は失敗を値として返せる
   API に一本化し、OOM は abort ではなく例外にする。この規約は lint と、
   確保点を順に失敗させる injection テストで守る。
-* 最適化フラグは platform ごとに「そのツールチェーンで実際に通るか」で
-  決め、計測で得があるものだけ採用する。判断はビルド側で検出し、
-  検出できない環境では黙って従来の経路に落ちる。
+* 最適化は platform によらない 1 つの release profile に固定する
+  (`opt-level = 3`、`lto = true`、`codegen-units = 1`)。拡張は cdylib
+  だけをビルドし、LTO が crate をまたいで効くようにする。変えるのは
+  bench で計測した得があるときだけとする。
 * 移植版のパーサが持つ静的な表 (タグ名、属性名、名前空間、文字参照の
   探索木、tree builder のタグの分類と調整表) は、Lexbor のヘッダとソース
   と WHATWG の `entities.json` から生成し、手で転記しない。生成物は
@@ -386,8 +402,11 @@ CSS/serialize/読み取りアクセサも GVL を保持する。`spec/threading_
     には、Ruby に依存しないクレートにある必要がある。
   - 子の位置の memo (`child_index`) はエンジンに置き、memo を無効にする
     版数 (`tree_version`) は拡張が文書ごとに持って渡す。
-  - GVL を鍵にした cell (`gvl`) と、C の callback の中で panic を捕まえる
-    latch (`caught`) は参照実装に移す。出荷するビルドで使うものはない。
+  - GVL を鍵にした cell (`gvl` の `GvlCell`) は参照実装に置き、出荷する
+    ビルドには入らない。C の callback の中で panic を捕まえる latch
+    (`caught::PanicLatch`) は、参照実装が Lexbor の callback のために自分の
+    ものを持ち、出荷するビルドでは nupur のもの (`nupur::caught`) を GVL を
+    外した処理と `rb_hash_foreach` の callback が使う。
   - 参照実装のテストが使うエンジンの内部 (Lexbor のとおりに動かす切り替え、
     適合テストの harness、tokenizer の追跡付きの実行など) は、エンジンの
     `lexbor-compat` フィーチャで公開する。出荷するビルドには入らない。
@@ -513,9 +532,10 @@ bench で実測の改善があり spec/fuzz/sanitizer が green なときだけ�
 ### 6.7 CI
 
 GitHub Actions で Ruby の各バージョンと OS とで実行する。
-sanitizer は Linux のみで実行する。Lexbor と比べる job (`rake rust:test`、
-差分 fuzz、`conformance:parser`) だけが `rake lexbor` で参照の Lexbor を
-ビルドする。
+sanitizer は Linux のみで実行する。`rake lexbor` で参照の Lexbor を
+ビルドするのは、参照実装を build する job だけである: 参照実装も含めた
+clippy (`rake lint`)、`rake rust:test`、ASan 下の Rust のテスト (sanitize
+job)、差分 fuzz、`conformance:parser`。
 
 ## 7. 互換性に関する考慮
 

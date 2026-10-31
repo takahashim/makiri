@@ -8,9 +8,14 @@ this is an *untagged master* commit, taken deliberately. It is still
 **vanilla, NEVER patched**: the constraint that relaxed is "release tag only",
 not "no fork".
 
+Lexbor is only the reference here: the pin is what the reference builds and
+what the differential tests and the diff fuzzers compare the ports against.
+No build that ships links it.
+
 **v3.0.1 is NOT usable.** It is a maintenance release off v3.0.0 and does not
 contain the **two CSS-selector fixes we upstreamed**, so moving to it would
-REGRESS matching:
+change the oracle's matching answers (the `selector_diff` / `html_css_diff`
+comparisons), not the shipped matcher's:
 
 - `#369` (`3a2d595`): class/ID selectors match case-sensitively except in
   quirks mode, like browsers.
@@ -19,16 +24,14 @@ REGRESS matching:
 
 Check that again on the next tag.
 
-Master also carries what Makiri needs:
+Master also carries fixes the reference builds run with:
 
-- the **heap-overflow fix in the `:lexbor-contains()` parser** (reached via
-  `Node#css`);
+- the **heap-overflow fix in the `:lexbor-contains()` parser**;
 - the `#365` tokenizer size-limit (DoS) fix;
-- new in this pin, the fix for an **out-of-bounds write in
-  `lxb_dom_character_data_replace`** (`cf31487`), which `Node#content=` on a
-  text/comment/PI node reaches through `lxb_dom_node_text_content_set`, plus
-  UTF-16 surrogate rejection, exact `meta` charset matching, buffer-capacity
-  fixes in the integer/hex conversion, and selector-destroy leaks.
+- new in this pin, a memory-safety fix in the DOM's character-data editing
+  (`cf31487`), plus UTF-16 surrogate rejection, exact `meta` charset
+  matching, buffer-capacity fixes in the integer/hex conversion, and
+  selector-destroy leaks.
 
 ## Processing instructions: the parsing change
 

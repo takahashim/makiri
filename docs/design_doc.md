@@ -19,6 +19,11 @@ This is the English version of the design document; the Japanese version,
   runs no Lexbor CSS code. Matching follows a browser's `querySelectorAll`.
 * Support source locations and basic DOM mutation.
 * Make XPath evaluation resistant to memory exhaustion and DoS attacks.
+* Bound parsing too: HTML parsing limits the tree depth (`max_tree_depth:`,
+  default 400) and the document's size against its input
+  (`max_amplification:`, default 256 times, never less than 64 MiB), refused
+  as `Makiri::Error`; an XML document has an arena byte budget (`max_bytes:`,
+  default 256 MiB) over its whole life, edits included.
 * Use UTF-8 internally.
 
   * HTML parsing is lenient and replaces invalid bytes with U+FFFD.
@@ -46,7 +51,10 @@ This is the English version of the design document; the Japanese version,
   upstream.
 * Treating libxml2 compatibility as the main goal. When behavior conflicts
   with HTML5 or XPath specifications, Makiri follows the specification and
-  documents the difference.
+  documents the difference. The exception is XPath's number-to-string
+  conversion (`string()`), which writes numbers as libxml2 does (exponent
+  notation, 15 significant digits) rather than by XPath 1.0 §4.2, because a
+  caller moving from Nokogiri compares strings.
 
 ## 2. Ruby API Surface
 
@@ -155,8 +163,10 @@ any tree holding a character XML 1.0 has no `Char` for, when they write it.
 - The extension should export only the symbols required by Ruby. Lexbor
   symbols must not be re-exported.
 - Allocation APIs that abort are not allowed.
-- Platform-specific optimizations are enabled only when they work on that
-  toolchain and benchmarks show a real improvement.
+- Optimization is one fixed release profile on every platform
+  (`opt-level = 3`, `lto = true`, `codegen-units = 1`); the extension builds
+  as a cdylib alone, so LTO applies across its crates. It changes only for a
+  measured benchmark win.
 
 ## 6. Testing
 

@@ -29,8 +29,9 @@ task release: %w[release:guard_clean release:source_control_push] do
   MSG
 end
 
-# The extension is one Rust crate, and this is still rake-compiler's ordinary
-# task: it runs ext/makiri/rust/extconf.rb, which calls `create_rust_makefile`.
+# The extension is a cargo workspace at ext/makiri/rust, and this is still
+# rake-compiler's ordinary task: it runs ext/makiri/rust/extconf.rb, which calls
+# `create_rust_makefile`.
 # The cargo integration lives there, which is where the build's other decisions
 # (the link arguments, the export trim) already are.
 #
@@ -41,10 +42,10 @@ end
 # it would cost is structural: it infers the crate by running `cargo metadata`
 # in the REPO ROOT (rb_sys/cargo/metadata.rb passes no working directory), so it
 # needs a root workspace manifest; it then looks the crate up by PACKAGE name,
-# so `makiri_rs` would have to be renamed; and a root workspace would swallow
-# the cargo-fuzz crate, which declares no `[workspace]` of its own, so that
-# would need excluding too. Three changes to the crate's shape to gain a
-# capability we do not use.
+# so `makiri_rs` would have to be renamed; and a root workspace would have to
+# exclude every crate under it that is a `[workspace]` of its own (`reference/`,
+# `fuzz/`, `lints/`, `nupur/test/ext`). Three changes to the crate's shape to
+# gain a capability we do not use.
 #
 # `source_pattern` is what makes `rake compile` notice an edited .rs. The
 # Makefile that extconf writes re-runs cargo on every build anyway (cargo does

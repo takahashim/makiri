@@ -466,7 +466,7 @@ fn union_nodeset<'e, 'd, D: Dom<'d>>(
 /// the whole node-set to take [0]. For the common "find a descendant by name
 /// (plus a simple attribute predicate)" shapes the subtree can be walked in
 /// document order and stopped at the first match - the XPath-side analogue of
-/// at_css's MATCH_FIRST.
+/// at_css's first-match search (`css_match`'s `select_first`).
 ///
 /// Recognised, after the parser's `//` peephole:
 ///

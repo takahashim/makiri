@@ -86,19 +86,22 @@ with its reason; there is one, the `__panic(1)` hook.
 
 A node's `source` field holds its start tag's byte offset (offset + 1; 0 for
 none), for `Node#line`. `Document::set_source_offset` /
-`forget_source_offset` / `source_offset` (`html/dom/mod.rs`) are its only
-writers and reader. A copy within the document keeps it; one from another
-document drops it, since it indexes that document's source
-(`html/dom/copy.rs`).
+`forget_source_offset` / `source_offset` (`html/dom/mod.rs`) write and read
+it; the one other writer is the copy (`html/dom/copy.rs`). A copy within the
+document carries the field across; one from another document drops it, since
+it indexes that document's source.
 
 ## Pointer-keyed tables
 
-Pointer-keyed tables hash with `crate::ptr_table::ptr_hash`, and are a
-`PtrTable` (sized once) or a `PtrMap` (grows) rather than another
-hand-written probe loop. Verus proves the probe always stops
+Node- and id-keyed tables are a `PtrTable` (sized once) or a `PtrMap`
+(grows) rather than another hand-written probe loop, keyed by a `TableKey`
+type (`NodeKey`, `Token`, `ChildListKey`, `AttrKey`, `NameKey`, ...) that
+supplies its hash (`TableKey::table_hash`, mostly `ptr_table::mix64`;
+`ptr_hash` for a raw pointer) and its empty marker (`TableKey::EMPTY`). A
+`Token` is a kind and a word, so its empty marker is its `Null` kind rather
+than a zero word. Verus proves the probe always stops
 (`verus/ptr_table.rs`), so a change to either table goes through
-`rake verus:sync`. A key that can be 0 (an XML token) supplies its own empty
-marker through `TableKey`.
+`rake verus:sync`.
 
 ## XPath name tests and axis walks
 

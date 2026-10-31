@@ -14,13 +14,12 @@ description = "The Makiri gem's extension: HTML5 parsing, XPath 1.0 and an XML r
 # The Ruby extension is `makiri.bundle` / `makiri.so`, loaded by
 # `require "makiri/makiri"`, and rb_sys's generated Makefile copies
 # `lib<lib name>.<soext>` into place - so the LIB name has to be `makiri` even
-# though the package is `makiri_rs`. (The package keeps the `_rs` suffix: it is
-# what `fuzz/Cargo.toml` depends on by name, and it distinguishes the crate from
-# the gem in cargo output.)
+# though the package is `makiri_rs`. (The package keeps the `_rs` suffix: it
+# distinguishes the crate from the gem in cargo output.)
 name = "makiri"
 # cdylib is what Ruby loads, and all it is: the cargo-fuzz crate depends on
-# the engine and the Lexbor reference, not on this, and with an `rlib` beside
-# it rustc would run no LTO.
+# the Lexbor reference alone (as `makiri`), not on this, and with an `rlib`
+# beside it rustc would run no LTO.
 crate-type = ["cdylib"]
 path = "src/lib.rs"
 
@@ -46,10 +45,10 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(fuzzing)', 'c
 
 # The panic gate. A panic now reaches Ruby as an exception (see the profile
 # below), but it is still an INTERNAL error nobody asked for - `rescue => e`
-# does not catch a `fatal` - so a new one has to be a decision rather than an
-# accident: these two make it a build failure under CI's `-D warnings`, and the
-# few sites that want one carry an `#[allow]` with a reason. Test code is
-# exempt in `lib.rs`.
+# does not catch a `Makiri::InternalError` - so a new one has to be a decision
+# rather than an accident: these three make it a build failure under CI's
+# `-D warnings`, and the few sites that want one carry an `#[allow]` with a
+# reason. Test code is exempt in `lib.rs`.
 #
 # `expect_used` joined them once method registration stopped `.expect`ing each
 # definition (223 hits, now `?`): what remains is a handful of invariants, each
@@ -84,23 +83,23 @@ nupur = { path = "nupur", version = "0.0.1" }
 
 # `unwind`, so a panic reaches Ruby as an exception instead of killing the host
 # process. Every method's trampoline (`bridge::rb::method::finish`) catches a
-# panic; `abort` was what stopped such a catch from ever running. With `unwind` a panic becomes a Ruby
-# `fatal` - not caught by `rescue => e`, caught by `rescue Exception`, and it
-# runs `ensure` blocks and `at_exit` on the way out. `abort` ran neither, and
-# ran no destructor either, so this also RELEASES what the old setting leaked.
+# panic; `abort` would stop such a catch from ever running. With `unwind` a
+# panic becomes `Makiri::InternalError` - an `Exception`, not a
+# `StandardError`, so not caught by `rescue => e` but by `rescue Exception` -
+# and it runs `ensure` blocks, `at_exit` and every destructor on the way out,
+# none of which `abort` runs.
 #
 # A callback is the case this does not cover by itself: Rust turns an unwind at
 # an `extern "C"` boundary into an abort, because unwinding through C frames
 # built without unwind tables is undefined behaviour. So every callback catches
 # its own panic and the caller re-raises it past the C frames - `caught::
-# PanicLatch`, installed in all eight (the CSS traversal, the serializer sink,
-# the tokenizer hook, the GVL trampoline, and `bridge::ruby::protect`, which
-# covers every `rb_protect`). The GC callbacks in `bridge/typed.rs` keep
-# aborting on purpose; see docs/internals/ruby_boundary.md.
+# PanicLatch`, installed in the two the shipped build has (`bridge::gvl`'s
+# trampoline and `nupur::raw::hash_foreach`'s callback). The GC callbacks in
+# `nupur/src/typed/callbacks.rs` have no latch on purpose; see
+# docs/internals/ruby_boundary.md.
 #
 # Anything that must be released across a panic is therefore a `Drop`, not a
-# statement after the work. `lexbor::selectors::Session` and
-# `post_parse::DocOwner` are the two that had to be converted.
+# statement after the work.
 #
 # overflow-checks stays ON in release: a wrapped size is exactly the class of
 # bug fail-closed exists to stop, and now it stops as an exception.

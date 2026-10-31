@@ -20,7 +20,8 @@
 //! every child-list edit changes anything (`bridge::wrapper::record_edit`),
 //! so an entry that survives describes the tree as it is. This is what lets
 //! a representation turn a recorded token back into a node
-//! ([`TokenTree::node_of`]) - for HTML, a raw pointer.
+//! ([`TokenTree::node_of`]) - for HTML, the arena node word, read back
+//! through the document's checked lookup.
 //!
 //! # Its known limit
 //!

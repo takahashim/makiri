@@ -54,9 +54,10 @@ namespace :fuzz do
   #
   # Nothing here depends on the built extension: cargo-fuzz builds the crate
   # itself, with its own instrumentation. It does need the vendored Lexbor
-  # library and headers (the crate's build.rs links the archive and generates
-  # the layout from the headers), which `rake compile` produces - hence the
-  # dependency, which is about Lexbor rather than about the bundle.
+  # library and headers (the reference crate's build.rs links the archive and
+  # generates the layout from the headers), which `rake lexbor` produces -
+  # hence that dependency. The `compile` one builds the extension as well,
+  # which the harnesses do not use.
   FUZZ_TARGETS = %w[xml xpath xml_xpath css html html_xpath html_css html_css_diff html_diff selector_diff stylesheet_diff].freeze
   # The targets whose input starts with a CSS selector take its dictionary.
   FUZZ_CSS_DICT = %w[html_css html_css_diff].freeze

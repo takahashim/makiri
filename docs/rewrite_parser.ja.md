@@ -308,7 +308,7 @@ Makiri は常に文書全体を 1 バッファで渡すので、Lexbor の状態
 ### tree builder
 
 insertion mode ごとに 1 モジュールとし、制御フローは Lexbor の対応する関数に従い、doc comment に仕様の節の step を写す。
-木の深さガードと `<select>` の option 数の上限は、tree builder の挿入処理に直接書く。
+木の深さガードは、tree builder の挿入処理に直接書く（`<select>` の option 数の上限は 2026-10-21 に外した。進捗を参照）。
 現行の `tree_guard` が token hook で外から数えているのは、Lexbor の tree builder に手を入れられなかったからである。
 
 要素を作る箇所は「token から作った」か「パーサが補った」かを引数で受け取る。
@@ -339,7 +339,7 @@ HTML Standard は通常の直列化しか定義しておらず、Lexbor の pret
 
 ### セレクタパーサ
 
-Lexbor の制御フローのまま Rust に移す（`src/selectors/`）。
+Lexbor の制御フローのまま Rust に移す（`engine/src/selectors/`）。
 セレクタの状態関数は汎用の構文パーサ（規則のスタックと状態のスタック、規則ごとの phase）の上で動き、エラーからの回復や寛容なリスト（`:is()`、`:where()`、`:has()`）の挙動はその組み合わせで決まるので、構文パーサの必要な部分ごと移す。
 `css_match::compile` と `css/lower.rs` は `css_parser` の `Simple`、`Selector`、`List` のビューだけを消費しているので、同じ形のビューをアリーナの AST の上に置けば、消費側は import を変えるだけで済む。
 `selector_cache` の別アリーナ、`Parsed` の Drop がアリーナ全体を掃除する問題、セレクタ解析用の `GvlCell` は、ここで消える。
@@ -400,7 +400,7 @@ CSS は、Selectors Level 4 と CSS Syntax Level 3 のうち、セレクタパ�
 3 を 4 より先に置くのは、tree builder が書き込む先を一度だけ相手にするためである。
 Lexbor の DOM に tree builder を向けると、その癖（`attr_append` が `attr_id` の裏の属性を破棄する、など）に合わせて一度書き、アリーナに移してもう一度合わせることになる。
 
-## 進捗（2026-10-18 時点）
+## 進捗（2026-10-31 時点）
 
 ブランチ `parser-port/foundation` で次を終えた。
 
@@ -468,3 +468,8 @@ bench（release、同一マシン）でのアリーナ構成と Lexbor 構成の
   - 退役後に、出荷していた構成（Lexbor の DOM、Lexbor は LTO つき）と比べ直した。Ruby から parse 1 回の CPU 時間の中央値で、移植版は中くらいの文書（リスト 2000 項目、table、SVG、文字参照）で 1.08〜1.20 倍、小さい文書で 0.4 倍、入れ子の崩れたタグで 0.75 倍だった。LTO なしの Lexbor とは 0.93〜1.10 倍で並ぶ。差は parser のコードではなくメモリの使い方にある。perf（`cpu-clock`）で、移植版は `Vec` の倍々の成長による `memmove` と、新しいページの fault と 0 埋め（カーネル）に parse の 1〜2 割を使い、Lexbor はそれがほぼなく（`mraw` が中くらいの固定長の chunk を使い回す）、代わりに自前の確保と `memset` に 2 割を使う。どちらに転ぶかは glibc の mmap の閾値と trim に左右され、同じ処理でも文書を一つずつ捨てるか溜めるかで ±30% 動く（Ruby を通さない比較で、一つずつ捨てると移植版 3.4 ms 対 Lexbor 6.4 ms、溜めると 4.4 ms 対 4.0 ms）。試して採らなかったもの：入力の長さから表を先に確保する（`memmove` は減るが、大きな確保が mmap になって fault が増え、遅くなる）、node と属性の表を 32 KiB の固定 chunk に分ける（コピーは消えるが、chunk の解放と再確保で fault が戻り、Ruby から 4〜14% 遅い）、`overflow-checks` を外す（平均の差はなく、配置の変化で入力によって ±30%）。PGO は DOM の操作を 2〜3 割速くするが、parse には入力によって ±1 割で、出荷の手間に見合うかは決めていない。
 - **Lexbor の DOM のビルドの退役（第 9 段の後半）**：拡張を Lexbor の DOM でビルドする構成（`MAKIRI_LEXBOR_DOM=1`）をなくした。facade（`crate::html_dom`）は常にアリーナを指し、`arena-dom` フィーチャと build.rs の cfg は `html-dom` フィーチャ一つになった（`ruby` と `lexbor` が含む）。`bridge::dom` の分岐、Lexbor の DOM 用の長命なノードの鍵、`lexbor::memory`（ヒープの余白）、`Makiri.__lexbor_dom?`、CI の `lexbor-dom` と `security-sanitize-lexbor` の job、`rake sanitize:lexbor`、Lexbor の LTO とそのための LLVM の導入を外した。参照の Lexbor は `rake lexbor`（`script/build_lexbor.rb`、素の静的ビルド）が作り、extconf は Lexbor に触れない。比較の土台は残る。`lexbor::arena_tests`、`tree_port_tests`、`html_diff`、`selector_diff`、`stylesheet_diff` はそのまま動き、Lexbor の DOM の上で回っていた CSS の照合のテスト（`lexbor::tests::css_match`、`selector_cache`）と fuzz（`html_css_diff`）は、Lexbor の解析とそのアリーナへの複製を位置で対応させる `lexbor::twin` を通して、旧エンジンの答えを複製の上で比べる。`html`、`html_css`、`html_xpath` の fuzz は、出荷するアリーナを対象に変えた（それまでは Lexbor の DOM を fuzz していた）。
 - **退役後の比較の補強**：Lexbor の DOM のビルドをなくしたあと、パーサより後ろの層が Lexbor と比べられているのは固定した入力（手書きと WPT）の上だけだった。そこで次の三つを足した。直列化は、`html_diff` と無作為な入力のテストが木の一致に続けて、文書と最大 64 ノードの 4 形式（`tree_diff::check_serialization`）と、fragment の中身（`check_fragment_serialization`）を Lexbor の直列化と比べる。深さの上限は、それまで境界の手書きテストと web100k でだけ比べていたので、上の二つが 1〜32 の上限を無作為に選び、受理と拒否が一致すること（`check_verdict`、fragment は一致したときの木も）を確かめる。XPath は、`lexbor::xpath_diff` が文法に沿って式と文書を生成し、同じ Lexbor の解析を Lexbor の `Dom` とアリーナの複製の `Dom` で、strict と lax、`evaluate` と `evaluate_first` について比べる。答えがどちらも空のものばかりでは比べた意味がないので、空でない答えの割合が 1/5 を下回るとテストは失敗する（実測で約 27%）。cargo-fuzz に `html_xpath_diff` を足した。無作為な 10 万件（文書と fragment のそれぞれ、XPath は 10 万文書 × 4 式）、`html_diff`（3 分、143 万件）、`html_xpath_diff`（3 分、65 万件）で食い違いはなかった。編集の列（`arena_tests` の 400 系列）と、`ContextFacts` が既定値でないときの fragment の解析は、まだ fuzz で比べていない。後者は Lexbor と意図して違うので、比べる相手は parse5 かブラウザになる。
+- **その後の整理（2026-10-31 時点）**：上の項目が挙げるパスと名前のうち、次が変わっている。
+  - `<select>` の option 数の上限（10,000）を外した（2026-10-21）。selectedness の設定アルゴリズムは select ごとの状態（`html/tree/select.rs` の `SelectStates`）から決めるので、select の構築は option の数に線形の時間で済む。ガードが判定するのは木の深さと文書の大きさで、第 4 段の検証にある「option 10,000 と 10,001」の判定はもうない。
+  - 出荷するモジュールを `lexbor/` の外へ移した（2026-10-22）。stylesheet の値を作るのは `selectors/stylesheet.rs`、`FragmentError` は `html::fragment`、セレクタの文字列化は `selectors/text.rs` にある。`selector_cache` は `css_cache` になった。
+  - 移行のための arena と Lexbor の DOM の比較（`lexbor::arena_tests`、`lexbor::xpath_diff`、`html_xpath_diff` fuzz）を退役させた（2026-10-22）。Lexbor と比べ続けるのは、`tree_port_tests`、`tree_diff`、`selector_diff`、`stylesheet_diff`、`twin` を通した CSS の照合と、`html_diff`、`selector_diff`、`stylesheet_diff`、`html_css_diff` の fuzz である。
+  - エンジンを独立したクレート `makiri_engine`（`ext/makiri/rust/engine/`）に分け、Lexbor の参照を別のワークスペースのクレート `makiri_lexbor`（`ext/makiri/rust/reference/`）にした（2026-10-31）。上の項目の `src/html/tokenizer/`、`src/html/dom/`、`src/html/tree/`、`src/selectors/` は `engine/src/` の下に、`lexbor::` のモジュールは `reference/src/lexbor/` にある。

@@ -9,9 +9,10 @@ lib/makiri/                Ruby API (Document, Node, Element, NodeSet,
                            XPathContext, ...)
 ext/makiri/rust/           the extension (package makiri_rs, lib `makiri`)
                            and the root of a workspace with `engine/`,
-                           `falloc/` and `nupur/`. `reference/`, `fuzz/` and
-                           `lints/` are crates of their own, each its own
-                           `[workspace]` (see "Workspaces")
+                           `falloc/` and `nupur/`. `reference/`, `fuzz/`,
+                           `lints/` and `nupur/test/ext` (`nupur_test`) are
+                           crates of their own, each its own `[workspace]`
+                           (see "Workspaces")
   extconf.rb               hands the crate to cargo via create_rust_makefile;
                            owns the link arguments and the export trim. It
                            builds no Lexbor (`rake lexbor` does, for the
@@ -22,19 +23,22 @@ ext/makiri/rust/           the extension (package makiri_rs, lib `makiri`)
   src/                     the extension (`makiri_rs`): the Ruby surface alone
     init.rs                Init_makiri: the class hierarchy and the
                            registration seam
-    bridge/                the Ruby boundary - the ONLY layer allowed raw Ruby
-                           String access (RSTRING) and verified-string
-                           minting. `rb/` is its value and method layer over
-                           rb-sys (`Value` and the class-checked handles,
-                           `Error`, the `method!` / `function!` trampolines,
-                           class definitions), which replaced magnus under
-                           its names (see "The bridge and the glue")
+    bridge/                the Ruby boundary, `#![forbid(unsafe_code)]`: it
+                           re-exports nupur's `rb` (`Value` and the
+                           class-checked handles, `Error`, the `method!` /
+                           `function!` trampolines, class definitions) and
+                           mints the checked string views over nupur's
+                           String reads; raw String access is nupur's (see
+                           "The bridge and the glue")
     glue/                  THE Ruby surface: every method Makiri defines, with
                            its argument reading, its errors and its
                            registration, one module per feature
-                           (query/html_doc/xml_doc/node_set/xpath_context/
-                           html_node/xml_node; each node module owns its
-                           read/mutate/css/serialize). All `unsafe`-free
+                           (query/css/stylesheet/html_doc/xml_doc/node_set/
+                           xpath_context/html_node/xml_node, with node for
+                           the methods both node kinds share and
+                           namespaces/dom_names/kwargs for argument reading;
+                           each node module owns its read/mutate/css/
+                           serialize). All `unsafe`-free
   nupur/                   the Ruby binding layer, a crate of its own over
                            rb-sys. `nupur/src/lib.rs` is the one statement of
                            what it guarantees, what an extension must uphold
@@ -45,8 +49,8 @@ ext/makiri/rust/           the extension (package makiri_rs, lib `makiri`)
   falloc/                  fallible allocation (crate `falloc`): every engine
                            allocation goes through here, so `rake oom` can
                            fail it and OOM raises rather than aborting the
-                           host process. Holds the ONE `unsafe` block of ours
-                           outside nupur (see "falloc")
+                           host process. Holds one of the few `unsafe`
+                           blocks of ours outside nupur (see "falloc")
   engine/                  the engine (crate `makiri_engine`): no Ruby, no
                            Lexbor (see "The engine boundary"; its features
                            are under "Features")
@@ -127,9 +131,10 @@ ext/makiri/rust/           the extension (package makiri_rs, lib `makiri`)
                            four exports no header declares are written by
                            hand, and build.rs's `UNDECLARED_EXPORTS` fails
                            the build if their C definitions change
-      adapter              the one reader of Lexbor's DOM structs, plus the
-                           element index, text index, source location and
-                           post-parse
+      adapter              the one reader of Lexbor's DOM structs (`html`),
+                           plus the arena's size (`arena_bytes`), the copy
+                           into the port's arena (`arena_copy`), source
+                           location, tree guard and post-parse
       selectors,           the facades
       serialize,
       fragment
@@ -157,7 +162,9 @@ ext/makiri/rust/           the extension (package makiri_rs, lib `makiri`)
                            through
   fuzz/                    cargo-fuzz harnesses, over the reference crate (as
                            `makiri`) and so the engine. Built on PRs, run
-                           nightly; css-match.yml owns the two html_css*
+                           nightly; css-match.yml runs the two html_css*
+                           (libfuzzer.yml's slow-inputs job runs html_css
+                           too)
     xml, html
     xpath, xml_xpath,
     html_xpath
@@ -182,9 +189,10 @@ docs/design_doc.ja.md      authoritative design (read this)
 
 ## Workspaces
 
-`reference/`, `fuzz/` and `lints/` each declare their own `[workspace]`, so
-the extension workspace's Cargo.lock - the one a source install builds from -
-holds nothing of Lexbor's, and its build scripts read no Lexbor header.
+`reference/`, `fuzz/`, `lints/` and `nupur/test/ext` each declare their own
+`[workspace]`, so the extension workspace's Cargo.lock - the one a source
+install builds from - holds nothing of Lexbor's, and its build scripts read
+no Lexbor header.
 
 ## cdylib alone
 
@@ -209,10 +217,12 @@ of the shipped binary.
 ## falloc
 
 The glue's Ruby-side storage is Ruby's xmalloc, not falloc (see
-`engine_rules.md`). falloc's `try_box` holds the ONE `unsafe` block of ours
-outside nupur, because a fallible `Box<T>` has no stable safe spelling; that
-is why falloc is a crate of its own. Its test build includes
-`nupur/src/utf8_copy.rs` for Miri.
+`engine_rules.md`). falloc's `try_box` holds an `unsafe` block, because a
+fallible `Box<T>` has no stable safe spelling; that is why falloc is a crate
+of its own. Outside nupur the only others are `Init_makiri`'s call to
+`run_init` (`src/init.rs`) and the `rake no_unwind` check build's sites
+(`engine/src/no_unwind.rs`); `rake unsafe:boundaries` counts each. Its test
+build includes `nupur/src/utf8_copy.rs` for Miri.
 
 ## The engine boundary
 
@@ -237,13 +247,16 @@ These gates hold the boundary:
 - `rake unsafe:boundaries`. The crate denies `unsafe_code` (`lib.rs`), so
   every file that needs it carries an `allow`, and the script holds each
   one's count exactly: a new file fails even where a parent module's `allow`
-  kept rustc quiet. It also counts every `forbid` file.
+  kept rustc quiet. It also counts every `forbid` file. `rake unsafe:fix`
+  rewrites both records from the tree, but not the `static mut` table.
 - `bridge/**` and `glue/**` are fully safe: their module roots carry
   `#![forbid(unsafe_code)]`, as the engine's root does for the whole engine.
   The gate pins the roots in `FORBID_ROOTS` (`bridge`, `glue` and the
   engine's `css_match`, `selectors`, `xml` and `xpath`).
-- `rake dylint` holds `rb_sys::` to `bridge/` and the C calls that can raise
-  to `nupur`'s `raw/`.
+- rb-sys is nupur's: the extension does not depend on it, so no file of it
+  names `rb_sys::`, and `rake dylint`'s `raw_ruby_outside_bridge` refuses one
+  outside nupur (and `bridge/`, which cannot reach it). `rake dylint` also
+  holds the C calls that can raise to `nupur`'s `raw/`.
 - `Value::from_raw` is nupur's, `pub(crate)` and `unsafe`, so the extension
   cannot make a `Value` from a raw `VALUE`.
 - Making a borrowed HTML handle into a lifetime-free `RawNode` in `bridge/` is
@@ -285,9 +298,8 @@ crate is Lexbor, and nothing that ships depends on it, so `nm` finds no
 `lxb_` symbol.
 
 The ~30 features that used to stand here were migration scaffolding, one per
-ported C file, and went with the C. The CSS-to-XPath lowering that XML's CSS
-ran on before `css_match` stayed as the XML matcher's reference, behind
-`xml-css-reference`, until the browser comparison made it redundant.
+ported C file, and went with the C. The XML matcher has no reference
+feature: the browser comparison (`rake conformance:css_browsers`) holds it.
 
 ## The retired Lexbor DOM
 

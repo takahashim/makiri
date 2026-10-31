@@ -228,10 +228,10 @@ end
 # that day arrives as a failing gate rather than as a silent re-export.
 keep = File.join(Dir.pwd, "makiri-exported.sym")
 
-# MAKIRI_NO_EXPORT_TRIM=1 skips the trim entirely. It exists to answer one
-# question - whether the trim is what makes the ASan build segfault at load -
-# and a build made with it exports every `mkr_*` name, so `rake symbols` will
-# (correctly) fail on it. Diagnostic only; not a supported configuration.
+# MAKIRI_NO_EXPORT_TRIM=1 skips the trim entirely, to tell whether the trim is
+# what changes a build's behaviour at load. Since nothing but `Init_makiri` is
+# `#[no_mangle]`, a build made with it should export nothing more; `rake
+# symbols` is what says so. Diagnostic only; not a supported configuration.
 restrict =
   if !ENV["MAKIRI_NO_EXPORT_TRIM"].to_s.empty?
     warn "makiri: SKIPPING the export trim (MAKIRI_NO_EXPORT_TRIM) - diagnostic build"

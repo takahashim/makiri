@@ -81,7 +81,7 @@ fn string_literal(e: &Expr) -> Option<&[u8]> {
 /// It is also the attribute axis's own test: an attribute counts when
 /// [`unprefixed_attr_matches`] - the function the axis's name test calls - says
 /// so. And like `@name = 'v'` over that axis, the value compare is "some
-/// matching attribute has it": in XML's lax mode `a` and `p:a` both match `@a`.
+/// matching attribute has it".
 ///
 /// This scans rather than using the host's attribute lookup, whose rules are
 /// not the name test's: HTML's is DOM getAttribute, keyed on the qualified
