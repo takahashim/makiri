@@ -127,6 +127,18 @@ struct Envelope<T, const N: usize> {
     data: T,
 }
 
+/// What a new object is made of: its class, its payload, and the values its
+/// slots keep alive - one value, as they are one object's, which
+/// [`TypedType::wrap`] and its kin make and write together (`wrap_built`).
+pub struct Birth<T, R, const N: usize> {
+    /// The class Ruby sees it as.
+    pub klass: crate::rb::DataClass,
+    /// The payload.
+    pub data: T,
+    /// What its slots keep alive.
+    pub roots: [R; N],
+}
+
 /// A `rb_data_type_t` for a payload `T` with `N` slots: its GC callbacks
 /// drive [`Payload`] for `T`, and every way to make or read an object of this
 /// type goes through it.
@@ -246,8 +258,9 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
         typed_data_known(v, &self.raw) as *const Envelope<T, N>
     }
 
-    /// Wrap `data` as a `klass` object of this type, keeping `roots` alive in
-    /// its slots. A failed allocation is `Err`, `data` dropped.
+    /// Make the object `birth` describes, of this type: its payload wrapped
+    /// as an instance of its class, its roots kept alive in its slots. A
+    /// failed allocation is `Err`, the payload dropped.
     ///
     /// The payload is built, and the roots held, before the object exists:
     /// they are on this frame through the allocation - where the GC's stack
@@ -259,11 +272,9 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
     pub fn wrap<R: Root>(
         &'static self,
         ruby: &crate::rb::Ruby,
-        klass: crate::rb::DataClass,
-        data: T,
-        roots: [R; N],
+        birth: Birth<T, R, N>,
     ) -> Result<Typed<T, N>, Error> {
-        self.wrap_value(ruby, klass, data, roots).map(Typed::new)
+        self.wrap_value(ruby, birth).map(Typed::new)
     }
 
     /// [`wrap`](Self::wrap)'s object as a bare `Value`, for an embedded
@@ -271,10 +282,9 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
     fn wrap_value<R: Root>(
         &'static self,
         _: &crate::rb::Ruby,
-        klass: crate::rb::DataClass,
-        data: T,
-        roots: [R; N],
+        birth: Birth<T, R, N>,
     ) -> Result<Value, Error> {
+        let Birth { klass, data, roots } = birth;
         // SAFETY: under the GVL (`&Ruby`), and `ty` is this payload's own type.
         let obj = unsafe {
             wrap_built::<T, N>(
@@ -327,22 +337,28 @@ impl<T: Payload + 'static, const N: usize> Typed<T, N> {
         *self.obj.value()
     }
 
-    /// The payload, borrowed for as long as the handle is.
+    /// The object's envelope, borrowed for as long as the handle is.
     #[inline]
-    pub fn data(&self) -> &T {
+    fn envelope(&self) -> &Envelope<T, N> {
         // SAFETY: the type was established when the handle was made, which
         // is `T`'s with `N` slots (a derived type holds the same); the data
         // is the envelope `wrap_built` wrote, and the handle holds the object
         // until after the borrow.
-        unsafe { &(*(data_pointer(self.value().as_raw()) as *const Envelope<T, N>)).data }
+        unsafe { &*(data_pointer(self.value().as_raw()) as *const Envelope<T, N>) }
+    }
+
+    /// The payload, borrowed for as long as the handle is.
+    #[inline]
+    pub fn data(&self) -> &T {
+        &self.envelope().data
     }
 
     /// Slot `I` (`I < N`, checked when it compiles).
     #[inline]
     pub fn root<const I: usize>(&self) -> Value {
         const { assert!(I < N, "no such slot") };
-        // SAFETY: as `data`; the slots hold live values the object marks.
-        unsafe { value((*(data_pointer(self.value().as_raw()) as *const Envelope<T, N>)).roots[I]) }
+        // SAFETY: the slots hold live values the object marks.
+        unsafe { value(self.envelope().roots[I]) }
     }
 }
 
@@ -373,28 +389,64 @@ impl<T: Payload + 'static, const N: usize> TypedType<T, N> {
     /// with no data, visible, which every reader refuses (`typed_data`).
     ///
     /// Nothing but this call refers to the object until it is shown, so its
-    /// data is lent to `fill` through the [`Typed`] the wrap made.
+    /// data is lent to `fill` through the handle the wrap made, held as a
+    /// `Hidden` - which lends the data and shows the object, and hands out
+    /// nothing else.
     pub fn wrap_hidden<R: Root>(
         &'static self,
         ruby: &crate::rb::Ruby,
-        klass: crate::rb::DataClass,
-        data: T,
-        roots: [R; N],
+        birth: Birth<T, R, N>,
         ivars: &[(crate::rb::HiddenId, Value)],
         fill: impl FnOnce(&T) -> Result<(), Error>,
     ) -> Result<Typed<T, N>, Error> {
-        let made = self.wrap(ruby, klass, data, roots)?;
-        let obj = made.value();
+        let klass = birth.klass;
+        let made = self.wrap(ruby, birth)?;
         let written = ivars
             .iter()
-            .try_for_each(|&(id, v)| crate::raw::ivar_set(obj, id, v));
-        // SAFETY: the object just made, of ours; hiding writes only its class
-        // field, which the reveal below restores.
-        unsafe { crate::rb::object::obj_hide(obj) };
+            .try_for_each(|&(id, v)| crate::raw::ivar_set(made.value(), id, v));
+        // SAFETY: the object just made, which nothing but `made` refers to.
+        let hidden = unsafe { Hidden::hide(made, klass) };
         written?;
-        fill(made.data())?;
-        crate::raw::obj_reveal(obj, crate::rb::ReprValue::as_value(klass))?;
-        Ok(made)
+        fill(hidden.data())?;
+        hidden.show()
+    }
+}
+
+/// An object [`TypedType::wrap_hidden`] has hidden: its data can be lent
+/// and it can be shown, but its value cannot be had - a hidden object has no
+/// class, and Ruby code given one would crash on it. Dropped unshown, it
+/// stays hidden for the GC to free.
+struct Hidden<T: Payload + 'static, const N: usize> {
+    made: Typed<T, N>,
+    klass: crate::rb::DataClass,
+}
+
+impl<T: Payload + 'static, const N: usize> Hidden<T, N> {
+    /// Hide `made`, to be shown as an instance of `klass`.
+    ///
+    /// # Safety
+    /// `made` is an object just made that nothing else refers to - no Ruby
+    /// code holds it, and none will be handed it while it is hidden.
+    unsafe fn hide(made: Typed<T, N>, klass: crate::rb::DataClass) -> Hidden<T, N> {
+        // SAFETY: the caller's contract; hiding writes only the object's
+        // class field, which `show` restores.
+        unsafe { crate::rb::object::obj_hide(made.value()) };
+        Hidden { made, klass }
+    }
+
+    /// The payload, lent while the object is hidden.
+    fn data(&self) -> &T {
+        self.made.data()
+    }
+
+    /// Show the object with its class again, and hand it out. A failure (out
+    /// of memory) leaves it hidden, for the GC.
+    fn show(self) -> Result<Typed<T, N>, Error> {
+        crate::raw::obj_reveal(
+            self.made.value(),
+            crate::rb::ReprValue::as_value(self.klass),
+        )?;
+        Ok(self.made)
     }
 }
 
@@ -410,15 +462,17 @@ impl<T: Payload + 'static, const N: usize> TypedType<T, N> {
 pub struct EmbeddedType<T: Payload + Copy, const N: usize = 0>(TypedType<T, N>);
 
 impl<T: Payload + Copy, const N: usize> EmbeddedType<T, N> {
-    /// A base type.
-    pub const fn base(name: &'static CStr) -> EmbeddedType<T, N> {
+    /// An embedded type deriving from `parent` (null for a base type), its
+    /// envelope held to what an object's slot takes.
+    const fn with_parent(name: &'static CStr, parent: *const rb_data_type_t) -> EmbeddedType<T, N> {
         const { assert!(core::mem::size_of::<Envelope<T, N>>() <= EMBED_MAX) };
         const { assert!(core::mem::align_of::<Envelope<T, N>>() <= EMBED_ALIGN) };
-        EmbeddedType(TypedType::with_parent(
-            name.as_ptr(),
-            core::ptr::null(),
-            true,
-        ))
+        EmbeddedType(TypedType::with_parent(name.as_ptr(), parent, true))
+    }
+
+    /// A base type.
+    pub const fn base(name: &'static CStr) -> EmbeddedType<T, N> {
+        Self::with_parent(name, core::ptr::null())
     }
 
     /// A type deriving from `parent`, which holds the same payload and slots.
@@ -428,13 +482,7 @@ impl<T: Payload + Copy, const N: usize> EmbeddedType<T, N> {
         name: &'static CStr,
         parent: &'static EmbeddedType<T, N>,
     ) -> EmbeddedType<T, N> {
-        const { assert!(core::mem::size_of::<Envelope<T, N>>() <= EMBED_MAX) };
-        const { assert!(core::mem::align_of::<Envelope<T, N>>() <= EMBED_ALIGN) };
-        EmbeddedType(TypedType::with_parent(
-            name.as_ptr(),
-            parent.0.raw.as_ptr(),
-            true,
-        ))
+        Self::with_parent(name, parent.0.raw.as_ptr())
     }
 
     /// Whether `v` is an object of this type or one deriving from it. Never
@@ -464,11 +512,9 @@ impl<T: Payload + Copy, const N: usize> EmbeddedType<T, N> {
     pub fn wrap<R: Root>(
         &'static self,
         ruby: &crate::rb::Ruby,
-        klass: crate::rb::DataClass,
-        data: T,
-        roots: [R; N],
+        birth: Birth<T, R, N>,
     ) -> Result<Value, Error> {
-        self.0.wrap_value(ruby, klass, data, roots)
+        self.0.wrap_value(ruby, birth)
     }
 }
 

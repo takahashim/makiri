@@ -100,17 +100,45 @@ pub struct Error(Kind);
     reason = "an Error holds its message inline (`crate::msg::Msg`), so it is never boxed"
 )]
 enum Kind {
-    /// An exception of `class` with a fixed message, made when it is raised.
-    New(ErrorClass, &'static str),
-    /// An exception of `class` with a formatted message, made when it is
-    /// raised.
-    Formatted(ErrorClass, crate::msg::Msg),
+    /// An exception of `class` with a message, made when it is raised.
+    New(ErrorClass, Text),
     /// An exception object - one a protected C call caught.
     Exception(Value),
     /// A non-local exit a protected call caught that is not an exception -
     /// a `throw`, a `break` or `return` out of a block, a thread kill - by
     /// its `rb_protect` state, resumed as it was.
     Jump(c_int),
+}
+
+/// The message of an exception not yet made: fixed, or formatted into a
+/// buffer held inline.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "a formatted message is held inline (`crate::msg::Msg`), so it is never boxed"
+)]
+enum Text {
+    Fixed(&'static str),
+    Formatted(crate::msg::Msg),
+}
+
+impl Text {
+    #[inline]
+    fn as_str(&self) -> &str {
+        match self {
+            Text::Fixed(s) => s,
+            Text::Formatted(m) => m.as_str(),
+        }
+    }
+
+    /// The bytes, as the exception is made from them: no UTF-8 check, which
+    /// the raise path - a `no_unwind` site - has no use for.
+    #[inline]
+    fn as_bytes(&self) -> &[u8] {
+        match self {
+            Text::Fixed(s) => s.as_bytes(),
+            Text::Formatted(m) => m.as_bytes(),
+        }
+    }
 }
 
 /// A message an [`Error`] can carry: a `&'static str`, or `format_args!`.
@@ -121,22 +149,25 @@ pub trait Message {
 impl Message for &'static str {
     #[inline]
     fn into_error(self, class: ErrorClass) -> Error {
-        Error(Kind::New(class, self))
+        Error(Kind::New(class, Text::Fixed(self)))
     }
 }
 
 impl Message for crate::msg::Msg {
     #[inline]
     fn into_error(self, class: ErrorClass) -> Error {
-        Error(Kind::Formatted(class, self))
+        Error(Kind::New(class, Text::Formatted(self)))
     }
 }
 
 impl Message for fmt::Arguments<'_> {
     fn into_error(self, class: ErrorClass) -> Error {
         match self.as_str() {
-            Some(s) => Error(Kind::New(class, s)),
-            None => Error(Kind::Formatted(class, crate::msg::Msg::format(self))),
+            Some(s) => Error(Kind::New(class, Text::Fixed(s))),
+            None => Error(Kind::New(
+                class,
+                Text::Formatted(crate::msg::Msg::format(self)),
+            )),
         }
     }
 }
@@ -165,7 +196,7 @@ impl Error {
     pub fn is_kind_of(&self, ruby: &Ruby, class: impl Into<ErrorClass>) -> bool {
         let class = class.into().resolve(ruby);
         match &self.0 {
-            Kind::New(c, _) | Kind::Formatted(c, _) => {
+            Kind::New(c, _) => {
                 crate::rb::object::class_inherits(c.resolve(ruby).as_value(), class.as_value())
             }
             Kind::Exception(v) => v.is_kind_of(class),
@@ -228,15 +259,6 @@ impl Error {
                         }
                     }
                 }
-                Kind::Formatted(class, msg) => {
-                    match crate::raw::exception_new(ruby, class.resolve(ruby), msg.as_bytes()) {
-                        Ok(v) => v,
-                        Err(again) => {
-                            e = again;
-                            continue;
-                        }
-                    }
-                }
             };
             crate::raw::exc_raise(exc)
         }
@@ -254,8 +276,7 @@ pub struct Wording<'a>(&'a Error, &'a Ruby);
 impl fmt::Display for Wording<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0 .0 {
-            Kind::New(_, msg) => f.write_str(msg),
-            Kind::Formatted(_, msg) => f.write_str(msg.as_str()),
+            Kind::New(_, msg) => f.write_str(msg.as_str()),
             Kind::Exception(v) => crate::describe::ExceptionText(self.1, *v).fmt(f),
             Kind::Jump(_) => f.write_str("error"),
         }
@@ -265,8 +286,7 @@ impl fmt::Display for Wording<'_> {
 impl core::fmt::Debug for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match &self.0 {
-            Kind::New(_, msg) => write!(f, "Error({msg:?})"),
-            Kind::Formatted(_, msg) => write!(f, "Error({:?})", msg.as_str()),
+            Kind::New(_, msg) => write!(f, "Error({:?})", msg.as_str()),
             Kind::Exception(_) => f.write_str("Error(<exception>)"),
             Kind::Jump(state) => write!(f, "Error(<jump {state}>)"),
         }

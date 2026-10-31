@@ -1,5 +1,9 @@
-//! The Ruby API version: the one this crate was built against, and the
-//! running Ruby's, for a load check that refuses a binary built for another.
+//! What this binary assumes of the Ruby that loads it, and the load checks
+//! that refuse a Ruby where an assumption fails, before anything is defined:
+//! the Ruby API version it was built against ([`check_running_api`]), and
+//! the `rb_protect` state a raise comes back with, which Ruby does not
+//! document and the layer tells an exception from a `throw` by
+//! ([`check_raise_state`]).
 
 #![allow(unsafe_code)]
 

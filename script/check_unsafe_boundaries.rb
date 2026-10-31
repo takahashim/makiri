@@ -70,8 +70,7 @@ UNSAFE_ISLANDS = {
   "lexbor/tests.rs" => 3,
   "no_unwind.rs" => 2,
   "nupur/abi.rs" => 1,
-  "nupur/describe.rs" => 4,
-  "nupur/encoding.rs" => 8,
+  "nupur/encoding.rs" => 6,
   "nupur/gvl.rs" => 3,
   "nupur/no_unwind.rs" => 2,
   "nupur/raw/check.rs" => 4,
@@ -86,17 +85,18 @@ UNSAFE_ISLANDS = {
   "nupur/raw/values.rs" => 21,
   "nupur/rb/global.rs" => 2,
   "nupur/rb/kept.rs" => 2,
-  "nupur/rb/method.rs" => 18,
+  "nupur/rb/method.rs" => 17,
   "nupur/rb/object.rs" => 5,
   "nupur/rb/ruby.rs" => 5,
-  "nupur/rb/value.rs" => 20,
+  "nupur/rb/value.rs" => 18,
+  "nupur/rb/value/header.rs" => 3,
   "nupur/stack.rs" => 1,
   "nupur/string/make.rs" => 5,
-  "nupur/string/read.rs" => 4,
+  "nupur/string/read.rs" => 2,
   "nupur/typed/callbacks.rs" => 10,
   "nupur/typed/data_type.rs" => 12,
   "nupur/typed/external.rs" => 1,
-  "nupur/typed/mod.rs" => 11,
+  "nupur/typed/mod.rs" => 13,
   "nupur/utf8_copy.rs" => 1,
 }.freeze
 
@@ -138,31 +138,32 @@ FORBID_FILES = %w[
   html/dom/mod.rs html/encoding/mod.rs html/mod.rs
   html/tokenizer/mod.rs html/tree/mod.rs html_dom.rs
   lexbor/contains_guard.rs limits.rs node_type.rs
-  nupur/args.rs nupur/build.rs nupur/hash.rs
-  nupur/int.rs nupur/msg.rs nupur/rb/class.rs
-  nupur/rb/convert.rs nupur/rb/error.rs nupur/table.rs
-  ptr_table.rs rust_tests.rs selectors/mod.rs
-  selectors/stylesheet.rs selectors/text.rs source_lines.rs
-  stack.rs text.rs token.rs
-  utf8_input.rs xml/arena.rs xml/attr_key.rs
-  xml/chars/expand.rs xml/chars/mod.rs xml/css.rs
-  xml/css_tests.rs xml/dom_name.rs xml/encoding_names.rs
-  xml/encoding_sniff.rs xml/index.rs xml/mod.rs
-  xml/model.rs xml/mutate/attr.rs xml/mutate/copy.rs
-  xml/mutate/edit.rs xml/mutate/factory.rs xml/mutate/insert.rs
-  xml/mutate/mod.rs xml/mutate/ns.rs xml/ns_scope.rs
-  xml/qname.rs xml/selftest.rs xml/serialize/bindings.rs
-  xml/serialize/c14n.rs xml/serialize/mod.rs xml/serialize/out.rs
-  xml/serialize/xml.rs xml/tree/cursor.rs xml/tree/decl.rs
-  xml/tree/dtd.rs xml/tree/mod.rs xml/tree/scope.rs
-  xml/verify.rs xml/xpath.rs xpath/abi.rs
-  xpath/ast.rs xpath/ast_ops.rs xpath/attr_pred.rs
-  xpath/axis.rs xpath/ctx.rs xpath/dom.rs
-  xpath/eval.rs xpath/funcs/ext.rs xpath/funcs/mod.rs
-  xpath/lex.rs xpath/limits.rs xpath/mod.rs
-  xpath/nodetest.rs xpath/number.rs xpath/order.rs
-  xpath/parse.rs xpath/step_index.rs xpath/str_cache.rs
-  xpath/tests.rs xpath/value.rs xpath/verify.rs
+  nupur/args.rs nupur/build.rs nupur/cname.rs
+  nupur/describe.rs nupur/hash.rs nupur/int.rs
+  nupur/msg.rs nupur/rb/class.rs nupur/rb/convert.rs
+  nupur/rb/error.rs nupur/table.rs ptr_table.rs
+  rust_tests.rs selectors/mod.rs selectors/stylesheet.rs
+  selectors/text.rs source_lines.rs stack.rs
+  text.rs token.rs utf8_input.rs
+  xml/arena.rs xml/attr_key.rs xml/chars/expand.rs
+  xml/chars/mod.rs xml/css.rs xml/css_tests.rs
+  xml/dom_name.rs xml/encoding_names.rs xml/encoding_sniff.rs
+  xml/index.rs xml/mod.rs xml/model.rs
+  xml/mutate/attr.rs xml/mutate/copy.rs xml/mutate/edit.rs
+  xml/mutate/factory.rs xml/mutate/insert.rs xml/mutate/mod.rs
+  xml/mutate/ns.rs xml/ns_scope.rs xml/qname.rs
+  xml/selftest.rs xml/serialize/bindings.rs xml/serialize/c14n.rs
+  xml/serialize/mod.rs xml/serialize/out.rs xml/serialize/xml.rs
+  xml/tree/cursor.rs xml/tree/decl.rs xml/tree/dtd.rs
+  xml/tree/mod.rs xml/tree/scope.rs xml/verify.rs
+  xml/xpath.rs xpath/abi.rs xpath/ast.rs
+  xpath/ast_ops.rs xpath/attr_pred.rs xpath/axis.rs
+  xpath/ctx.rs xpath/dom.rs xpath/eval.rs
+  xpath/funcs/ext.rs xpath/funcs/mod.rs xpath/lex.rs
+  xpath/limits.rs xpath/mod.rs xpath/nodetest.rs
+  xpath/number.rs xpath/order.rs xpath/parse.rs
+  xpath/step_index.rs xpath/str_cache.rs xpath/tests.rs
+  xpath/value.rs xpath/verify.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/

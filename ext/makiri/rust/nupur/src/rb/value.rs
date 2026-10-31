@@ -23,6 +23,10 @@ use super::error::{Builtin, Error};
 use super::object::{class_inherits, obj_is_kind_of};
 use super::ruby::Ruby;
 
+// What a String's header says of it: its coderange, encoding index, class.
+mod header;
+pub use header::Coderange;
+
 /// Any Ruby value.
 #[derive(Clone, Copy)]
 #[repr(transparent)]
@@ -256,33 +260,6 @@ impl RString {
             core::slice::from_raw_parts(p as *const u8, n)
         }
     }
-
-    /// The String's cached coderange - a read of its header flags, which
-    /// never scans and never allocates.
-    #[inline]
-    pub fn enc_coderange(self) -> Coderange {
-        const MASK: VALUE = rb_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_MASK as VALUE;
-        const SEVEN: VALUE = rb_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_7BIT as VALUE;
-        const VALID: VALUE = rb_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_VALID as VALUE;
-        const BROKEN: VALUE = rb_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_BROKEN as VALUE;
-        // SAFETY: a String is an object, whose header starts with `RBasic`.
-        let flags = unsafe { (*(self.0 .0 as *const rb_sys::RBasic)).flags };
-        match flags & MASK {
-            SEVEN => Coderange::SevenBit,
-            VALID => Coderange::Valid,
-            BROKEN => Coderange::Broken,
-            _ => Coderange::Unknown,
-        }
-    }
-}
-
-/// A String's coderange, as Ruby caches it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Coderange {
-    Unknown,
-    SevenBit,
-    Valid,
-    Broken,
 }
 
 impl RArray {
@@ -352,11 +329,7 @@ pub(crate) fn plain_key(k: Value) -> bool {
     if Symbol::from_value(k).is_some() {
         return true;
     }
-    RString::from_value(k).is_some_and(|s| {
-        // SAFETY: a String is a heap object, whose header starts with
-        // `RBasic`; `rb_cString` is a C global Ruby sets once at boot.
-        unsafe { (*(s.as_raw() as *const rb_sys::RBasic)).klass == rb_sys::rb_cString }
-    })
+    RString::from_value(k).is_some_and(RString::has_string_class)
 }
 
 impl Range {
