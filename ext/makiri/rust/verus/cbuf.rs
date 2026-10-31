@@ -36,9 +36,11 @@ pub mod falloc {
     pub fn grow_capacity(cap: usize, need: usize, elem: usize) -> (result: Option<usize>)
         ensures // [verus]
             result.is_none() <==> !fits(need as int, elem as int), // [verus]
-            need > 0 && result.is_some() ==> result.unwrap() >= need // [verus]
+            result.is_some() ==> result.unwrap() >= need // [verus]
                 && fits(result.unwrap() as int, elem as int), // [verus]
-            need > 0 && result.is_some() && cap > 0 && fits(cap as int, elem as int) // [verus]
+            // A live capacity never comes back smaller, for an empty request
+            // too: `need == 0` answers `cap`, never 0 for `realloc`.
+            result.is_some() && cap > 0 && fits(cap as int, elem as int) // [verus]
                 ==> result.unwrap() >= cap, // [verus]
     {
         need.checked_mul(elem)?;

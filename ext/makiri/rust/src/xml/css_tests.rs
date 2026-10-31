@@ -54,6 +54,26 @@ fn matched(doc: &Document, selector: &str, scratch: &mut Scratch<XmlHost>) -> Op
     Some(all.into_iter().map(XmlNode::id).collect())
 }
 
+/// [`matched`]'s answer as each element's place among the document's
+/// elements in document order (the root element is 0), so a fixed answer
+/// names the elements found rather than counting them.
+fn found_at(doc: &Document, selector: &str, scratch: &mut Scratch<XmlHost>) -> Option<Vec<usize>> {
+    let found = matched(doc, selector, scratch)?;
+    let root = XmlNode::new(doc, doc.doc_node());
+    let mut at = Vec::new();
+    let (mut n, mut place) = (root, 0);
+    while let Some(next) = n.preorder_next(root) {
+        n = next;
+        if n.element().is_some() {
+            if found.contains(&n.id()) {
+                at.push(place);
+            }
+            place += 1;
+        }
+    }
+    Some(at)
+}
+
 /// A small deterministic generator (xorshift64*).
 struct Rng(u64);
 
@@ -225,90 +245,96 @@ fn selector(rng: &mut Rng, namespaced: bool) -> String {
 }
 
 /// Fixed shapes first: each kind of simple selector and combinator, over
-/// one document of each kind, with the number of elements found - the
-/// answers the matcher and the lowering agreed on.
+/// one document of each kind, with the elements found ([`found_at`]). Up to
+/// `|a` they are the answers the matcher and the lowering agreed on, node for
+/// node, while both were built; the rest are the lowering's own tests',
+/// which the HTML matcher answered alike.
 #[test]
 fn the_matcher_keeps_its_answers_on_fixed_selectors() {
+    /* 0 r, 1 a#x, 2 b, 3 c, 4 a, 5 p, 6 B, 7 b.xy, 8 c */
     let plain = r#"<r><a id="x" class="x y" k="12"><b/><?pi d?><c k="x-y">t</c></a><a/><p><![CDATA[]]></p><B k="X"/><!--c--><b class="xy"><c/></b></r>"#;
+    /* 0 r, 1 s:a, 2 a, 3 s:b, 4 b (urn:s), 5 c (urn:s) */
     let spaced =
         r#"<r xmlns:s="urn:s"><s:a s:k="1" k="2"><a/><s:b/></s:a><b xmlns="urn:s"><c/></b></r>"#;
     let mut scratch = Scratch::new();
     let doc = xml_parse(plain.as_bytes()).expect("parses");
-    for (sel, want) in [
-        ("a", 2),
-        ("B", 1),
-        ("b", 2),
-        ("*", 9),
-        ("a b", 1),
-        ("a > b", 1),
-        ("b + c", 1),
-        ("b ~ c", 1),
-        ("r > *", 5),
-        (".x", 1),
-        (".y", 1),
-        (".xy", 1),
-        ("#x", 1),
-        ("[k]", 3),
-        ("[k='12']", 1),
-        ("[k^='1']", 1),
-        ("[k$='2']", 1),
-        ("[k*='2']", 1),
-        ("[k|=x]", 1),
-        ("[k~=x]", 0),
-        ("[class~=y]", 1),
-        (":first-child", 4),
-        (":last-child", 4),
-        (":only-child", 2),
-        (":first-of-type", 8),
-        (":nth-child(2)", 2),
-        (":nth-last-child(odd)", 6),
-        (":nth-of-type(2)", 1),
-        (":root", 1),
-        (":not(a)", 7),
-        (":is(a, b)", 4),
-        (":where(c)", 2),
-        ("a:has(c)", 1),
-        ("a:has(> b)", 1),
-        ("b:has(+ c)", 1),
-        (":has(~ c)", 1),
-        ("a, b", 4),
-        ("[|k]", 3),
-        ("*|a", 2),
-        ("|a", 2),
+    let cases: &[(&str, &[usize])] = &[
+        ("a", &[1, 4]),
+        ("B", &[6]),
+        ("b", &[2, 7]),
+        ("*", &[0, 1, 2, 3, 4, 5, 6, 7, 8]),
+        ("a b", &[2]),
+        ("a > b", &[2]),
+        ("b + c", &[3]),
+        ("b ~ c", &[3]),
+        ("r > *", &[1, 4, 5, 6, 7]),
+        (".x", &[1]),
+        (".y", &[1]),
+        (".xy", &[7]),
+        ("#x", &[1]),
+        ("[k]", &[1, 3, 6]),
+        ("[k='12']", &[1]),
+        ("[k^='1']", &[1]),
+        ("[k$='2']", &[1]),
+        ("[k*='2']", &[1]),
+        ("[k|=x]", &[3]),
+        ("[k~=x]", &[]),
+        ("[class~=y]", &[1]),
+        (":first-child", &[0, 1, 2, 8]),
+        (":last-child", &[0, 3, 7, 8]),
+        (":only-child", &[0, 8]),
+        (":first-of-type", &[0, 1, 2, 3, 5, 6, 7, 8]),
+        (":nth-child(2)", &[3, 4]),
+        (":nth-last-child(odd)", &[0, 1, 3, 5, 7, 8]),
+        (":nth-of-type(2)", &[4]),
+        (":root", &[0]),
+        (":not(a)", &[0, 2, 3, 5, 6, 7, 8]),
+        (":is(a, b)", &[1, 2, 4, 7]),
+        (":where(c)", &[3, 8]),
+        ("a:has(c)", &[1]),
+        ("a:has(> b)", &[1]),
+        ("b:has(+ c)", &[2]),
+        (":has(~ c)", &[2]),
+        ("a, b", &[1, 2, 4, 7]),
+        ("[|k]", &[1, 3, 6]),
+        ("*|a", &[1, 4]),
+        ("|a", &[1, 4]),
         /* A class name holding whitespace, or an empty `~=` token,
          * represents nothing. */
-        (r".x\ y", 0),
-        ("[class~='']", 0),
+        (r".x\ y", &[]),
+        ("[class~='']", &[]),
         /* `:root` is the document element, not any parentless element. */
-        ("a:root", 0),
+        ("a:root", &[]),
         /* A negative step: only the leading positions. */
-        ("r > :nth-child(-n+3)", 3),
-        ("r > :nth-child(-2n+2)", 1),
-        ("r > :nth-child(-2n+1)", 1),
-        ("r > :nth-child(-n+0)", 0),
-    ] {
-        let found = matched(&doc, sel, &mut scratch).map(|v| v.len());
-        assert_eq!(found, Some(want), "{sel:?}");
+        ("r > :nth-child(-n+3)", &[1, 4, 5]),
+        ("r > :nth-child(-2n+2)", &[4]),
+        ("r > :nth-child(-2n+1)", &[1]),
+        ("r > :nth-child(-n+0)", &[]),
+    ];
+    for &(sel, want) in cases {
+        let found = found_at(&doc, sel, &mut scratch);
+        assert_eq!(found.as_deref(), Some(want), "{sel:?}");
     }
     let doc = xml_parse(spaced.as_bytes()).expect("parses");
-    for (sel, want) in [
-        ("s|a", 1),
-        ("|a", 1),
-        ("*|a", 2),
-        ("s|*", 4),
-        ("|*", 2),
-        ("*|*", 6),
-        ("s|a > |a", 1),
-        ("s|b", 2),
-        ("*|b > *|c", 1),
-        ("[s|k]", 1),
-        ("[s|k='1']", 1),
-        ("[k]", 1),
-        (":not(s|a)", 5),
-        ("*|*:first-child", 4),
-    ] {
-        let found = matched(&doc, sel, &mut scratch).map(|v| v.len());
-        assert_eq!(found, Some(want), "{sel:?}");
+    let cases: &[(&str, &[usize])] = &[
+        ("s|a", &[1]),
+        ("|a", &[2]),
+        ("*|a", &[1, 2]),
+        ("s|*", &[1, 3, 4, 5]),
+        ("|*", &[0, 2]),
+        ("*|*", &[0, 1, 2, 3, 4, 5]),
+        ("s|a > |a", &[2]),
+        ("s|b", &[3, 4]),
+        ("*|b > *|c", &[5]),
+        ("[s|k]", &[1]),
+        ("[s|k='1']", &[1]),
+        ("[k]", &[1]),
+        (":not(s|a)", &[0, 2, 3, 4, 5]),
+        ("*|*:first-child", &[0, 1, 2, 5]),
+    ];
+    for &(sel, want) in cases {
+        let found = found_at(&doc, sel, &mut scratch);
+        assert_eq!(found.as_deref(), Some(want), "{sel:?}");
     }
 }
 
