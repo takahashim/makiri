@@ -15,6 +15,8 @@ use super::{
 use crate::dom_rules::{self, At, PreInsertError, TextContent, Tree};
 use crate::falloc::VecGrow;
 use crate::html::res::names as res;
+use core::marker::PhantomData;
+
 use crate::xml::dom_name::{Name, QName};
 
 /// Where an insertion puts its node, relative to the node it is made on.
@@ -604,9 +606,49 @@ impl<'d> HtmlDocMut<'d> {
 /// could change it: no insertion but into a node no tree holds, no attribute
 /// or data write.
 ///
+/// What it makes it hands back as a [`Detached`], and only a `Detached` is
+/// inserted into or under: a node this lend made is in no tree, and stays in
+/// none while the lend lasts, since the lend can put nothing in one.
+///
 /// [`HtmlParsed::edit_keeping_indexes`]: super::HtmlParsed::edit_keeping_indexes
 pub struct HtmlNewNodes<'d> {
     d: &'d mut Document,
+}
+
+/// A node an [`HtmlNewNodes`] lend made, so in no tree of the document. It
+/// is tied to the lend: it cannot be kept past it, after which an edit could
+/// put the node in a tree. [`raw`](Detached::raw) is the node itself, for
+/// anything else.
+///
+/// No edit can begin while one is held:
+///
+/// ```compile_fail,E0499
+/// let mut parsed = makiri::html::tree::empty_html_document(0).unwrap();
+/// let frag = parsed.edit_keeping_indexes().create_fragment().unwrap();
+/// let _ = parsed.edit();
+/// let mut lend = parsed.edit_keeping_indexes();
+/// lend.append_to_detached(frag, frag);
+/// ```
+///
+/// and the lend's own nodes are what it inserts into:
+///
+/// ```compile_fail,E0308
+/// let mut parsed = makiri::html::tree::empty_html_document(0).unwrap();
+/// let mut lend = parsed.edit_keeping_indexes();
+/// let frag = lend.create_fragment().unwrap();
+/// lend.append_to_detached(frag.raw(), frag);
+/// ```
+#[derive(Clone, Copy, Debug)]
+pub struct Detached<'d> {
+    raw: RawNode,
+    _lend: PhantomData<&'d mut Document>,
+}
+
+impl Detached<'_> {
+    #[inline]
+    pub fn raw(self) -> RawNode {
+        self.raw
+    }
 }
 
 impl<'d> HtmlNewNodes<'d> {
@@ -621,39 +663,37 @@ impl<'d> HtmlNewNodes<'d> {
         HtmlDocMut::new(self.d)
     }
 
+    /// `raw`, just made by this lend.
+    #[inline]
+    fn made(raw: RawNode) -> Detached<'d> {
+        Detached {
+            raw,
+            _lend: PhantomData,
+        }
+    }
+
     /// The document, for reading between changes.
     #[inline]
     pub fn read(&self) -> HtmlDoc<'_> {
         HtmlDoc::of(self.d)
     }
 
-    /// Append `node` as the last child of `into` - a node no tree of the
-    /// document holds (a fragment this lend made) - or, `node` being a
-    /// fragment, its children.
-    pub fn append_to_detached(&mut self, into: RawNode, node: RawNode) {
-        /* `place` takes `node` from wherever it is, so it must be detached
-         * too: moving it out of the tree would leave the kept indexes
-         * naming it there. */
-        debug_assert!(
-            !self.d.is_connected(into.id()) && !self.d.is_connected(node.id()),
-            "a node in the document's tree, whose indexes this lend keeps"
-        );
-        self.edit().place(into, node, Place::Child);
+    /// Append `node` as the last child of `into`, or, `node` being a
+    /// fragment, its children. Both are this lend's, so in no tree: `place`
+    /// takes `node` from wherever it is, and moving it out of the tree would
+    /// leave the kept indexes naming it there.
+    pub fn append_to_detached(&mut self, into: Detached<'d>, node: Detached<'d>) {
+        self.edit().place(into.raw, node.raw, Place::Child);
     }
 
-    /// [`HtmlDocMut::give_namespace`], under `root`, a node no tree of the
-    /// document holds.
-    pub fn give_namespace(&mut self, root: RawNode, ns: NsId) -> Result<(), DomOom> {
-        debug_assert!(
-            !self.d.is_connected(root.id()),
-            "a node in the document's tree, whose indexes this lend keeps"
-        );
-        self.edit().give_namespace(root, ns)
+    /// [`HtmlDocMut::give_namespace`], under `root`, which this lend made.
+    pub fn give_namespace(&mut self, root: Detached<'d>, ns: NsId) -> Result<(), DomOom> {
+        self.edit().give_namespace(root.raw, ns)
     }
 
     /// [`HtmlDocMut::create_element`].
-    pub fn create_element(&mut self, local_name: Name<'_>) -> Option<RawNode> {
-        self.edit().create_element(local_name)
+    pub fn create_element(&mut self, local_name: Name<'_>) -> Option<Detached<'d>> {
+        self.edit().create_element(local_name).map(Self::made)
     }
 
     /// [`HtmlDocMut::create_element_ns`].
@@ -662,23 +702,25 @@ impl<'d> HtmlNewNodes<'d> {
         local: Name<'_>,
         ns: &[u8],
         prefix: &[u8],
-    ) -> Option<RawNode> {
-        self.edit().create_element_ns(local, ns, prefix)
+    ) -> Option<Detached<'d>> {
+        self.edit()
+            .create_element_ns(local, ns, prefix)
+            .map(Self::made)
     }
 
     /// [`HtmlDocMut::create_text`].
-    pub fn create_text(&mut self, text: &[u8]) -> Option<RawNode> {
-        self.edit().create_text(text)
+    pub fn create_text(&mut self, text: &[u8]) -> Option<Detached<'d>> {
+        self.edit().create_text(text).map(Self::made)
     }
 
     /// [`HtmlDocMut::create_comment`].
-    pub fn create_comment(&mut self, text: &[u8]) -> Option<RawNode> {
-        self.edit().create_comment(text)
+    pub fn create_comment(&mut self, text: &[u8]) -> Option<Detached<'d>> {
+        self.edit().create_comment(text).map(Self::made)
     }
 
     /// [`HtmlDocMut::create_pi`].
-    pub fn create_pi(&mut self, target: &[u8], data: &[u8]) -> Result<RawNode, CreatePiError> {
-        self.edit().create_pi(target, data)
+    pub fn create_pi(&mut self, target: &[u8], data: &[u8]) -> Result<Detached<'d>, CreatePiError> {
+        self.edit().create_pi(target, data).map(Self::made)
     }
 
     /// [`HtmlDocMut::create_doctype`].
@@ -687,23 +729,25 @@ impl<'d> HtmlNewNodes<'d> {
         name: &[u8],
         public_id: Option<&[u8]>,
         system_id: Option<&[u8]>,
-    ) -> Option<RawNode> {
-        self.edit().create_doctype(name, public_id, system_id)
+    ) -> Option<Detached<'d>> {
+        self.edit()
+            .create_doctype(name, public_id, system_id)
+            .map(Self::made)
     }
 
     /// [`HtmlDocMut::create_fragment`].
-    pub fn create_fragment(&mut self) -> Option<RawNode> {
-        self.edit().create_fragment()
+    pub fn create_fragment(&mut self) -> Option<Detached<'d>> {
+        self.edit().create_fragment().map(Self::made)
     }
 
     /// [`HtmlDocMut::import`].
-    pub fn import(&mut self, src: HtmlNode<'_>, deep: bool) -> Result<RawNode, DomOom> {
-        self.edit().import(src, deep)
+    pub fn import(&mut self, src: HtmlNode<'_>, deep: bool) -> Result<Detached<'d>, DomOom> {
+        self.edit().import(src, deep).map(Self::made)
     }
 
     /// [`HtmlDocMut::copy`].
-    pub fn copy(&mut self, src: RawNode, deep: bool) -> Result<RawNode, DomOom> {
-        self.edit().copy(src, deep)
+    pub fn copy(&mut self, src: RawNode, deep: bool) -> Result<Detached<'d>, DomOom> {
+        self.edit().copy(src, deep).map(Self::made)
     }
 
     /// [`HtmlDocMut::import_xml`].
@@ -712,8 +756,8 @@ impl<'d> HtmlNewNodes<'d> {
         xdoc: &crate::xml::model::Document,
         src: crate::xml::model::NodeId,
         deep: bool,
-    ) -> Result<RawNode, crate::xml::model::MutError> {
-        self.edit().import_xml(xdoc, src, deep)
+    ) -> Result<Detached<'d>, crate::xml::model::MutError> {
+        self.edit().import_xml(xdoc, src, deep).map(Self::made)
     }
 
     /// [`HtmlDocMut::intern_ns`].

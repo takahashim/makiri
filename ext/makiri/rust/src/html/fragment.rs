@@ -15,7 +15,7 @@
 
 use crate::falloc::try_to_vec;
 use crate::html::dom::{
-    DomOom, HtmlDoc, HtmlElement, HtmlNewNodes, HtmlNode, NsId, RawNode, TagId,
+    Detached, DomOom, HtmlDoc, HtmlElement, HtmlNewNodes, HtmlNode, NsId, RawNode, TagId,
 };
 use crate::html::res::names as res;
 use crate::html::tree::guard::{GuardStop, ParseLimits};
@@ -244,13 +244,18 @@ impl TransientFragment {
         Ok(TransientFragment { parsed, inherit })
     }
 
-    /// Copy every child into `d`'s detached fragment `into`; `Err` if one
-    /// could not be copied, with the ones before it already there.
-    pub fn import_into_doc(self, d: &mut HtmlNewNodes<'_>, into: RawNode) -> Result<(), DomOom> {
+    /// Copy every child into a fragment `d` makes, and answer it; `Err` if
+    /// one could not be copied, the fragment and the copies before it left
+    /// in the arena, in no tree, for the document to reclaim.
+    pub fn import_into_fragment<'d>(
+        self,
+        d: &mut HtmlNewNodes<'d>,
+    ) -> Result<Detached<'d>, DomOom> {
         let inherit = match &self.inherit {
             FragNs::Id(ns) => *ns,
             FragNs::Uri(u) => Some(d.intern_ns(u).ok_or(DomOom)?),
         };
+        let into = d.create_fragment().ok_or(DomOom)?;
         let src = HtmlDoc::of(&self.parsed.doc);
         let mut child = src.get(self.parsed.root).and_then(HtmlNode::first_child);
         while let Some(c) = child {
@@ -261,6 +266,6 @@ impl TransientFragment {
         if let Some(ns) = inherit {
             d.give_namespace(into, ns)?;
         }
-        Ok(())
+        Ok(into)
     }
 }

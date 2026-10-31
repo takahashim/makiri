@@ -29,7 +29,7 @@ use crate::bridge::string::{
 use crate::dom_rules::{self, TextContent};
 use crate::glue::dom_names::dom_extract as extract;
 use crate::glue::node::DOCUMENT_NOT_REMOVABLE;
-use crate::html_dom::html::{CreatePiError, HtmlDocMut, NodeType, Place, RawNode};
+use crate::html_dom::html::{CreatePiError, Detached, HtmlDocMut, NodeType, Place, RawNode};
 use crate::xml::dom_name;
 
 /// `name` held to the WHATWG DOM rule `rule`, else `ArgumentError` - the DOM's
@@ -334,7 +334,9 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Val
     let name = check_dom_name(&nv, dom_name::Name::element, "element")?;
     created(
         ruby,
-        new_node(ruby, &rb_self, |d| d.create_element(name))?,
+        new_node(ruby, &rb_self, |d| {
+            d.create_element(name).map(Detached::raw)
+        })?,
         rb_self,
         "element",
     )
@@ -367,6 +369,7 @@ pub fn create_element_ns(
         ruby,
         new_node(ruby, &rb_self, |d| {
             d.create_element_ns(qname.local, ns, qname.prefix)
+                .map(Detached::raw)
         })?,
         rb_self,
         "element",
@@ -407,6 +410,7 @@ pub fn create_loose_dom_element(
         ruby,
         new_node(ruby, &rb_self, |d| {
             d.create_element_ns(local, ns, prefix.unwrap_or_default())
+                .map(Detached::raw)
         })?,
         rb_self,
         "element",
@@ -419,7 +423,9 @@ pub fn create_text_node(ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<V
     let tv = ruby_verified_data(ruby, rb_text, "text content")?;
     created(
         ruby,
-        new_node(ruby, &rb_self, |d| d.create_text(tv.as_bytes()))?,
+        new_node(ruby, &rb_self, |d| {
+            d.create_text(tv.as_bytes()).map(Detached::raw)
+        })?,
         rb_self,
         "text node",
     )
@@ -431,7 +437,9 @@ pub fn create_comment(ruby: &Ruby, rb_self: Value, rb_text: Value) -> Result<Val
     let tv = ruby_verified_data(ruby, rb_text, "comment content")?;
     created(
         ruby,
-        new_node(ruby, &rb_self, |d| d.create_comment(tv.as_bytes()))?,
+        new_node(ruby, &rb_self, |d| {
+            d.create_comment(tv.as_bytes()).map(Detached::raw)
+        })?,
         rb_self,
         "comment",
     )
@@ -458,7 +466,7 @@ pub fn create_pi(
     )?;
     /* ... and the data must not hold `?>` - the factory's rule. */
     match new_node(ruby, &rb_self, |d| {
-        d.create_pi(tv.as_bytes(), dv.as_bytes())
+        d.create_pi(tv.as_bytes(), dv.as_bytes()).map(Detached::raw)
     })? {
         Ok(n) => created(ruby, Some(n), rb_self, "processing instruction"),
         Err(CreatePiError::ClosingInData) => Err(Error::new(
@@ -500,6 +508,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
                 pv.as_ref().map(|v| v.as_bytes()),
                 sv.as_ref().map(|v| v.as_bytes()),
             )
+            .map(Detached::raw)
         })?,
         rb_self,
         "doctype",
@@ -511,7 +520,7 @@ pub fn create_document_fragment(ruby: &Ruby, rb_self: Value) -> Result<Value, Er
     check_owning_doc(&rb_self)?;
     created(
         ruby,
-        new_node(ruby, &rb_self, |d| d.create_fragment())?,
+        new_node(ruby, &rb_self, |d| d.create_fragment().map(Detached::raw))?,
         rb_self,
         "document fragment",
     )

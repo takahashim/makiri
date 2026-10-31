@@ -28,7 +28,7 @@ use crate::bridge::wrapper::{
 };
 use crate::bridge::xml::xml_node_document;
 use crate::bridge::xml::{xml_mut_result, xml_node_unwrap};
-use crate::html_dom::html::RawNode;
+use crate::html_dom::html::{Detached, RawNode};
 use crate::html_dom::post_parse::{empty_html_document, HtmlParseError};
 use crate::html_dom::tree_guard::{GuardStop, ParseLimits};
 
@@ -198,7 +198,9 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, node_v: Value, deep: bool) -> Re
         let imp = {
             let source = doc_known(xml_doc);
             let xdoc = xml_read(&source)?;
-            new_node(ruby, &rb_self, |d| d.import_xml(&xdoc, src, deep))?
+            new_node(ruby, &rb_self, |d| {
+                d.import_xml(&xdoc, src, deep).map(Detached::raw)
+            })?
         };
         return wrap_html_node(ruby, xml_mut_result(imp)?, rb_self);
     }
@@ -216,10 +218,10 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, node_v: Value, deep: bool) -> Re
     }
     let raw = crate::bridge::html::node_ref(src_doc, key)?;
     let imp = if crate::bridge::ruby::same_value(src_doc, rb_self) {
-        new_node(ruby, &rb_self, |d| d.copy(raw, deep))?
+        new_node(ruby, &rb_self, |d| d.copy(raw, deep).map(Detached::raw))?
     } else {
         with_html_node(src_doc, key, |src| {
-            new_node(ruby, &rb_self, |d| d.import(src, deep))
+            new_node(ruby, &rb_self, |d| d.import(src, deep).map(Detached::raw))
         })??
     };
     let imp = imp.map_err(|_| makiri_error("failed to import node"))?;
@@ -240,7 +242,7 @@ pub fn clone_node(ruby: &Ruby, rb_self: Value, deep: bool) -> Result<Value, Erro
         return Err(makiri_error("clone_node cannot copy a document; use #dup"));
     }
     let raw = crate::bridge::html::node_ref(document, key)?;
-    let clone = new_node(ruby, &document, |d| d.copy(raw, deep))?
+    let clone = new_node(ruby, &document, |d| d.copy(raw, deep).map(Detached::raw))?
         .map_err(|_| makiri_error("failed to clone node"))?;
     wrap_html_node(ruby, clone, document)
 }
