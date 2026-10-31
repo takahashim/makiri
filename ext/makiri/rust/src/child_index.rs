@@ -110,6 +110,34 @@ pub fn previous_element_sibling<T: Tree>(tree: &T, n: T::Node) -> Option<T::Node
     ChildList::Elements.first_from(tree, tree.prev_sibling(n), T::prev_sibling)
 }
 
+/// `root`'s subtree in post-order, `root` last - Nokogiri's `traverse` order:
+/// each node after its children, siblings in order. Over the same links, and
+/// iterative, so a deep tree costs no native stack.
+pub fn post_order<T: Tree>(tree: &T, root: T::Node, out: &mut dyn FnMut(T::Node)) {
+    let deepest = |mut n: T::Node| {
+        while let Some(c) = tree.first_child(n) {
+            n = c;
+        }
+        n
+    };
+    let mut n = deepest(root);
+    loop {
+        out(n);
+        if n == root {
+            return;
+        }
+        n = match tree.next_sibling(n) {
+            Some(s) => deepest(s),
+            None => match tree.tree_parent(n) {
+                Some(p) => p,
+                /* Not under `root` after all: a broken link, not a shorter
+                 * walk - but nothing more to visit either way. */
+                None => return,
+            },
+        };
+    }
+}
+
 /// Which list of which parent.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ChildListKey {

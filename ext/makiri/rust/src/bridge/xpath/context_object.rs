@@ -242,7 +242,7 @@ impl XPathCtx {
     }
 
     /// Bind `prefix` to `uri` for every later evaluate, for bytes a caller has
-    /// already put through the text contract (`glue::query::bind_pair`).
+    /// already put through the text contract (`glue::namespaces::bind_pair`).
     pub fn bind_namespace(&self, prefix: &[u8], uri: &[u8]) -> Result<(), Error> {
         self.ctx
             .register_ns(prefix, uri) /* copies both */

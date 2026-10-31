@@ -71,7 +71,7 @@ fn register_namespace(
     uri: Value,
 ) -> Result<Value, Error> {
     let cap = ctx.limits().max_string_bytes;
-    crate::glue::query::bind_pair(ruby, prefix, uri, cap, |p, u| ctx.bind_namespace(p, u))?;
+    crate::glue::namespaces::bind_pair(ruby, prefix, uri, cap, |p, u| ctx.bind_namespace(p, u))?;
     Ok(ctx.value())
 }
 

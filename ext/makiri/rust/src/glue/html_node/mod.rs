@@ -1,4 +1,4 @@
-//! The HTML (Lexbor) node surface: every method on `Makiri::HTML::NodeMethods`,
+//! The HTML node surface: every method on `Makiri::HTML::NodeMethods`,
 //! in a submodule per kind - `read`, `mutate`, `css`, `serialize`.
 //!
 //! The XML counterpart is `glue::xml_node`; what both share - identity by node
@@ -12,16 +12,7 @@
 //! [`crate::bridge::html::with_arg_node`] (an argument, for the length of a
 //! closure) reach the node a wrapper names, through its document-bound key;
 //! they live in [`crate::bridge::html`], the one seam that knows both the Ruby
-//! wrapper and the Lexbor handle.
-//!
-//! # Nothing here is declared twice
-//!
-//! Every Lexbor accessor comes from the `lexbor` layer, which re-exports the
-//! generated bindings - the `_noi` twins included. Allowlisting a name in
-//! build.rs and finding no binding is what identifies an `lxb_inline` function;
-//! eight of the eighteen readers this file needs turned out to be inline-only,
-//! and on macOS a hand-written declaration of one of those links to nothing and
-//! becomes a NULL call at run time rather than a link error.
+//! wrapper and the arena's handle.
 
 pub mod css;
 
@@ -43,14 +34,13 @@ use crate::init::CLASS_HTML_DOCUMENT;
  * the DOM node types                                                 *
  * ------------------------------------------------------------------ */
 
-use crate::glue::html_doc::node_clone_node;
 use crate::glue::node::{
     child_at, child_count, element_child_at, element_child_count, node_equals, node_hash,
     node_pointer_id,
 };
 use crate::init::{CLASS_HTML_DOCUMENT_TYPE, CLASS_HTML_ELEMENT};
 
-/* The receiver and argument handles, from the Ruby <-> Lexbor seam
+/* The receiver and argument handles, from the Ruby <-> arena seam
  * (`bridge::html`), for the readers and for `glue::html_doc`. */
 pub use crate::bridge::html::{with_arg_node, wrap_node, HtmlSelf};
 
@@ -139,7 +129,6 @@ fn init_read(ruby: &Ruby) -> Result<(), Error> {
     m.define_method("eql?", method!(node_equals, 1))?;
     m.define_method("hash", method!(node_hash, 0))?;
     m.define_method("pointer_id", method!(node_pointer_id, 0))?;
-    m.define_method("clone_node", method!(node_clone_node, -1))?;
 
     m.define_method("<=>", method!(read::spaceship, 1))?;
 
@@ -174,6 +163,7 @@ fn init_mutate(ruby: &Ruby) -> Result<(), Error> {
         m.define_method(name, method!(mutate::remove, 0))?;
     }
     m.define_method("replace", method!(mutate::replace, 1))?;
+    m.define_method("clone_node", method!(mutate::clone_node, -1))?;
 
     m.define_method("inner_html=", method!(mutate::set_inner_html, 1))?;
     m.define_method("outer_html=", method!(mutate::set_outer_html, 1))?;
