@@ -50,6 +50,10 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     let groups = parsed.groups();
+    /* `:scope` is the walk's root but `matches_any`'s candidate. */
+    if mentions_scope(groups) {
+        return;
+    }
     let default = mode & 1 == 1;
     let bindings: [(&[u8], &[u8]); 1] = [(b"ns", NS)];
     let ns = Namespaces::new(&bindings, default.then_some(DEFAULT));
