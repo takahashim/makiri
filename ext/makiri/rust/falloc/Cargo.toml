@@ -1,0 +1,18 @@
+[package]
+name = "falloc"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.95"
+publish = false
+description = "Fallible allocation for Makiri's engine: every growth reserves first, and the reserve can be made to fail"
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[features]
+# Allocation-failure injection, the Rust half of `rake oom`. Off,
+# `should_fail` is a const false and the branch disappears.
+alloc-inject = []

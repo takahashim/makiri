@@ -63,7 +63,7 @@ pub type Bindings = Vec<(Vec<u8>, Vec<u8>)>;
 /// `h`'s bindings, read as [`bind_each`] reads them and copied out - for a
 /// matcher that takes them as bytes after the Hash is done with (CSS).
 pub fn owned(ruby: &Ruby, h: RHash, cap: usize) -> Result<Bindings, Error> {
-    use crate::falloc::{try_to_vec, VecGrow};
+    use falloc::{try_to_vec, VecGrow};
     let oom = || makiri_error("out of memory reading namespace bindings");
     let mut out = Vec::new();
     bind_each(ruby, h, cap, |prefix, uri| {

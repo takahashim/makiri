@@ -9,9 +9,10 @@ namespace :conformance do
   desc "HTML parser conformance in the crate: WPT tree construction through each parser"
   task parser: :lexbor do
     sh "#{FileUtils::RUBY} spec/conformance/parser_data.rb"
-    Dir.chdir("ext/makiri/rust") do
-      sh "cargo test --no-default-features --features lexbor -- --include-ignored wpt html5lib entities_are_the_whatwg res_gen"
-    end
+    filters = "--include-ignored wpt html5lib entities_are_the_whatwg res_gen"
+    # The port through the engine's tests, and Lexbor through the reference's.
+    Dir.chdir("ext/makiri/rust") { sh "cargo test -p makiri_engine -- #{filters}" }
+    Dir.chdir("ext/makiri/rust/reference") { sh "cargo test -- #{filters}" }
   end
 
   # The ported tree builder against Lexbor over 100,000 real homepages

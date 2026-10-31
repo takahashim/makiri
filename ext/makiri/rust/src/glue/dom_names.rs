@@ -16,14 +16,14 @@ xml and xmlns take only their own)";
 
 /// [`dom_name::validate_and_extract`] with its refusals as the `*_ns` methods
 /// of both representations raise them: `ArgumentError` for a name ("invalid
-/// `what` name"), `Makiri::Error` for a namespace. Returns (prefix, local
-/// name), the prefix empty when there is none.
+/// `what` name"), `Makiri::Error` for a namespace. Returns the name split,
+/// its prefix empty when there is none.
 pub fn dom_extract<'q>(
     ns: &[u8],
     qname: &'q [u8],
     local_ok: fn(&[u8]) -> bool,
     what: &str,
-) -> Result<(&'q [u8], &'q [u8]), Error> {
+) -> Result<dom_name::QName<'q>, Error> {
     dom_name::validate_and_extract(ns, qname, local_ok).map_err(|e| match e {
         dom_name::ExtractError::Name => Error::new(
             crate::bridge::rb::Builtin::ArgumentError,

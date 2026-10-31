@@ -38,7 +38,11 @@
 //! Where Makiri draws its own lines - its engine, its glue and bridge, its
 //! allocation policy - in [`boundaries`]: `ruby_layer_in_engine`,
 //! `infallible_allocation`, `raw_ruby_outside_bridge`'s half that holds
-//! rb-sys to `bridge/`, `raw_node_crossing`, `ruby_surface_in_bridge`.
+//! rb-sys to `bridge/`, `raw_node_crossing`, `ruby_surface_in_bridge`. The
+//! engine is a crate of its own (`makiri_engine`, [`paths::ENGINE`]) that
+//! depends on no Ruby, so `ruby_layer_in_engine` has nothing to find there;
+//! it holds nupur's one Ruby-free module, `utf8_copy`, which shares a crate
+//! with the Ruby layer.
 //!
 //! (A second lint, `converted_argument`, checked that no registered method
 //! took a type magnus would convert with the caller's Ruby. Since

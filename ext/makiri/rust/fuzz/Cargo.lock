@@ -108,6 +108,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "falloc"
+version = "0.0.1"
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -186,16 +190,25 @@ name = "makiri-fuzz"
 version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
- "makiri_rs",
+ "makiri_lexbor",
 ]
 
 [[package]]
-name = "makiri_rs"
+name = "makiri_engine"
+version = "0.0.1"
+dependencies = [
+ "chardetng",
+ "encoding_rs",
+ "falloc",
+]
+
+[[package]]
+name = "makiri_lexbor"
 version = "0.0.1"
 dependencies = [
  "bindgen",
- "chardetng",
- "encoding_rs",
+ "falloc",
+ "makiri_engine",
 ]
 
 [[package]]

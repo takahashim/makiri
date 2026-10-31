@@ -16,9 +16,9 @@ use crate::bridge::typed::{Payload, Typed, TypedType};
 use crate::bridge::string::ruby_try_verified_text;
 use crate::bridge::string::{ruby_verified_text, RubyText};
 use crate::bridge::wrapper::{keepalive_document, node_token_in, HiddenIvar, NotInDocument};
-use crate::falloc::{try_to_boxed_slice, Reserve};
 use crate::xpath::ast::Ast;
 use crate::xpath::ctx::ContextError;
+use falloc::{try_to_boxed_slice, Reserve};
 
 use super::*;
 

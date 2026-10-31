@@ -35,7 +35,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::falloc::{Reserve, SetInsert, VecGrow};
+use falloc::{Reserve, SetInsert, VecGrow};
 use std::cell::RefCell;
 use std::collections::HashSet;
 

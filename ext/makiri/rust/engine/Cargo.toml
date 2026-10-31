@@ -1,0 +1,41 @@
+[package]
+name = "makiri_engine"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.95"
+publish = false
+description = "Makiri's engine: the HTML parser and DOM, the XML reader, XPath 1.0 and CSS selectors, with no Ruby and no Lexbor"
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[features]
+default = ["html-dom"]
+
+# The parser port's index-arena DOM (`html::dom`) behind its facade
+# (`html_dom`), parsed by the ported tree builder (`html::tree`), and what sits
+# over it: the HTML CSS matcher, XPath's HTML instance. Off only in the bare
+# engine Kani proves. The document parse's encoding sniffing and decoders
+# (`html::encoding`) come with it.
+html-dom = ["dep:encoding_rs", "dep:chardetng"]
+
+# Allocation-failure injection, the Rust half of `rake oom` (`falloc`'s).
+alloc-inject = ["falloc/alloc-inject"]
+
+# Running the ports as Lexbor did (`compat::as_lexbor`), and what else only the
+# Lexbor reference (`makiri_lexbor`) compares against. Never part of a build
+# that ships: there every departure from Lexbor is a constant.
+lexbor-compat = []
+
+[dependencies]
+falloc = { path = "../falloc", version = "0.0.1" }
+# The WHATWG Encoding Standard's decoders (`encoding_rs`) and Firefox's
+# detector for a document that declares no encoding (`chardetng`), for the
+# HTML document parse (`html::encoding`). Neither allocates through the
+# global allocator on the paths used: a decoder writes into a buffer we hand
+# it (`falloc`'s), and the detector keeps fixed-size state.
+chardetng = { version = "=1.0.0", optional = true }
+encoding_rs = { version = "=0.8.35", optional = true }

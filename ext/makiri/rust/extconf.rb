@@ -10,10 +10,12 @@ require "rb_sys/mkmf"
 
 # extconf for the Makiri extension.
 #
-# Makiri is one Rust crate, and this file hands it to cargo. The vendored
-# Lexbor is not part of the extension: it is the reference the ports are
-# tested against, built by `rake lexbor` (script/build_lexbor.rb) for the
-# tests alone. There is no C left to compile, so there is no mkmf object list, no
+# Makiri's extension is a Rust crate (`makiri_rs`), and this file hands it to
+# cargo; it builds the engine (`makiri_engine`), the fallible allocation it
+# allocates through (`falloc`) and the binding layer (`nupur`) with it, from the
+# one workspace. The vendored Lexbor is not part of it: it is the reference the
+# ports are tested against (`reference/`, a workspace of its own), built by
+# `rake lexbor` (script/build_lexbor.rb) for the tests alone. There is no C left to compile, so there is no mkmf object list, no
 # $srcs, and no $CFLAGS: cargo performs the final link, and everything that used
 # to be a compiler or linker flag is now either a rustc argument or gone.
 #
@@ -43,7 +45,8 @@ sanitize = ENV["MAKIRI_SANITIZE"].to_s.strip
 # What the crate is built with
 # ---------------------------------------------------------------------------
 
-# The default feature set is `ruby`, which carries the arena HTML DOM.
+# The extension has one feature, the injection hook below; the engine's
+# default (the arena HTML DOM) comes with it.
 features = []
 
 # OOM-injection build (opt-in): MAKIRI_ALLOC_INJECT=1 compiles the allocation
@@ -180,13 +183,13 @@ create_rust_makefile("makiri/makiri") do |r|
   r.extra_rustflags = rustflags
   r.env = cargo_env
   r.target = cargo_target if cargo_target
-  # The extension alone: the crate's `rlib` type is for the fuzz crate, and
-  # with it in the build rustc runs no LTO ("lto can only be run for
-  # executables, cdylibs and static library outputs") - which once cost
-  # nothing, the crate being one codegen unit, but makes every call into the
-  # binding layer (`nupur`, a crate of its own) an opaque cross-crate call:
-  # the light readers measured 9-25% slower. With `cdylib` alone, the
-  # release profile's `lto = true` applies.
+  # The extension alone, as a `cdylib`: with an `rlib` in the build rustc runs
+  # no LTO ("lto can only be run for executables, cdylibs and static library
+  # outputs"), and every call into the engine and the binding layer, crates
+  # of their own, would be an opaque cross-crate call - the light readers
+  # measured 9-25% slower when `nupur` was split off. With `cdylib` alone, the
+  # release profile's `lto = true` applies. (The manifest lists `cdylib`
+  # only; this says it again, so a type added there cannot undo it.)
   r.extra_cargo_args = ["--crate-type", "cdylib"]
   # The C was built -O2. Match it: a debug-profile extension is several times
   # slower, and every benchmark in this project is stated against a release one.

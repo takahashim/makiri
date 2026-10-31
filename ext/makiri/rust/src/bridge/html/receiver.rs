@@ -18,7 +18,7 @@ use super::*;
 /// Made with the read and the slice list held; a failed allocation is `Err`,
 /// and both drop.
 fn subtree_text(ruby: &Ruby, read: &HtmlRead<'_>, node: HtmlNode<'_>) -> Result<Value, Error> {
-    use crate::falloc::VecGrow;
+    use falloc::VecGrow;
     let texts = || {
         core::iter::successors(node.first_child(), move |c| c.preorder_next(node))
             .filter_map(|c| c.char_data())
@@ -282,30 +282,6 @@ pub fn with_arg_node<R>(
 /* ------------------------------------------------------------------ *
  * indexing a child list                                               *
  * ------------------------------------------------------------------ */
-
-/// The arena's tree for [`crate::child_index`]: a node's word is its token.
-/// The links are [`HtmlTree`]'s, the raw ones `#children` follows, so the two
-/// agree - a `<template>`'s own (empty) child list included.
-impl<'d> TokenTree for HtmlTree<'d> {
-    #[cfg_attr(
-        dylint_lib = "makiri_lints",
-        allow(
-            raw_node_crossing,
-            reason = "the child-position memo's token, read back only through the checked lookup"
-        )
-    )]
-    fn token(&self, n: HtmlNode<'d>) -> usize {
-        RawNode::from(n).word()
-    }
-    fn node_of(&self, token: usize) -> Option<HtmlNode<'d>> {
-        // `child_index` asks only for a token it recorded for a list of this
-        // document (`ChildPositionMemo`'s invariant), and the lookup is the
-        // checked one all the same: a stale or foreign word answers None,
-        // which the memo reads as a miss, rather than another node.
-        let raw = RawNode::from_word(token)?;
-        self.doc()?.checked(raw)
-    }
-}
 
 impl ChildListHost for HtmlSelf {
     type Tree<'a> = HtmlTree<'a>;

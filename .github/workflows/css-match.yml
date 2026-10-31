@@ -21,18 +21,20 @@ on:
   push:
     branches: [main, master]
     paths:
-      - "ext/makiri/rust/src/lexbor/**"
-      - "ext/makiri/rust/src/css_match/**"
+      - "ext/makiri/rust/reference/src/lexbor/**"
+      - "ext/makiri/rust/engine/src/css_match/**"
       - "ext/makiri/rust/fuzz/**"
       - "ext/makiri/rust/Cargo.toml"
+      - "ext/makiri/rust/reference/Cargo.toml"
       - "vendor/lexbor"
       - ".github/workflows/css-match.yml"
   pull_request:
     paths:
-      - "ext/makiri/rust/src/lexbor/**"
-      - "ext/makiri/rust/src/css_match/**"
+      - "ext/makiri/rust/reference/src/lexbor/**"
+      - "ext/makiri/rust/engine/src/css_match/**"
       - "ext/makiri/rust/fuzz/**"
       - "ext/makiri/rust/Cargo.toml"
+      - "ext/makiri/rust/reference/Cargo.toml"
       - "vendor/lexbor"
       - ".github/workflows/css-match.yml"
   schedule:
@@ -93,8 +95,8 @@ jobs:
             export MAKIRI_CSS_DIFF_ITERATIONS=20000
           fi
           echo "MAKIRI_CSS_DIFF_SEED=$MAKIRI_CSS_DIFF_SEED MAKIRI_CSS_DIFF_ITERATIONS=$MAKIRI_CSS_DIFF_ITERATIONS"
-          cargo test --release --no-default-features --features lexbor -- \
-            lexbor::tests::css_match css_cache::tests
+          cargo test --release --manifest-path reference/Cargo.toml -- lexbor::tests::css_match
+          cargo test --release -p makiri_engine -- css_cache::tests
 
   fuzz:
     name: cargo-fuzz ${{ matrix.target }}

@@ -47,7 +47,6 @@ pub mod stack;
 
 /// The node and Document wrappers, their TypedData types, and the
 /// representation-agnostic accessors.
-#[cfg(feature = "html-dom")]
 pub mod wrapper;
 
 /// The bridge steps that differ between the two HTML DOMs.
@@ -56,21 +55,17 @@ pub mod dom;
 /// The HTML front door: arena nodes to Ruby and back, the HTML edits, the
 /// Document (`html::document`: parsing, its readers, import/clone) and the
 /// fragment pipeline (`html::fragment`).
-#[cfg(feature = "html-dom")]
 pub mod html;
 
 /// The XML front door and the one gated way to write an arena (the XML
 /// counterpart of `html`).
-#[cfg(feature = "html-dom")]
 pub mod xml;
 
 /// `Makiri::NodeSet`'s wrapper type (opaque node pointers + a Document
 /// keepalive) and the safe fill handle over it.
-#[cfg(feature = "html-dom")]
 pub mod node_set;
 
 /// Reading a stored node word back as a typed wrapper (the two front doors).
-#[cfg(feature = "html-dom")]
 pub mod node_wrap;
 
 /// The errors the DOM's insertion rules raise, for HTML and XML alike.
@@ -78,7 +73,6 @@ pub mod dom_error;
 
 /// The Ruby <-> XPath engine seam: which backend a query runs on, and
 /// building the engine context for a Ruby node or document.
-#[cfg(feature = "html-dom")]
 pub mod xpath;
 
 pub mod ruby;

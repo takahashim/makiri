@@ -27,7 +27,7 @@ use crate::bridge::ruby::is_kind_of;
 use crate::bridge::string::{ruby_verified_text, RubyText};
 use crate::bridge::wrapper::*;
 use crate::bridge::wrapper::{new_xml_document, node_repr, DocHandle, NodeRepr};
-use crate::child_index::{ChildList, Children, TokenTree};
+use crate::child_index::{ChildList, Children};
 use crate::html_dom::cross_import::cross_html_to_xml;
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT, EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 use crate::init::{

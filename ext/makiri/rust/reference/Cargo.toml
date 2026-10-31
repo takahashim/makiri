@@ -1,0 +1,49 @@
+[package]
+name = "makiri_lexbor"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.95"
+publish = false
+description = "The vendored Lexbor, as the reference Makiri's engine is held to: never part of a build that ships"
+
+[lib]
+# The fuzz crate depends on this by the name `makiri`, the name its targets
+# were written against.
+path = "src/lib.rs"
+
+# A workspace of its own, like `fuzz/`: the extension's workspace - and its
+# Cargo.lock, the one a source install builds from - holds nothing of
+# Lexbor's.
+[workspace]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)', 'cfg(makiri_no_unwind)'] }
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+
+[features]
+# The OLD `lxb_selectors` engine (`lexbor::selectors`) outside `cfg(test)`, as
+# the reference the `html_css_diff` fuzz harness holds `css_match` to.
+css-reference = []
+
+# Lexbor as the parser port's reference (`lexbor::tree_diff`): its tree,
+# copied into the arena, beside the ported tree builder's, for the
+# `html_diff` fuzz harness; and its selector and stylesheet parsers beside the
+# ports', for `selector_diff` and `stylesheet_diff`.
+lexbor-reference = []
+
+[dependencies]
+# The engine, with what only a reference reads: the switch that runs the ports
+# as Lexbor did (`lexbor-compat`).
+makiri_engine = { path = "../engine", features = ["html-dom", "lexbor-compat"] }
+falloc = { path = "../falloc" }
+
+[build-dependencies]
+# Reads the vendored Lexbor headers so the layout is not transcribed by hand.
+bindgen = "0.72"
+
+[profile.dev]
+panic = "unwind"

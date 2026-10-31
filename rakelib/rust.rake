@@ -13,8 +13,8 @@
 desc "Kani proofs over the Ruby-free core - UTF-8 validate/decode, XML " \
      "characters, XPath numbers (needs cargo-kani; successor to the C-era CBMC harnesses)"
 task :kani do
-  # Only the Ruby-free features: anything under glue needs rb-sys -> a live
-  # Ruby, which Kani cannot build.
+  # The engine alone, with no feature: the extension needs rb-sys -> a live
+  # Ruby, which Kani cannot build, and the engine knows no Ruby.
   #
   #   rake kani                                   # every harness
   #   rake kani HARNESS=accepted_is_utf8          # one
@@ -23,18 +23,10 @@ task :kani do
   # The KANI_*_MAX overrides reach the build through the environment, which `sh`
   # passes on - but they change a `const`, so cargo must see them as a rebuild
   # reason; they are listed here so that is visible rather than folklore.
-  # core-utf8 is in the set because it is Ruby-free and its C-ABI proof is
-  # gated on it: without the feature that harness silently does not run, which
-  # is the failure mode this project keeps finding rather than a saving.
-  #
-  # `no-c` is in the set because it is what ships. Without it the buffer's
-  # ceilings are `extern static`s that Kani, which does not link C, treats as
-  # unconstrained values - so the proof would be about a configuration nobody
-  # builds. With it they are the consts the extension actually uses.
   #
   #   KANI_GROUPS=utf8,xml rake kani              # some groups (KANI_GROUPS below)
   #   KANI_JOBS=4 rake kani                       # harnesses in parallel
-  argv = ["cargo", "kani", "--no-default-features"]
+  argv = ["cargo", "kani", "-p", "makiri_engine", "--no-default-features"]
   harness = ENV["HARNESS"].to_s.strip
   groups = ENV["KANI_GROUPS"].to_s.split(",").map(&:strip).reject(&:empty?)
   unknown = groups - KANI_GROUPS.keys
@@ -82,7 +74,7 @@ end
 # bounds in lib.rs, the build, this file and the workflow. `kani:groups`
 # fails when a file holding a proof is in no group, so a new harness cannot
 # go unrun.
-RUST_SRC = "ext/makiri/rust/src"
+RUST_SRC = "ext/makiri/rust/engine/src"
 KANI_GROUPS = {
   # (An "alloc" group proved falloc's grow_capacity and cbuf's copy_small,
   # bounded, in ~6 of CI's ~10 minutes. verus/cbuf.rs proves both at every
@@ -107,8 +99,9 @@ KANI_GROUPS = {
   }
 }.freeze
 KANI_SHARED = %W[
-  #{RUST_SRC}/lib.rs ext/makiri/rust/build.rs ext/makiri/rust/Cargo.toml
-  ext/makiri/rust/Cargo.lock Rakefile rakelib/rust.rake .github/workflows/verify.yml
+  #{RUST_SRC}/lib.rs ext/makiri/rust/engine/Cargo.toml ext/makiri/rust/Cargo.toml
+  ext/makiri/rust/Cargo.lock ext/makiri/rust/falloc/src/lib.rs
+  Rakefile rakelib/rust.rake .github/workflows/verify.yml
 ].freeze
 
 namespace :kani do
@@ -135,19 +128,22 @@ namespace :kani do
 end
 
 namespace :rust do
-  # The Ruby- and Lexbor-free core; the HTML DOM the extension ships with,
-  # still Lexbor-free; then the same with the `lexbor` layers in, which holds
-  # the ports to Lexbor (the reference tests) and needs the vendored Lexbor
-  # `rake lexbor` builds.
-  desc "Run the Rust tests (the engine core, the shipped DOM, then against Lexbor)"
+  # The bare engine (what Kani proves); the engine as the extension builds it,
+  # with the HTML DOM; falloc, its injection hook alone in a binary of its own
+  # (the counter is process-global); the binding layer; and then the Lexbor
+  # reference, which holds the ports to Lexbor and needs the vendored Lexbor
+  # `rake lexbor` builds. The extension itself has no Ruby-free test to run.
+  desc "Run the Rust tests (the engine bare and as shipped, falloc, nupur, then against Lexbor)"
   task test: :lexbor do
     Dir.chdir("ext/makiri/rust") do
-      sh "cargo test --no-default-features"
-      sh "cargo test --no-default-features --features html-dom"
-      sh "cargo test --no-default-features --features lexbor"
-      # The binding layer, a workspace member of its own (its Ruby-free tests:
-      # the message buffer, and `caught`'s panic latch and payload reading).
+      sh "cargo test -p makiri_engine --no-default-features"
+      sh "cargo test -p makiri_engine"
+      sh "cargo test -p falloc"
+      sh "cargo test -p falloc --features alloc-inject --test alloc_inject_map_insert"
+      # The binding layer (its Ruby-free tests: the message buffer, and
+      # `caught`'s panic latch and payload reading).
       sh "cargo test -p nupur"
+      sh "cargo test --manifest-path reference/Cargo.toml"
       # The fuzz crate is a separate one, so `cargo test` above never sees it;
       # without this check an engine API change can silently break the nightly
       # harnesses (they are not built by `rake compile` or `rake spec`).

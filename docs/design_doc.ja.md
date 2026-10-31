@@ -328,23 +328,84 @@ CSS/serialize/読み取りアクセサも GVL を保持する。`spec/threading_
   探索木、tree builder のタグの分類と調整表) は、Lexbor のヘッダとソース
   と WHATWG の `entities.json` から生成し、手で転記しない。生成物は
   Lexbor の表と要素ごとに一致することをテストで確かめる。
-* 拡張は二つのクレートの workspace とする。Ruby との境界の層 (`nupur`、
-  rb-sys の上) は、Ruby と話すための `unsafe` をすべて持ち、safe な型だけを
-  外に出す。拡張 (`makiri_rs`) はそれに依存し、境界の層は拡張に依存しない
-  ので、層が拡張の都合を知ることはない。拡張が層に渡す必要のあるもの
-  (内部エラーの例外クラス、raise の注入の hook) は、初期化のときに登録する。
-  拡張の Ruby 側 (`bridge`、`glue`) は `unsafe` を書かない。
+* 拡張は五つのクレートからなる。参照実装のほかの四つが一つの workspace で、
+  依存は一方向で、下のクレートは上のクレートを知らない。
+  - 確保の基盤 (`falloc`): 失敗を値として返す確保と、その注入の hook。
+    どのクレートにも依存しない。
+  - エンジン (`makiri_engine`): HTML の tokenizer と tree builder、
+    index アリーナの DOM、XML の reader、XPath、セレクタの構文解析と CSS の
+    照合。依存するのは `falloc` と Rust のライブラリ (`encoding_rs`、
+    `chardetng`) だけで、Ruby も Lexbor も知らない。
+  - Ruby との境界の層 (`nupur`、rb-sys の上): Ruby と話すための `unsafe` を
+    すべて持ち、safe な型だけを外に出す。拡張にもエンジンにも依存しない
+    ので、層が拡張の都合を知ることはない。拡張が層に渡す必要のあるもの
+    (内部エラーの例外クラス、raise の注入の hook) は、初期化のときに
+    登録する。
+  - 拡張 (`makiri_rs`): エンジンと境界の層に依存し、Ruby の表面 (`bridge`、
+    `glue`、初期化) だけを持つ。`bridge` と `glue` は `unsafe` を書かない。
+  - 参照実装 (`makiri_lexbor`): vendored Lexbor と、そのレイアウトの
+    生成 (bindgen)、Lexbor の DOM を読む adapter、移植版を Lexbor に照らす
+    差分テスト。エンジンに依存し、出荷する拡張はこれに依存しない。fuzz の
+    クレートと同じく独立した workspace とし、拡張の workspace の
+    Cargo.lock (source install が使うもの) には Lexbor のためのものが何も
+    現れない。
+  拡張と参照実装は、エンジンのモジュールをクレートの根で re-export する。
+  `crate::xml` は拡張の中でも参照実装の中でもエンジンのものを指す。
+* エンジンが Ruby-free であることは、規約や lint ではなく依存関係で
+  成り立たせる。エンジンは rb-sys にも `nupur` にも依存しないので、Ruby の
+  値や境界の層の名前を書けばコンパイルが通らない。GVL を外して動く parse の
+  本体と、文書を `&mut` で借りた編集の閉包が Ruby を呼ばないことは、
+  それらがエンジンの関数だけを呼ぶことに帰着する。
+* エンジンは `unsafe` を書かない。クレートの根で `forbid(unsafe_code)` と
+  する。安定版の Rust には、失敗を返す `Box<T>` の確保を safe に書く方法が
+  なく、そこに一か所だけ `unsafe` が残る。それを持つ確保の基盤を別の
+  クレート (`falloc`) にするのはこのためである。Miri が Ruby なしで検査する
+  `nupur` の `utf8_copy` も、`unsafe` を許すこのクレートのテストビルドに
+  含める。unwind しないことの証明に使う未定義シンボルの呼び出しは、証明の
+  ためのビルドにだけ現れるので、そのビルドに限って許す。
+* エンジンと拡張の境目にあるモジュールは、次のように置く。
+  - コンパイル済みセレクタの cache (`css_cache`) はエンジンに置く。二つの
+    DOM を知り、Ruby を知らない。スレッドごとに持つのは、クエリが GVL を
+    外さないことから来る性質であり、照合の入口の約束として述べる。
+  - スタック残量の検査はエンジンが問い合わせ、検査の関数は拡張が初期化の
+    ときに渡す (`stack::install`)。OOM 注入の hook も同じ形で、エンジンと
+    `falloc` は hook を受け取る口だけを持つ。
+  - Lexbor から離れた箇所の分岐 (`compat`) はエンジンに置き、Lexbor の
+    とおりに動かす切り替え (`as_lexbor`) はエンジンのフィーチャにする。
+    どこで Lexbor から離れたかはエンジン自身の知識であり、切り替えを使う
+    のが参照実装だけである。出荷するビルドでは分岐は定数になる。
+  - 文書の本体の借用ガード (`doc_cell`) はエンジンに置く。同じ文書を
+    Ruby 側の複数の参照が共有することへの備えで、使うのは拡張だけだが、
+    Ruby-free であり、その約束 (借用がガードより長く生きない、ガードが
+    スレッドを離れない) を `compile_fail` の doctest で Ruby なしに確かめる
+    には、Ruby に依存しないクレートにある必要がある。
+  - 子の位置の memo (`child_index`) はエンジンに置き、memo を無効にする
+    版数 (`tree_version`) は拡張が文書ごとに持って渡す。
+  - GVL を鍵にした cell (`gvl`) と、C の callback の中で panic を捕まえる
+    latch (`caught`) は参照実装に移す。出荷するビルドで使うものはない。
+  - 参照実装のテストが使うエンジンの内部 (Lexbor のとおりに動かす切り替え、
+    適合テストの harness、tokenizer の追跡付きの実行など) は、エンジンの
+    `lexbor-compat` フィーチャで公開する。出荷するビルドには入らない。
+* エンジンの公開 API は、拡張と参照実装が呼ぶものに限る。エンジンの中の不変条件
+  (編集は文書を貸す閉包の中でだけ行う、作りかけの node は木に入らない、
+  など) はこれまでどおり型で守り、クレートの可視性には頼らない。依存する
+  クレート (拡張、参照実装、fuzz) はどれも同じ型の規則に従う。
 * GVL を持っている証拠のトークンは、Ruby が呼ぶ入口 (メソッドの trampoline
   と初期化関数) だけが作る。その補助関数は `unsafe` で、`unsafe` を書けない
   拡張のコードからは、マクロの展開を通してしか呼べない。
-* 拡張は `cdylib` だけとしてビルドする。fuzz のクレートが使う `rlib` を
-  同時に作ると rustc は LTO を行わず、境界の層への呼び出しがクレートを
-  またぐ不透明な呼び出しになる。
-* crate のフィーチャは六つ。`ruby` (Ruby との境界、既定)、`html-dom`
-  (index アリーナの HTML DOM とその上の CSS の照合、XPath の HTML 実装。
-  `ruby` と `lexbor` が含む)、`lexbor` (vendored Lexbor を読む参照の層)、
-  `alloc-inject` (OOM 注入)、`css-reference`、`lexbor-reference`
-  (差分 fuzz の参照実装)。`lexbor` と二つの参照は出荷するビルドに入らない。
+* 拡張は `cdylib` だけとしてビルドし、release では LTO を行う。エンジンと
+  境界の層への呼び出しはクレートをまたぐが、LTO の下でインライン化される。
+  拡張を `rlib` として同時に作ると rustc は LTO を行わないので、fuzz の
+  クレートは拡張ではなく、エンジンと参照実装に依存する。
+* フィーチャはクレートごとに持つ。エンジンは `html-dom` (既定。index
+  アリーナの HTML DOM と、その上の CSS の照合、XPath の HTML 実装。外すと
+  Kani が証明する素のエンジンになる) と `lexbor-compat` (Lexbor のとおりに
+  動かす切り替え。参照実装だけが使う)、`falloc` と拡張は `alloc-inject`
+  (OOM 注入)、参照実装は `css-reference` と `lexbor-reference` (差分 fuzz の
+  参照) を持つ。Ruby との境界を外すフィーチャと Lexbor を読むフィーチャは
+  なくなり、それぞれ拡張と参照実装のクレートそのものになる。出荷する
+  拡張のビルドは Lexbor を link せず、そのヘッダも読まない (bindgen を使う
+  のは Ruby のヘッダを読む rb-sys だけになる)。
 
 ## 6. Testing
 
@@ -366,8 +427,9 @@ cargo-fuzz の harness (`ext/makiri/rust/fuzz/`) は Ruby なしで engine を
 harness を持つ: `html_diff` (移植版の tree builder と Lexbor の木、その
 直列化、深さの上限の判定)、`selector_diff` (移植版と Lexbor のセレクタ解析)、`html_css_diff` (自前の
 matcher と Lexbor の matcher)。`css` は XML の matcher の入口どうしの
-一致を見る。参照実装は `lexbor-reference` / `css-reference` フィーチャで
-だけ link する。
+一致を見る。fuzz のクレートは拡張ではなく参照実装 (`makiri_lexbor`) に
+依存し、比べる相手は参照実装の `lexbor-reference` / `css-reference`
+フィーチャでだけ link する。
 
 > 当初構想にあった「Nokogiri を oracle にした diff モードを fuzz に持たせる」
 > 案は採っていない。Lexbor と libxml2 は HTML5 semantics が異なり、ランダム
@@ -519,6 +581,17 @@ HTML名前テストとHTML属性ではASCII caseを畳み込み、SVG/MathMLの�
   並列。失うのは「単一の共有 document への XPath の並列実行」だけ。
   GVL 解放する XPath 経路を再導入しない (document/context lock の整備が
   済むまで)。
+* エンジンをクレートとして分ける (§5)。分ける前からエンジンは Ruby も
+  Lexbor も知らずに書かれ、Ruby なしで動いていた (`ruby` フィーチャを外した
+  ビルド、Kani、Miri、Verus、cargo-fuzz、Ruby なしの計測)。ただしその境界は
+  手で保守するモジュールの一覧 (lint の `ENGINE`、unsafe の検査の
+  `ENGINE_DIRS`、`forbid` の根) で定義されていて、一覧どうしが食い違って
+  いた (消したモジュールが残り、新しいモジュールが入っていない)。クレートに
+  すると境界は依存関係になり、一覧も、それを守る lint
+  (`ruby_layer_in_engine`) がエンジンに対して見るものもなくなる (lint は
+  `nupur` の中の Ruby-free な一モジュール、`utf8_copy` のためだけに残る)。
+  境界の層 (`nupur`) を分けたのと同じ考えであり、性能は `cdylib` 単体の
+  ビルドの LTO で保つ。
 * 入力は lenient parse / strict API。HTML parse はブラウザ同様
   decode して常に成功 (不正→U+FFFD、HTML5 適合・スクレイピング堅牢・
   U+FFFD 置換は smuggling 防御)。一方プログラム API はバイト列ではなく

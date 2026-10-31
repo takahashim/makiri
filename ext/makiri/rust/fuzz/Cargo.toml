@@ -10,20 +10,21 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 
-# No Ruby: the glue needs rb-sys -> a live Ruby, which a fuzz binary
-# has no business linking. The targets drive the engine's front door the glue
-# drives - the XML reader, the HTML parse and its indexes, XPath over both
-# engine instances, and the CSS matcher over both DOMs - and so need `lexbor`,
-# which is what carries the HTML instance.
-[dependencies.makiri_rs]
-path = ".."
-default-features = false
+# No Ruby: the extension needs rb-sys -> a live Ruby, which a fuzz binary has
+# no business linking. The targets drive the engine's front door the
+# extension drives - the XML reader, the HTML parse and its indexes, XPath over
+# both engine instances, and the CSS matcher over both DOMs - and Lexbor beside
+# it, so they depend on the Lexbor reference, which re-exports the engine's
+# modules, by the name `makiri` they were written against.
+[dependencies.makiri]
+package = "makiri_lexbor"
+path = "../reference"
 # `css-reference` adds the OLD CSS engine, the reference `html_css_diff`
 # compares against, and `lexbor-reference` Lexbor's tree, the reference
 # `html_diff` compares the ported tree builder against (and Lexbor's selector
 # and stylesheet parsers beside the ports, for `selector_diff` and
 # `stylesheet_diff`); neither ships in any build of the extension.
-features = ["lexbor", "css-reference", "lexbor-reference"]
+features = ["css-reference", "lexbor-reference"]
 
 [[bin]]
 name = "xml"

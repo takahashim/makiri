@@ -1,19 +1,14 @@
-//! makiri - the HTML5 parser, XPath 1.0 engine and XML reader behind the
-//! `makiri` gem, as one crate.
+//! makiri - the Ruby extension behind the `makiri` gem: the Ruby surface
+//! (`bridge`, `glue`, `init`) over the engine (`makiri_engine`), on the binding
+//! layer (`nupur`).
 //!
-//! Three layers, and the feature flags name the two optional dependencies
-//! rather than any step of the C port that produced this code:
-//!
-//!   engine   `xml`, `xpath`, `cbuf`, `cutf8`, `falloc` - no Ruby, no Lexbor.
-//!            This is what Kani proves and what cargo-fuzz drives.
-//!   lexbor   `lexbor` (its `abi` and DOM facade), `css`, and the XPath HTML
-//!            instance - everything that reads the vendored Lexbor DOM.
-//!   ruby     `bridge`, `glue`, `init` - the Ruby boundary and `Init_makiri`
-//!            (`ruby`, on by default; it implies `lexbor`).
+//! The engine is a crate of its own, which knows neither Ruby nor Lexbor; this
+//! crate re-exports its modules at its root, so `crate::xml` here is the
+//! engine's. Lexbor is not in this crate's dependency graph at all: it is the
+//! reference the ports are tested against (`makiri_lexbor`).
 //!
 //! No SYMBOL here carries the C ABI's `mkr_` prefix any more: the crate exports only
 //! `Init_makiri` (and `ruby_abi_version`), so every item is named as Rust.
-//! Lexbor's own names stay `lxb_*`.
 
 #![deny(unsafe_code)]
 /* An `Err` of a Ruby error is never dropped: `Error::rescue` handles the
@@ -27,208 +22,32 @@
 // the failure report.
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
-/// Compile-time decimal parsing, for the settings that arrive as `option_env!`
-/// overrides: a const context cannot call `parse`.
-///
-/// Two kinds of setting use it. The `verify` modules bound the input each set of
-/// proofs quantifies over - and raising such a bound means raising that
-/// harness's `#[kani::unwind]`, which cannot be computed because Kani wants a
-/// literal. Getting it wrong fails loudly (`unwinding assertion`), not silently,
-/// so the override is safe to use for an experiment without editing the default.
-/// The buffer's content ceilings (`cbuf`) use it for a different reason: they
-/// were `-D`-overridable C macros, and standing alone that override has to
-/// arrive from the environment instead.
-///
-/// Hence ungated. It was `#[cfg(kani)]` while the proofs were its only caller.
-pub mod kani_bounds {
-    /// Decimal only; a non-digit is a compile error naming the bound.
-    pub const fn parse_usize(s: &str) -> usize {
-        let b = s.as_bytes();
-        let mut i = 0;
-        let mut n = 0usize;
-        while i < b.len() {
-            assert!(
-                b[i] >= b'0' && b[i] <= b'9',
-                "the bound must be a decimal number"
-            );
-            n = n * 10 + (b[i] - b'0') as usize;
-            i += 1;
-        }
-        n
-    }
-}
-
-/// Fallible allocation. Every engine heap allocation goes through here (the
-/// glue's Ruby-side storage uses Ruby's xmalloc instead), so that `rake oom` can
-/// fail it and so that failure raises instead of aborting the host process.
-pub mod falloc;
-
-/// `Buf`, the capped byte buffer more than one subsystem writes into.
-pub mod cbuf;
-
-/// `nupur::utf8_copy`, the checked copy behind the bridge's views of a Ruby
-/// String, included here in the test build as well: it depends on std alone,
-/// and Miri runs its tests in this crate's Ruby-free build (`rake miri`),
-/// which nupur, built over rb-sys, cannot be.
-#[cfg(test)]
-#[path = "../nupur/src/utf8_copy.rs"]
-#[allow(dead_code, reason = "included for its tests; the API is nupur's")]
-mod utf8_copy;
-
-/// The bodies that must not unwind (an `extern "C"` function's, a `Drop`
-/// run from the GC), and the build that checks they cannot.
-pub mod no_unwind;
-
-/// Catching a panic at a C boundary and re-raising it past one, so a panic in a
-/// Lexbor callback becomes an exception rather than an abort - for the
-/// reference-only Lexbor layer, built without Ruby. The Ruby layer has its
-/// own (`nupur::caught`).
-#[cfg(feature = "lexbor")]
-pub mod caught;
-
-/// Holding the GVL as a value: the token the process-global CSS engines ask
-/// for, and the cell that keeps them.
-#[cfg(feature = "html-dom")]
-pub mod gvl;
-
-/// The CSS matcher behind `Node#css`/`#at_css`/`#matches?`
-/// (`glue::html_node::css`, via `css_cache`): Lexbor's
-/// `lxb_selectors_*` control flow in safe Rust, on an explicit heap work
-/// stack rather than native recursion, over the selector parser's views and
-/// any DOM that implements its traits (`css_match::dom`). Ruby- and
-/// Lexbor-free, like the engine.
-pub mod css_match;
-
-/// A Document's content, reachable only through a counted borrow guard -
-/// what `bridge::dom` holds each Document's parse in. Ruby-free, so the
-/// guards' promises are tested here.
-pub mod doc_cell;
-
-/// The compiled-selector cache in front of `css_match`, with the `Scratch`
-/// each host's queries borrow: process-global, behind the GVL. It names the
-/// two hosts (`html::dom::css`, `xml::css`), so it sits beside the matcher,
-/// which knows none, rather than in it.
-#[cfg(feature = "html-dom")]
-pub mod css_cache;
-
-/// The shared UTF-8 primitives. Unconditional, like `falloc`
-/// and `cbuf`: the XML and XPath layers use the strict decoder whatever the
-/// feature set.
-pub mod cutf8;
-
-/// The HTML input sanitiser: invalid UTF-8 becomes U+FFFD, per WHATWG
-/// byte-stream decoding. Ruby-free and Lexbor-free - it is `cbuf` and `cutf8`
-/// only - so it sits with the engine even though only the HTML parse path calls
-/// it.
-pub mod utf8_input;
-
-/// The source line table (byte offset -> line).
-pub mod source_lines;
-
-/// `VerifiedText`: a borrowed engine input, valid UTF-8 with no NUL.
-/// Unconditional: the engine, the DOM adapter and the glue all pass it.
-pub mod text;
-
-/// Bounds shared across layers (`NODE_SET_MAX`). Unconditional and Ruby-free.
-pub mod limits;
-
-/// The native-stack-exhaustion probe the engine's recursion checks consult,
-/// installed by `bridge::stack` at `Init_makiri`. Unconditional and Ruby-free
-/// itself - see the module doc for why a depth count alone does not bound the
-/// stack.
-pub mod stack;
-
-/// The engine error vocabulary - the kind, the message buffer and the sink -
-/// of XPath's front end and evaluator. Unconditional and Ruby-free.
-pub mod engine_error;
-
-/// The one pointer hash, and the pointer-keyed tables the per-document indexes
-/// are built on: `PtrTable` (sized once) and `PtrMap` (grows). Below every layer, so none reaches into
-/// another's internals for them.
-pub mod ptr_table;
-
-/// The opaque, kind-tagged node token the engine passes around and the bridge
-/// mints. Unconditional: the engine, the backends and the bridge all use it.
-pub mod token;
-
-/// The DOM node type every layer reads: the XPath engine, the HTML adapter
-/// and the Ruby class table. Unconditional, like `token`.
-pub mod node_type;
-
-/// The WHATWG DOM's pre-insertion rules, once for the HTML adapter and the
-/// XML arena alike. Unconditional, like `node_type`.
-pub mod dom_rules;
-
-/// Counting and indexing a child list without building it, with the
-/// position memo a document keeps. Unconditional, like `dom_rules`.
-pub mod child_index;
+/// The engine's modules, by the paths the Ruby layer names them with.
+pub use makiri_engine::{
+    cbuf, child_index, compat, css_cache, css_match, cutf8, doc_cell, dom_rules, engine_error,
+    html, html_dom, kani_bounds, limits, no_unwind, node_type, ptr_table, selectors, source_lines,
+    stack, text, token, utf8_input, xml, xpath,
+};
 
 /// The Ruby binding layer the bridge is built on, a crate of its own that
 /// knows nothing of Makiri (`nupur/`). Named `crate::nupur` here, and its
 /// `method!` / `function!` macros are in scope crate-wide.
-#[cfg(feature = "ruby")]
 extern crate nupur;
 
 /// The method-registration macros, by the path the glue imports them from.
-#[cfg(feature = "ruby")]
 pub(crate) use nupur::{function, method};
 
 /// `nupur::msg`, under the name the bridge and the glue use.
-#[cfg(feature = "ruby")]
 pub use nupur::msg;
 
 /// The Ruby boundary - the only part of the crate that depends on rb-sys.
-#[cfg(feature = "ruby")]
 pub mod bridge;
-#[cfg(feature = "ruby")]
 pub mod glue;
 
 /// `rake dylint`'s self-test: what the crate's own lints must report.
-#[cfg(all(feature = "ruby", makiri_lint_probe))]
+#[cfg(makiri_lint_probe)]
 mod lint_probe;
-
-/// The vendored Lexbor boundary. This owns every direct use of its C ABI;
-/// `adapter` supplies the compatibility facilities Lexbor does not provide.
-/// Only the reference the ports are tested against: no build that ships has it.
-#[cfg(feature = "lexbor")]
-pub mod lexbor;
-
-/// The HTML DOM as the rest of the crate reaches it: one path, to the parser
-/// port's index arena (`html::dom`).
-#[cfg(feature = "html-dom")]
-pub mod html_dom;
-
-/// The HTML parser ported from Lexbor to Rust (`docs/rewrite_parser.ja.md`):
-/// Lexbor-free and Ruby-free.
-pub mod html;
-
-/// The CSS selector parser port (Ruby- and Lexbor-free).
-pub mod selectors;
-
-/// Where the parser ports follow the specifications and Lexbor does not:
-/// the `fixed(Fix::...)` gate the differential harnesses turn off.
-pub mod compat;
-
-/// The XML reader and its arena. Ruby-free and Lexbor-free.
-pub mod xml;
-
-/// The XPath 1.0 engine, generic over a `Dom` trait. The XML instance needs
-/// nothing else; the HTML instance is gated on `lexbor` inside the module.
-pub mod xpath;
 
 /// `Init_makiri` and the class hierarchy: the symbol Ruby looks up at require
 /// time, and the one export the extension publishes.
-#[cfg(feature = "ruby")]
 pub mod init;
-
-// These tests deliberately use the Ruby- and Lexbor-free feature set.  Kani
-// proves bounded symbolic properties in a separate job; this module gives the
-// normal Rust test runner exhaustive small-domain and boundary-value coverage
-// on every representative CI build.
-#[cfg(test)]
-mod rust_tests;
-
-/// The HTML parser conformance harness: a parser-neutral DOM tree, the
-/// html5lib formats, and the classified known divergences.
-#[cfg(test)]
-pub mod conformance;

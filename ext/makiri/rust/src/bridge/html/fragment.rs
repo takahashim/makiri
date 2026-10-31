@@ -21,7 +21,7 @@ use crate::bridge::string::{ruby_verified_text, HtmlSource};
 use crate::bridge::wrapper::{doc_known, html_doc_check, html_read, new_html_document, DocHandle};
 pub use crate::html_dom::fragment::FragmentTag;
 use crate::html_dom::fragment::{FragmentContext, FragmentError, TransientFragment};
-use crate::html_dom::html::{HtmlDoc, HtmlDocMut, HtmlNode, HtmlNodeKey, Place, RawNode};
+use crate::html_dom::html::{Detached, HtmlDoc, HtmlDocMut, HtmlNode, HtmlNodeKey, Place, RawNode};
 use crate::html_dom::post_parse::parse_html;
 pub use crate::html_dom::tree_guard::ParseLimits;
 use crate::init::CLASS_NODE;
@@ -167,31 +167,15 @@ pub fn stage_fragment_in(
     context: RawNode,
     src: &HtmlSource,
 ) -> Result<RawNode, Error> {
-    let Some(staged) = d.create_fragment() else {
-        return Err(makiri_error("failed to create document fragment"));
-    };
-    import_into(d, context, staged, src)?;
-    Ok(staged)
-}
-
-/// Parse `html` in the context of the element `context` and import the result
-/// into the DETACHED fragment `into`. Nothing in `into` is cleared first: on a
-/// failure it is left as it was (a parse failure) or partly filled (an import
-/// failure), and the caller only places it once this returned `Ok`.
-fn import_into(
-    d: &mut HtmlDocMut<'_>,
-    context: RawNode,
-    into: RawNode,
-    src: &HtmlSource,
-) -> Result<(), Error> {
     /* The setters take no keyword, so they parse under the default limit, as
      * Nokogiri's do. */
     let context = FragmentContext::element(d.read(), context)
         .map_err(|e| fragment_error(e, ParseLimits::DEFAULT))?;
     let parsed = parse(src, &context, ParseLimits::DEFAULT)?;
     parsed
-        .import_into_doc(&mut d.new_nodes(), into)
-        .map_err(|_| makiri_error("failed to import a fragment child"))
+        .import_into_fragment(&mut d.new_nodes())
+        .map(Detached::raw)
+        .map_err(|_| makiri_error("failed to import a fragment"))
 }
 
 /// The WHATWG `template.innerHTML = html`: parse `html` in the TEMPLATE
@@ -240,14 +224,9 @@ pub fn build_fragment(
     let parsed = parse(&src, &context, limit)?;
 
     let frag = crate::bridge::html::new_node(ruby, &document, |d| {
-        let Some(frag) = d.create_fragment() else {
-            return Err(makiri_error("failed to create document fragment"));
-        };
-        parsed
-            .import_into_doc(d, frag)
-            .map_err(|_| makiri_error("failed to import a fragment child"))?;
-        Ok(frag)
-    })??;
+        parsed.import_into_fragment(d).map(Detached::raw)
+    })?
+    .map_err(|_| makiri_error("failed to import a fragment"))?;
     /* Released before the wrap, which can raise (NoMemoryError) past this
      * frame: the source copy would leak with it, and so would the context's
      * namespace URI (`FragNs::Uri`, a context node of another document). */

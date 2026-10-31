@@ -1,4 +1,4 @@
-//! Verus proofs over `src/ptr_table.rs`: linear probing always stops, the
+//! Verus proofs over `engine/src/ptr_table.rs`: linear probing always stops, the
 //! tables keep the free slot that makes it stop, and each table is the map
 //! it stands for - `get` answers what was put, and only that.
 //!
@@ -713,7 +713,7 @@ fn lookup<K: TableKey + PartialEqSpec, V: Copy>(slots: &[(K, V)], key: K) -> (r:
 pub mod falloc {
     use vstd::prelude::*;
 
-    /// `src/falloc/mod.rs`'s, by its contract: `len` copies of `value`.
+    /// `falloc/src/lib.rs`'s, by its contract: `len` copies of `value`.
     #[verifier::external_body]
     pub fn try_vec_filled<T: Copy>(len: usize, value: T) -> (r: Option<Vec<T>>)
         ensures
@@ -788,7 +788,7 @@ impl<K: TableKey + PartialEqSpec, V: Copy> PtrTable<K, V> {
         let mut slots = Vec::new();
         if keys > 0 {
             let cap = capacity_for(keys)?;
-            slots = crate::falloc::try_vec_filled(cap, (K::EMPTY, empty))?;
+            slots = falloc::try_vec_filled(cap, (K::EMPTY, empty))?;
             // [canary]
             assert(occ(slots@) =~= Set::<int>::empty()); // [verus]
         }
@@ -1035,7 +1035,7 @@ impl<K: TableKey + PartialEqSpec, V: Copy + Default> PtrMap<K, V> {
             } // [verus]
         } // [verus]
         let mut slots: Vec<(K, V)> =
-            crate::falloc::try_vec_filled(cap, (K::EMPTY, V::default())).or_oom()?;
+            falloc::try_vec_filled(cap, (K::EMPTY, V::default())).or_oom()?;
         assert(occ(slots@) =~= Set::<int>::empty()); // [verus]
         proof { lemma_all_empty(slots@); lemma_view_below_ends(self.slots@); } // [verus]
         for &(k, v) in
