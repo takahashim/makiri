@@ -128,7 +128,7 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
     if let Some(enc) = to_enc {
         /* Text already UTF-8 or US-ASCII needs no transcode; anything else
          * writes what it has no form for as a character reference. */
-        if !enc.is_utf8_or_ascii(ruby) {
+        if !enc.is_utf8_or_ascii() {
             str = enc.encode(str, crate::nupur::encoding::Unconvertible::HexCharRef)?;
         }
     }

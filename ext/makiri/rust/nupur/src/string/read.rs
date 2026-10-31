@@ -5,10 +5,7 @@
 
 #![allow(unsafe_code)]
 
-use core::ffi::c_int;
-
 use crate::encoding::{Encoding, Unconvertible};
-use crate::rb::value::AsRawValue;
 use crate::rb::{Error, RString, Ruby};
 
 /// [`RString::append_to`]'s refusal: the buffer had too little spare room.
@@ -67,37 +64,6 @@ impl RString {
     /// `Node#[]` ~13%.
     pub fn reads_as_utf8_bytes(self) -> bool {
         crate::encoding::reads_as_utf8_index(self.encoding_index())
-    }
-
-    /// The String's encoding index, read from its flags where Ruby keeps it
-    /// inline (every encoding below `RUBY_ENCODING_INLINE_MAX`), and looked
-    /// up only past that.
-    #[inline]
-    #[cfg_attr(
-        dylint_lib = "makiri_lints",
-        allow(
-            raising_call_outside_protect,
-            reason = "rb_enc_get_index raises for a File or a Symbol, as rb_enc_get; `s` is a String, and a String's index is an ivar read when it is not inline"
-        )
-    )]
-    fn encoding_index(self) -> c_int {
-        use rb_sys::ruby_encoding_consts::{
-            RUBY_ENCODING_INLINE_MAX, RUBY_ENCODING_MASK, RUBY_ENCODING_SHIFT,
-        };
-        // SAFETY: `self` is a live String - a heap object, whose flags word is
-        // the first field of its `RBasic` and readable; reading it runs no Ruby.
-        let flags = unsafe { (*(self.as_raw() as *const rb_sys::RBasic)).flags };
-        /* Seven bits, which a `c_int` holds. */
-        let bits =
-            (crate::int::word(flags) & RUBY_ENCODING_MASK as usize) >> RUBY_ENCODING_SHIFT as u32;
-        let inline = c_int::try_from(bits).unwrap_or(c_int::MAX);
-        if inline == RUBY_ENCODING_INLINE_MAX as c_int {
-            // SAFETY: as above; the lookup reads an instance variable and
-            // raises nothing.
-            unsafe { rb_sys::rb_enc_get_index(self.as_raw()) }
-        } else {
-            inline
-        }
     }
 
     /// Whether Ruby already knows this String to be valid UTF-8, from its

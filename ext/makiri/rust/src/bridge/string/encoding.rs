@@ -52,13 +52,12 @@ pub(in crate::bridge) fn claims_no_encoding(tag: Encoding) -> bool {
 /// an encoding of a kind other than binary, UTF-8 and US-ASCII is asked its
 /// name.
 pub(in crate::bridge) fn encoding_kind(
-    ruby: &crate::bridge::rb::Ruby,
     enc: Encoding,
 ) -> crate::html::encoding::StringEncoding<'static> {
     use crate::html::encoding::StringEncoding;
     if claims_no_encoding(enc) {
         StringEncoding::Binary
-    } else if enc.is_utf8_or_ascii(ruby) {
+    } else if enc.is_utf8_or_ascii() {
         StringEncoding::Utf8
     } else {
         StringEncoding::Named(enc.name())
