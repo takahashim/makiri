@@ -52,6 +52,9 @@ pub mod node_set;
 /// `#xpath` / `#at_xpath` for both representations, and the query path.
 pub mod query;
 
+/// A `{prefix => uri}` Hash, as XPath and CSS both read one.
+pub mod namespaces;
+
 /// `Makiri::XPathContext`.
 pub mod xpath_context;
 
