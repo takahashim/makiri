@@ -34,7 +34,6 @@ use crate::init::CLASS_HTML_DOCUMENT;
  * the DOM node types                                                 *
  * ------------------------------------------------------------------ */
 
-use crate::glue::html_doc::node_clone_node;
 use crate::glue::node::{
     child_at, child_count, element_child_at, element_child_count, node_equals, node_hash,
     node_pointer_id,
@@ -130,7 +129,6 @@ fn init_read(ruby: &Ruby) -> Result<(), Error> {
     m.define_method("eql?", method!(node_equals, 1))?;
     m.define_method("hash", method!(node_hash, 0))?;
     m.define_method("pointer_id", method!(node_pointer_id, 0))?;
-    m.define_method("clone_node", method!(node_clone_node, -1))?;
 
     m.define_method("<=>", method!(read::spaceship, 1))?;
 
@@ -165,6 +163,7 @@ fn init_mutate(ruby: &Ruby) -> Result<(), Error> {
         m.define_method(name, method!(mutate::remove, 0))?;
     }
     m.define_method("replace", method!(mutate::replace, 1))?;
+    m.define_method("clone_node", method!(mutate::clone_node, -1))?;
 
     m.define_method("inner_html=", method!(mutate::set_inner_html, 1))?;
     m.define_method("outer_html=", method!(mutate::set_outer_html, 1))?;

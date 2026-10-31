@@ -195,15 +195,6 @@ fn doc_import_node(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, E
     crate::bridge::html::document::import_node(ruby, self_, a.required(0), deep)
 }
 
-/// `Node#clone_node(deep = false)`: a copy owned by the same document and
-/// detached from any parent - the DOM cloneNode, whose `deep` defaults to false.
-pub fn node_clone_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
-    let a = crate::bridge::args::scan(ruby, args, crate::bridge::args::Shape::positional(0, 1))?;
-    /* Truthiness: anything but nil and false. */
-    let deep = a.optional(0).is_some_and(|v| v.to_bool());
-    crate::bridge::html::document::clone_node(ruby, rb_self, deep)
-}
-
 /* ---- registration ---- */
 
 /// The HTML Document surface. From `Init_makiri`, after the classes exist.
