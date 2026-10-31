@@ -37,13 +37,16 @@ pub mod kwargs;
 /// `Makiri::Lexbor::CSS.parse_stylesheet` - the Ruby half of `selectors::stylesheet`.
 pub mod stylesheet;
 
-/// What a rejected CSS selector raises, for both representations.
+/// What both representations' `#css` / `#at_css` / `#matches?` share: the
+/// argument list, the compile and the run ([`css::CssQuery`]), and what a
+/// failure raises.
 pub mod css;
 
 /// `Makiri::HTML::Document` and the HTML fragment entry points.
 pub mod html_doc;
 
-/// The identity methods (`==`, `hash`, `pointer_id`) both representations share.
+/// The node methods both representations share: identity (`==`, `hash`,
+/// `pointer_id`), the child-list readers and the Document's edit versions.
 pub mod node;
 
 /// The DOM's naming rules, as both representations' factories raise them.

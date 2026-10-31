@@ -42,8 +42,9 @@ use crate::rb::{Error, Value};
 use rb_sys::{rb_data_type_t, VALUE};
 
 /// A `Value` from a raw handle this module holds - a slot, or what a wrap
-/// returned. With `raw.rs`, the only place a raw `VALUE` becomes a `Value`
-/// (`rake dylint`'s `raw_ruby_outside_bridge`).
+/// returned. With `raw/` and the `rb` files that are the typed values, the
+/// only places a raw `VALUE` becomes a `Value` (`rake dylint`'s
+/// `raw_ruby_outside_bridge`).
 ///
 /// # Safety
 /// `raw` is a live Ruby value of the current process, kept rooted by the

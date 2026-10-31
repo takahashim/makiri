@@ -50,7 +50,8 @@
 //! `bool` and Makiri's receiver types, so such a method does not compile.)
 //!
 //! `rake dylint` runs them all, then their self-test (`src/lint_probe.rs`
-//! in the extension crate).
+//! in the extension crate, `nupur/src/lint_probe.rs` in the layer: each
+//! line ending in `//~` reported by exactly the lints named after it).
 
 extern crate rustc_hir;
 extern crate rustc_lint;

@@ -112,7 +112,7 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
   end
 
   # C34: `:lang()` takes language ranges (identifiers or strings) and matches by
-  # extended filtering over the nearest `lang` (`xml:lang` in XML).
+  # extended filtering over the nearest `xml:lang` or `lang`.
   it "matches :lang() by the nearest lang, with extended filtering" do
     doc = Makiri::HTML('<div id=a lang="en-US"><p id=p1>x</p><p id=p2 lang="fr">y</p>' \
                        '<p id=p3 lang="">z</p><i id=s lang="zh-Hant-TW">w</i></div><p id=p4>n</p>')
@@ -131,6 +131,11 @@ RSpec.describe "CSS Syntax 3 and Selectors 4 steps the CSS parser follows" do
     xml = Makiri::XML('<r xml:lang="en"><a/><b xml:lang="fr"/></r>')
     expect(xml.css(":lang(en)").map(&:name)).to eq(%w[r a])
     expect(xml.css(":lang(fr)").map(&:name)).to eq(%w[b])
+    # In HTML, the XML namespace's xml:lang (which the parser puts on foreign
+    # elements) comes before lang, as the HTML Standard's language of a node.
+    svg = Makiri::HTML('<p lang="en"><svg xml:lang="fr"><text>t</text></svg></p>')
+    expect(svg.css("text:lang(fr)").length).to eq(1)
+    expect(svg.css("text:lang(en)")).to be_empty
   end
 
   it "writes :lang()'s ranges back" do

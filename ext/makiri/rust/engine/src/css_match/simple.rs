@@ -345,13 +345,14 @@ pub(super) fn check_simple<'d, N: CssNode<'d>>(
         Simple::PseudoClassFunction(FunctionArg::Contains | FunctionArg::Current(_)) => {
             return Err(MatchFailure::Unsupported)
         }
-        // Any OTHER functional pseudo-class (`:dir()`, `:lang()`, `:nth-col()`,
+        // `:lang()`, which Lexbor's parser refuses (`docs/parser_differences.ja.md`).
+        Simple::PseudoClassFunction(FunctionArg::Lang(ranges)) => {
+            SimpleCheck::Result(lang_matches(node, ranges, env.budget)?)
+        }
+        // Any OTHER functional pseudo-class (`:dir()`, `:nth-col()`,
         // `:nth-last-col()`) is unimplemented in LEXBOR TOO
         // (`lxb_selectors_pseudo_class_function`'s `default:` case) - a real,
         // agreed "always false", not a gap this port introduces.
-        Simple::PseudoClassFunction(FunctionArg::Lang(ranges)) => {
-            SimpleCheck::Result(lang_matches(node, ranges))
-        }
         Simple::PseudoClassFunction(FunctionArg::Other) => SimpleCheck::Result(false),
         Simple::PseudoElement | Simple::Other => SimpleCheck::Result(false),
     })

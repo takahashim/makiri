@@ -90,6 +90,17 @@ RSpec.describe "Cost proportional to input", :timing do
       expect(Makiri::Lexbor::CSS.parse_stylesheet(sheet).last[:selector_text]).to eq("a:lexbor-contains(1 2)")
     end
 
+    # A value opening with a {}-block is read to the block's end to decide
+    # whether it is a declaration, and blocks nested that way read the rest
+    # of the sheet once each: 36 KB took 1.4 s. A block after another
+    # component is decided without reading it, and the rest is charged.
+    it "stays linear in rules nested in declaration-like preludes" do
+      ["a:b{", "a:{", "a:{}b{"].each do |unit|
+        sheet = "x{#{unit * 32_000}"
+        expect(elapsed { Makiri::Lexbor::CSS.parse_stylesheet(sheet) }).to be < 1.0
+      end
+    end
+
     it "shows a declaration value as written, not with the guard's rewrite" do
       sheet = "a{--x: :lexbor-contains(1 2); background: url(x:lexbor-contains(1 2))}"
       values = Makiri::Lexbor::CSS.parse_stylesheet(sheet).first[:declarations].map { |d| d[:value] }
@@ -147,6 +158,11 @@ RSpec.describe "Cost proportional to input", :timing do
         took = elapsed { expect { nested.xpath(expr) }.to raise_error(Makiri::XPath::LimitExceeded) }
         expect(took).to be < 5.0
       end
+    end
+
+    it "stops :lang()'s ancestor climb, per candidate" do
+      took = elapsed { expect { nested.css("span:lang(en)") }.to raise_error(Makiri::Error, /work budget/) }
+      expect(took).to be < 5.0
     end
 
     # Counting preceding siblings per candidate was n^2 over a flat list: 40k
