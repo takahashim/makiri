@@ -96,7 +96,7 @@ UNSAFE_ISLANDS = {
   "nupur/typed/callbacks.rs" => 10,
   "nupur/typed/data_type.rs" => 12,
   "nupur/typed/external.rs" => 1,
-  "nupur/typed/mod.rs" => 11,
+  "nupur/typed/mod.rs" => 13,
   "nupur/utf8_copy.rs" => 1,
 }.freeze
 

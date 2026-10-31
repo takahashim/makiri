@@ -12,7 +12,7 @@ use crate::bridge::ruby::{internal_error, makiri_error};
 
 use super::*;
 use crate::bridge::dom::{Body, Conflict, HtmlRead, HtmlWrite, XmlRead, XmlWrite};
-use crate::bridge::typed::{Payload, TypedType};
+use crate::bridge::typed::{Birth, Payload, TypedType};
 use crate::child_index::ChildPositionMemo;
 use crate::html_dom::post_parse::HtmlParsed;
 use crate::token::Kind;
@@ -282,16 +282,18 @@ fn new_document(
     let nodes = crate::nupur::table::IntTable::new_hidden(ruby)?;
     ty.wrap_hidden(
         ruby,
-        klass,
-        DocData {
-            content: OnceCell::new(),
-            edits: Cell::new(EditState::default()),
-            external: crate::bridge::typed::External::new(),
-            chunks: Cell::new(0),
-            child_memo: RefCell::new(ChildPositionMemo::default()),
-            stamp: Cell::new(0),
+        Birth {
+            klass,
+            data: DocData {
+                content: OnceCell::new(),
+                edits: Cell::new(EditState::default()),
+                external: crate::bridge::typed::External::new(),
+                chunks: Cell::new(0),
+                child_memo: RefCell::new(ChildPositionMemo::default()),
+                stamp: Cell::new(0),
+            },
+            roots: [nodes],
         },
-        [nodes],
         /* Written before it is hidden, and a failure hides it all the
          * same: no content-less Document is left where `ObjectSpace`
          * lists it. */

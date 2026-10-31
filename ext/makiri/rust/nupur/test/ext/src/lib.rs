@@ -10,7 +10,7 @@ use nupur::rb::{
     prelude::*, Builtin, DataClass, Error, ExceptionClass, RArray, RHash, RbConst, Ruby, Value,
 };
 use nupur::string::{ReadError, Transcode};
-use nupur::typed::{Payload, TypedType};
+use nupur::typed::{Birth, Payload, TypedType};
 use nupur::{function, method};
 
 /* ---- a wrapped object with a slot ---- */
@@ -30,11 +30,13 @@ fn holder_new(ruby: &Ruby, v: Value) -> Result<Value, Error> {
     let class = HOLDER_CLASS.defined(ruby)?;
     let made = HOLDER.wrap(
         ruby,
-        class,
-        Holder {
-            bumps: Cell::new(0),
+        Birth {
+            klass: class,
+            data: Holder {
+                bumps: Cell::new(0),
+            },
+            roots: [v],
         },
-        [v],
     )?;
     Ok(made.value())
 }

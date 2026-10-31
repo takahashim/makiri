@@ -114,7 +114,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   owns** (`bridge::typed`, i.e. `nupur::typed`). An object's data is an
   envelope: the payload `T` (a `Payload`, which holds no Ruby value at all)
   and `N` slots (`TypedType<T, N>`, `EmbeddedType<T, N>`), written by
-  `wrap(ruby, klass, data, roots)` in the same step, right after the
+  `wrap(ruby, Birth { klass, data, roots })` in the same step, right after the
   object's allocation and with nothing run between - the roots were on the
   caller's stack through it, where the stack scan pins them - and never
   written again. The mark callback marks every slot PINNED in a fixed loop,
