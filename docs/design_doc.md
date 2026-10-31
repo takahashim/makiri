@@ -1,5 +1,8 @@
 # Makiri Design Document
 
+This is the English version of the design document; the Japanese version,
+`docs/design_doc.ja.md`, is authoritative.
+
 ## 1. Basic Policy
 
 ### Goals
@@ -31,8 +34,11 @@
 
 ### Things We Intentionally Avoid
 
-* Forking Lexbor. Bugs should be handled in our adapter layer where possible and reported upstream.
-* Treating libxml2 compatibility as the main goal. When behavior conflicts with HTML5 or XPath specifications, Makiri follows the specification and documents the difference.
+* Forking Lexbor. Makiri handles bugs in its adapter layer where possible and
+  reports them upstream.
+* Treating libxml2 compatibility as the main goal. When behavior conflicts
+  with HTML5 or XPath specifications, Makiri follows the specification and
+  documents the difference.
 
 ## 2. Ruby API Surface
 
@@ -65,11 +71,12 @@ Makiri::XPathContext
 Makiri::XML::Builder
 ```
 
-Node class names follow WHATWG DOM interface names. Nokogiri-compatible names such as `CDATA` and `DTD` are aliases.
+Node class names follow WHATWG DOM interface names. Nokogiri-compatible names
+such as `CDATA` and `DTD` are aliases. Common methods include navigation,
+XPath, CSS selectors, text access, serialization, mutation, and source
+location.
 
-Common methods include navigation, XPath, CSS selectors, text access, serialization, mutation, and source location.
-
-Input errors are subclasses of `Makiri::Error`.
+Input errors are subclasses of `Makiri::Error`:
 
 ```text
 Makiri::Error
@@ -82,13 +89,15 @@ Makiri::Error
 Makiri::InternalError
 ```
 
-`InternalError` is separate from `StandardError` because it represents an internal invariant failure, not a normal input error.
+`InternalError` is separate from `StandardError` because it represents an
+internal invariant failure, not a normal input error.
 
-`XPathContext` caches parsed XPath expressions. XPath evaluation keeps the GVL, so operations on the same context and document are serialized.
+`XPathContext` caches parsed XPath expressions. XPath evaluation keeps the
+GVL, so operations on the same context and document are serialized.
 
 ## 3. UTF-8 Text-Input Contract
 
-Makiri uses UTF-8 internally.
+Makiri uses UTF-8 internally, and treats input in one of two ways.
 
 HTML parsing and fragment parsing are lenient:
 
@@ -101,33 +110,40 @@ Program APIs are strict:
 * invalid input raises `Makiri::Error`
 * Makiri does not silently repair API input
 
-NUL is rejected in names, namespaces, selectors, XPath expressions, and engine input.
-
-HTML text, comments, and attribute values may contain NUL when DOM behavior requires it.
-
-XML always rejects NUL.
+NUL is rejected in names, namespaces, selectors, XPath expressions, and
+engine input. HTML text, comments, and attribute values may contain NUL when
+DOM behavior requires it. XML always rejects NUL.
 
 ## 4. Memory Model
 
 - DOM nodes are allocated in a document-level arena.
-- Removing a node only detaches it. It does not destroy the node while Ruby wrappers may still reference it.
+- Removing a node only detaches it. It does not destroy the node while Ruby
+  wrappers may still reference it.
 - Ruby wrappers keep their document alive.
-- Indexes and caches belong to the document and are invalidated after mutation.
-- Temporary XPath caches belong to one evaluation so nested evaluations cannot affect outer evaluations.
-- Allocation failure in the engine must become an error instead of calling `abort`.
+- Indexes and caches belong to the document and are invalidated after
+  mutation.
+- Temporary XPath caches belong to one evaluation so nested evaluations
+  cannot affect outer evaluations.
+- Allocation failure in the engine must become an error instead of calling
+  `abort`.
 - Parsing releases the GVL after copying input outside the Ruby heap.
-- XPath, CSS, serialization, and normal DOM access keep the GVL to prevent unsafe concurrent access.
+- XPath, CSS, serialization, and normal DOM access keep the GVL to prevent
+  unsafe concurrent access.
 - Memory safety is tested with `GC.stress` and GC compaction.
 
 ## 5. Build System
 
 - Build decisions are managed in one configure step.
 - Lexbor is used without local patches or forks.
-- Prefer release tags. Use a commit pin only when Makiri needs an unreleased upstream fix.
-- Generate Lexbor structure information and constants from upstream headers instead of copying them manually.
-- The extension should export only the symbols required by Ruby. Lexbor symbols must not be re-exported.
+- Prefer release tags. Use a commit pin only when Makiri needs an unreleased
+  upstream fix.
+- Generate Lexbor structure information and constants from upstream headers
+  instead of copying them manually.
+- The extension should export only the symbols required by Ruby. Lexbor
+  symbols must not be re-exported.
 - Allocation APIs that abort are not allowed.
-- Platform-specific optimizations are enabled only when they work on that toolchain and benchmarks show a real improvement.
+- Platform-specific optimizations are enabled only when they work on that
+  toolchain and benchmarks show a real improvement.
 
 ## 6. Testing
 
@@ -154,13 +170,12 @@ rake fuzz
 rake fuzz:sanitize
 ```
 
-Generate and mutate XPath and CSS expressions.
+The fuzzer generates and mutates XPath and CSS expressions. Invalid input must
+not cause crashes, hangs, or unexpected foreign exceptions.
 
-Invalid input must not cause crashes, hangs, or unexpected foreign exceptions.
-
-Nokogiri is not used as a general oracle because Lexbor and libxml2 have different HTML5 semantics.
-
-Known differences are instead recorded in curated specs.
+Nokogiri is not used as a general oracle, because Lexbor and libxml2 have
+different HTML5 semantics. Known differences are recorded in curated specs
+instead.
 
 ### 6.3 Property / Differential (`spec/invariants/`, `spec/differential/`)
 
@@ -172,38 +187,31 @@ Check invariants such as:
 * serialization
 * text-input rules
 
-Also compare results against a fixed historical baseline.
-
-Do not regenerate the baseline automatically. Intentional changes must update it in the same commit.
+Also compare results against a fixed historical baseline. Do not regenerate
+the baseline automatically; an intentional change updates it in the same
+commit.
 
 ### 6.4 Memory Safety and Resources
 
-Run specs and fuzzing with AddressSanitizer.
-
-Use separate leak tests.
-
-Inject allocation failures to test every OOM path.
-
-Core components that do not depend on Ruby may also use formal verification.
+* Run specs and fuzzing with AddressSanitizer.
+* Use separate leak tests.
+* Inject allocation failures to test every OOM path.
+* Core components that do not depend on Ruby may also use formal verification.
 
 ### 6.5 Performance (`bench/`)
 
-Use `rake bench` to compare Makiri with Nokogiri.
-
-Keep an optimization only when benchmarks improve and all normal, fuzz, and sanitizer tests still pass.
+Use `rake bench` to compare Makiri with Nokogiri. Keep an optimization only
+when benchmarks improve and all normal, fuzz, and sanitizer tests still pass.
 
 ### 6.6 CI
 
-Run GitHub Actions across supported Ruby versions and operating systems.
-
-Run sanitizer tests on Linux.
+Run GitHub Actions across supported Ruby versions and operating systems. Run
+sanitizer tests on Linux.
 
 ## 7. Compatibility Considerations
 
-Lexbor follows HTML5 behavior more closely than libxml2 in some areas.
-
+Lexbor follows HTML5 behavior more closely than libxml2 in some areas, and
 Makiri follows specifications even when the result differs from Nokogiri.
-
 Important differences include:
 
 | Item                     | Makiri              | Nokogiri / Browser        |
@@ -219,7 +227,8 @@ Important differences include:
 
 Known differences are recorded in curated conformance tests.
 
-Some behavior, such as HTML name case folding and handling of `xmlns`, is still under review.
+Some behavior, such as HTML name case folding and the handling of `xmlns`, is
+still under review.
 
 ## 8. Design Decision Notes
 
@@ -229,20 +238,26 @@ These decisions may change later.
 * Node identity is based on the underlying node, not the Ruby wrapper.
 * XPath evaluation keeps the GVL.
 
-Earlier versions released the GVL during XPath evaluation and achieved better parallel performance.
+### XPath and the GVL
 
-However, XPath evaluation could then race with DOM mutation or concurrent changes to the same `XPathContext`, causing memory corruption.
+Earlier versions released the GVL during XPath evaluation and achieved better
+parallel performance. However, XPath evaluation could then race with DOM
+mutation or concurrent changes to the same `XPathContext`, causing memory
+corruption.
 
-Using the GVL gives a simpler safety rule. Parsing still releases the GVL and remains parallel.
+Keeping the GVL gives a simpler safety rule, and parsing still releases the
+GVL and remains parallel. Do not reintroduce GVL-free XPath evaluation until
+proper document and context locking exists.
 
-Do not reintroduce GVL-free XPath evaluation until proper document and context locking exists.
+### Lenient parsing, strict APIs
 
 Input handling also follows a clear rule:
 
 * parsing is lenient
 * program APIs are strict
 
-HTML parsing repairs invalid byte sequences. XPath, CSS, names, and other control inputs must be valid.
+HTML parsing repairs invalid byte sequences. XPath, CSS, names, and other
+control inputs must be valid.
 
 ## 9. Migration from Nokogiri (Unofficial)
 
@@ -264,6 +279,6 @@ doc = Makiri::HTML(source)
 doc.css('.foo').map(&:text)
 ```
 
-The goal is for about 90% of common HTML scraping code to work with a simple `Nokogiri` → `Makiri` replacement.
-
-The remaining differences mainly come from HTML5 conformance and Makiri's stricter input rules.
+The goal is for about 90% of common HTML scraping code to work with a simple
+`Nokogiri` → `Makiri` replacement. The remaining differences mainly come from
+HTML5 conformance and Makiri's stricter input rules.
