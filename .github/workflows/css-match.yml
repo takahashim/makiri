@@ -79,8 +79,8 @@ jobs:
 
       # The targets and tests here compare against Lexbor: build.rs links the
       # reference Lexbor `rake lexbor` builds and reads its headers.
-      - name: Compile the extension and the reference Lexbor
-        run: bundle exec rake compile lexbor
+      - name: Build the reference Lexbor
+        run: bundle exec rake lexbor
 
       # Release: the sweep is the point, and debug is ~10x slower. The seed is
       # fresh per run, so a long series covers new ground; it is printed here
@@ -127,8 +127,8 @@ jobs:
           ruby-version: "3.4"
           bundler-cache: true
 
-      - name: Compile the extension and the reference Lexbor
-        run: bundle exec rake compile lexbor
+      - name: Build the reference Lexbor
+        run: bundle exec rake lexbor
 
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked

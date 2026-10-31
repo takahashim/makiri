@@ -54,8 +54,8 @@ jobs:
 
       # The targets need the reference Lexbor `rake lexbor` builds - the crate's
       # build.rs links the archive and generates bindings from the headers.
-      - name: Compile the extension and the reference Lexbor
-        run: bundle exec rake compile lexbor
+      - name: Build the reference Lexbor
+        run: bundle exec rake lexbor
 
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
@@ -153,8 +153,8 @@ jobs:
           ruby-version: "3.4"
           bundler-cache: true
 
-      - name: Compile the extension and the reference Lexbor
-        run: bundle exec rake compile lexbor
+      - name: Build the reference Lexbor
+        run: bundle exec rake lexbor
 
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
