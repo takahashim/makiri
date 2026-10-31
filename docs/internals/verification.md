@@ -63,8 +63,8 @@ gems are published per platform, so most users never compile.
 ## Tests
 
 - `rake rust:test` runs the tests of the engine (bare and as shipped), falloc,
-  nupur and the Lexbor reference, and the fuzz-crate check.
-- `rake nupur:spec` tests nupur alone, through its test extension
+  Nupur and the Lexbor reference, and the fuzz-crate check.
+- `rake nupur:spec` tests Nupur alone, through its test extension
   (`nupur/test/ext`, a cdylib over the layer and nothing of Makiri's) and the
   specs beside it: trampolines, panics, exits, slots under GC, checked String
   reads, arguments.
@@ -72,8 +72,8 @@ gems are published per platform, so most users never compile.
 ## Lints and dependency checks
 
 `rake lint` runs `cargo clippy -D warnings` over every crate and configuration
-(the workspace, the engine bare and as shipped, the reference, nupur's test
-extension, the fuzz crate), plus fmt and nupur's rustdoc with `-D warnings`.
+(the workspace, the engine bare and as shipped, the reference, Nupur's test
+extension, the fuzz crate), plus fmt and Nupur's rustdoc with `-D warnings`.
 
 ### `rake dylint`
 
@@ -95,9 +95,9 @@ reason. The lints:
   `.ok()` / `.unwrap_or*` / `.is_ok()` / `let _ =` / `let _name =` / an
   Ok-only or `Err(_)` pattern / a `map_err(|_| ..)` / `drop`. It is FORBIDDEN
   in the extension, so no allow: handle the error with `Error::rescue`, which
-  hands every throw/break/kill back. nupur denies it; its drops are
+  hands every throw/break/kill back. Nupur denies it; its drops are
   `describe::for_message` and the `yield_dropping_error_for_test` hook.
-- `ffi_without_gvl_proof` (in nupur): a safe fn calling `rb_sys::` whose
+- `ffi_without_gvl_proof` (in Nupur): a safe fn calling `rb_sys::` whose
   signature holds no `&Ruby`, Ruby value or handle made from one. `extern "C"`
   entries and unsafe fns are exempt.
 - `c_integer_outside_int`: an integer `as` or a named `c_long` at the Ruby
@@ -125,7 +125,7 @@ advisory that does not apply is ignored in `deny.toml` with its reason.
 
 `rake symbols` is THE export gate. `rake no_unwind` is a release build
 proving that no `extern "C"` fn or GC-run `Drop` can unwind
-(`nupur/src/no_unwind.rs` for nupur's sites, `engine/src/no_unwind.rs` for
+(`nupur/src/no_unwind.rs` for Nupur's sites, `engine/src/no_unwind.rs` for
 the engine's). `ruby_boundary.md` explains both.
 
 ## `rake diff` and the C baseline
@@ -194,7 +194,7 @@ baseline-identical result); the sweep then reuses the same document/context
 after `GC.compact`.
 
 The raise sweep follows (`script/check_raise_injection.rb`). Each allocating C
-call of nupur's `raw/` raises `NoMemoryError` in turn, and no document may be
+call of Nupur's `raw/` raises `NoMemoryError` in turn, and no document may be
 left borrowed (`Makiri.__borrowed?`) or unusable. This is the runtime check of
 the guards-across-raises rule.
 
@@ -207,8 +207,8 @@ normal build.
 ### `rake miri`
 
 `rake miri` runs the tests of the Ruby-free unsafe code - the falloc crate,
-with nupur's `utf8_copy` - under Miri with strict provenance (nightly + miri;
-CI: `verify.yml`). `utf8_copy` is nupur's and std-only; falloc's test build
+with Nupur's `utf8_copy` - under Miri with strict provenance (nightly + miri;
+CI: `verify.yml`). `utf8_copy` is Nupur's and std-only; falloc's test build
 includes it through `#[path]`.
 
 ### `rake verus`

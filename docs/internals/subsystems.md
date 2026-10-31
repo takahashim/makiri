@@ -55,7 +55,7 @@ fragment **never fail** on bad bytes, and the DOM is always valid UTF-8.
 The validation is a dedicated validate-only scan (Unicode well-formed table
 plus word-at-a-time ASCII). It is skipped entirely when the String's cached
 coderange (read via `ENC_CODERANGE`, no forced scan) already proves it
-valid: `parse_html`'s `assume_valid` and `RString::known_utf8` (nupur).
+valid: `parse_html`'s `assume_valid` and `RString::known_utf8` (Nupur).
 
 ### Strict programmatic inputs
 

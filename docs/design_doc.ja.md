@@ -405,7 +405,7 @@ CSS/serialize/読み取りアクセサも GVL を保持する。`spec/threading_
   - GVL を鍵にした cell (`gvl` の `GvlCell`) は参照実装に置き、出荷する
     ビルドには入らない。C の callback の中で panic を捕まえる latch
     (`caught::PanicLatch`) は、参照実装が Lexbor の callback のために自分の
-    ものを持ち、出荷するビルドでは nupur のもの (`nupur::caught`) を GVL を
+    ものを持ち、出荷するビルドでは Nupur のもの (`nupur::caught`) を GVL を
     外した処理と `rb_hash_foreach` の callback が使う。
   - 参照実装のテストが使うエンジンの内部 (Lexbor のとおりに動かす切り替え、
     適合テストの harness、tokenizer の追跡付きの実行など) は、エンジンの
