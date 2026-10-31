@@ -66,16 +66,18 @@ pub fn is_name_char(c: u32) -> bool {
 /// all rejected.
 ///
 /// Re-exported from `crate::utf8_decode` rather than written again here: there must be
-/// exactly ONE strict decoder of ours, and `verify::accepted_is_utf8`
-/// cross-checks it against `core::str::from_utf8` to keep it honest.
+/// exactly ONE strict decoder of ours, and `verus/utf8.rs` (against vstd's
+/// UTF-8) and `utf8_decode`'s exhaustive test (against `core::str::from_utf8`)
+/// keep it honest.
 pub use crate::utf8_decode::decode1;
 
 /// Every code point of `s` decodes strictly AND satisfies `ok`.
 ///
 /// The decode-then-classify loop, once. Deliberately still built on this
-/// module's own [`decode1`] rather than on `core::str::from_utf8`: `verify.rs`
-/// proves properties of THIS traversal, and routing it through the standard
-/// validator would make that proof a tautology.
+/// module's own [`decode1`] rather than on `core::str::from_utf8`:
+/// `verus/utf8.rs` proves THIS traversal (copied, with `validate_chars` and
+/// `is_char`) accepts only valid UTF-8, and routing it through the standard
+/// validator would leave nothing of ours to prove.
 #[inline]
 fn all_code_points(s: &[u8], ok: impl Fn(u32) -> bool) -> bool {
     let mut i = 0;

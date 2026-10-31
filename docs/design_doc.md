@@ -470,7 +470,7 @@ CSS, serialization and the read accessors hold the GVL too.
   (which re-exports the engine) rather than on the extension.
 * Features belong to each crate. The engine has `html-dom` (the default: the
   index-arena HTML DOM, CSS matching over it, and XPath's HTML instance;
-  without it the engine is the bare one Kani proves things about),
+  without it the engine is the bare one),
   `lexbor-compat` (the switch to run as Lexbor does, used only by the
   reference) and `alloc-inject` (OOM injection). `falloc` and `nupur` have
   `alloc-inject` too, and the extension's `alloc-inject` turns on all three.

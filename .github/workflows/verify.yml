@@ -1,19 +1,18 @@
 name: Verify
 
 on:
-  # A few minutes of proofs, over the Ruby-free engine only - so they run
-  # when that engine (or how it is built) changes, not on every push, and then
-  # only the groups whose code changed (see "Pick the proof groups").
+  # Proofs and exhaustive tests over the Ruby-free engine only - so they run
+  # when that engine (or how it is built) changes, not on every push.
   push:
     branches: [main, master]
-    paths: &kani-paths
-      # The proofs build the engine alone, with no feature: a change to the
-      # extension or the Lexbor reference cannot change a proof's outcome.
-      # Every engine module stays in, since the harnesses reach its shared
-      # modules (limits, text, ...), and so does falloc, which it allocates
-      # through. Two nupur files are checked here as well: Miri runs
-      # `utf8_copy` inside falloc's test build, and `rake verus:sync` holds
-      # `copy_small` in `string/make.rs` to the Verus proof.
+    paths: &verify-paths
+      # The engine alone, with no feature: a change to the extension or the
+      # Lexbor reference cannot change these outcomes. Every engine module
+      # stays in, since the proofs reach its shared modules (limits, text,
+      # ...), and so does falloc, which it allocates through. Two nupur files
+      # are checked here as well: Miri runs `utf8_copy` inside falloc's test
+      # build, and `rake verus:sync` holds `copy_small` in `string/make.rs` to
+      # the Verus proof.
       - "ext/makiri/rust/engine/**"
       - "ext/makiri/rust/falloc/**"
       - "ext/makiri/rust/nupur/src/utf8_copy.rs"
@@ -25,9 +24,8 @@ on:
       - "rakelib/**"
       - ".github/workflows/verify.yml"
   pull_request:
-    paths: *kani-paths
-  # Every group, whatever changed: the safety net for a dependency the groups
-  # in rakelib/rust.rake (KANI_GROUPS) missed.
+    paths: *verify-paths
+  # Whatever changed: the safety net for a dependency the paths above miss.
   schedule:
     - cron: "0 4 * * 0"
   workflow_dispatch:
@@ -40,27 +38,19 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # A CBMC job stood here and proved ext/makiri/{core,xml,xpath}/*.c. Those
-  # files are gone, and `rake verify` with them: every one of its fifteen
-  # harnesses compiled one of them, and the three that linked none proved
-  # `static inline` code in the same headers - there was nothing left to point
-  # CBMC at.
-  #
-  # Kani is the successor and deliberately not a rename: the two tools prove
-  # different things about different code, and which Kani proof replaces which
-  # CBMC one - and what changed in the translation - is written down rather than
-  # assumed. Not all the answers are "the same property".
-  kani:
-    name: Kani proofs (rust)
+  # The tests that run every input of their domain (`rake rust:exhaustive`):
+  # `decode1` against `core::str::from_utf8` on every buffer of up to four
+  # bytes, the one claim about the decoder Verus cannot state, since it has
+  # no contract for `from_utf8`. A Kani job stood here and proved it, with
+  # the bounded harnesses verus/ now proves at every length; a CBMC job
+  # before that, over the C.
+  exhaustive:
+    name: Exhaustive tests (rust)
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
-
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        with:
-          # The base of the change, for the diff below.
-          fetch-depth: 0
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
@@ -68,48 +58,10 @@ jobs:
           ruby-version: "3.4"
           bundler-cache: true
 
-      # Only the groups whose code changed (`rake kani:groups`, which also
-      # fails on a proof in no group): the allocator's group alone is ~6
-      # minutes and its code rarely changes. A schedule or manual run, or a
-      # push with no previous commit to diff against, takes every group.
-      - name: Pick the proof groups
-        id: groups
-        env:
-          EVENT: ${{ github.event_name }}
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
-          PUSH_BEFORE: ${{ github.event.before }}
-        run: |
-          case "$EVENT" in
-            pull_request) base="$PR_BASE" ;;
-            push) base="$PUSH_BEFORE" ;;
-            *) base="" ;;
-          esac
-          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
-            groups=$(printf 'Rakefile\n' | bundle exec rake -s kani:groups)
-          else
-            groups=$(git diff --name-only "$base" HEAD | bundle exec rake -s kani:groups)
-          fi
-          echo "groups=$groups" >> "$GITHUB_OUTPUT"
-          echo "Kani groups: ${groups:-(none)}"
+      - uses: dtolnay/rust-toolchain@stable
 
-      # Kani pins its own Rust toolchain, so no rust-toolchain step here.
-      - name: Install Kani
-        if: steps.groups.outputs.groups != ''
-        run: |
-          cargo install --locked kani-verifier
-          cargo kani setup
-          cargo kani --version
-
-      # No `rake compile` first: these proofs are over the Ruby- and
-      # Lexbor-free features, which is the whole reason Kani can build them.
-      # Four jobs: the runner's cores, so the run takes about its slowest
-      # harness rather than the sum.
-      - name: Run the Kani proofs
-        if: steps.groups.outputs.groups != ''
-        env:
-          KANI_GROUPS: ${{ steps.groups.outputs.groups }}
-          KANI_JOBS: "4"
-        run: bundle exec rake kani
+      - name: Run the exhaustive tests
+        run: bundle exec rake rust:exhaustive
 
   # Miri over the Ruby-free code that holds `unsafe` - the `falloc` crate,
   # with `nupur::utf8_copy` included in its test build: their tests run on
@@ -138,8 +90,10 @@ jobs:
         run: "cargo +nightly miri test -p falloc --lib"
 
   # Verus over ext/makiri/rust/verus/: `falloc::grow_capacity`,
-  # `ptr_table`, `ceiling_buf::Buf` and `limits::admit` (copied, and checked against the source by
-  # `rake verus:sync`), unbounded where Kani is bounded, each with canaries
+  # `ptr_table`, `ceiling_buf::Buf`, `limits::admit`, the UTF-8 decoder with
+  # the XML Char scan, the XML character classes and `xpath::number::extent`
+  # (copied, and checked against the source by `rake verus:sync`), at every
+  # length, each with canaries
   # that must fail. Verus is a pinned release
   # (rakelib/verus.rake's VERUS_VERSION) and brings the Rust toolchain it names.
   verus:

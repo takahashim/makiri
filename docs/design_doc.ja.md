@@ -424,7 +424,7 @@ CSS/serialize/読み取りアクセサも GVL を保持する。`spec/threading_
   依存する。
 * フィーチャはクレートごとに持つ。エンジンは `html-dom` (既定。index
   アリーナの HTML DOM と、その上の CSS の照合、XPath の HTML 実装。外すと
-  Kani が証明する素のエンジンになる) と `lexbor-compat` (Lexbor のとおりに
+  素のエンジンになる) と `lexbor-compat` (Lexbor のとおりに
   動かす切り替え。参照実装だけが使う) と `alloc-inject` (OOM 注入)
   を持つ。`falloc` と `nupur` も `alloc-inject` を持ち、拡張の
   `alloc-inject` はこの 3 つを有効にする。参照実装は `css-reference` と

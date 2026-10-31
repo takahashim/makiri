@@ -131,9 +131,9 @@ jobs:
           cargo fmt -- --check
           cargo clippy --all-targets -- -D warnings
 
-      # Fast, Ruby- and Lexbor-free checks for the Rust core. Kani proves the
-      # bounded symbolic contracts in verify.yml; this executes exhaustive
-      # small-domain and regression properties on every ordinary CI run.
+      # Fast, Ruby- and Lexbor-free checks for the Rust core. verify.yml holds
+      # the Verus proofs and the tests too large for a debug build; this
+      # executes small-domain and regression properties on every ordinary CI run.
       - name: Rust core tests
         if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
         run: bundle exec rake rust:test
