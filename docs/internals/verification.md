@@ -38,7 +38,7 @@ bundle exec rake leaks             # macOS malloc-leak gate
 bundle exec rake oom               # OOM-injection sweep, then the raise sweep
 bundle exec rake miri              # the Ruby-free unsafe code's tests under Miri
 bundle exec rake verus             # Verus proofs (ext/makiri/rust/verus/)
-bundle exec rake kani              # Kani proofs over the Ruby-free core
+bundle exec rake rust:exhaustive   # the tests that run every input, in release
 bundle exec rake coverage          # llvm-cov report of our sources over the suite (macOS);
                                    # leaves the instrumented build: `rake clean compile`
 bundle exec rake bench             # perf vs Nokogiri (bench-only gems; runs outside bundle)
@@ -202,7 +202,7 @@ Prefix the task with `MAKIRI_SANITIZE=address` to combine it with ASan. The
 task leaves the injection build in place; `rake clean compile` goes back to a
 normal build.
 
-## Proofs: Miri, Verus and Kani
+## Proofs: Miri, Verus and the exhaustive tests
 
 ### `rake miri`
 
@@ -218,34 +218,30 @@ unbounded. They cover falloc's `grow_capacity`; `ptr_table`'s probing and load
 factor; `ceiling_buf`'s `Buf` (content, ceiling, fail-closed) with
 `copy_small`; `limits::admit`, the one rule every work budget charges
 through; the strict UTF-8 decoder `decode1` and the XML Char scan built on
-it, against vstd's own statement of UTF-8 (`vstd::utf8`); and the XPath
+it, against vstd's own statement of UTF-8 (`vstd::utf8`); the XML character
+classes' inclusions (NameStartChar in NameChar in Char); and the XPath
 Number gate `xpath::number::extent`. Each is copied and checked against the
 source (`verus:sync`).
 
 `VERUS=path/to/verus` names the binary; `rakelib/verus.rake`'s
 `VERUS_VERSION` is the version CI uses. CI runs it in `verify.yml`: heavy
-tools stay in CI, like Miri and Kani.
+tools stay in CI, like Miri.
 
 Vacuity is checked by what must FAIL: an `assert(false)` at each
 `// [canary]` mark, one variant each, and the callers in `verus/canaries/`.
 What each proof trusts (`external_body`, `assume_specification`, `assume`)
 is pinned (`VERUS_TRUSTED`).
 
-### `rake kani`
+### `rake rust:exhaustive`
 
-`rake kani` runs the Kani proofs over the Ruby-free core (needs cargo-kani).
-They succeed the C-era CBMC harnesses. Two are left: `decode1` against
-std's `from_utf8`, exhaustive over its 4-byte input - the tie between vstd's
-UTF-8 and the validator the crate calls, which Verus has no contract for -
-and the XML character classes' inclusions over every `u32`. The allocator,
-`ceiling_buf`, the decoder's own contract, the decode chain,
-`validate_chars` and the XPath Number gate are Verus's now, at every length.
+`rake rust:exhaustive` runs the Rust tests that check every input of their
+domain - too many for a debug build, a few seconds in release (CI:
+`verify.yml`). Today that is one: `decode1` against std's `from_utf8` on
+every buffer of up to four bytes, the tie between vstd's statement of UTF-8,
+which Verus proves `decode1` against, and the validator the crate calls,
+which Verus has no contract for. Each such test is `#[ignore]`d, so
+`rust:test` leaves it out, and lives in a module named `exhaustive`.
 
-- `KANI_GROUPS=utf8,xml` picks groups (`rakelib/rust.rake`'s
-  `KANI_GROUPS`, with the code each depends on). CI runs only the groups whose
-  code changed (`rake kani:groups`), and all of them weekly.
-- `KANI_JOBS=N` runs N in parallel.
-
-Every harness states with `kani::cover!` that its claim is reached, and the
-task fails on a harness with no cover or an unsatisfied one, because a proof
-that an over-strong assume made vacuous still says "0 failed".
+Kani proved these properties before Verus did, and CBMC before Kani, over
+the C. Each property went to the tool that holds it at every length; the
+one left is checked by running every input.

@@ -24,17 +24,11 @@
 /// Compile-time decimal parsing, for the settings that arrive as `option_env!`
 /// overrides: a const context cannot call `parse`.
 ///
-/// Two kinds of setting use it. The `verify` modules bound the input each set of
-/// proofs quantifies over - and raising such a bound means raising that
-/// harness's `#[kani::unwind]`, which cannot be computed because Kani wants a
-/// literal. Getting it wrong fails loudly (`unwinding assertion`), not silently,
-/// so the override is safe to use for an experiment without editing the default.
-/// The buffer's content ceilings (`ceiling_buf`) use it for a different reason: they
-/// were `-D`-overridable C macros, and standing alone that override has to
-/// arrive from the environment instead.
-///
-/// Hence ungated. It was `#[cfg(kani)]` while the proofs were its only caller.
-pub mod kani_bounds {
+/// The buffer's content ceilings (`ceiling_buf`) use it: they were
+/// `-D`-overridable C macros, and standing alone that override has to arrive
+/// from the environment instead. (The Kani harnesses' input bounds used it
+/// too, and named it, while there were any.)
+pub mod env_bounds {
     /// Decimal only; a non-digit is a compile error naming the bound.
     pub const fn parse_usize(s: &str) -> usize {
         let b = s.as_bytes();
@@ -148,9 +142,9 @@ pub mod xml;
 /// The XPath 1.0 engine, generic over a `Dom` trait, and its two instances.
 pub mod xpath;
 
-// These tests deliberately use the bare feature set. Kani proves bounded
-// symbolic properties in a separate job; this module gives the normal Rust
-// test runner exhaustive small-domain and boundary-value coverage on every
+// These tests deliberately use the bare feature set. Verus proves the
+// contracts at every length (`verus/`); this module gives the normal Rust test
+// runner exhaustive small-domain and boundary-value coverage on every
 // representative CI build.
 #[cfg(test)]
 mod rust_tests;

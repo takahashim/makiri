@@ -25,7 +25,7 @@
 /// The engine's modules, by the paths the Ruby layer names them with.
 pub use makiri_engine::{
     ceiling_buf, child_index, compat, css_cache, css_match, doc_cell, dom_rules, engine_error,
-    html, html_dom, kani_bounds, limits, no_unwind, node_type, ptr_table, selectors, source_lines,
+    env_bounds, html, html_dom, limits, no_unwind, node_type, ptr_table, selectors, source_lines,
     stack, text, token, utf8_decode, utf8_input, xml, xpath,
 };
 

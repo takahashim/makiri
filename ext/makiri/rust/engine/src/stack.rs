@@ -21,7 +21,7 @@
 //! This module holds only the seam: a `fn() -> bool` installed once at
 //! `Init_makiri` and read by every recursion check. It is `#![forbid(unsafe_code)]`
 //! and Ruby-free itself; `bridge::stack` is the one place that calls
-//! `rb_sys::ruby_stack_check`, and cargo tests / Kani / fuzz never install
+//! `rb_sys::ruby_stack_check`, and cargo tests and the fuzz targets never install
 //! anything, so `exhausted()` is a constant `false` there - the engine never
 //! depends on Ruby to build or run standalone.
 
@@ -40,8 +40,8 @@ pub fn install(probe: fn() -> bool) {
 }
 
 /// Is the current execution context's native stack low? `false` whenever no
-/// probe is installed - the engine's Ruby-free builds (cargo test, Kani, the
-/// fuzz targets) - so recursion there is bounded by depth counts alone, as it
+/// probe is installed - the engine's Ruby-free builds (cargo test, the fuzz
+/// targets) - so recursion there is bounded by depth counts alone, as it
 /// always was.
 pub fn exhausted() -> bool {
     PROBE.get().is_some_and(|probe| probe())

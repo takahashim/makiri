@@ -16,7 +16,7 @@ history behind each rule are in `docs/internals/`:
 | `ruby_boundary.md` | panics and unwinding, slots and handles, raising C calls, document guards, `InternalError`, C integers, exports |
 | `engine_rules.md` | the fallible-allocation line, a node's `source` offset, pointer-keyed tables |
 | `build_and_sanitizers.md` | the ASan preload split, `asan-stack=0`, build gotchas |
-| `verification.md` | every rake task annotated (the lints, Kani, Verus, Miri, oom, fuzz), `rake diff` |
+| `verification.md` | every rake task annotated (the lints, Verus, Miri, the exhaustive tests, oom, fuzz), `rake diff` |
 | `lexbor.md` | why Lexbor is pinned where it is, the `lexbor-contains` guard |
 | `layout.md` | the source tree, file by file, and the crate features |
 | `subsystems.md` | text input, parsing, indexes, XPath, CSS, serialization, mutation |
@@ -187,7 +187,7 @@ bundle exec rake leaks             # macOS leak gate (Linux: spec:valgrind, nigh
 bundle exec rake deny              # cargo-deny over the extension's dependencies
 bundle exec rake miri              # falloc + nupur's utf8_copy under Miri
 bundle exec rake verus             # Verus proofs (verus/), `verus:sync` checks the copies
-bundle exec rake kani              # Kani proofs over the Ruby-free core (KANI_GROUPS=)
+bundle exec rake rust:exhaustive   # tests that run every input (decode1 vs from_utf8), release
 bundle exec rake bench             # perf vs Nokogiri (runs outside bundle)
 bundle exec rake clean             # wipe the build dir
 bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'   # smoke load

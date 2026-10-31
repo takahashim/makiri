@@ -169,6 +169,8 @@ ext/makiri/rust/           the extension (package makiri_rs, lib `makiri`)
     xpath_number.rs        `xpath::number::extent`: the longest prefix that
                            is an XPath Number, 0 when none is - at every
                            length, where Kani stopped at 6 bytes
+    xml_chars.rs           `xml::chars`' classes: NameStartChar is in
+                           NameChar, and NameChar in Char, for every `u32`
   fuzz/                    cargo-fuzz harnesses, over the reference crate (as
                            `makiri`) and so the engine. Built on PRs, run
                            nightly; css-match.yml runs the two html_css*
@@ -281,8 +283,8 @@ Features are per crate.
   - **`html-dom`** (default): the parser port's index-arena DOM, `html::dom`,
     behind the `html_dom` facade and parsed by the ported tree builder
     `html::tree`, with what sits over it - the HTML CSS matcher and XPath's
-    HTML instance. Only the bare engine - Kani - is without it: Kani builds
-    the engine with `--no-default-features`.
+    HTML instance. Only the bare engine is without it: `rake rust:test` and
+    `rake lint` build the engine with `--no-default-features` too.
   - **`alloc-inject`**: the `rake oom` hook, through to `falloc`'s.
   - **`lexbor-compat`**: `compat::as_lexbor`, the conformance harness and the
     tokenizer's traced run - what only the Lexbor reference reads. Never in a

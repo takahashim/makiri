@@ -1,7 +1,7 @@
 //! Verus proofs over the strict UTF-8 decoder (`engine/src/utf8_decode.rs`'s
 //! `decode1`) and the XML Char scan built on it (`engine/src/xml/chars/mod.rs`'s
 //! `all_code_points` and `validate_chars`), for inputs of every length - the
-//! Kani harnesses they replace stopped at 8 bytes.
+//! Kani harnesses they replaced stopped at 8 bytes.
 //!
 //! What they are held to is `vstd::utf8`: Verus's own statement of UTF-8 -
 //! `valid_first_scalar` (the bit patterns, no overlong form, no surrogate),
@@ -17,10 +17,11 @@
 //!   decodes consumes valid input exactly and nothing else;
 //! - so `validate_chars` accepts only valid UTF-8, whatever its length.
 //!
-//! What stays Kani's (`utf8_decode::verify`): that `decode1` agrees with
-//! `core::str::from_utf8`, std's validator, exhaustively over its 4-byte
-//! input - the tie between vstd's model and the validator the rest of the
-//! crate calls.
+//! What is not proved here: that `decode1` agrees with `core::str::from_utf8`,
+//! std's validator, which Verus has no contract for - the tie between vstd's
+//! model and the validator the rest of the crate calls. `utf8_decode`'s
+//! exhaustive test runs that on every buffer of up to four bytes
+//! (`rake rust:exhaustive`).
 //!
 //! Nothing is assumed: no `external_body`, no `assume_specification` (the
 //! source spells out the scalar test rather than calling `char::from_u32`,

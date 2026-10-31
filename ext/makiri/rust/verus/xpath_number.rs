@@ -1,6 +1,6 @@
 //! Verus proofs over `engine/src/xpath/number.rs`'s `extent`: the grammar gate
 //! the XPath lexer (`xpath::lex`) and `number()` (`xpath::value`) read a Number
-//! through, for inputs of every length (Kani's harnesses stopped at 6 bytes).
+//! through, for inputs of every length (the Kani harnesses it replaced stopped at 6 bytes).
 //!
 //! The production is `Digits ('.' Digits?)? | '.' Digits` (XPath 1.0 [30],
 //! [31]); `is_number(s, n)` below is it, written from the grammar rather than

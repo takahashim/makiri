@@ -67,8 +67,8 @@ pub fn is_name_char(c: u32) -> bool {
 ///
 /// Re-exported from `crate::utf8_decode` rather than written again here: there must be
 /// exactly ONE strict decoder of ours, and `verus/utf8.rs` (against vstd's
-/// UTF-8) and `utf8_decode::verify` (against `core::str::from_utf8`) keep it
-/// honest.
+/// UTF-8) and `utf8_decode`'s exhaustive test (against `core::str::from_utf8`)
+/// keep it honest.
 pub use crate::utf8_decode::decode1;
 
 /// Every code point of `s` decodes strictly AND satisfies `ok`.

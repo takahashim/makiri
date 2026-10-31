@@ -23,8 +23,8 @@
 //!
 //! It gives up nothing in correctness: `verus/utf8.rs` proves it answers
 //! exactly vstd's statement of UTF-8 (`valid_first_scalar`, the scalar and
-//! its length) for every input, and [`verify::decode1_agrees_with_from_utf8`]
-//! that it agrees with `from_utf8`, exhaustively over its 4-byte input. Keep
+//! its length) for every input, and `exhaustive`'s test that it answers what
+//! `from_utf8` reads first, on every buffer of up to four bytes. Keep
 //! both with it - they are what make a hand-written decoder as trustworthy as
 //! the standard one.
 //!
@@ -41,13 +41,14 @@
 //! - **scalar range, no surrogates, no overlongs**: `from_utf8`'s contract for
 //!   the validator; proved for the decoder in `verus/utf8.rs`.
 //! - **decoder/validator agreement, first code point and whole buffer**:
-//!   [`verify::decode1_agrees_with_from_utf8`] (against `from_utf8`, 4 bytes),
+//!   `exhaustive`'s test (against `from_utf8`, every buffer up to 4 bytes),
 //!   and `verus/utf8.rs`'s `all_code_points` (the chain, against vstd's
 //!   `valid_utf8`, every length).
 
 #![forbid(unsafe_code)]
 
-pub mod verify;
+#[cfg(test)]
+mod exhaustive;
 
 /// Decode ONE code point from the front of `p`, strictly.
 ///

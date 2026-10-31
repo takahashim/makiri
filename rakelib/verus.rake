@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
-# Verus over what Kani proves bounded (ext/makiri/rust/verus/): the growth
-# arithmetic, copied from falloc, the pointer tables, the byte buffer, the
-# work budgets' one rule, the strict UTF-8 decoder with the XML Char scan, and
-# the XPath Number gate. The copies are checked
+# Verus over the Ruby-free core (ext/makiri/rust/verus/), at every length or
+# size: the growth arithmetic, copied from falloc, the pointer tables, the byte
+# buffer, the work budgets' one rule, the strict UTF-8 decoder with the XML
+# Char scan, the XML character classes, and the XPath Number gate. The copies are checked
 # against the source first - every line only Verus needs ends in `// [verus]`,
 # and the rest of the body must be the source's, token for token - so a
 # change to `grow_capacity` fails here until the proof is redone. VERUS names
@@ -22,6 +22,9 @@ VERUS_COPIES = [
   *%w[is_char all_code_points validate_chars].map do |name|
     ["ext/makiri/rust/engine/src/xml/chars/mod.rs", "ext/makiri/rust/verus/utf8.rs", name]
   end,
+  *%w[is_char is_name_start is_name_char].map do |name|
+    ["ext/makiri/rust/engine/src/xml/chars/mod.rs", "ext/makiri/rust/verus/xml_chars.rs", name]
+  end,
   *%w[extent digits_end].map do |name|
     ["ext/makiri/rust/engine/src/xpath/number.rs", "ext/makiri/rust/verus/xpath_number.rs", name]
   end,
@@ -34,7 +37,7 @@ VERUS_COPIES = [
   end
 ].freeze
 # The files `rake verus` verifies.
-VERUS_PROOFS = %w[ptr_table.rs ceiling_buf.rs limits.rs utf8.rs xpath_number.rs].freeze
+VERUS_PROOFS = %w[ptr_table.rs ceiling_buf.rs limits.rs utf8.rs xpath_number.rs xml_chars.rs].freeze
 
 # The body of `fn name` in `src` - `Type::name` for the one in `impl ... Type`
 # - as tokens: lines marked `// [verus]` and
@@ -80,7 +83,7 @@ end
 # file's module doc; a new one is a new axiom, and this count moves with it on
 # purpose. The canaries may hold none.
 VERUS_TRUSTED = { "ptr_table.rs" => 4, "ceiling_buf.rs" => 4, "limits.rs" => 0, "utf8.rs" => 0,
-                  "xpath_number.rs" => 0 }.freeze
+                  "xpath_number.rs" => 0, "xml_chars.rs" => 0 }.freeze
 # Verus's `admit()` takes no argument, which tells it from a function named
 # `admit` (`limits.rs`).
 VERUS_TRUST = /#\[verifier::external(?:_body)?\]|\bassume_specification\b|\bassume\(|\badmit\(\s*\)/

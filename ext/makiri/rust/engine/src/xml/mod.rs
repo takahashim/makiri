@@ -27,8 +27,5 @@ mod selftest;
 pub mod serialize;
 pub mod tree;
 
-#[cfg(kani)]
-mod verify;
-
 /// The XPath engine's XML backend (`Dom` for a borrowed `Document`).
 pub mod xpath;
