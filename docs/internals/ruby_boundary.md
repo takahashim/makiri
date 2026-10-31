@@ -82,14 +82,14 @@ callback is latched (above) and raises nothing.
 ### Proving unwind-freedom
 
 **Nothing that must not unwind can, and the compiler proves it**
-(`nupur/src/no_unwind.rs` for nupur's sites, `engine/src/no_unwind.rs` for
+(`nupur/src/no_unwind.rs` for Nupur's sites, `engine/src/no_unwind.rs` for
 the engine's, `rake no_unwind`). An unwind out of an
 `extern "C"` function aborts, and so does a panic in a `Drop` that the GC
 runs or that runs while another panic unwinds. Each such body is a `Site`
 run through `must_not_unwind`.
 
 The proof rests on a symbol nobody defines. A release build with
-`--cfg makiri_no_unwind` (and `--cfg nupur_no_unwind` for nupur's own sites,
+`--cfg makiri_no_unwind` (and `--cfg nupur_no_unwind` for Nupur's own sites,
 `nupur_unwinds_<site>`) gives each site's guard a `Drop` that calls
 `makiri_unwinds_<site>`. Only an unwind reaches that call, so the optimizer
 removes it exactly where it proves the body unwind-free, and `nm -u` lists
@@ -275,7 +275,7 @@ owns the new set, never with a lifetime of its own.
 
 **Every C call that can raise is a wrapper in `nupur/src/raw/`, and every
 wrapper runs it under `rb_protect` and returns `Result`.** `nupur::raw` is
-private to nupur; an extension reaches each wrapper through a value-level
+private to Nupur; an extension reaches each wrapper through a value-level
 API.
 
 A raise is a `longjmp` over every Rust frame up to the nearest
@@ -463,7 +463,7 @@ Outside a registered method a panic does not become `InternalError`:
   half-defined extension must not be used. Only the checks that come first
   raise an ordinary `LoadError`: the Ruby API one
   (`nupur::abi::check_running_api`) and that `rb_protect`'s raise state is
-  the one nupur knows (`nupur::abi::check_raise_state`)
+  the one Nupur knows (`nupur::abi::check_raise_state`)
   (`bridge::rb::method::run_init(check, init)`).
 
 ## C integers
@@ -477,9 +477,9 @@ bug used to be found by review.
 `int` writes the rules once over a `Long` of either width, tested at both on
 any machine and held to rb-sys's `FIXNUM_MAX` / `fixable`. Outside it,
 `rake dylint`'s `c_integer_outside_int` refuses an integer `as` cast and any
-naming of `c_long` / `c_ulong` in nupur and in `bridge` / `glue` / `init`.
+naming of `c_long` / `c_ulong` in Nupur and in `bridge` / `glue` / `init`.
 Convert with `From` / `TryFrom`; a length is a `usize`, an index an `i64`.
-Clippy's cast lints, on in nupur, see the real types on CI's Windows cell.
+Clippy's cast lints, on in Nupur, see the real types on CI's Windows cell.
 
 ## Panic lints and the panic hook
 

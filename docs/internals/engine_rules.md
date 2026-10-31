@@ -49,7 +49,7 @@ in-place sort without it.
 The glue's Ruby-side storage is Ruby's own memory instead. A TypedData
 wrapper's struct is its object's data, made with it in one call by
 `rb_data_typed_object_zalloc` (`TypedData_Make_Struct`'s function;
-`typed::TypedType::wrap`, over nupur's private `wrap_built`) and freed by
+`typed::TypedType::wrap`, over Nupur's private `wrap_built`) and freed by
 running the struct's `Drop` in place. A non-embedded type's data is
 `xcalloc`'d, which is also where Ruby decides whether malloc pressure calls
 for a GC, so a Document's arena report (`rb_gc_adjust_memory_usage`, which

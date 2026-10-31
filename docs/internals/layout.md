@@ -209,19 +209,19 @@ no Lexbor header.
 
 `extconf.rb` builds `--crate-type cdylib` alone because with an `rlib` in,
 rustc runs NO LTO, and every call into `nupur` and the engine is then an
-opaque cross-crate call. The light readers measured 9-25% slower when nupur
+opaque cross-crate call. The light readers measured 9-25% slower when Nupur
 was split; with LTO they are 12-14% faster than the one-crate build, which
 never had LTO either. `rake no_unwind` builds the same way, since its proof is
 of the shipped binary.
 
-## nupur and the extension
+## Nupur and the extension
 
-- nupur cannot name the extension: it has no dependency on it. The extension
-  names it `crate::nupur` and registers what nupur needs from it at Init_
+- Nupur cannot name the extension: it has no dependency on it. The extension
+  names it `crate::nupur` and registers what Nupur needs from it at Init_
   (`INTERNAL_ERROR`, `inject::install`).
-- `bridge` re-exports nupur's `rb`, `typed`, `gvl`, `build`, `hash` and
+- `bridge` re-exports Nupur's `rb`, `typed`, `gvl`, `build`, `hash` and
   `args`; its other public modules are reached as `crate::nupur::...`, and
-  `raw` is private to nupur.
+  `raw` is private to Nupur.
 - A function on a no_unwind site's path is `#[inline]`, or the proof cannot
   see into it across the crate.
 
@@ -230,7 +230,7 @@ of the shipped binary.
 The glue's Ruby-side storage is Ruby's xmalloc, not falloc (see
 `engine_rules.md`). falloc's `try_box` holds an `unsafe` block, because a
 fallible `Box<T>` has no stable safe spelling; that is why falloc is a crate
-of its own. Outside nupur the only others are `Init_makiri`'s call to
+of its own. Outside Nupur the only others are `Init_makiri`'s call to
 `run_init` (`src/init.rs`) and the `rake no_unwind` check build's sites
 (`engine/src/no_unwind.rs`); `rake unsafe:boundaries` counts each. Its test
 build includes `nupur/src/utf8_copy.rs` for Miri.
@@ -250,7 +250,7 @@ keep a structure's invariants are `bridge/`'s. `rake dylint`'s
 `ruby_surface_in_bridge` fails on a method defined - or an argument list
 split - in `bridge/`.
 
-The C calls that can raise are nupur's own (`nupur/src/raw/`, private to it),
+The C calls that can raise are Nupur's own (`nupur/src/raw/`, private to it),
 as is the wrap-then-store constructor; a raise becomes `Err` there.
 
 These gates hold the boundary:
@@ -264,11 +264,11 @@ These gates hold the boundary:
   `#![forbid(unsafe_code)]`, as the engine's root does for the whole engine.
   The gate pins the roots in `FORBID_ROOTS` (`bridge`, `glue` and the
   engine's `css_match`, `selectors`, `xml` and `xpath`).
-- rb-sys is nupur's: the extension does not depend on it, so no file of it
+- rb-sys is Nupur's: the extension does not depend on it, so no file of it
   names `rb_sys::`, and `rake dylint`'s `raw_ruby_outside_bridge` refuses one
-  outside nupur (and `bridge/`, which cannot reach it). `rake dylint` also
+  outside Nupur (and `bridge/`, which cannot reach it). `rake dylint` also
   holds the C calls that can raise to `nupur`'s `raw/`.
-- `Value::from_raw` is nupur's, `pub(crate)` and `unsafe`, so the extension
+- `Value::from_raw` is Nupur's, `pub(crate)` and `unsafe`, so the extension
   cannot make a `Value` from a raw `VALUE`.
 - Making a borrowed HTML handle into a lifetime-free `RawNode` in `bridge/` is
   a `raw_node_crossing`, and each crossing is an allow with its reason.
@@ -290,7 +290,7 @@ Features are per crate.
     tokenizer's traced run - what only the Lexbor reference reads. Never in a
     build that ships.
 - **Extension**: **`alloc-inject`** alone, passed to the engine, `falloc`
-  and nupur.
+  and Nupur.
 - **Reference**
   - **`css-reference`**: the OLD CSS engine, `lexbor::selectors`, for the
     `html_css_diff` fuzz target.
@@ -300,7 +300,7 @@ Features are per crate.
     `stylesheet_diff` fuzz targets.
 
 The fuzz crate builds the reference with `css-reference,lexbor-reference`.
-`rake rust:test` runs the engine bare and as shipped, `falloc`, nupur and the
+`rake rust:test` runs the engine bare and as shipped, `falloc`, Nupur and the
 reference.
 
 There is no `ruby` feature: the extension is the Ruby surface, and the engine

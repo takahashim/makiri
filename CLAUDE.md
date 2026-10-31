@@ -102,7 +102,7 @@ When a rule here changes, change its reasoning there in the same commit.
   definition has begun is `fatal`; only the first, Ruby API check is a
   `LoadError` (`run_init`).
 - **A C integer is converted only in `nupur::int`.** No integer `as` cast and
-  no `c_long` / `c_ulong` in nupur, `bridge`, `glue` or `init`
+  no `c_long` / `c_ulong` in Nupur, `bridge`, `glue` or `init`
   (`c_integer_outside_int`): a `long` is 32 bits on Windows.
 - `clippy::unwrap_used` / `expect_used` / `panic` are on; a site that wants
   one carries an `#[allow]` with its reason.

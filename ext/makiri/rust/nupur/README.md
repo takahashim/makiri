@@ -1,15 +1,15 @@
-# nupur
+# Nupur
 
-nupur is the Ruby binding layer under Makiri's extension, built on rb-sys
+Nupur is the Ruby binding layer under Makiri's extension, built on rb-sys
 alone. It holds every `unsafe` the extension needs to talk to Ruby, and gives
 the extension a safe API over it: Ruby values and their class-checked
 handles, exceptions, method trampolines, TypedData, the GVL, and a wrapper
 for every C call that can raise.
 
-nupur does not depend on the extension and knows nothing of it. What it needs
+Nupur does not depend on the extension and knows nothing of it. What it needs
 from the extension (the exception class for a broken internal invariant, the
 `rake oom` hooks) the extension registers at `Init_`. The extension reaches
-nupur as `crate::nupur`, and its `bridge` re-exports `rb`, `typed`, `gvl`,
+Nupur as `crate::nupur`, and its `bridge` re-exports `rb`, `typed`, `gvl`,
 `build`, `hash` and `args`.
 
 ## What it guarantees
@@ -27,7 +27,7 @@ nupur as `crate::nupur`, and its `bridge` re-exports `rb`, `typed`, `gvl`,
   method trampoline and `rb::method::run_init`), and everything that calls
   Ruby takes one, or a Ruby value, which can exist only where a token did.
 - **A wrapped object's Ruby values are its slots.** A payload holds no Ruby
-  value; the slots are written once, when the object is made, and nupur's
+  value; the slots are written once, when the object is made, and Nupur's
   mark callback marks them. A payload is reached only through a
   `typed::Typed` handle, which keeps the object alive while its data is
   borrowed.
@@ -37,7 +37,7 @@ nupur as `crate::nupur`, and its `bridge` re-exports `rb`, `typed`, `gvl`,
 - **A C integer is converted in one place** (`int`): a C `long` is 32 bits on
   Windows, so the conversions are written once for either width.
 - **Two Ractors may run the layer at once**, once the extension declares
-  itself Ractor-safe (`rb::method::declare_ractor_safe`). Nothing of nupur's
+  itself Ractor-safe (`rb::method::declare_ractor_safe`). Nothing of Nupur's
   is shared between them but what any Ractor may read.
 
 The same file also lists the rules the types cannot enforce, which an
@@ -45,7 +45,7 @@ extension must keep: Ruby values stay where the GC's stack scan sees them, a
 GVL-released body runs no Ruby, nothing runs the caller's Ruby unasked, and
 the rest. Read it before using the layer.
 
-## An extension on nupur
+## An extension on Nupur
 
 A method is a Rust function that takes the GVL's token (`&Ruby`) and returns
 its value, or a `Result` of it; the `method!` / `function!` macros wrap it in
