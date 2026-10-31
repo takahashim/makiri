@@ -62,9 +62,10 @@ end
 # by type. The lint is a rustc plugin, so it builds on the nightly its
 # rust-toolchain.toml pins, with cargo-dylint and dylint-link installed. The
 # second run is the self-test: `lint_probe.rs`, compiled only under
-# `--cfg makiri_lint_probe`, ends with `//~` each line the lint must report,
-# and the task fails unless exactly those lines are reported - so a lint that
-# has stopped seeing a case cannot pass by reporting nothing.
+# `--cfg makiri_lint_probe`, ends each line a lint must report with `//~` and
+# the lints' names, and the task fails unless exactly those (line, lint)
+# pairs are reported - so a lint that has stopped seeing a case cannot pass
+# by reporting nothing, nor behind another lint reporting the same line.
 DYLINT = %w[cargo dylint --path lints/makiri_lints --no-deps -- -p makiri_rs].freeze
 # The engine: what it may allocate (`infallible_allocation`) and call
 # (`runs_callers_ruby` has nothing to find there - it cannot name Ruby - but
@@ -80,6 +81,7 @@ DYLINT_NUPUR = %w[cargo dylint --path lints/makiri_lints --no-deps -- -p nupur
 
 desc "Run the crate's own lint (makiri_lints; needs cargo-dylint and its nightly)"
 task :dylint do
+  require "json"
   require "open3"
   Dir.chdir("ext/makiri/rust") do
     # cargo keeps the crate's last check when only the lint library changed,
@@ -92,18 +94,32 @@ task :dylint do
     sh(*DYLINT_ENGINE)
     sh(*DYLINT_NUPUR)
     # The self-test, once per crate: the extension's probe, and the binding
-    # layer's, which holds the cases only code naming rb-sys can write.
+    # layer's, which holds the cases only code naming rb-sys can write. Each
+    # `//~` names the lints that must report its line, and the reports must
+    # be exactly those pairs: matched by line alone, a line that two lints
+    # report kept passing with one of them dead (`ruby_in_gvl_released_body`
+    # did, once `without_gvl` took the token).
     probes = [[DYLINT, "src/lint_probe.rs", "makiri_lint_probe"],
               [DYLINT_NUPUR, "nupur/src/lint_probe.rs", "nupur_lint_probe"]]
     total = probes.sum do |cmd, probe, cfg|
-      expected = File.readlines(probe).each_with_index
-                     .select { |line, _| line.match?(%r{//~\s*\z}) }.map { |_, i| i + 1 }
-      out, = Open3.capture2e({ "RUSTFLAGS" => "--cfg #{cfg}" }, *cmd)
-      reported = out.scan(%r{--> #{Regexp.escape(probe)}:(\d+):}).flatten.map(&:to_i).uniq.sort
+      expected = File.readlines(probe).each_with_index.flat_map do |line, i|
+        names = line[%r{//~((?: [a-z_]+)*)\s*\z}, 1] or next []
+        abort "makiri_lints' self-test: #{probe}:#{i + 1}'s //~ names no lint" if names.strip.empty?
+        names.split.map { |lint| [i + 1, lint] }
+      end.sort
+      out, = Open3.capture2e({ "RUSTFLAGS" => "--cfg #{cfg}" }, *cmd, "--message-format=json")
+      messages = out.lines.filter_map do |l|
+        m = JSON.parse(l) if l.start_with?("{")
+        m["message"] if m && m["reason"] == "compiler-message"
+      end
+      reported = messages.filter_map do |m|
+        at = m["spans"].find { |sp| sp["is_primary"] }
+        [at["line_start"], m.dig("code", "code")] if at && at["file_name"] == probe && m["code"]
+      end.uniq.sort
       unless reported == expected
-        puts out
-        abort "makiri_lints' self-test: expected reports on lines #{expected.inspect} " \
-              "of #{probe}, got #{reported.inspect}"
+        messages.each { |m| puts m["rendered"] }
+        abort "makiri_lints' self-test on #{probe}: missing #{(expected - reported).inspect}, " \
+              "unexpected #{(reported - expected).inspect} ([line, lint])"
       end
       expected.size
     end

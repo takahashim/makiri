@@ -2,19 +2,20 @@
 //! binding layer, the cases only code that names rb-sys can write - the
 //! extension cannot, since it does not depend on it. Compiled only under
 //! `--cfg nupur_lint_probe`, by `rake dylint`, which fails unless the lints
-//! fire on exactly the lines that end in `//~`.
+//! report exactly the lines that end in `//~`, each by the lints named
+//! after it.
 #![allow(dead_code, clippy::all)]
 
 /// A raising C call outside `raw::call`'s closure
 /// (`raising_call_outside_protect`).
 #[allow(unsafe_code)]
 fn raising() {
-    let _ = unsafe { rb_sys::rb_ary_new_capa(0) }; //~
+    let _ = unsafe { rb_sys::rb_ary_new_capa(0) }; //~ ffi_without_gvl_proof raising_call_outside_protect
 }
 
 /// A raw `VALUE` outside the files that are the typed values
 /// (`raw_ruby_outside_bridge`).
-fn raw_type(_: rb_sys::VALUE) {} //~
+fn raw_type(_: rb_sys::VALUE) {} //~ raw_ruby_outside_bridge
 
 /// The GVL's token made outside the entries Ruby calls
 /// (`gvl_token_outside_entry`): the maker outside `rb::method`, a
@@ -24,15 +25,15 @@ fn raw_type(_: rb_sys::VALUE) {} //~
 #[rustfmt::skip] // keeps each marker on the line reported
 mod entry {
     fn token() {
-        let _ = unsafe { crate::rb::Ruby::get_unchecked() }; //~
+        let _ = unsafe { crate::rb::Ruby::get_unchecked() }; //~ gvl_token_outside_entry
     }
 
     fn trampoline() -> crate::rb::Value {
-        unsafe { crate::rb::method::finish(|ruby| Ok(ruby.qnil())) } //~
+        unsafe { crate::rb::method::finish(|ruby| Ok(ruby.qnil())) } //~ gvl_token_outside_entry
     }
 
     fn init(check: fn(&crate::rb::Ruby) -> Result<(), crate::rb::Error>) {
-        unsafe { crate::rb::method::run_init(check, check) } //~
+        unsafe { crate::rb::method::run_init(check, check) } //~ gvl_token_outside_entry
     }
 }
 
@@ -45,12 +46,12 @@ mod handles {
 
     fn forgotten(v: crate::rb::Value) -> Result<(), crate::rb::Error> {
         let handle = T.check(v)?;
-        core::mem::forget(handle); //~
+        core::mem::forget(handle); //~ forgotten_handle
         Ok(())
     }
 
     fn manually(v: crate::rb::Value) -> Result<(), crate::rb::Error> {
-        let _kept = core::mem::ManuallyDrop::new(T.check(v)?); //~
+        let _kept = core::mem::ManuallyDrop::new(T.check(v)?); //~ forgotten_handle
         Ok(())
     }
 }
@@ -59,7 +60,7 @@ mod handles {
 /// too.
 #[allow(unsafe_code)]
 fn raw_global() -> bool {
-    unsafe { rb_sys::rb_cObject != 0 } //~
+    unsafe { rb_sys::rb_cObject != 0 } //~ raw_ruby_outside_bridge
 }
 
 /// Ruby's C API from a function holding no proof of the GVL
@@ -68,7 +69,7 @@ fn raw_global() -> bool {
 #[rustfmt::skip] // keeps each marker on the line reported
 mod gvl_proof {
     fn without_proof() -> bool {
-        unsafe { rb_sys::ruby_stack_check() != 0 } //~
+        unsafe { rb_sys::ruby_stack_check() != 0 } //~ ffi_without_gvl_proof
     }
 
     fn with_a_token(_: &crate::rb::Ruby) -> bool {
@@ -80,7 +81,7 @@ mod gvl_proof {
     }
 
     fn in_a_closure() -> bool {
-        (|| unsafe { rb_sys::ruby_stack_check() != 0 })() //~
+        (|| unsafe { rb_sys::ruby_stack_check() != 0 })() //~ ffi_without_gvl_proof
     }
 }
 
@@ -91,10 +92,10 @@ mod gvl_proof {
 #[rustfmt::skip] // keeps each marker on the line reported
 mod c_integer {
     fn cast(n: usize) -> i64 {
-        n as i64 //~
+        n as i64 //~ c_integer_outside_int
     }
 
-    fn named(n: i64) -> Option<core::ffi::c_long> { //~
+    fn named(n: i64) -> Option<core::ffi::c_long> { //~ c_integer_outside_int
         n.try_into().ok()
     }
 
@@ -110,7 +111,7 @@ mod c_integer {
 #[rustfmt::skip] // keeps each marker on the line reported
 mod raising {
     fn unclassified(_: &crate::rb::Ruby) {
-        unsafe { rb_sys::rb_undef_alloc_func(rb_sys::rb_cObject) } //~
+        unsafe { rb_sys::rb_undef_alloc_func(rb_sys::rb_cObject) } //~ raising_call_outside_protect raw_ruby_outside_bridge
     }
 
     fn classified(_: &crate::rb::Ruby) -> bool {
@@ -129,11 +130,11 @@ mod raw {
     }
 
     fn a_read_in_raw(_: &crate::rb::Ruby) -> bool {
-        unsafe { rb_sys::rb_block_given_p() != 0 } //~
+        unsafe { rb_sys::rb_block_given_p() != 0 } //~ unraising_call_in_raw
     }
 
     fn protecting_nothing(_: &crate::rb::Ruby) -> bool {
-        call(|| unsafe { rb_sys::rb_block_given_p() != 0 }) //~
+        call(|| unsafe { rb_sys::rb_block_given_p() != 0 }) //~ unraising_call_in_raw
     }
 
     fn protecting_a_raise(_: &crate::rb::Ruby) {
