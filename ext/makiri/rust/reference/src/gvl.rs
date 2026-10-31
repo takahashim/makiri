@@ -69,7 +69,7 @@ impl Deref for Exclusive {
 /// Only a `Send` value can be one, as with a `Mutex`:
 ///
 /// ```compile_fail,E0277
-/// use makiri::gvl::GvlCell;
+/// use makiri_lexbor::gvl::GvlCell;
 /// static CELL: GvlCell<Option<std::rc::Rc<u8>>> = GvlCell::new(None);
 /// ```
 pub struct GvlCell<T> {
