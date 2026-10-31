@@ -135,7 +135,6 @@ ext/makiri/rust/           the extension (package makiri_rs, lib `makiri`)
       fragment
       css_parser.rs        the views over Lexbor's CSS selector lists; its
                            parse is a reference
-      xpath.rs             the XPath HTML backend
   verus/                   Verus proofs, each over code copied from the
                            source. Lines only Verus needs end in
                            `// [verus]`; `rake verus:sync` holds the rest to

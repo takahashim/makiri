@@ -8,16 +8,23 @@ This is the English version of the design document; the Japanese version,
 ### Goals
 
 * Provide a Nokogiri-compatible API for common HTML5 scraping.
-* Use Lexbor for fast HTML5 parsing.
+* Parse HTML5 fast, by the WHATWG HTML Standard, with Makiri's own parser:
+  a Rust port of Lexbor's tokenizer and tree builder, building an index-arena
+  DOM. The vendored Lexbor is not part of the extension; it is built only as
+  the reference the port is tested against (`rake lexbor`).
 * Implement an XPath 1.0 engine without libxml2.
-* Use Lexbor for CSS parsing and matching where possible.
+* Parse CSS selectors and stylesheets with a Rust port of Lexbor's CSS
+  parsers, and match them with Makiri's own matcher (`css_match`), a safe-Rust
+  port of Lexbor's state machine, over both HTML and XML. The shipping build
+  runs no Lexbor CSS code. Matching follows a browser's `querySelectorAll`.
 * Support source locations and basic DOM mutation.
 * Make XPath evaluation resistant to memory exhaustion and DoS attacks.
 * Use UTF-8 internally.
 
   * HTML parsing is lenient and replaces invalid bytes with U+FFFD.
   * Program APIs require valid UTF-8 and fail with `Makiri::Error`.
-  * XML always rejects NUL.
+  * NUL is refused in names and engine input, and kept in text, comments and
+    attribute values, in HTML and XML alike.
 * Parsing releases the GVL and can run in parallel.
 * XPath evaluation keeps the GVL to avoid unsafe concurrent access.
 * Internal errors should not crash the whole host process.
@@ -34,8 +41,9 @@ This is the English version of the design document; the Japanese version,
 
 ### Things We Intentionally Avoid
 
-* Forking Lexbor. Makiri handles bugs in its adapter layer where possible and
-  reports them upstream.
+* Forking Lexbor. Makiri handles Lexbor's bugs and gaps in its port, records
+  the differences in `docs/parser_differences.ja.md`, and reports them
+  upstream.
 * Treating libxml2 compatibility as the main goal. When behavior conflicts
   with HTML5 or XPath specifications, Makiri follows the specification and
   documents the difference.
@@ -111,8 +119,9 @@ Program APIs are strict:
 * Makiri does not silently repair API input
 
 NUL is rejected in names, namespaces, selectors, XPath expressions, and
-engine input. HTML text, comments, and attribute values may contain NUL when
-DOM behavior requires it. XML always rejects NUL.
+engine input. Text, comments, and attribute values may contain NUL, as the DOM
+allows, in HTML and XML alike. The XML serializers refuse such a tree, and
+any tree holding a character XML 1.0 has no `Char` for, when they write it.
 
 ## 4. Memory Model
 
@@ -134,7 +143,8 @@ DOM behavior requires it. XML always rejects NUL.
 ## 5. Build System
 
 - Build decisions are managed in one configure step.
-- Lexbor is used without local patches or forks.
+- The vendored Lexbor, built only for the tests, is used without local
+  patches or forks.
 - Prefer release tags. Use a commit pin only when Makiri needs an unreleased
   upstream fix.
 - Generate Lexbor structure information and constants from upstream headers
@@ -173,8 +183,8 @@ rake fuzz:sanitize
 The fuzzer generates and mutates XPath and CSS expressions. Invalid input must
 not cause crashes, hangs, or unexpected foreign exceptions.
 
-Nokogiri is not used as a general oracle, because Lexbor and libxml2 have
-different HTML5 semantics. Known differences are recorded in curated specs
+Nokogiri is not used as a general oracle, because Makiri's parser and libxml2
+have different HTML5 semantics. Known differences are recorded in curated specs
 instead.
 
 ### 6.3 Property / Differential (`spec/invariants/`, `spec/differential/`)
@@ -210,7 +220,7 @@ sanitizer tests on Linux.
 
 ## 7. Compatibility Considerations
 
-Lexbor follows HTML5 behavior more closely than libxml2 in some areas, and
+Makiri's parser follows HTML5 behavior more closely than libxml2, and
 Makiri follows specifications even when the result differs from Nokogiri.
 Important differences include:
 
@@ -223,19 +233,23 @@ Important differences include:
 | XPath namespace matching | Strict by default   | Strict in Nokogiri::HTML5 |
 | XPath namespace axis     | Not implemented     | Implemented by libxml2    |
 | Invalid HTML bytes       | Replace with U+FFFD | Encoding guess in libxml2 |
-| HTML name case folding   | Not performed       | Browsers perform it       |
+| HTML name case folding   | HTML names folded   | Not in Nokogiri; browsers fold |
 
 Known differences are recorded in curated conformance tests.
 
-Some behavior, such as HTML name case folding and the handling of `xmlns`, is
-still under review.
+XPath name tests fold ASCII case on HTML elements and attributes, and keep
+SVG/MathML names as written. The HTML attribute axis leaves out the `xmlns` /
+`xmlns:*` attributes of SVG/MathML elements (attributes in the XMLNS
+namespace); an `xmlns` written on an HTML element is an ordinary attribute.
 
 ## 8. Design Decision Notes
 
 These decisions may change later.
 
 * `HTML()` is the main implementation and `parse()` is an alias.
-* Node identity is based on the underlying node, not the Ruby wrapper.
+* Each node has one Ruby wrapper, which the document caches, so a node reached
+  twice is the same object. Node and NodeSet comparisons still use the node's
+  identity.
 * XPath evaluation keeps the GVL.
 
 ### XPath and the GVL

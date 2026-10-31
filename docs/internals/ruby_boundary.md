@@ -18,7 +18,7 @@ another Lexbor-based gem in the same process (e.g. `nokolexbor`) bind its
 ours in the dynamic table is the same hazard.
 
 **Verify with `bundle exec rake symbols`**, which asserts the whole claim:
-nothing but those two names is exported. Do not weaken that gate to "no
+nothing but those two names is exported, function or data. Do not weaken that gate to "no
 `lxb_` exported". That check passed while ~220 `mkr_*` names leaked into the
 dynamic table.
 

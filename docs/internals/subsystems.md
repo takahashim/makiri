@@ -139,7 +139,8 @@ byte-class table), never from a flag a setter could leave stale. XML names
 stay NUL-strict, like HTML's.
 
 Don't drop the UTF-8 checks or route a name or engine string through the
-data path; see `docs/string_types.md`.
+data path. The two contracts are the types `RubyText` and `RubyData`
+(`bridge/string/view.rs`).
 
 ### No argument is converted
 
@@ -275,7 +276,7 @@ with `spec/xpath_kept_order_spec.rb` and `xpath::order::speed::order_speed`
 
 `TextIndex` holds every text node's span in document order and each
 container's `[start, end)` run of them (a dense array by `NodeId`, built in
-one walk). A `Node#text` is then a lookup plus `ruby_str_from_slices` - one
+one walk). A `Node#text` is then a lookup plus `utf8_str_from_slices` - one
 pre-sized memcpy run, no element node touched (**~4x libxml2**).
 
 It is built only once the walks `Node#text` has served since the last edit

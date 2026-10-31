@@ -102,6 +102,13 @@ check.
 extconf writes re-runs cargo on every build, so a new `.rs` cannot be silently
 dropped the way a new `.c` could.
 
+**Adding a crate does.** rake-compiler runs that Makefile only when a file
+`ext.source_pattern` (`Rakefile`) lists is newer than the built extension. The
+pattern lists the extension, `nupur`, `engine`, `falloc` and the workspace's
+manifest, lock file and `build.rs`. A crate the extension comes to depend on
+goes there too; otherwise an edit to that crate alone leaves `rake compile` on
+the old bundle, and `rake spec` tests it without saying so.
+
 That hazard was real, and is worth remembering for anything else generated at
 configure time: extconf globbed sources once, a stale Makefile omitted the new
 file, and macOS's `-undefined dynamic_lookup` turned the missing symbols into
@@ -136,8 +143,7 @@ stack-redzone poison behind. A later interceptor (memcpy & co.) in the
 uninstrumented interpreter then trips over the stale shadow: a
 layout-sensitive spurious report that ASan aborts on while rendering
 (`asan_thread.cpp` `kCurrentStackFrameMagic` CHECK). This took CI's sanitize
-jobs down via the XML-mutation PBT, which raises thousands of times; see
-`docs/ci-crash/INVESTIGATION.md`.
+jobs down via the XML-mutation PBT, which raises thousands of times.
 
 Heap red zones are unaffected; only stack-buffer checks are lost. Do not
 re-enable stack instrumentation without solving the `__builtin_longjmp`
