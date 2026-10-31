@@ -349,19 +349,11 @@ impl Document {
     pub fn new(compat_mode: u8) -> Result<Document, DomOom> {
         let mut nodes: Vec<Node> = try_vec_with_capacity(16).ok_or(DomOom)?;
         oom!(nodes.falloc_push(Node {
-            kind: NodeType::Document,
             local: res::TAG__DOCUMENT as u32,
             /* An HTML document node is in the HTML namespace
              * (`lxb_dom_document_init`). */
             ns: HTML_NS,
-            prefix: 0,
-            parent: None,
-            first_child: None,
-            last_child: None,
-            next: None,
-            prev: None,
-            source: 0,
-            payload: Payload::Document,
+            ..Node::blank(NodeType::Document, Payload::Document)
         }));
         Ok(Document {
             nodes,
@@ -470,6 +462,17 @@ impl Document {
     #[inline]
     fn bytes_of(&self, s: Span) -> &[u8] {
         self.bytes.get(s)
+    }
+
+    /// `r`, with `spans` - stored for a node `r` failed to make - counted
+    /// dead, so the store's dead count stays what no span names.
+    fn release_on_err<T>(&mut self, r: Result<T, DomOom>, spans: &[Span]) -> Result<T, DomOom> {
+        if r.is_err() {
+            for &s in spans {
+                self.bytes.release(s);
+            }
+        }
+        r
     }
 
     fn push(&mut self, kind: NodeType, payload: Payload) -> Result<NodeId, DomOom> {
@@ -629,7 +632,8 @@ impl Document {
     ) -> Result<NodeId, DomOom> {
         let written = self.intern_written(written)?;
         let value = self.store(value)?;
-        self.push_attr(local, ns, prefix, written, value)
+        let made = self.push_attr(local, ns, prefix, written, value);
+        self.release_on_err(made, &[value])
     }
 
     /// The one maker of an attribute node: names, a written-name id and a
@@ -671,7 +675,8 @@ impl Document {
             NodeType::Text | NodeType::Comment | NodeType::CDataSection
         ));
         let span = self.store(data)?;
-        let id = self.push(kind, Payload::Data(span))?;
+        let made = self.push(kind, Payload::Data(span));
+        let id = self.release_on_err(made, &[span])?;
         self.set_names(id, name.local, name.ns, name.prefix);
         Ok(id)
     }
@@ -679,8 +684,10 @@ impl Document {
     /// A new ProcessingInstruction.
     pub fn create_pi(&mut self, target: &[u8], data: &[u8]) -> Result<NodeId, DomOom> {
         let target = self.store(target)?;
-        let data = self.store(data)?;
-        self.push(NodeType::Pi, Payload::Pi { target, data })
+        let data = self.store(data);
+        let data = self.release_on_err(data, &[target])?;
+        let made = self.push(NodeType::Pi, Payload::Pi { target, data });
+        self.release_on_err(made, &[target, data])
     }
 
     /// A new DocumentType, its node named `names`.
@@ -691,12 +698,20 @@ impl Document {
         public_id: &[u8],
         system_id: &[u8],
     ) -> Result<NodeId, DomOom> {
-        let d = DoctypeData {
-            name: self.store(name)?,
-            public_id: self.store(public_id)?,
-            system_id: self.store(system_id)?,
-        };
-        self.push_doctype(names, d)
+        let name = self.store(name)?;
+        let public_id = self.store(public_id);
+        let public_id = self.release_on_err(public_id, &[name])?;
+        let system_id = self.store(system_id);
+        let system_id = self.release_on_err(system_id, &[name, public_id])?;
+        let made = self.push_doctype(
+            names,
+            DoctypeData {
+                name,
+                public_id,
+                system_id,
+            },
+        );
+        self.release_on_err(made, &[name, public_id, system_id])
     }
 
     /// The one maker of a DocumentType node, its strings in the store.
@@ -983,12 +998,19 @@ impl Document {
     /// attribute's value. The old bytes stay in the store, counted as dead
     /// until the store is compacted (`compact.rs`).
     pub fn set_data(&mut self, n: NodeId, data: &[u8]) -> Result<(), DomOom> {
-        let span = self.store(data)?;
-        let Some(node) = self.node(n).copied() else {
-            self.bytes.release(span);
+        /* A node with no data takes nothing: decided before anything is
+         * stored, so no bytes are written only to be counted dead. */
+        let Some(payload) = self.node(n).map(|x| x.payload) else {
             return Ok(());
         };
-        let old = match node.payload {
+        if !matches!(
+            payload,
+            Payload::Data(_) | Payload::Pi { .. } | Payload::Attr(_)
+        ) {
+            return Ok(());
+        }
+        let span = self.store(data)?;
+        let old = match payload {
             Payload::Data(old) => {
                 if let Some(x) = self.node_mut(n) {
                     x.payload = Payload::Data(span);

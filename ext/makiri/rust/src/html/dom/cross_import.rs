@@ -128,6 +128,11 @@ impl NsSpans {
     /// asked for.
     fn span(&mut self, doc: &mut XmlDoc, n: HtmlNode<'_>) -> Result<Span, MutError> {
         let id = n.ns_id();
+        /* No namespace stores nothing - and `None` is the table's empty
+         * key, which it would refuse to keep. */
+        if id.is_none() {
+            return Ok(Span::ABSENT);
+        }
         if let Some(span) = self.seen.get(id).flatten() {
             return Ok(span);
         }
