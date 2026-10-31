@@ -318,7 +318,7 @@ pub fn offsets_name_their_tags(input: &[u8]) -> Result<(), String> {
 /// tree is sampled evenly, so a deep one does not make the check quadratic.
 const SERIALIZED_NODES: usize = 64;
 
-fn serial_text(b: Option<crate::cbuf::Buf>) -> String {
+fn serial_text(b: Option<crate::ceiling_buf::Buf>) -> String {
     match b {
         Some(b) => String::from_utf8_lossy(b.as_slice()).into_owned(),
         None => "<none>".into(),

@@ -23,7 +23,7 @@ use crate::bridge::rb::{Error, RString};
 use crate::bridge::string::{
     claims_no_encoding, prefix, ruby_string_bytes_from, text_check, Encoding,
 };
-use crate::cbuf::OwnedBuf;
+use crate::ceiling_buf::OwnedBuf;
 use crate::init::{EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 use crate::xml::encoding_sniff::{sniff, SNIFF_WINDOW};
 

@@ -553,9 +553,9 @@ impl<T> OomOption<T> for Option<T> {
 /// and fall back to exactly `need` when doubling would overshoot what `elem`
 /// allows. `None` only when `need` itself does not fit.
 ///
-/// This lives here rather than beside its callers (`cbuf`,
+/// This lives here rather than beside its callers (`ceiling_buf`,
 /// `bridge::node_set`, the proofs) for a reason worth keeping: the arithmetic
-/// is pure, so it can be proved (`verus/cbuf.rs`, at every element size) and
+/// is pure, so it can be proved (`verus/ceiling_buf.rs`, at every element size) and
 /// tested without Lexbor or Ruby. Putting it where it can be proved is the difference between a property
 /// that is checked and one that is merely commented.
 pub fn grow_capacity(cap: usize, need: usize, elem: usize) -> Option<usize> {

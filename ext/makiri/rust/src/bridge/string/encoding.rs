@@ -14,7 +14,10 @@ pub use crate::nupur::encoding::to_encoding;
 
 /// `v` as an encoding argument: the encoding, and the name to write for it -
 /// the String or Symbol as the caller wrote it, or an `Encoding`'s own name.
-pub fn encoding_arg(ruby: &Ruby, v: Value) -> Result<(Encoding, crate::cbuf::OwnedBuf), Error> {
+pub fn encoding_arg(
+    ruby: &Ruby,
+    v: Value,
+) -> Result<(Encoding, crate::ceiling_buf::OwnedBuf), Error> {
     let e = to_encoding(ruby, v)?;
     let name = match RString::from_value(v) {
         Some(s) => s,
@@ -22,7 +25,7 @@ pub fn encoding_arg(ruby: &Ruby, v: Value) -> Result<(Encoding, crate::cbuf::Own
             crate::bridge::ruby::name_arg(v)?
         }
         None => {
-            return crate::cbuf::OwnedBuf::copy_from(e.name())
+            return crate::ceiling_buf::OwnedBuf::copy_from(e.name())
                 .map(|b| (e, b))
                 .ok_or_else(|| {
                     crate::bridge::ruby::makiri_error("out of memory reading an encoding name")

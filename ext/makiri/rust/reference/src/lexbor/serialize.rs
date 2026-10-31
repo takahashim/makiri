@@ -12,7 +12,7 @@
 
 #![allow(unsafe_code)]
 
-use crate::cbuf::{Buf, BufError};
+use crate::ceiling_buf::{Buf, BufError};
 use crate::lexbor::abi::consts::STATUS_OK as LXB_STATUS_OK;
 use crate::lexbor::adapter::arena_bytes::{document_size, DocumentSize};
 use crate::lexbor::adapter::html::{HtmlDoc, HtmlNode};
@@ -36,7 +36,7 @@ const CEILING_FLOOR: usize = 65536;
 /// with a large one, so a legitimate parse round-trips through `to_html` (HTML
 /// parsing is itself byte-uncapped) while a pathologically deep pretty-print
 /// fails closed instead of growing without bound. It is deliberately *not*
-/// clamped to `cbuf`'s hard ceiling here; `Buf` takes the minimum of the two
+/// clamped to `ceiling_buf`'s hard ceiling here; `Buf` takes the minimum of the two
 /// on every growth, so the clamp would only duplicate a constant this side
 /// could then disagree with. The HTML tree cannot cycle (the mutation guards
 /// plus Lexbor's own insert checks), so the ceiling is never reached in normal

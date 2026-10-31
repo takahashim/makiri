@@ -271,7 +271,7 @@ P で始まる項目は HTML パーサの振る舞いである。
 
 ### 入力と資源の制限
 
-- NUL を含む名前や不正な UTF-8 を、API の境界で例外にする（`CLAUDE.md` の text-input contract）。HTML の入力そのものは置き換えて読む。
+- NUL を含む名前や不正な UTF-8 を、API の境界で例外にする（`docs/internals/subsystems.md` の text-input contract）。HTML の入力そのものは置き換えて読む。
 - stylesheet の at-rule の入れ子が 64 を超えると例外にする（`selectors/stylesheet.rs` の `MAX_DEPTH`）。
 - メモリ不足では stylesheet の解析全体を失敗にする（S3 と同じ方針）。
 
@@ -548,7 +548,7 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 
 次の差は HTML パーサではなく、DOM の上の層（CSS マッチャ、XPath の名前照合）にある。
 パーサの移植では変わらないが、同じ表で管理する。
-詳細と根拠は `CLAUDE.md` の CSS の節にある。
+詳細と根拠は `docs/internals/subsystems.md` の CSS の節にある。
 
 - **M1 form state**：`:disabled`、`:enabled`、`:checked` は HTML Standard の定義に従う（fieldset の継承、最初の legend 子要素、option と optgroup）。Lexbor は近似している。分類は意図した互換差ではなく、仕様への準拠である。
 - **M2 link**：`:any-link` と `:link` は、`href` 属性を持つ HTML の `a` と `area`、および `href` か XLink の `href` を持つ SVG の `a` に当たる（HTML Standard と SVG 2。履歴がないので二つは同じ）。Lexbor は、`a`、`area` と `map`（`:any-link`）または `link`（`:link`）を名前空間を問わず数え、属性も名前空間を問わず local name で見るので、`<link href>` が `:link` に当たり、`:any-link` と答えが食い違っていた。Chromium、Firefox、WebKit は前者。`Fix::M2`。

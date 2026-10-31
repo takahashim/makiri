@@ -15,6 +15,6 @@ pub use crate::engine_error::ErrorKind;
 pub use super::ctx::XPathValue;
 pub use super::ctx::{Context, Session};
 pub use super::limits::Budget;
-pub(crate) use crate::cbuf::{Buf, BufError};
+pub(crate) use crate::ceiling_buf::{Buf, BufError};
 pub use crate::engine_error::{ErrSink, Error, Reported};
 pub use crate::text::VerifiedText;

@@ -29,7 +29,7 @@ mod c14n;
 mod out;
 mod xml;
 
-use crate::cbuf::Buf;
+use crate::ceiling_buf::Buf;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
 /// The top of the writers' recursion: one level per element, bounded by

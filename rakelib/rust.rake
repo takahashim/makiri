@@ -70,20 +70,20 @@ end
 # of them, to catch a dependency missed here). The paths are the code
 # each group's proofs run - read off the harnesses' `use`s, what the proven
 # functions call, and the modules' `cfg(kani)`: `xml::verify` reaches
-# `cutf8` through `xml::chars`. `KANI_SHARED` is what every group depends on - the
+# `utf8_decode` through `xml::chars`. `KANI_SHARED` is what every group depends on - the
 # bounds in lib.rs, the build, this file and the workflow. `kani:groups`
 # fails when a file holding a proof is in no group, so a new harness cannot
 # go unrun.
 RUST_SRC = "ext/makiri/rust/engine/src"
 KANI_GROUPS = {
-  # (An "alloc" group proved falloc's grow_capacity and cbuf's copy_small,
-  # bounded, in ~6 of CI's ~10 minutes. verus/cbuf.rs proves both at every
-  # size, and cbuf's tests run the rest, so it went.)
+  # (An "alloc" group proved falloc's grow_capacity and ceiling_buf's copy_small,
+  # bounded, in ~6 of CI's ~10 minutes. verus/ceiling_buf.rs proves both at every
+  # size, and ceiling_buf's tests run the rest, so it went.)
   "utf8" => {
-    harnesses: %w[cutf8::verify::],
-    paths: %W[#{RUST_SRC}/cutf8.rs #{RUST_SRC}/cutf8/]
+    harnesses: %w[utf8_decode::verify::],
+    paths: %W[#{RUST_SRC}/utf8_decode.rs #{RUST_SRC}/utf8_decode/]
   },
-  # `cutf8` too: `xml::chars::decode1` IS `cutf8::decode1`, and
+  # `utf8_decode` too: `xml::chars::decode1` IS `utf8_decode::decode1`, and
   # `validate_chars` decodes with it, so a change there can change these
   # proofs' answer - which the utf8 group's own proofs of `decode1` do not
   # stand in for. Not `falloc`, which `xml::chars` uses only outside what
@@ -91,7 +91,7 @@ KANI_GROUPS = {
   "xml" => {
     harnesses: %w[xml::verify::],
     paths: %W[#{RUST_SRC}/xml/chars/ #{RUST_SRC}/xml/verify.rs #{RUST_SRC}/xml/mod.rs
-              #{RUST_SRC}/cutf8.rs #{RUST_SRC}/cutf8/]
+              #{RUST_SRC}/utf8_decode.rs #{RUST_SRC}/utf8_decode/]
   },
   "xpath" => {
     harnesses: %w[xpath::verify::],

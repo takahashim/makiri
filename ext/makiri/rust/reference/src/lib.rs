@@ -13,9 +13,9 @@
 
 /// The engine's modules, by the paths the reference names them with.
 pub use makiri_engine::{
-    cbuf, child_index, compat, conformance, css_cache, css_match, cutf8, doc_cell, dom_rules,
+    ceiling_buf, child_index, compat, conformance, css_cache, css_match, doc_cell, dom_rules,
     engine_error, html, html_dom, kani_bounds, limits, no_unwind, node_type, ptr_table, selectors,
-    source_lines, stack, text, token, utf8_input, xml, xpath,
+    source_lines, stack, text, token, utf8_decode, utf8_input, xml, xpath,
 };
 
 /// Catching a panic at a C boundary and re-raising it past one, so a panic in a

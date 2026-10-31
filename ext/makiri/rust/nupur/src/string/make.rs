@@ -157,8 +157,8 @@ impl Unwritten<'_> {
 /// `dst.copy_from_slice(src)` for slices of one length, with no `memcpy`
 /// call for 16 elements or fewer: two fixed-size copies that overlap. Text
 /// slices are mostly a few bytes, and a `memcpy` call each measured
-/// `doc.text` ~50% slower. The extension's `cbuf::copy_small`, token for
-/// token, which Verus proves (`verus/cbuf.rs`); `rake verus:sync` holds this
+/// `doc.text` ~50% slower. The extension's `ceiling_buf::copy_small`, token for
+/// token, which Verus proves (`verus/ceiling_buf.rs`); `rake verus:sync` holds this
 /// copy to it too, since this crate cannot depend on the extension.
 #[inline(always)]
 #[allow(

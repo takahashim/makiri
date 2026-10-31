@@ -9,7 +9,7 @@ use crate::bridge::rb::{Error, RString};
 use crate::bridge::ruby::makiri_error;
 
 /// The shared owned buffer.
-use crate::cbuf::OwnedBuf;
+use crate::ceiling_buf::OwnedBuf;
 
 use super::*;
 

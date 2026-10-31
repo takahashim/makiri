@@ -97,23 +97,23 @@ impl RubyText {
 
 /// What the strict-text check found.
 ///
-/// The enum itself lives in [`crate::cutf8`] beside the pure [`text_verdict`];
+/// The enum itself lives in [`crate::utf8_decode`] beside the pure [`text_verdict`];
 /// re-exported here so the bridge's callers keep naming it from this module.
-pub use crate::cutf8::TextVerdict;
+pub use crate::utf8_decode::TextVerdict;
 
 /// Check `bytes` against the strict contract, returning the specific
 /// violation so each caller can map it to its own error surface (`Makiri::Error`,
 /// `XML::SyntaxError`, or a reason string).
 ///
 /// It resolves the String's cached coderange into an ordinary value, then
-/// delegates the actual check to the pure [`crate::cutf8::text_verdict`]; the
+/// delegates the actual check to the pure [`crate::utf8_decode::text_verdict`]; the
 /// logic is Ruby-free and testable under the always-compiled core.
 ///
 /// `coderange_str` is consulted only for its CACHED coderange, which never
 /// scans and never allocates.
 pub fn text_check(coderange_str: RString, bytes: &[u8]) -> TextVerdict {
     /* The cached coderange reads flags; it never scans and never allocates. */
-    crate::cutf8::text_verdict(bytes, coderange_str.known_utf8())
+    crate::utf8_decode::text_verdict(bytes, coderange_str.known_utf8())
 }
 
 /// Why a String in another encoding was refused ([`ReadError::NoUtf8Form`]).
@@ -197,7 +197,7 @@ fn verified_text_raising(
     what: &str,
     on_nul: fn(core::fmt::Arguments<'_>) -> Error,
 ) -> Result<RubyText, Error> {
-    use crate::cutf8::TextVerdict;
+    use crate::utf8_decode::TextVerdict;
     let s = name_arg(in_)?;
     RubyText::acquire(ruby, s, None, |b| {
         b.contains(&0).then_some(TextVerdict::HasNul)

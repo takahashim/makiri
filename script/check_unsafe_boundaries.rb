@@ -129,16 +129,16 @@ FORBID_FILES = %w[
   bridge/xml/decode.rs bridge/xml/document.rs bridge/xml/edit.rs
   bridge/xml/error.rs bridge/xml/insert.rs bridge/xml/mod.rs
   bridge/xml/receiver.rs bridge/xml/strings.rs bridge/xml/wrap.rs
-  bridge/xpath/context_object.rs bridge/xpath/mod.rs engine/cbuf.rs
+  bridge/xpath/context_object.rs bridge/xpath/mod.rs engine/ceiling_buf.rs
   engine/child_index.rs engine/conformance/mod.rs engine/css_cache.rs
-  engine/css_match/mod.rs engine/cutf8.rs engine/cutf8/verify.rs
-  engine/doc_cell.rs engine/dom_rules.rs engine/engine_error.rs
-  engine/html/dom/mod.rs engine/html/encoding/mod.rs engine/html/mod.rs
-  engine/html/tokenizer/mod.rs engine/html/tree/mod.rs engine/html_dom.rs
-  engine/limits.rs engine/node_type.rs engine/ptr_table.rs
-  engine/rust_tests.rs engine/selectors/mod.rs engine/selectors/stylesheet.rs
-  engine/selectors/text.rs engine/source_lines.rs engine/stack.rs
-  engine/text.rs engine/token.rs engine/utf8_input.rs
+  engine/css_match/mod.rs engine/doc_cell.rs engine/dom_rules.rs
+  engine/engine_error.rs engine/html/dom/mod.rs engine/html/encoding/mod.rs
+  engine/html/mod.rs engine/html/tokenizer/mod.rs engine/html/tree/mod.rs
+  engine/html_dom.rs engine/limits.rs engine/node_type.rs
+  engine/ptr_table.rs engine/rust_tests.rs engine/selectors/mod.rs
+  engine/selectors/stylesheet.rs engine/selectors/text.rs engine/source_lines.rs
+  engine/stack.rs engine/text.rs engine/token.rs
+  engine/utf8_decode.rs engine/utf8_decode/verify.rs engine/utf8_input.rs
   engine/xml/arena.rs engine/xml/attr_key.rs engine/xml/chars/expand.rs
   engine/xml/chars/mod.rs engine/xml/css.rs engine/xml/css_tests.rs
   engine/xml/dom_name.rs engine/xml/encoding_names.rs engine/xml/encoding_sniff.rs

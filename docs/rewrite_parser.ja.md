@@ -82,7 +82,7 @@ u32 の index で引くアリーナにすると、node は約 48 B、attr は約
 
 **意図した仕様差**。
 `NOKOGIRI_DIFFERENCES.md` と同じ形式で、Lexbor との差分表を新たに置く。
-`CLAUDE.md` にすでに記録がある差分（form state は Standard、link は Lexbor、SVG 要素名の case folding、属性名の大文字小文字）を最初の項目にする。
+`docs/internals/subsystems.md`（当時は `CLAUDE.md`）にすでに記録がある差分（form state は Standard、link は Lexbor、SVG 要素名の case folding、属性名の大文字小文字）を最初の項目にする。
 移植中に見つかる食い違いは、後述の分類に従ってこの表に追記する。
 
 **対象とする仕様の版**。

@@ -31,15 +31,15 @@
 //! owns. The document parse and the fragment parse both go through it, so the
 //! "skip when the caller already knows it is valid" rule lives here once.
 //!
-//! The repaired copy is built in a `cbuf::Buf` and stolen as an `OwnedBuf`,
+//! The repaired copy is built in a `ceiling_buf::Buf` and stolen as an `OwnedBuf`,
 //! which frees it on drop. That also keeps the growth clamp, the NUL terminator
 //! and the `rake oom` injection hook - three properties that a Rust `Vec` would
 //! have had to re-earn.
 
 #![forbid(unsafe_code)]
 
-use crate::cbuf::{Buf, BufError, OwnedBuf};
-use crate::cutf8::valid;
+use crate::ceiling_buf::{Buf, BufError, OwnedBuf};
+use crate::utf8_decode::valid;
 
 /// HTML input after browser-compatible decoding: the caller's bytes when they
 /// needed no repair, or the repaired copy, which this owns and frees.
@@ -65,9 +65,9 @@ fn replace_invalid(src: &[u8]) -> Result<OwnedBuf, BufError> {
      * tight and tied to the actual input, so a large document still parses but
      * nothing runs away - rather than a blanket ceiling. */
     /* On overflow, `usize::MAX` rather than a restated hard ceiling: every
-     * growth path in `cbuf::Buf` already takes min(max, BUF_HARD_MAX), so this
+     * growth path in `ceiling_buf::Buf` already takes min(max, BUF_HARD_MAX), so this
      * is that ceiling, without a second copy of the constant that an
-     * `MKR_BUF_HARD_MAX=` build could silently disagree with (see cbuf.rs). */
+     * `MKR_BUF_HARD_MAX=` build could silently disagree with (see ceiling_buf.rs). */
     let cap = src.len().saturating_mul(3);
     let mut buf = Buf::new(cap);
 

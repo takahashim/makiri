@@ -12,7 +12,7 @@
 //!
 //! **Never let C longjmp through a Rust frame.** `rb_raise` unwinds with
 //! `longjmp`, which skips Rust destructors: a raise crossing a frame that owns a
-//! `Vec`, a [`Buf`](crate::cbuf::Buf), a `RefCell` borrow or any other resource
+//! `Vec`, a [`Buf`](crate::ceiling_buf::Buf), a `RefCell` borrow or any other resource
 //! leaks it or leaves it held. So a failure travels back as
 //! `Result<_, crate::bridge::rb::Error>`, which the method's trampoline turns
 //! into a raise after the Rust frames have returned normally

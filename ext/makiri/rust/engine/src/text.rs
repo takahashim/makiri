@@ -2,7 +2,7 @@
 //! selector, a namespace prefix or URI, a variable name or value.
 //!
 //! The one contract is **valid UTF-8 with no NUL**. The UTF-8 half is the type
-//! (`&str`); the NUL half is [`crate::cutf8::text_verdict`], the one check this
+//! (`&str`); the NUL half is [`crate::utf8_decode::text_verdict`], the one check this
 //! type and the Ruby bridge's `text_check` both run. Made by checking the bytes
 //! ([`VerifiedText::from_bytes`], [`VerifiedText::new`]) or at the Ruby boundary,
 //! where the bridge has already run the same check
@@ -22,7 +22,7 @@
 
 use core::ops::Deref;
 
-use crate::cutf8::{text_verdict, TextVerdict};
+use crate::utf8_decode::{text_verdict, TextVerdict};
 
 /// Valid UTF-8 (by type) with no NUL (by construction): the text an engine
 /// input must be.
@@ -32,7 +32,7 @@ pub struct VerifiedText<'a>(&'a str);
 impl<'a> VerifiedText<'a> {
     /// `s`, unless it holds a NUL.
     ///
-    /// The NUL half of the contract is [`cutf8::text_verdict`], the one check
+    /// The NUL half of the contract is [`utf8_decode::text_verdict`], the one check
     /// the bridge's [`text_check`](crate::bridge::string::text_check) also runs;
     /// `true` because `s` is already UTF-8 by type.
     pub fn new(s: &'a str) -> Option<Self> {

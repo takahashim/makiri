@@ -3,7 +3,7 @@
 #![forbid(unsafe_code)]
 
 use super::Failure;
-use crate::cbuf::{Buf, BufError};
+use crate::ceiling_buf::{Buf, BufError};
 use crate::xml::model::{Document as XmlDoc, NodeId};
 
 /// A write either succeeded or failed for the reason it carries: the failure

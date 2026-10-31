@@ -1,4 +1,4 @@
-// The canaries `rake verus` adds to cbuf.rs: each `canary_` function
+// The canaries `rake verus` adds to ceiling_buf.rs: each `canary_` function
 // reaches one outcome of the proved code, from a buffer it builds itself,
 // then asserts `false` - which must FAIL. One that verifies means the
 // axioms, or the specs above, prove anything there: the proof is vacuous.

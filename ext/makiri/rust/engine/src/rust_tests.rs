@@ -8,7 +8,7 @@
 #![allow(clippy::disallowed_methods)] /* test inputs */
 #![forbid(unsafe_code)]
 
-use crate::cutf8::{decode1, valid};
+use crate::utf8_decode::{decode1, valid};
 use crate::xml::chars::Utf8Char;
 use crate::xml::qname::{split_checked, xmlns_prefix};
 use crate::xpath::number::{extent, from_extent, to_text};
@@ -252,7 +252,7 @@ fn growth_policy_never_shrinks_a_live_allocation_for_non_empty_need() {
 
 #[test]
 fn text_verdict_accepts_valid_utf8() {
-    use crate::cutf8::{text_verdict, TextVerdict};
+    use crate::utf8_decode::{text_verdict, TextVerdict};
     assert_eq!(text_verdict(b"", false), TextVerdict::Ok);
     assert_eq!(text_verdict(b"hello", false), TextVerdict::Ok);
     assert_eq!(text_verdict("日本語".as_bytes(), false), TextVerdict::Ok);
@@ -263,14 +263,14 @@ fn text_verdict_rejects_nul_before_utf8() {
     // NUL is well-formed UTF-8, but the strict contract forbids it, so it is
     // reported as HasNul even when the bytes are otherwise valid, and even when
     // a caller has already proved the bytes valid UTF-8.
-    use crate::cutf8::{text_verdict, TextVerdict};
+    use crate::utf8_decode::{text_verdict, TextVerdict};
     assert_eq!(text_verdict(b"a\0b", false), TextVerdict::HasNul);
     assert_eq!(text_verdict(b"a\0b", true), TextVerdict::HasNul);
 }
 
 #[test]
 fn text_verdict_rejects_invalid_utf8() {
-    use crate::cutf8::{text_verdict, TextVerdict};
+    use crate::utf8_decode::{text_verdict, TextVerdict};
     assert_eq!(text_verdict(b"\xFF", false), TextVerdict::InvalidUtf8);
     // A truncated multi-byte sequence.
     assert_eq!(text_verdict(b"\xE2\x82", false), TextVerdict::InvalidUtf8);
@@ -283,7 +283,7 @@ fn text_verdict_skips_the_scan_when_already_known_valid() {
     // A caller that has proved validity (a whole-string coderange) skips the
     // UTF-8 scan, so bytes the scan would reject are accepted - the
     // BOM-stripped-suffix case - while the NUL rule still applies.
-    use crate::cutf8::{text_verdict, TextVerdict};
+    use crate::utf8_decode::{text_verdict, TextVerdict};
     assert_eq!(text_verdict(b"\xFF", true), TextVerdict::Ok);
     assert_eq!(text_verdict(b"\xFF\0", true), TextVerdict::HasNul);
 }
@@ -293,7 +293,7 @@ fn text_verdict_agrees_with_the_standard_library_on_every_one_and_two_byte_input
     // The verdict is "well-formed UTF-8 and no NUL", which `str::from_utf8`
     // answers for the whole 1- and 2-byte domain - the boundary-rich part. A
     // standalone oracle, not the validator under test.
-    use crate::cutf8::{text_verdict, TextVerdict};
+    use crate::utf8_decode::{text_verdict, TextVerdict};
     let oracle = |b: &[u8]| -> TextVerdict {
         if b.contains(&0) {
             TextVerdict::HasNul
@@ -337,8 +337,8 @@ fn verified_text_rejects_nul_and_invalid_utf8() {
 
 #[test]
 fn verified_text_agrees_with_the_bridge_check() {
-    use crate::cutf8::{text_verdict, TextVerdict};
     use crate::text::VerifiedText;
+    use crate::utf8_decode::{text_verdict, TextVerdict};
     for first in 0u8..=u8::MAX {
         for second in [0u8, 0x41, 0x80, 0xA0, 0xBF, 0xC0, 0xFF] {
             let two = [first, second];
@@ -363,7 +363,7 @@ fn text_copy_keeps_interior_nul() {
 
 #[test]
 fn text_adopts_a_detached_buffer() {
-    use crate::cbuf::Buf;
+    use crate::ceiling_buf::Buf;
     use crate::xpath::value::Text;
 
     let mut buf = Buf::new(0);
