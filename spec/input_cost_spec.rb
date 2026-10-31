@@ -160,6 +160,11 @@ RSpec.describe "Cost proportional to input", :timing do
       end
     end
 
+    it "stops :lang()'s ancestor climb, per candidate" do
+      took = elapsed { expect { nested.css("span:lang(en)") }.to raise_error(Makiri::Error, /work budget/) }
+      expect(took).to be < 5.0
+    end
+
     # Counting preceding siblings per candidate was n^2 over a flat list: 40k
     # ran for 15 s uncharged, and once charged a 10k-entry feed hit the
     # budget. The matcher remembers the positions it has counted
