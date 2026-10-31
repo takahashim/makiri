@@ -444,8 +444,8 @@ mod tests {
     }
 
     /// The stable-sort property over EVERY input in its range, the property a
-    /// Kani harness proved on 1-3 keys from 0..3 (`xpath::verify` says why it
-    /// moved here). Up to six elements every key is from `0..n`, which is
+    /// Kani harness proved on 1-3 keys from 0..3, in five minutes of CI where
+    /// running every input takes milliseconds and reaches further. Up to six elements every key is from `0..n`, which is
     /// every ordering of them, ties included; seven and eight take keys from
     /// `0..3`, so several merge passes over runs full of ties are reached too.
     /// `merge_runs` is the merge path alone, `merge_sort` with its scratch.

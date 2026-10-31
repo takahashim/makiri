@@ -275,7 +275,7 @@ pub(crate) fn copy_small<T: Copy>(dst: &mut [T], src: &[T]) {
  * still applies). Read in one place, `Buf::content_limit`. */
 
 mod limits {
-    use crate::kani_bounds::parse_usize;
+    use crate::env_bounds::parse_usize;
 
     /// The absolute ceiling on a buffer's CONTENT length.
     pub(crate) const BUF_HARD_MAX: usize = match option_env!("MKR_BUF_HARD_MAX") {

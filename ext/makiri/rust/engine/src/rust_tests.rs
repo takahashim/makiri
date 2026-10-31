@@ -1,6 +1,6 @@
 //! Native Rust checks for the pure engine core.
 //!
-//! Kani proves the finite symbolic contracts under `cfg(kani)`.  These tests
+//! Verus proves the contracts at every length (`verus/`).  These tests
 //! complement that work with a normal `cargo test --no-default-features` run:
 //! they are fast enough for every CI run, use independent standard-library
 //! oracles where one exists, and preserve concrete regressions without
@@ -28,8 +28,9 @@ fn decoder_consumes_all(s: &[u8]) -> bool {
 #[test]
 fn utf8_decoder_agrees_with_the_standard_library_for_every_one_and_two_byte_input() {
     // A complete 65,793-input check.  This catches the lead-byte and
-    // continuation-byte boundaries that examples tend to miss, while Kani
-    // covers every possible four-byte decoder input separately.
+    // continuation-byte boundaries that examples tend to miss, while
+    // `utf8_decode`'s exhaustive test covers every four-byte decoder input
+    // (in release, `rake rust:exhaustive`).
     assert_eq!(valid(b""), decoder_consumes_all(b""));
     for first in 0u8..=u8::MAX {
         let one = [first];

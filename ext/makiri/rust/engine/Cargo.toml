@@ -18,7 +18,7 @@ default = ["html-dom"]
 # The parser port's index-arena DOM (`html::dom`) behind its facade
 # (`html_dom`), parsed by the ported tree builder (`html::tree`), and what sits
 # over it: the HTML CSS matcher, XPath's HTML instance. Off only in the bare
-# engine Kani proves. The document parse's encoding sniffing and decoders
+# engine (`rake rust:test` and `rake lint` build it). The document parse's encoding sniffing and decoders
 # (`html::encoding`) come with it.
 html-dom = ["dep:encoding_rs", "dep:chardetng"]
 

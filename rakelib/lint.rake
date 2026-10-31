@@ -21,7 +21,7 @@ task lint: :lexbor do
   Dir.chdir("ext/makiri/rust") do
     # The extension, the engine, falloc and nupur, each with every feature.
     sh "cargo", "clippy", "--workspace", "--all-features", "--tests", "--", "-D", "warnings"
-    # The engine as Kani builds it - no HTML DOM - where code only the DOM
+    # The bare engine - no HTML DOM - where code only the DOM
     # uses is dead; and as the extension builds it, where test helpers only
     # the Lexbor reference calls are (`--all-features` sees neither).
     sh "cargo", "clippy", "-p", "makiri_engine", "--no-default-features", "--tests", "--", "-D", "warnings"
