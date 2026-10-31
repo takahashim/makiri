@@ -178,6 +178,10 @@ ext/makiri/rust/           the extension (package makiri_rs, lib `makiri`)
                            `end`, whatever the word
     source_lines.rs        `lines_build`: the line table is exactly 0 and
                            the offset past each newline, for every input
+    xml_expand.rs          `xml::chars::expand`: `scan_char_ref` answers the
+                           digits' exact value or refuses (never wraps), and
+                           `expand_into` writes no more than it reads, so
+                           never `Overflow`
   fuzz/                    cargo-fuzz harnesses, over the reference crate (as
                            `makiri`) and so the engine. Built on PRs, run
                            nightly; css-match.yml runs the two html_css*
