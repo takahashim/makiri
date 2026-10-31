@@ -6,44 +6,14 @@
 
 #![forbid(unsafe_code)]
 
-use core::ffi::CStr;
-
 use super::error::Error;
 use super::method::Func;
 use super::ruby::Ruby;
 use super::value::{ExceptionClass, RClass, RModule, ReprValue, Value};
+use crate::cname::CName;
 
-/// The longest name a definition takes, its NUL included. Every name an extension
-/// defines is a short Ruby identifier.
-const NAME_MAX: usize = 64;
-
-/// A name as the C string the definition functions take, on the stack.
-pub(crate) struct CName([u8; NAME_MAX]);
-
-impl core::ops::Deref for CName {
-    type Target = CStr;
-    fn deref(&self) -> &CStr {
-        /* `c_name` wrote a NUL and checked there is no other. */
-        CStr::from_bytes_until_nul(&self.0).unwrap_or(c"")
-    }
-}
-
-impl CName {
-    /// `name` NUL-terminated on the stack, or `None` for one with a NUL of
-    /// its own or too long to leave room for the terminator.
-    pub(crate) fn new(name: &[u8]) -> Option<CName> {
-        let mut buf = [0u8; NAME_MAX];
-        match buf.get_mut(..name.len()) {
-            Some(dst) if name.len() < NAME_MAX && !name.contains(&0) => {
-                dst.copy_from_slice(name);
-                Some(CName(buf))
-            }
-            _ => None,
-        }
-    }
-}
-
-/// `name` as a [`CName`]; a name with a NUL, or one too long, is refused.
+/// `name` as the C string a definition takes; a name with a NUL, or one too
+/// long, is refused.
 pub(crate) fn c_name(name: &str) -> Result<CName, Error> {
     CName::new(name.as_bytes()).ok_or_else(|| {
         crate::rb::error::arg_error("a name to define that is too long or holds a NUL byte")

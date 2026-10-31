@@ -143,7 +143,7 @@ impl Encoding {
         if name.is_empty() {
             return Ok(None);
         }
-        let Some(c) = crate::rb::class::CName::new(name) else {
+        let Some(c) = crate::cname::CName::new(name) else {
             return Ok(None);
         };
         use crate::rb::Builtin::{ArgumentError, LoadError};
