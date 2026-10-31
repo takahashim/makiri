@@ -79,3 +79,43 @@ impl Expr {
         VerifiedText::from_bytes(&self.0)
     }
 }
+
+/// Whether the selector holds `:scope`, nested or not: a walking query's
+/// `:scope` is its root, a one-candidate query's the candidate, so the two
+/// entry points answer it differently by design. Walked on a work list
+/// (no input nests the harness's stack); one too large to walk counts as
+/// holding it.
+#[allow(clippy::disallowed_methods)] /* the harness's own work list */
+pub fn mentions_scope(groups: makiri::selectors::ast::Lists<'_>) -> bool {
+    let mut pending = vec![groups];
+    let mut visited = 0usize;
+    while let Some(lists) = pending.pop() {
+        for list in lists {
+            let mut sel = list.first();
+            while let Some(s) = sel {
+                visited += 1;
+                if visited > 4096 {
+                    return true;
+                }
+                match s.simple() {
+                    makiri::selectors::ast::Simple::PseudoClass(
+                        makiri::selectors::ast::PseudoClass::Scope,
+                    ) => return true,
+                    makiri::selectors::ast::Simple::PseudoClassFunction(
+                        makiri::selectors::ast::FunctionArg::Selectors { lists, .. },
+                    ) => pending.push(lists),
+                    makiri::selectors::ast::Simple::PseudoClassFunction(
+                        makiri::selectors::ast::FunctionArg::Nth { anb: Some(anb), .. },
+                    ) => {
+                        if let Some(of) = anb.of {
+                            pending.push(of);
+                        }
+                    }
+                    _ => {}
+                }
+                sel = s.next();
+            }
+        }
+    }
+    false
+}
