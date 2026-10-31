@@ -508,3 +508,4 @@ class Makiri::XPathContext < Object
   def register_ns(2)
   def register_variable(2)
   def register_variables(1 req:bindings)
+  private def declared_prefix(1 req:key)

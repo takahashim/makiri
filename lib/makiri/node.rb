@@ -164,8 +164,10 @@ module Makiri
     end
 
     # Query with CSS or XPath, auto-detecting which from the string shape.
-    # Strings that look like a location path (start with "/", "./", "..", ".//",
-    # "(", "@" or contain "::") are treated as XPath; everything else as CSS.
+    # Strings that look like a location path (start with "/", "./", "..", "("
+    # or "@", are "." alone, or contain "::") are treated as XPath; everything
+    # else as CSS. No CSS selector starts with "." followed by "." or "/", or
+    # is "." alone.
     # @return [Makiri::NodeSet, String, Float, Boolean]
     def search(path)
       xpath?(path) ? xpath(path) : css(path)
@@ -199,7 +201,7 @@ module Makiri
     # rather than a CSS selector?
     def xpath?(path)
       s = path.to_s.strip
-      s.start_with?("/", "./", "../", ".//", "(", "@") || s.include?("::")
+      s == "." || s.start_with?("/", "./", "..", "(", "@") || s.include?("::")
     end
   end
 end

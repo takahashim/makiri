@@ -12,7 +12,9 @@ use crate::bridge::ruby::makiri_error;
 use crate::bridge::string::ruby_try_verified_text_pair;
 
 /// Bind every `{prefix => uri}` pair of `h` through `register`, each prefix
-/// and URI held to `cap` bytes.
+/// and URI held to `cap` bytes. A key written as a declaration, `xmlns:p`,
+/// binds `p` - the form `Node#namespaces` returns, so its Hash can be passed
+/// as it is.
 ///
 /// On any bad entry the error is returned and nothing further is registered -
 /// the caller's owner then frees what it registered into, so a partial
@@ -34,8 +36,18 @@ pub fn bind_each(
     }
     /* The pairs are copied out first and bound after (`hash::each_pair`). */
     crate::bridge::hash::each_pair(ruby, h, |prefix, uri| {
-        bind_pair(ruby, prefix, uri, cap, &mut register)
+        bind_pair(ruby, prefix, uri, cap, |p, u| {
+            register(declared_prefix(p), u)
+        })
     })
+}
+
+/// `xmlns:p` as `p`; any other prefix as it is.
+fn declared_prefix(p: &[u8]) -> &[u8] {
+    match p.strip_prefix(b"xmlns:") {
+        Some(rest) if !rest.is_empty() => rest,
+        _ => p,
+    }
 }
 
 /// Bind one `prefix => uri` pair through `register`.
