@@ -142,7 +142,8 @@ Node の method (scraping idiom の 9 割をカバー):
 #xpath #at_xpath                   #css #at_css #matches?
 #search #at                        (CSS/XPath 自動判別)
 #text #inner_text #content #content=
-#inner_html #inner_html= #outer_html #to_html #to_s  (#inner_html= は HTML のみ)
+#inner_html #inner_html= #outer_html #outer_html= #to_html  (HTML のみ)
+#to_s                              (XML は #to_xml / #canonicalize も)
 #add_child #<< #add_previous_sibling #before
 #add_next_sibling #after
 #remove #unlink                    #replace
@@ -152,7 +153,9 @@ Node の method (scraping idiom の 9 割をカバー):
 ```
 
 `#xpath` / `#at_xpath` は `namespace_matching:` option を取る
-(`:strict` 既定 / `:lax`)。`Element#content_fragment` は
+(`:strict` 既定 / `:lax`)。ほかの keyword は namespace の接頭辞の束縛
+(Nokogiri の `xpath("//s:p", s: uri)` と同じ) で、`XPathContext.new` も
+同じ keyword を登録する。`Element#content_fragment` は
 `<template>` の template contents を `DocumentFragment` で返す。
 
 Document 追加 method (HTML/XML 共通):
@@ -201,9 +204,11 @@ mutation は GVL により直列化されメモリ破壊しない。
 ## 3. UTF-8 text-input 契約
 
 Makiri が内部で扱うテキストは UTF-8 だけとする。入力 String の encoding は
-尊重し、UTF-8 でなければ UTF-8 に変換してから境界を越えさせる (UTF-8 の
-common case では変換も copy もしない)。そのうえで境界での挙動を 2 つに
-分ける:
+尊重し、UTF-8 でなければ UTF-8 に変換してから境界を越えさせる
+(UTF-8 / US-ASCII / ASCII-8BIT は変換しない)。String のバイト列は
+どれも、読んでから copy するまでの間に Ruby を走らせずに一度 copy
+するので、その後に Ruby がすることは copy に届かない。そのうえで
+境界での挙動を 2 つに分ける:
 
 * HTML parse / fragment parse は lenient (ブラウザ互換)。
 * プログラム API は strict。コード内の文字列は valid UTF-8 を要求し、
@@ -260,8 +265,8 @@ XPath の独自関数（Nokogiri の handler）は受け付けない。
   document は表の wrapper を GC mark するため、document が生きている間は
   wrapper も生き続ける (上の keepalive の逆向き)。
 * engine 内の確保は失敗を値として返せる API に一本化し、OOM は abort
-  ではなく例外にする (§5)。一方 Ruby 側の記憶域 (wrapper、NodeSet の
-  配列) は Ruby のアロケータで確保し、OOM は Ruby 自身の
+  ではなく例外にする (§5)。一方 Ruby 側の記憶域 (wrapper) は Ruby の
+  アロケータで確保し、OOM は Ruby 自身の
   `NoMemoryError` に委ねる。その raise は大域脱出なので、raise しうる C の
   呼び出しはすべて Ruby との境界の層 (`nupur` の `raw`) の中で
   `rb_protect` の下に置き、`Err` として戻す（Rust のフレームを飛び越え
@@ -396,14 +401,17 @@ CSS/serialize/読み取りアクセサも GVL を保持する。`spec/threading_
 * 拡張は `cdylib` だけとしてビルドし、release では LTO を行う。エンジンと
   境界の層への呼び出しはクレートをまたぐが、LTO の下でインライン化される。
   拡張を `rlib` として同時に作ると rustc は LTO を行わないので、fuzz の
-  クレートは拡張ではなく、エンジンと参照実装に依存する。
+  クレートは拡張ではなく、参照実装 (エンジンを re-export する) に
+  依存する。
 * フィーチャはクレートごとに持つ。エンジンは `html-dom` (既定。index
   アリーナの HTML DOM と、その上の CSS の照合、XPath の HTML 実装。外すと
   Kani が証明する素のエンジンになる) と `lexbor-compat` (Lexbor のとおりに
-  動かす切り替え。参照実装だけが使う)、`falloc` と拡張は `alloc-inject`
-  (OOM 注入)、参照実装は `css-reference` と `lexbor-reference` (差分 fuzz の
-  参照) を持つ。Ruby との境界を外すフィーチャと Lexbor を読むフィーチャは
-  なくなり、それぞれ拡張と参照実装のクレートそのものになる。出荷する
+  動かす切り替え。参照実装だけが使う) と `alloc-inject` (OOM 注入)
+  を持つ。`falloc` と `nupur` も `alloc-inject` を持ち、拡張の
+  `alloc-inject` はこの 3 つを有効にする。参照実装は `css-reference` と
+  `lexbor-reference` (差分 fuzz の参照) を持つ。Ruby との境界を外す
+  フィーチャと Lexbor を読むフィーチャはなくなり、それぞれ拡張と
+  参照実装のクレートそのものになる。出荷する
   拡張のビルドは Lexbor を link せず、そのヘッダも読まない (bindgen を使う
   のは Ruby のヘッダを読む rb-sys だけになる)。
 
@@ -425,8 +433,10 @@ cargo-fuzz の harness (`ext/makiri/rust/fuzz/`) は Ruby なしで engine を
 叩く。壊れないことを見るもの (`html`、`xml`、`xpath`、`xml_xpath`、
 `html_xpath`、`css`、`html_css`) に加えて、参照実装との一致を見る差分
 harness を持つ: `html_diff` (移植版の tree builder と Lexbor の木、その
-直列化、深さの上限の判定)、`selector_diff` (移植版と Lexbor のセレクタ解析)、`html_css_diff` (自前の
-matcher と Lexbor の matcher)。`css` は XML の matcher の入口どうしの
+直列化、深さの上限の判定)、`selector_diff` (移植版と Lexbor のセレクタ
+解析)、`stylesheet_diff` (移植版と Lexbor の stylesheet 解析)、
+`html_css_diff` (自前の matcher と Lexbor の matcher)。`css` は XML の
+matcher の入口どうしの
 一致を見る。fuzz のクレートは拡張ではなく参照実装 (`makiri_lexbor`) に
 依存し、比べる相手は参照実装の `lexbor-reference` / `css-reference`
 フィーチャでだけ link する。
@@ -463,7 +473,8 @@ baseline として固定し、現在のビルドと突き合わせる。baseline
   検査（`lexbor::arena_tests`、`html_xpath_diff`）は、arena が唯一の実装に
   なったので退役した。
   セレクタパーサの移植版は Lexbor の解析結果と一致することを見る
-  (`lexbor::selector_diff`)。
+  (`lexbor::selector_diff`)。stylesheet パーサも同様に照合する
+  (`lexbor::stylesheet_diff`)。
 * ブラウザ (Chromium、Firefox、WebKit) は証拠として使い、合格基準には
   しない (`conformance:browsers`)。オラクル同士の食い違いは差分表に記録する。
 * Nokogiri との突き合わせ: XPath / CSS / XML / Builder のそれぞれを

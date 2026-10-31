@@ -131,8 +131,11 @@ any tree holding a character XML 1.0 has no `Char` for, when they write it.
 - Ruby wrappers keep their document alive.
 - Indexes and caches belong to the document and are invalidated after
   mutation.
-- Temporary XPath caches belong to one evaluation so nested evaluations
-  cannot affect outer evaluations.
+- Caches valid only within one XPath evaluation (the string-value cache,
+  XML's document-order index) belong to that evaluation. HTML's
+  document-order index belongs to the document and is kept across
+  evaluations. No Ruby runs during an evaluation, and the document is not
+  edited.
 - Allocation failure in the engine must become an error instead of calling
   `abort`.
 - Parsing releases the GVL after copying input outside the Ruby heap.
