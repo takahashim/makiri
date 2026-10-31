@@ -85,8 +85,9 @@ namespace :fuzz do
   # SPLIT, like the ASan preload: an ASan-instrumented harness never reaches
   # main on macOS - its runtime re-enters its own init through malloc during
   # dyld's initialisers and spins forever, the same deadlock recorded for the
-  # preload in CLAUDE.md. So macOS runs uninstrumented (`-s none`): coverage
-  # guidance and the harnesses' own asserts, with memory safety left to
+  # preload in docs/internals/build_and_sanitizers.md. So macOS runs
+  # uninstrumented (`-s none`): coverage guidance and the harnesses' own
+  # asserts, with memory safety left to
   # `fuzz:sanitize` and the Linux CI run. Without ASan's runtime nothing in the
   # crate's cdylib defines the `__sanitizer_cov_*` hooks it is instrumented
   # with (libFuzzer does, but only in the harness binary), so that link needs

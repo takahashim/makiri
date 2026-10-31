@@ -6,8 +6,8 @@
 #
 # ## Why
 #
-# CLAUDE.md's "Text-input contract" states a precise set of rules that nothing
-# checked mechanically. Getting an encoding wrong is also a classic way to
+# The "Text-input contract" (docs/internals/subsystems.md) states a precise set
+# of rules that nothing checked mechanically. Getting an encoding wrong is also a classic way to
 # inject: Makiri honours the input String's encoding, decoding a document with
 # the Encoding Standard's decoder for it (html/encoding.rs), and that decoder is
 # what determines how multibyte encodings behave.

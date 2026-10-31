@@ -96,7 +96,7 @@ nupur = { path = "nupur", version = "0.0.1" }
 # PanicLatch`, installed in all eight (the CSS traversal, the serializer sink,
 # the tokenizer hook, the GVL trampoline, and `bridge::ruby::protect`, which
 # covers every `rb_protect`). The GC callbacks in `bridge/typed.rs` keep
-# aborting on purpose; see CLAUDE.md.
+# aborting on purpose; see docs/internals/ruby_boundary.md.
 #
 # Anything that must be released across a panic is therefore a `Drop`, not a
 # statement after the work. `lexbor::selectors::Session` and
