@@ -4,8 +4,9 @@
 //! over the typed adapter, non-recursive) plus [`crate::css_cache`]
 //! (parsing, with the parser port [`crate::selectors`], AND caching the
 //! parse across repeat calls with the same selector string), neither of
-//! which knows about Ruby. This module verifies the selector, maps an engine failure to
-//! its exception, and fills the NodeSet (`css`) or wraps the one node
+//! which knows about Ruby. The arguments, the selector's check and every
+//! failure's exception are [`CssQuery`]'s, shared with XML; this module hands
+//! it the receiver's node and fills the NodeSet (`css`) or wraps the one node
 //! `at_css` found.
 
 #![forbid(unsafe_code)]
@@ -16,42 +17,22 @@ use crate::method;
 use super::HtmlSelf;
 use crate::bridge::html::wrap_html_node;
 use crate::bridge::node_set::node_set_from;
-use crate::bridge::string::{ruby_verified_text, RubyText};
-use crate::css_cache;
-use crate::css_match;
-use crate::glue::css::{match_error, parse_error, query_error, CssArgs};
+use crate::glue::css::CssQuery;
 use crate::html_dom::html::RawNode;
 use crate::init::MOD_HTML_NODE_METHODS;
 
-/// The selector after the strict text check. The engine reads its bytes and
-/// runs no Ruby, so the view stays valid for the query.
-fn selector_text(ruby: &Ruby, selector: Value) -> Result<RubyText, Error> {
-    ruby_verified_text(ruby, selector, "CSS selector")
-}
-
 /// `Node#css`: every matching descendant, in document order.
 fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
-    let args = CssArgs::scan(ruby, args)?;
-    let selector = args.selector;
-    let sv = selector_text(ruby, selector)?;
-    /* Read once the namespaces are converted (their Hash is Ruby), and
-     * held while the set is built (`node_set_from`): the matched nodes
+    let query = CssQuery::scan(ruby, args)?;
+    /* Held while the set is built (`node_set_from`): the matched nodes
      * borrow it. */
-    let found = args.with_namespaces(|ns| {
-        let view = this.read()?;
-        let matched = css_cache::with_compiled(sv.as_bytes(), |groups, scratch| {
-            css_match::select_all(scratch, view.node(), groups, ns)
-        })
-        .map_err(|e| parse_error(e, selector))?;
-        let nodes = matched.map_err(|e| query_error(e, selector))?;
-        node_set_from(
-            ruby,
-            this.document(),
-            nodes.into_iter().map(|n| RawNode::from(n).into()),
-        )
-    })?;
-    drop(sv);
-    found
+    let view = this.read()?;
+    let nodes = query.select_all(view.node())?;
+    node_set_from(
+        ruby,
+        this.document(),
+        nodes.into_iter().map(|n| RawNode::from(n).into()),
+    )
 }
 
 /// `Node#at_css`: the first matching descendant, or nil.
@@ -59,22 +40,8 @@ fn css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Value, Error> {
 /// Stops at the first match and wraps that one node - no NodeSet, and no Ruby
 /// `#first` dispatch, for the single node the caller asked for.
 fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, Error> {
-    let args = CssArgs::scan(ruby, args)?;
-    let selector = args.selector;
-    let sv = selector_text(ruby, selector)?;
-    let found = args.with_namespaces(|ns| {
-        let view = this.read()?;
-        let matched = css_cache::with_compiled(sv.as_bytes(), |groups, scratch| {
-            css_match::select_first(scratch, view.node(), groups, ns)
-        })
-        .map_err(|e| parse_error(e, selector))?;
-        Ok::<_, Error>(
-            matched
-                .map_err(|e| match_error(e, selector))?
-                .map(RawNode::from),
-        )
-    })??;
-    drop(sv);
+    let query = CssQuery::scan(ruby, args)?;
+    let found = query.select_first(this.read()?.node())?.map(RawNode::from);
     found
         .map(|n| wrap_html_node(ruby, n, this.document()))
         .transpose()
@@ -87,19 +54,8 @@ fn at_css(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<Option<Value>, 
 /// still compiled, so one the matcher refuses is refused whatever node it is
 /// asked about (`css_match::matches_any`).
 fn matches(ruby: &Ruby, this: HtmlSelf, args: &[Value]) -> Result<bool, Error> {
-    let args = CssArgs::scan(ruby, args)?;
-    let selector = args.selector;
-    let sv = selector_text(ruby, selector)?;
-    let matched = args.with_namespaces(|ns| {
-        let view = this.read()?;
-        let matched = css_cache::with_compiled(sv.as_bytes(), |groups, scratch| {
-            css_match::matches_any(scratch, groups, ns, view.node())
-        })
-        .map_err(|e| parse_error(e, selector))?;
-        matched.map_err(|e| match_error(e, selector))
-    })?;
-    drop(sv);
-    matched
+    let query = CssQuery::scan(ruby, args)?;
+    query.matches(this.read()?.node())
 }
 
 /// From `Init_makiri`.

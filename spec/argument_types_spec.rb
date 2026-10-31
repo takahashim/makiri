@@ -62,6 +62,20 @@ RSpec.describe "argument types" do
       expect(doc.create_element("e", k: "v")["k"]).to eq("v")
     end
 
+    it "takes a CSS selector as HTML's does: a String or a Symbol, no to_s called" do
+      called = false
+      tracer = Class.new { define_method(:to_s) { called = true; "p" } }.new
+      [tracer, to_str_only, 1, nil].each do |v|
+        %i[css at_css matches?].each do |m|
+          expect { doc.root.public_send(m, v) }.to raise_error(TypeError, /expected String or Symbol/)
+        end
+      end
+      expect(called).to be(false)
+      expect(doc.at_css(:p)).to eq(doc.at_xpath("//p"))
+      expect(doc.css("p", nil).size).to eq(1)
+      expect { doc.css("p", "not a Hash") }.to raise_error(TypeError, /namespaces must be a Hash/)
+    end
+
     it "refuses a non-String variable value" do
       ctx = Makiri::XPathContext.new(doc)
       expect { ctx.register_variable("v", 1) }.to raise_error(TypeError)
