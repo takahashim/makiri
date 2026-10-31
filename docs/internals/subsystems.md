@@ -943,7 +943,7 @@ Conveniences:
 - `Node#{root,ancestors,path}` (path round-trips through `#at_xpath`).
 - `Node#{attributes,to_h}`.
 - `Node#{search,at}` auto-detect CSS or XPath: an expression that starts
-  `/ ./ .. .// ( @` or contains `::` ⇒ XPath, else CSS.
+  `/ ./ .. ( @`, is `.` alone, or contains `::` ⇒ XPath, else CSS.
 - `Document#{body,head,encoding,meta_encoding}` (`encoding` is the one the
   document was read in, "UTF-8" for one made).
 - `NodeSet#{|,+,&,-}` are identity-dedup, encounter-order (**not**

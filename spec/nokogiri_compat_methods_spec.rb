@@ -102,6 +102,32 @@ RSpec.describe "Nokogiri-compatible convenience methods" do
       ctx.register_variables("want" => "hi")
       expect(ctx.evaluate("$want")).to eq("hi")
     end
+
+    it "takes Symbol keys and binds a declaration key's prefix" do
+      xml = Makiri::XML(%(<r xmlns:s="urn:s"><s:p/></r>))
+      ctx = Makiri::XPathContext.new(xml)
+      ctx.register_namespaces(xml.root.namespaces)
+      expect(ctx.evaluate("count(//s:p)")).to eq(1.0)
+      ctx.register_namespaces(t: "urn:s")
+      ctx.register_variables(n: "2")
+      expect(ctx.evaluate("count(//t:p) + $n")).to eq(3.0)
+    end
+
+    it "converts no key or value" do
+      ctx = Makiri::XPathContext.new(doc)
+      expect { ctx.register_namespaces("s" => nil) }.to raise_error(TypeError)
+      expect { ctx.register_namespaces("s" => :uri) }.to raise_error(TypeError)
+      expect { ctx.register_namespaces(1 => "urn:s") }.to raise_error(TypeError)
+      expect { ctx.register_variables(1 => "x") }.to raise_error(TypeError)
+    end
+  end
+
+  describe "a query's namespace Hash" do
+    it "binds a declaration key's prefix, so Node#namespaces can be passed" do
+      xml = Makiri::XML(%(<r xmlns:s="urn:s"><s:p/></r>))
+      expect(xml.xpath("//s:p", xml.root.namespaces).length).to eq(1)
+      expect(xml.css("s|p", xml.root.namespaces).length).to eq(1)
+    end
   end
 
   describe "Document#title=" do

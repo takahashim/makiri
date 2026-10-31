@@ -50,6 +50,26 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   * An index is an `Integer`: `node_set[1.5]` and a Range with a Float end
     are a `TypeError`, where Nokogiri (as `Array#[]`) truncates them.
 
+* Namespace bindings: a Hash key is read as a prefix, with only `xmlns:` taken off
+  * `xpath(expr, ns)`, `css(rule, ns)` and `XPathContext#register_namespaces`
+    bind `p` for a key `"xmlns:p"`, so the Hash `Node#namespaces` returns can
+    be passed as it is, as in Nokogiri. Nokogiri takes off everything up to the
+    last `:` of any key (`"xml:p"`, `"a:b:p"` bind `p`); Makiri reads any other
+    key as the prefix itself.
+  * Keys and values are not converted: a key is a `String` or a `Symbol`, a URI
+    a `String`, and anything else is a `TypeError`. Nokogiri's
+    `register_namespaces` and `register_variables` call `to_s` on each key, so
+    an Integer key binds `"1"` there.
+  * `register_namespace` with a single prefix takes `"xmlns:p"` as it is, in
+    both.
+
+* `Node#search` / `#at` send more strings to XPath
+  * Both treat a string that starts with `/`, `./` or `..`, or is `.` alone,
+    as XPath. Makiri also treats one that starts with `(` or `@`, or contains
+    `::`, as XPath (`(//a)[1]`, `@href`, `child::p`). Nokogiri sends those to
+    its CSS translator, which raises `CSS::SyntaxError` for `(//a)[1]` and
+    `child::p`; `@href` happens to come out as the same attribute search.
+
 * There are no custom XPath functions
   * Nokogiri answers a function XPath does not define by calling a method of
     a handler object (`xpath("my-fn(.)", handler)`). Makiri runs no Ruby while

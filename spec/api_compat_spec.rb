@@ -37,6 +37,14 @@ RSpec.describe "Makiri Nokogiri-compat API" do
       expect(div.search(".//p").length).to eq(2)
     end
 
+    it "treats \"..\" and \".\" as XPath, as Nokogiri does" do
+      a = doc.at_css("a")
+      expect(a.search("..").map(&:name)).to eq(["div"])
+      expect(a.search("../p").length).to eq(2)
+      expect(a.search(".").map(&:name)).to eq(["a"])
+      expect(a.at("..").name).to eq("div")
+    end
+
     it "treats other strings as CSS" do
       expect(doc.search("p").map(&:text)).to eq(%w[one two])
       expect(doc.search("div.c a").map(&:text)).to eq(%w[L])
