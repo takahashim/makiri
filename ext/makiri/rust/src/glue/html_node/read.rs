@@ -58,6 +58,20 @@ fn is_element(this: &super::HtmlSelf) -> Result<bool, Error> {
     Ok(this.read()?.node().element().is_some())
 }
 
+/// An attribute reader's name argument, converted - `None` for a non-element
+/// receiver, before the argument is read. Converted before the document is
+/// borrowed: a conversion can allocate (a Symbol's name, a transcode).
+fn attr_name_arg(
+    ruby: &Ruby,
+    this: &super::HtmlSelf,
+    rb_name: Value,
+) -> Result<Option<RubyText>, Error> {
+    if !is_element(this)? {
+        return Ok(None);
+    }
+    ruby_verified_text(ruby, rb_name, "attribute name").map(Some)
+}
+
 /* ------------------------------------------------------------------ *
  * name / type / content                                              *
  * ------------------------------------------------------------------ */
@@ -310,12 +324,9 @@ pub fn ancestors(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 /// find `xlink:href`. See [`attribute_by_qualified_name`] for the byte-exact
 /// sibling.
 pub fn aref(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Option<Value>, Error> {
-    if !is_element(&this)? {
+    let Some(nv) = attr_name_arg(ruby, &this, rb_name)? else {
         return Ok(None);
-    }
-    /* Converted before the document is borrowed: a conversion can
-     * allocate (a Symbol's name, a transcode). */
-    let nv = ruby_verified_text(ruby, rb_name, "attribute name")?;
+    };
     /* A present attribute with no value (`<input disabled>`) answers
      * `Some(b"")`, which is `""`; only an absent one is nil. The name goes
      * with the read, before the String is made. */
@@ -326,12 +337,9 @@ pub fn aref(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<Option
 
 /// `node.key?(name)`.
 pub fn has_key(ruby: &Ruby, this: super::HtmlSelf, rb_name: Value) -> Result<bool, Error> {
-    if !is_element(&this)? {
+    let Some(nv) = attr_name_arg(ruby, &this, rb_name)? else {
         return Ok(false);
-    }
-    /* Converted before the document is borrowed: a conversion can
-     * allocate (a Symbol's name, a transcode). */
-    let nv = ruby_verified_text(ruby, rb_name, "attribute name")?;
+    };
     let view = this.read()?;
     let found = view
         .node()
@@ -387,12 +395,9 @@ pub fn attribute_by_qualified_name(
     this: super::HtmlSelf,
     rb_name: Value,
 ) -> Result<Option<Value>, Error> {
-    if !is_element(&this)? {
+    let Some(nv) = attr_name_arg(ruby, &this, rb_name)? else {
         return Ok(None);
-    }
-    /* Converted before the document is borrowed: a conversion can
-     * allocate (a Symbol's name, a transcode). */
-    let nv = ruby_verified_text(ruby, rb_name, "attribute name")?;
+    };
     let found = {
         let view = this.read()?;
         let name = nv.as_bytes();
@@ -420,12 +425,9 @@ pub fn attribute_value_by_qualified_name(
     this: super::HtmlSelf,
     rb_name: Value,
 ) -> Result<Option<Value>, Error> {
-    if !is_element(&this)? {
+    let Some(nv) = attr_name_arg(ruby, &this, rb_name)? else {
         return Ok(None);
-    }
-    /* Converted before the document is borrowed: a conversion can
-     * allocate (a Symbol's name, a transcode). */
-    let nv = ruby_verified_text(ruby, rb_name, "attribute name")?;
+    };
     str_from_read(ruby, (this.read()?, nv), StrKind::Utf8, |(v, nv)| {
         let name = nv.as_bytes();
         v.node()

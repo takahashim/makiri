@@ -52,6 +52,18 @@ fn check_dom_name(
     ))
 }
 
+/// What an attribute setter raises on a node that is not an element.
+const NOT_AN_ELEMENT: &str = "cannot set an attribute on a non-element node";
+
+/// The receiver cleared for an edit ([`edit`]), when it is an element - asked
+/// before any argument is converted, so a non-element answers without reading
+/// one. `None` for any other node: each caller says what that means (a
+/// refusal, or nothing to do).
+fn element_edit<'a>(ruby: &Ruby, this: &'a mut HtmlSelf) -> Result<Option<HtmlEdit<'a>>, Error> {
+    let edit = edit(ruby, this)?;
+    Ok((edit.node_type()? == NodeType::Element).then_some(edit))
+}
+
 /// An attribute edit of the receiver as an element, once every argument is
 /// converted. Its node type was checked before the conversion (an argument
 /// cannot change it), so a non-element here is a broken invariant - raised as
@@ -131,11 +143,9 @@ pub fn aset(
     rb_name: Value,
     rb_value: Value,
 ) -> Result<Value, Error> {
-    const REFUSAL: &str = "cannot set an attribute on a non-element node";
-    let edit = edit(ruby, &mut this)?;
-    if edit.node_type()? != NodeType::Element {
-        return Err(makiri_error(REFUSAL));
-    }
+    let Some(edit) = element_edit(ruby, &mut this)? else {
+        return Err(makiri_error(NOT_AN_ELEMENT));
+    };
     let nv = ruby_verified_name(ruby, rb_name, "attribute name")?;
     let vv = ruby_verified_data(ruby, rb_value, "attribute value")?;
     check_dom_name(&nv, dom_name::valid_attribute_local_name, "attribute")?;
@@ -154,11 +164,9 @@ pub fn set_attribute_ns(
     rb_qname: Value,
     rb_value: Value,
 ) -> Result<Value, Error> {
-    const REFUSAL: &str = "cannot set an attribute on a non-element node";
-    let edit = edit(ruby, &mut this)?;
-    if edit.node_type()? != NodeType::Element {
-        return Err(makiri_error(REFUSAL));
-    }
+    let Some(edit) = element_edit(ruby, &mut this)? else {
+        return Err(makiri_error(NOT_AN_ELEMENT));
+    };
     let qv = ruby_verified_name(ruby, rb_qname, "attribute qualified name")?;
     let vv = ruby_verified_data(ruby, rb_value, "attribute value")?;
     let nv = namespace_arg(ruby, rb_ns, "namespace")?;
@@ -186,10 +194,9 @@ pub fn remove_attribute_ns(
     rb_ns: Value,
     rb_local: Value,
 ) -> Result<Value, Error> {
-    let edit = edit(ruby, &mut this)?;
-    if edit.node_type()? != NodeType::Element {
+    let Some(edit) = element_edit(ruby, &mut this)? else {
         return Ok(ruby.qnil().as_value());
-    }
+    };
     let lv = ruby_verified_text(ruby, rb_local, "attribute local name")?;
     let nv = namespace_arg(ruby, rb_ns, "namespace")?;
     let ns = nv.as_ref().map(|n| n.as_bytes());
@@ -220,10 +227,9 @@ pub fn set_content(ruby: &Ruby, mut this: HtmlSelf, rb_text: Value) -> Result<Va
 /// `element.delete(name)` -> self.
 pub fn delete(ruby: &Ruby, mut this: HtmlSelf, rb_name: Value) -> Result<Value, Error> {
     let rb_self = this.value;
-    let edit = edit(ruby, &mut this)?;
-    if edit.node_type()? != NodeType::Element {
+    let Some(edit) = element_edit(ruby, &mut this)? else {
         return Ok(rb_self);
-    }
+    };
     let nv = ruby_verified_text(ruby, rb_name, "attribute name")?;
     with_element(edit, |d, el| {
         crate::bridge::html::remove_attribute(d, el, &nv)
@@ -236,10 +242,9 @@ pub fn delete(ruby: &Ruby, mut this: HtmlSelf, rb_name: Value) -> Result<Value, 
 /// All or nothing: the new content is parsed and imported into a detached
 /// fragment first, and only then are the old children swapped for it.
 pub fn set_inner_html(ruby: &Ruby, mut this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
-    let edit = edit(ruby, &mut this)?;
-    if edit.node_type()? != NodeType::Element {
+    let Some(edit) = element_edit(ruby, &mut this)? else {
         return Err(makiri_error("inner_html= requires an element"));
-    }
+    };
     /* A String only, transcoded before the edit - nothing inside it may
      * run Ruby. */
     let src = HtmlSource::from_ruby(ruby, string_arg(rb_html)?)?;
