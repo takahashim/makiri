@@ -642,7 +642,7 @@ pub struct HtmlNewNodes<'d> {
 /// No edit can begin while one is held:
 ///
 /// ```compile_fail,E0499
-/// let mut parsed = makiri::html::tree::empty_html_document(0).unwrap();
+/// let mut parsed = makiri_engine::html::tree::empty_html_document(0).unwrap();
 /// let frag = parsed.edit_keeping_indexes().create_fragment().unwrap();
 /// let _ = parsed.edit();
 /// let mut lend = parsed.edit_keeping_indexes();
@@ -652,7 +652,7 @@ pub struct HtmlNewNodes<'d> {
 /// and the lend's own nodes are what it inserts into:
 ///
 /// ```compile_fail,E0308
-/// let mut parsed = makiri::html::tree::empty_html_document(0).unwrap();
+/// let mut parsed = makiri_engine::html::tree::empty_html_document(0).unwrap();
 /// let mut lend = parsed.edit_keeping_indexes();
 /// let frag = lend.create_fragment().unwrap();
 /// lend.append_to_detached(frag.raw(), frag);

@@ -225,7 +225,7 @@ pub trait VecGrow<T> {
 /// slot is out - so nothing can take its room:
 ///
 /// ```compile_fail,E0499
-/// use makiri::falloc::VecGrow;
+/// use falloc::VecGrow;
 /// let mut v: Vec<u8> = Vec::new();
 /// let slot = v.falloc_slot().unwrap();
 /// v.falloc_push(1).unwrap();
@@ -235,7 +235,7 @@ pub trait VecGrow<T> {
 /// and a slot fills one element, once:
 ///
 /// ```compile_fail,E0382
-/// use makiri::falloc::VecGrow;
+/// use falloc::VecGrow;
 /// let mut v: Vec<u8> = Vec::new();
 /// let slot = v.falloc_slot().unwrap();
 /// slot.push(1);
