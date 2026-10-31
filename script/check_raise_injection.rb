@@ -6,9 +6,9 @@
 # (`bridge::dom`), and a guard is a Rust `Drop`: a Ruby raise `longjmp`s past
 # Rust frames without running it, so a raise while a guard is held would leave
 # the document borrowed for good - every later edit (or read) refused.
-# `rake unsafe:boundaries` checks statically that no guard is live across a
-# call that can raise, but by the text of the code; this checks it by making
-# every such call raise.
+# `rake dylint`'s `raising_call_outside_protect` checks statically that every
+# call that can raise returns `Err` instead, so none crosses a guard; this
+# checks it at run time, by making every such call raise.
 #
 # With the extension built under MAKIRI_ALLOC_INJECT=1, each allocating C call
 # of `nupur::raw` consults a hook that can be armed to raise `NoMemoryError`

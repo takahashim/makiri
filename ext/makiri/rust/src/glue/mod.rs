@@ -4,8 +4,8 @@
 //!
 //! The layers around it: `bridge` is the unsafe seam - raw Ruby strings, the
 //! TypedData wrappers, `rb_protect` - and hands this layer safe primitives;
-//! `lexbor`, `xml`, `xpath` and `css` are Ruby-free engines that take bytes and
-//! return their own error types. So this layer holds no unsafe, which the
+//! `html`, `xml`, `xpath`, `selectors` and `css_match` are Ruby-free engines
+//! that take bytes and return their own error types. So this layer holds no unsafe, which the
 //! `forbid` below and `rake unsafe:boundaries` both pin.
 //!
 //! # Two rules this layer lives by

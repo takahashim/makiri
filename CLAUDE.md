@@ -416,9 +416,7 @@ function - the answer the guard gave. The guard, `css_tokens`, `css_engine`
 and `css_parser` are compiled only into the tests and the reference features,
 where Lexbor's parser is the oracle. Both reference call sites still go
 through the guard - `css_engine::parse` (selectors) and
-`stylesheet_diff::lexbor_dump` (stylesheets) - and a new one must:
-`rake unsafe:boundaries` allows each Lexbor CSS parse function exactly one
-call site, the guarded one. The guard and its tests come out together or not
+`stylesheet_diff::lexbor_dump` (stylesheets) - and a new one must. The guard and its tests come out together or not
 at all, once no reference runs Lexbor's parser.
 
 ## Working conventions
@@ -453,7 +451,7 @@ bundle exec rake nupur:spec        # nupur alone: its test extension (nupur/test
                                    # the specs beside it - trampolines, panics, exits,
                                    # slots under GC, checked String reads, arguments
 bundle exec rake lint              # cargo clippy --all-features -D warnings + cargo fmt --check
-bundle exec rake unsafe:boundaries # reviewed unsafe islands and safe-module boundaries
+bundle exec rake unsafe:boundaries # each file's unsafe count, the forbid files, static mut
 bundle exec rake dylint            # the crate's own lints (lints/makiri_lints), on the
                                    # compiled code by resolved path: ruby_value_on_heap
                                    # (a Ruby value in a heap container, a static or a
@@ -748,8 +746,8 @@ by the check that concluded "every undefined symbol is legitimate".
   `msg::Lossy`). `rake dylint`'s `infallible_allocation` holds the whole
   shipped crate to no `format!` / `to_owned` / `to_string` / `vec!` /
   `from_utf8_lossy` / `into_owned` / `CString::new`, by the path each resolves
-  to (`lexbor/`, which that build leaves out, stays `unsafe:boundaries`'
-  text check); a site that must is `#[cfg_attr(dylint_lib = "makiri_lints",
+  to (`lexbor/`, which that build leaves out, is reference code and outside
+  the rule); a site that must is `#[cfg_attr(dylint_lib = "makiri_lints",
   allow(infallible_allocation))]` with its reason - one, the `__panic(1)` hook.
   std's STABLE sorts (`sort`, `sort_by`, `sort_by_key`, `sort_by_cached_key`)
   are banned there too: they take a scratch buffer from the global allocator
@@ -889,8 +887,8 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
     lexbor/                the Lexbor boundary: `abi` - the generated layout and
                            functions (the `_noi` twins included), the ONE place
                            a Lexbor function is declared (a second `extern "C"`
-                           spelling is a second Rust type for the symbol;
-                           `rake unsafe:boundaries` fails on one). Only the four
+                           spelling is a second Rust type for the symbol).
+                           Only the four
                            exports no header declares are written by hand, and
                            build.rs's `UNDECLARED_EXPORTS` fails the build if
                            their C definitions change - `adapter`, the one reader of

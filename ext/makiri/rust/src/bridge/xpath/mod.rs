@@ -180,8 +180,7 @@ pub fn parse_query(ruby: &Ruby, cx: &Cx, expr: Value) -> Result<Box<Ast>, Error>
     let ev = ruby_verified_text(ruby, expr, "XPath expression")?;
     /* `ev` owns a copy of the String's bytes; the parse reads that copy. */
     let parsed = parse_with_limits(cx.limits(), ev.text());
-    /* The copy is freed before the error is built, as `rake unsafe:boundaries`
-     * asks of every argument copy. */
+    /* The copy is freed before the error is built. */
     drop(ev);
     parsed.map_err(|error| xpath_error(&error))
 }

@@ -172,86 +172,24 @@ UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/
 # an explicit review of its synchronisation proof.
 STATIC_MUT_COUNTS = {}.freeze
 
-# Six text gates that stood here are `rake dylint`'s now
-# (lints/makiri_lints/src/boundaries.rs), on resolved paths:
-# `raw_ruby_outside_bridge` (`rb_sys::` outside bridge/, a raw `VALUE` outside
-# the files that are the typed values), `raising_call_outside_protect` (whose
-# `call` is private to `nupur::raw`, so it also pins where the raising calls
-# are), `runs_callers_ruby`, `raw_node_crossing` and `ruby_surface_in_bridge`,
-# each sanctioned site an `allow` with its reason where it is made.
-# `Value::from_raw` is `pub(in crate::bridge)`, so the compiler holds that one.
-
-# Lexbor ABI names outside `lexbor/` are forbidden. `lexbor` is the sole owner
-# of the vendored C ABI (notes/rust_third_architecture.ja.md): the bindgen types
-# (`Lxb*`), the `lxb_*` functions and constants, and `crate::lexbor::abi` must
-# not appear above it. The port is done, so the pinned table is empty and any
-# name found outside fails; a file that needs one goes through a `lexbor`
-# facade. `lexbor/abi.rs` is inside the layer, so the `lexbor/` skip covers it.
-LEXBOR_ABI = /crate::lexbor::abi\b|\blxb_[A-Za-z0-9_]+|\bLxb[A-Z][A-Za-z0-9_]*/
-LEXBOR_ABI_COUNTS = {}.freeze
-
-# The engine layers are Ruby-free: `lexbor/`, `xml/`, `xpath/` and `selectors/` take
-# bytes and return their own error types, and the Ruby half of a feature lives in
-# `bridge/` or `glue/`. `lexbor/fragment.rs` and `selectors/stylesheet.rs` once
-# reached back up for a `VALUE`, the String borrow rules and `Makiri::Error` - an
-# engine module holding the bridge's invariants, and the path a raise escaped
-# along - so the table is empty and any such use fails.
-# The crate-root modules the engine is built on sit outside those directories
-# and are held to the same two rules. `html/` (the parser and the arena DOM
-# an edit's closure works on), its facade and the child-index walk are
-# engine too: an edit lends `&mut HtmlDocMut` to a closure that must run no
-# Ruby, and this is what keeps what that closure calls Ruby-free.
-ENGINE_DIRS = %w[lexbor/ xml/ xpath/ selectors/ html/ html_dom.rs child_index.rs child_index/ falloc/ cbuf.rs cutf8.rs dom_rules.rs dom_rules/ limits.rs node_type.rs ptr_table.rs text.rs token.rs utf8_input.rs].freeze
-RUBY_LAYER = /\bcrate::(?:bridge|glue|init)\b|\brb_sys::/
-RUBY_LAYER_COUNTS = {}.freeze
-# The rule for the rest of the engine, and INFALLIBLE_ALLOC's below, are
-# `rake dylint`'s now (`ruby_layer_in_engine`, `infallible_allocation`):
-# checked on the compiled code, by resolved path, where this read text. What
-# stays here is `lexbor/` - the reference, which the lint's build (`ruby`)
-# does not compile.
-TEXT_CHECKED = %w[lexbor/].freeze
-
-# The engine allocates only through `falloc`, so `rake oom` can fail every site
-# and an OOM raises instead of aborting the host. `clippy.toml` bans the
-# infallible `Box::new` / `Vec::with_capacity` / `reserve` / `to_vec` crate-wide,
-# but it CANNOT ban `ToOwned::to_owned`: on a `&str` that is the String of a Ruby
-# exception message, which the glue is right to allocate on a path that is
-# already raising. The rule is per-LAYER, so the per-layer half is here.
-#
-# It is here because three `.to_owned()` calls reached `xml/serialize` unnoticed -
-# the engine's only infallible allocations - and the crate-wide lint that would
-# have caught them fired on five legitimate glue sites too.
-#
-# It holds for the Ruby layer too (bridge/, glue/, init.rs): an exception
-# message is written into a stack buffer (`crate::msg::Msg`, through
-# `format_args!`) and made into the exception at once, so an error path - the
-# one place a message used to be a `format!` - allocates nothing of Rust's,
-# and a real OOM there is Ruby's `NoMemoryError` rather than an abort.
-INFALLIBLE_ALLOC = /\.to_owned\(\)|\.to_vec\(\)|String::from\(|\bformat!\(|\.to_string\(\)|from_utf8_lossy|\.into_owned\(\)|\bvec!\[|CString::new/
-# Where the gate looks: the engine, and the Ruby layer over it.
-INFALLIBLE_ALLOC_DIRS = (ENGINE_DIRS + %w[bridge/ nupur/ glue/ init.rs lib.rs caught.rs css_cache.rs
-                                          compat.rs doc_cell.rs engine_error.rs gvl.rs source_lines.rs
-                                          stack.rs]).freeze
-INFALLIBLE_ALLOC_COUNTS = {}.freeze
+# What this script checked besides unsafe is elsewhere now: the layer rules
+# (Ruby-free engine, `rb_sys::` and raw `VALUE`s in the bridge, raising calls
+# under protection, no infallible allocation) are `rake dylint`'s, on resolved
+# paths. The reference Lexbor's own rules went with it being built only for
+# the tests and fuzz targets: no build that ships compiles `lexbor/`, so
+# nothing that ships can name it.
 
 def rust_code(path)
   File.binread(path).lines.reject { |line| line.match?(%r{\A\s*//}) }.join
 end
 
-# Comments out entirely, for the Lexbor-name check: a name mentioned in a
-# `/* ... */` block is documentation, not a reference, and `rust_code` above
-# does not strip those (it drops only whole `//` lines).
-def comments_removed(src)
-  src.gsub(%r{/\*.*?\*/}m, "").lines.reject { |line| line.match?(%r{\A\s*//}) }.join
-end
-
 # `--fix` transcribes the two tables that move whenever code moves, so a hand
 # count cannot disagree with the one this script does, and it writes them SORTED
 # (the shape the gate also demands), so running it is idempotent. It deliberately
-# does NOT touch STATIC_MUT_COUNTS or LEXBOR_ABI_COUNTS: those record a
-# boundary DECISION rather than a consequence of moving code, and a new
-# process-wide mutable global or a new Lexbor ABI name above `lexbor/` is exactly the thing a person should have to think about. Rewriting
-# them automatically would spend the ratchet it exists to hold.
+# does NOT touch STATIC_MUT_COUNTS: that records a boundary DECISION rather than
+# a consequence of moving code, and a new process-wide mutable global is exactly
+# the thing a person should have to think about. Rewriting it automatically
+# would spend the ratchet it exists to hold.
 FIX = ARGV.delete("--fix")
 abort "usage: check_unsafe_boundaries.rb [--fix]" unless ARGV.empty?
 
@@ -274,39 +212,6 @@ errors = []
 
 unless File.binread(File.join(RUST, "lib.rs")).include?("#![deny(unsafe_code)]")
   errors << "lib.rs: must retain #![deny(unsafe_code)] - it is what makes the rest a ratchet"
-end
-
-# The typed handles keep Lexbor pointers inside `lexbor::adapter`, so nothing
-# above it - not the facades, not the glue - can read a Lexbor struct field
-# through one. This is what closed the `compat_mode` leak: a field read spells
-# no `lxb_*`/`Lxb*` name, so LEXBOR_ABI below cannot see it, and only the
-# compiler can enforce this one.
-#
-# Stated as a rule rather than a list of signatures: every `fn` under
-# `lexbor/adapter/` whose signature carries a `*mut Lxb*`/`*const Lxb*` or a
-# `NonNull<Lxb...>` handle must be private, `pub(super)` or
-# `pub(in crate::lexbor::adapter)`. A new accessor is caught without anyone
-# remembering to list it. The exceptions are the doors a facade is meant to use,
-# each with its reason.
-# Not a Lexbor pointer, so the rule above cannot see it, but as dangerous: an
-# unbounded-lifetime reinterpretation, whose one safe caller is
-# `HtmlParsed::tag_bucket`. Held to the same visibility by name.
-ADAPTER_ONLY_BY_NAME = %w[as_html_nodes_unchecked].freeze
-RAW_POINTER_EXEMPT = {
-  "as_lxb_mut" => "the one way a facade (selectors, serialize) gets the node pointer a Lexbor call takes; " \
-                  "typed, so nothing casts c_void back",
-}.freeze
-ADAPTER_PRIVATE = /\A(?:pub\(super\)|pub\(in crate::lexbor::adapter(?:::\w+)*\))?\z/
-Dir.glob(File.join(RUST, "lexbor/adapter/**/*.rs")).sort.each do |path|
-  rel = rust_rel(path)
-  File.binread(path).scan(/^[ \t]*((pub(?:\([^)]*\))?)?\s*(?:const\s+)?(?:unsafe\s+)?(?:extern\s+"C"\s+)?fn\s+(\w+)[^{;]*?)(?:\{|;|\bwhere\b)/m) do |sig, vis, name|
-    next unless sig.match?(/\*(?:mut|const)\s+Lxb\w*|NonNull\s*<\s*Lxb\w*/) ||
-                ADAPTER_ONLY_BY_NAME.include?(name)
-    next if ADAPTER_PRIVATE.match?(vis.to_s)
-    next if RAW_POINTER_EXEMPT.key?(name)
-    errors << "#{rel}: `#{name}` hands out a Lexbor pointer or an unchecked view, so it must stay inside lexbor::adapter " \
-              "(private, pub(super) or pub(in crate::lexbor::adapter)) or be listed in RAW_POINTER_EXEMPT with a reason"
-  end
 end
 
 unsafe_actual = Hash.new(0)
@@ -378,110 +283,6 @@ if actual != STATIC_MUT_COUNTS
   errors << "static mut boundary changed: #{table_diff(STATIC_MUT_COUNTS, actual)}"
 end
 
-lexbor_abi = Hash.new(0)
-RUST_FILES.each do |path|
-  relative = rust_rel(path)
-  next if relative.start_with?("lexbor/")
-
-  count = comments_removed(File.binread(path)).scan(LEXBOR_ABI).length
-  lexbor_abi[relative] = count unless count.zero?
-end
-if lexbor_abi != LEXBOR_ABI_COUNTS
-  errors << "Lexbor ABI names outside lexbor/ changed: #{table_diff(LEXBOR_ABI_COUNTS, lexbor_abi)}"
-end
-
-# A Lexbor function is DECLARED in one place, `lexbor/abi.rs` (bindgen's output
-# plus the exports no header declares). A second `extern "C"` declaration of the
-# same symbol gives it a second Rust type, which nothing checks agree, and on
-# macOS a declaration that matches no symbol is a NULL call rather than a link
-# error. `post_parse.rs` re-declared four generated functions that way.
-LEXBOR_DECL = /\bfn\s+(?:lxb|lexbor)_[A-Za-z0-9_]*\s*\([^)]*\)[^;{]*;/m
-lexbor_decls = Hash.new(0)
-RUST_FILES.each do |path|
-  relative = rust_rel(path)
-  next if relative == "lexbor/abi.rs"
-
-  count = comments_removed(File.binread(path)).scan(LEXBOR_DECL).length
-  lexbor_decls[relative] = count unless count.zero?
-end
-unless lexbor_decls.empty?
-  errors << "Lexbor functions declared outside lexbor/abi.rs: #{lexbor_decls.inspect}"
-end
-
-# Lexbor's CSS parsers are CALLED in one place each - the function that puts
-# their input through `contains_guard` first (CLAUDE.md: the guard is not
-# optional, and a new parse entry must go through it). A type alone cannot
-# say so: the raw ABI is reachable crate-wide, so a second call site would
-# compile and reach the parser unguarded. Pinned here instead. (Both are
-# reference-only now: the shipping build parses with the `selectors` port.)
-GUARDED_PARSES = {
-  "lxb_css_selectors_parse" => "lexbor/css_engine.rs",   # SelectorParser::parse
-  "lxb_css_stylesheet_parse" => "lexbor/stylesheet_diff.rs",  # lexbor_dump
-}.freeze
-guarded_calls = Hash.new { |h, k| h[k] = Hash.new(0) }
-RUST_FILES.each do |path|
-  relative = rust_rel(path)
-  code = comments_removed(File.binread(path))
-  GUARDED_PARSES.each_key do |name|
-    count = code.scan(/\b#{name}\s*\(/).length
-    guarded_calls[name][relative] = count unless count.zero?
-  end
-end
-GUARDED_PARSES.each do |name, home|
-  next if guarded_calls[name] == { home => 1 }
-
-  errors << "#{name} must be called exactly once, in #{home} (behind contains_guard): " \
-            "#{guarded_calls[name].inspect}"
-end
-
-# Inside it, only the header-less exports are written by hand - everything else
-# is generated, so its signature is Lexbor's. A new hand declaration of a
-# header-declared function belongs in build.rs's allowlist instead; one with no
-# header belongs in build.rs's UNDECLARED_EXPORTS as well as here.
-LEXBOR_HAND_DECLS = 4
-abi_decls = comments_removed(File.binread(File.join(RUST, "lexbor/abi.rs"))).scan(LEXBOR_DECL).length
-if abi_decls != LEXBOR_HAND_DECLS
-  errors << "lexbor/abi.rs hand-declares #{abi_decls} Lexbor functions (expected " \
-            "#{LEXBOR_HAND_DECLS}): generate header-declared ones in build.rs; pin a " \
-            "header-less one in build.rs's UNDECLARED_EXPORTS"
-end
-
-ruby_layer = Hash.new(0)
-RUST_FILES.each do |path|
-  relative = rust_rel(path)
-  next unless relative.start_with?(*TEXT_CHECKED)
-
-  count = comments_removed(File.binread(path)).scan(RUBY_LAYER).length
-  ruby_layer[relative] = count unless count.zero?
-end
-if ruby_layer != RUBY_LAYER_COUNTS
-  errors << "Ruby-layer use inside an engine layer changed: #{table_diff(RUBY_LAYER_COUNTS, ruby_layer)}"
-end
-
-infallible = Hash.new(0)
-RUST_FILES.each do |path|
-  relative = rust_rel(path)
-  next unless relative.start_with?(*TEXT_CHECKED)
-  next if relative.end_with?("selftest.rs", "verify.rs", "tests.rs")
-  # Built only for the tests and the `html_diff` / `html_xpath_diff` /
-  # `selector_diff` / `stylesheet_diff` fuzz targets (`lexbor-reference`),
-  # never in a build that ships - test files by another name.
-  next if %w[lexbor/tree_diff.rs lexbor/xpath_diff.rs lexbor/selector_diff.rs
-             lexbor/stylesheet_diff.rs].include?(relative)
-  # A `#[cfg(test)]` module of its own (`pub mod conformance` is declared
-  # under `#[cfg(test)]` in html/dom/mod.rs), a test file by another name.
-  next if relative == "html/dom/conformance.rs"
-
-  # An inline `#[cfg(test)] mod tests` at the end of a file is tests too.
-  code = comments_removed(File.binread(path)).split(/^#\[cfg\(test\)\]\s*\n\s*mod tests\b/).first.to_s
-  count = code.scan(INFALLIBLE_ALLOC).length
-  infallible[relative] = count unless count.zero?
-end
-if infallible != INFALLIBLE_ALLOC_COUNTS
-  errors << "infallible allocation in the engine or the Ruby layer changed: " \
-            "#{table_diff(INFALLIBLE_ALLOC_COUNTS, infallible)}"
-end
-
 if FIX && !errors.empty?
   puts "unsafe-boundaries --fix: NOT rewritten, these record a decision rather than a count:"
   errors.each { |e| puts "  #{e}" }
@@ -494,8 +295,4 @@ glue_xpath_unsafe = unsafe_actual
 puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "#{unsafe_actual.values.sum} unsafe uses in #{unsafe_actual.length} islands " \
      "(glue+xpath #{glue_xpath_unsafe}); " \
-     "#{actual.values.sum} reviewed static mut declarations; " \
-     "#{lexbor_abi.values.sum} Lexbor ABI names outside their layer and " \
-     "#{lexbor_decls.values.sum} Lexbor declarations outside lexbor/abi.rs; " \
-     "#{ruby_layer.values.sum} Ruby-layer uses inside lexbor/ " \
-     "(the Ruby boundary's and the engine's layer rules: rake dylint)"
+     "#{actual.values.sum} reviewed static mut declarations"

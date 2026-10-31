@@ -11,8 +11,8 @@
 //! structure - `NodeSet`, `XPathContext` - the structure lives here with the
 //! operations that must keep its invariants (which nodes may enter a set, what
 //! a running evaluate refuses), and the methods over them are the glue's.
-//! `rake unsafe:boundaries` holds that: no method is defined, and no argument
-//! list scanned, in this layer.
+//! `rake dylint`'s `ruby_surface_in_bridge` holds that: no method is defined,
+//! and no argument list split, in this layer.
 //!
 //! An argument's TYPE is the glue's to check: a function here that needs a
 //! String takes an `RString`. A String's CONTENT is checked where it is read
