@@ -246,9 +246,10 @@ RSpec.describe "Makiri::XML CSS selectors" do
     end
 
     it "fails closed on an over-long :is()/:not() argument (fixed compounds bound)" do
-      # The :is()/:not() argument lowering takes a chain of at most 64
-      # compounds (it once split it into a fixed comps[64] stack array, which a
-      # longer one would have overflowed). Boundary: 64 is accepted, 65 refused.
+      # An :is()/:not() argument's chain is held to at most 64 compounds
+      # (`css_match::compile`; the lowering once split it into a fixed
+      # comps[64] stack array, which a longer one would have overflowed).
+      # Boundary: 64 is accepted, 65 refused.
       ok65  = ":is(#{(['a'] * 64).join(' ')})"
       over  = ":is(#{(['a'] * 65).join(' ')})"
       expect { doc.css(ok65) }.not_to raise_error
@@ -256,7 +257,7 @@ RSpec.describe "Makiri::XML CSS selectors" do
     end
 
     it "holds a top-level chain to the same 64-compound bound" do
-      # The forward lowering takes the cap from the same splitter as :is().
+      # `compile` holds every chain, top level or nested, to the same cap.
       expect { doc.css((["a"] * 64).join(" ")) }.not_to raise_error
       expect { doc.css((["a"] * 65).join(" ")) }.to raise_error(Makiri::Error, /too complex/)
     end
@@ -400,11 +401,12 @@ RSpec.describe "Makiri::XML CSS selectors" do
     end
   end
 
-  # HTML CSS runs on Lexbor's matcher, XML CSS on this lowering - two engines
-  # whose agreement nothing else checks. Each selector is scoped to a context
-  # that is its own ancestor-free root in both, so the one known difference
-  # (an HTML selector's ancestors may lie outside the context, as in
-  # querySelectorAll; the lowering's may not, as in Nokogiri) stays out of it.
+  # HTML and XML CSS run one matcher (`css_match`) over two DOMs, each with
+  # its own adapter, and nothing else holds the two to each other from Ruby.
+  # Each selector is scoped to a context that is its own ancestor-free root in
+  # both, so ancestors outside the context play no part. (Written when XML
+  # CSS ran on the CSS-to-XPath lowering, whose ancestors could not lie
+  # outside the context.)
   describe "agreement with the HTML matcher" do
     body = %(<main id="m"><p id="p1" class="a b">one</p><p id="p2"></p>) +
            %(<div id="d1"><span id="s1">x</span><span id="s2">y z</span></div>) +

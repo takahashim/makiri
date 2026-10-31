@@ -47,7 +47,7 @@ namespace :fuzz do
 
   # Coverage-guided libFuzzer harnesses for the Ruby-free surfaces (the XML
   # reader and the HTML parse, XPath over both engine instances, and the CSS
-  # lowering). They are
+  # matcher over both DOMs). They are
   # standalone binaries, so they run without the Ruby interpreter, and they
   # complement the Ruby-based robustness fuzzer by providing coverage feedback
   # and 2-3 orders of magnitude faster execution for the engine core.

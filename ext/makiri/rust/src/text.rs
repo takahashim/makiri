@@ -9,8 +9,8 @@
 //! ([`VerifiedText::from_checked`]).
 //!
 //! No NUL is a LOGICAL contract, not a memory-safety one: every consumer reads
-//! the text as a slice - the XPath lexer, the CSS lowering, and Lexbor's
-//! selector parser, which is handed `(ptr, len)` - and none as a C string. It
+//! the text as a slice - the XPath lexer, the selector parser, and Lexbor's
+//! (the reference's), which is handed `(ptr, len)` - and none as a C string. It
 //! is what the engine promises its callers about names (a NUL cannot be
 //! serialized into markup, nor written in an XPath or CSS literal), so it is
 //! checked once, here, rather than wherever a name is used.
@@ -29,7 +29,7 @@ use crate::cutf8::{text_verdict, TextVerdict};
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct VerifiedText<'a>(&'a str);
 
-// Its constructors are called from the CSS lowering and the Ruby glue, so the
+// Its constructors are called from the Ruby glue and the tests, so the
 // Ruby-free builds (Kani, the fuzz crate) see some of them unused.
 #[cfg_attr(not(feature = "ruby"), allow(dead_code))]
 impl<'a> VerifiedText<'a> {

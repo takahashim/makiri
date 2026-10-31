@@ -151,7 +151,8 @@ RSpec.describe "Cost proportional to input", :timing do
 
     # Counting preceding siblings per candidate was n^2 over a flat list: 40k
     # ran for 15 s uncharged, and once charged a 10k-entry feed hit the
-    # budget. The CSS lowering now reads a per-parent memo of positions.
+    # budget. The matcher remembers the positions it has counted
+    # (`css_match::positions`).
     it "answers structural pseudo-classes over a long XML sibling list" do
       xml = Makiri::XML("<r>#{"<a/>" * 40_000}</r>")
       {

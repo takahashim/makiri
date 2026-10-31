@@ -1,12 +1,8 @@
-# Differential probe for xpath/mkr_css.c -> crate::css.
+# Differential probe for CSS selection. It was written for the CSS-to-XPath
+# lowering (xpath/mkr_css.c, then crate::css), and records the RESULT of every
+# selector against fixtures, not the AST, so it holds whatever engine answers:
+# both hosts run `css_match` now, the XML one over its own arena.
 #
-# The lowering's whole job is that a CSS selector and its XPath translation
-# select the same nodes, so the probe runs every selector against fixtures and
-# records the RESULT, not the AST - an AST comparison would pass for two
-# translations that both parse and disagree.
-#
-# Both hosts: the XML engine reaches the lowering through Node#css, and the HTML
-# one through the XPath fallback for selectors Lexbor's matcher cannot serve.
 # The probes are run from spec/differential/run.rb, which puts lib/ on the
 # load path; this makes them work when run directly too. The original line
 # here expanded "lib" against THIS directory, which does not exist - it had
@@ -138,7 +134,7 @@ deep = (1..70).map { "div" }.join(" ")
 OUT << "cap = #{try { xdoc.css(deep).length }}"
 note(:cap)
 
-# at_css and matches? reach the same lowering.
+# at_css and matches? reach the same matcher.
 OUT << "at_css = #{try { xdoc.at_css("p.second")&.text }}"
 OUT << "matches = #{try { xdoc.at_css("#s1").matches?("section.a") }}"
 

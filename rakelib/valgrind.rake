@@ -6,37 +6,32 @@
 # the report down to errors whose stack touches our extension, so we no longer
 # have to fetch ruby.supp from ruby/ruby (that path was removed upstream).
 #
-# The job catches *use of uninitialised values* and *invalid reads/writes*
-# (incl. intra-arena overflows), and also any "definitely lost" block whose
-# stack touches our extension - the one leak gate with no frequency threshold
-# (`rake leaks`, macOS, flags only stacks repeated >= 30x). It once meant to
-# leave leaks out and could not: see `--leak-check` below. ruby_memcheck's
-# defaults disable undef-value errors, so we override them.
+# The job catches *invalid reads/writes* (incl. intra-arena overflows) and
+# any "definitely lost" block whose stack touches our extension - the one leak
+# gate with no frequency threshold (`rake leaks`, macOS, flags only stacks
+# repeated >= 30x). It once meant to leave leaks out and could not: see
+# `--leak-check` below.
 #
-# `filter_all_errors: true` is essential: by default ruby_memcheck only applies
-# its "stack must touch the makiri binary" filter to *leak*-kind errors
-# (`ValgrindError#should_filter? = filter_all_errors? || kind_leak?`), so every
-# uninitialised-value report is surfaced regardless of where it comes from. Ruby's
-# conservative GC (machine-context scan, RVALUE flag aging, free-at-exit teardown)
-# legitimately reads uninitialised words, and the bundled ruby.supp does not cover
-# the free-at-exit / subprocess stacks the `:isolated` specs spin up under
-# `--trace-children=yes` - which buried the run in ~3500 pure-Ruby false positives.
-# Filtering all error kinds by the same binary-touch rule keeps the gate scoped to
-# *our* code: a real uninit/invalid access in mkr_*/Lexbor still has a makiri frame
-# and is still reported.
+# It does NOT check uninitialised values (`--undef-value-errors=no`, which is
+# ruby_memcheck's default too). It did, and every report it ever kept was
+# CRuby's: the conservative GC scans the machine stack and reads words a
+# returned frame left behind, and Valgrind names as their origin whichever
+# frame last owned that stack - often one of ours. Which words are stale
+# shifts with the build's stack layout, so the suppressions (~45 entries)
+# grew with every runner image and never stayed whole. Safe Rust cannot read
+# uninitialised memory; `falloc`'s and `utf8_copy`'s `unsafe` runs under Miri;
+# and nupur's reads are of memory Ruby initialised. What is given up is an
+# uninitialised read in nupur's own `unsafe`.
 #
-# BUT the binary-touch filter is too coarse for one residual class: when a GC
-# cycle fires *inside* one of our allocations (or marks through our mark
-# callback), CRuby's conservative collector legitimately reads uninitialised
-# words (machine-stack scan reading stale frames, incremental mark/sweep reading
-# not-yet-written RVALUE flags) while a makiri frame sits on the stack - so ~190
-# of these pure-Ruby-GC false positives pass the filter. The gem's bundled
-# ruby.supp only covers `each_location*` under Addr8, not the Cond/Value8 reads
-# we hit. `suppressions/ruby.supp` (auto-loaded by ruby_memcheck: it globs
-# `<dir>/<ruby-version>.supp`, and the bare `ruby.supp` matches every version)
-# suppresses exactly those GC-driver-anchored uninit reads, plus the VM
-# method-cache id_table the interpreter never frees before exit. A real uninit
-# read in our code does not descend from a GC driver, so it still fails.
+# `filter_all_errors: true` applies ruby_memcheck's "stack must touch the
+# makiri binary" filter to every error kind, not only leaks
+# (`ValgrindError#should_filter? = filter_all_errors? || kind_leak?`), so the
+# `:isolated` specs' child processes under `--trace-children=yes` do not bury
+# the run in Ruby's own reports. A real invalid access in our code still has
+# a makiri frame and is still reported. `suppressions/ruby.supp` (auto-loaded
+# by ruby_memcheck: it globs `<dir>/<ruby-version>.supp`, and the bare
+# `ruby.supp` matches every version) holds the leaks the VM never frees
+# before exit.
 #
 # Guarded: ruby_memcheck lives in the optional :valgrind bundler group, so a
 # normal `bundle exec rake` (without that group) must not fail to load.
@@ -76,7 +71,7 @@ begin
         fixed = RepairUnclosedStillReachable.repair(xml)
         File.write(file, fixed) unless fixed == xml
         # ruby_memcheck deletes the XML once parsed; keep a gzipped copy to read
-        # an error's origin (VALGRIND_XML_KEEP=<dir>, set by valgrind.yml).
+        # an error's whole stacks (VALGRIND_XML_KEEP=<dir>, set by valgrind.yml).
         Zlib::GzipWriter.open(File.join(keep, "#{File.basename(file)}.gz")) { |gz| gz.write(fixed) } if keep
       end
       super
@@ -87,19 +82,12 @@ begin
   RubyMemcheck.config(
     binary_name: "makiri",
     filter_all_errors: true,    # apply the binary-touch filter to ALL error kinds,
-                                # not just leaks (see note above) - drops Ruby's own
-                                # GC uninitialised-value noise, keeps mkr_* reports
+                                # not just leaks (see note above)
     valgrind_options: [
       "--num-callers=50",
       "--error-limit=no",
       "--trace-children=yes",   # spec processes may fork
-      "--undef-value-errors=yes", # the point of this job (ruby_memcheck defaults to =no)
-      # Origin tracking (where an uninitialised value came from) roughly DOUBLES
-      # memcheck's run time. It is a diagnostic aid, not a detection capability -
-      # memcheck still reports the uninitialised USE without it - so the frequent
-      # post-merge push gate turns it off (VALGRIND_TRACK_ORIGINS=no) to run in
-      # ~half the time, while the nightly / manual runs keep it on for the backtrace.
-      "--track-origins=#{ENV.fetch('VALGRIND_TRACK_ORIGINS', 'yes')}",
+      "--undef-value-errors=no",  # see the note above; also ruby_memcheck's default
       # Leaks ARE checked here, whatever this says: ruby_memcheck always runs
       # valgrind with --xml=yes, and in XML mode memcheck writes its leak
       # records even under --leak-check=no (a "definitely lost" in a spec's

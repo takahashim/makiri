@@ -20,7 +20,7 @@
   載せない・照合前に selector 全体を検査する・確保はすべて fallible、を
   守る。意味はブラウザの `querySelectorAll` に合わせる (HTML 文書かどうかと
   要素の名前空間で規則を切り替える)。XML の CSS を XPath に落とす旧来の
-  変換 (`crate::css`) は、XML の照合を確かめる参照としてだけ残す
+  変換は、XML の照合をブラウザとの比較で確かめるようになって削除した
 * HTML の要素について source location (開始タグの行番号、1 始まり) を
   サポートする。行を特定できない node (parser が補った要素、fragment
   など) は推測せず nil を返す。column / byte offset は公開しない
@@ -340,12 +340,11 @@ CSS/serialize/読み取りアクセサも GVL を保持する。`spec/threading_
 * 拡張は `cdylib` だけとしてビルドする。fuzz のクレートが使う `rlib` を
   同時に作ると rustc は LTO を行わず、境界の層への呼び出しがクレートを
   またぐ不透明な呼び出しになる。
-* crate のフィーチャは七つ。`ruby` (Ruby との境界、既定)、`html-dom`
+* crate のフィーチャは六つ。`ruby` (Ruby との境界、既定)、`html-dom`
   (index アリーナの HTML DOM とその上の CSS の照合、XPath の HTML 実装。
   `ruby` と `lexbor` が含む)、`lexbor` (vendored Lexbor を読む参照の層)、
-  `alloc-inject` (OOM 注入)、`css-reference`、`lexbor-reference`、
-  `xml-css-reference` (差分 fuzz の参照実装)。`lexbor` と三つの参照は
-  出荷するビルドに入らない。
+  `alloc-inject` (OOM 注入)、`css-reference`、`lexbor-reference`
+  (差分 fuzz の参照実装)。`lexbor` と二つの参照は出荷するビルドに入らない。
 
 ## 6. Testing
 
@@ -366,9 +365,9 @@ cargo-fuzz の harness (`ext/makiri/rust/fuzz/`) は Ruby なしで engine を
 `html_xpath`、`css`、`html_css`) に加えて、参照実装との一致を見る差分
 harness を持つ: `html_diff` (移植版の tree builder と Lexbor の木、その
 直列化、深さの上限の判定)、`selector_diff` (移植版と Lexbor のセレクタ解析)、`html_css_diff` (自前の
-matcher と Lexbor の matcher)、`css` (XML の matcher と旧来の XPath への
-変換)。参照実装は `lexbor-reference` / `css-reference` /
-`xml-css-reference` フィーチャでだけ link する。
+matcher と Lexbor の matcher)。`css` は XML の matcher の入口どうしの
+一致を見る。参照実装は `lexbor-reference` / `css-reference` フィーチャで
+だけ link する。
 
 > 当初構想にあった「Nokogiri を oracle にした diff モードを fuzz に持たせる」
 > 案は採っていない。Lexbor と libxml2 は HTML5 semantics が異なり、ランダム

@@ -6,8 +6,8 @@ require "open3"
 # `crate::stack`/`bridge::stack` (see there for why): a recursion COUNT alone
 # assumes the caller's own frame started with a full-sized native stack, which
 # is not true in a small Fiber - `RUBY_FIBER_MACHINE_STACK_SIZE` can be as low
-# as 128 KiB, well under what the count-only caps (CSS's MAX_SELECTOR_NESTING,
-# XPath's max_recursion_depth) assumed when they were sized. Before the guard,
+# as 128 KiB, well under what the count-only caps (the CSS lowering's
+# MAX_SELECTOR_NESTING, since removed, and XPath's max_recursion_depth) assumed when they were sized. Before the guard,
 # a selector/expression comfortably inside those counts still overflowed the
 # REAL stack in a small Fiber: Ruby's SystemStackError handling longjmps past
 # Rust's frames, skipping every Drop on the way - which for the XML CSS lowering

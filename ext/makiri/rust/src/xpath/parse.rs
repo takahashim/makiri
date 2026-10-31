@@ -1,7 +1,6 @@
 //! XPath 1.0 recursive-descent parser.
 //!
-//! It builds the same AST as the CSS lowering, so the evaluator runs what either
-//! produces. A part under construction is ordinary owned data - a boxed operand,
+//! A part under construction is ordinary owned data - a boxed operand,
 //! a step, a list - so an error path simply returns and the drops free what was
 //! built.
 //!

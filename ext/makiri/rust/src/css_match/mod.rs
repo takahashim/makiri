@@ -172,8 +172,7 @@ use core::ops::ControlFlow;
 use dom::CssNode;
 use query::Query;
 
-/// A complexity bound on compounds per chain. The reference lowering
-/// (`crate::css`) is held to the same one.
+/// A complexity bound on compounds per chain.
 ///
 /// Not a stack-safety mechanism (this design needs none, for `:has()` nesting
 /// or any other - see the module doc) - just a sanity cap so a single

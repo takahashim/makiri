@@ -23,8 +23,6 @@
 
 use crate::falloc::{OomOption, Reserve, VecGrow};
 
-pub mod verify;
-
 /// Why a buffer operation failed. Every failure leaves the buffer as it was.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BufError {
@@ -126,8 +124,8 @@ impl Buf {
         /* The common case - serializer output arrives as many small chunks -
          * is a copy into room already there. `n` fits the room, so `len + n`
          * cannot overflow; and the room is never past the ceiling (`grow_to`,
-         * the one place it changes, is handed a clamped size, and the Kani
-         * proof asserts it), so content that fits it is within the ceiling. */
+         * the one place it changes, is handed a clamped size, and
+         * verus/cbuf.rs proves it), so content that fits it is within the ceiling. */
         if let Some(dst) = self.data.get_mut(len..len + n) {
             copy_small(dst, bytes);
             self.len = len + n;
@@ -351,8 +349,8 @@ mod tests {
     /// bytes survive every growth, the ceiling and the growth clamp hold,
     /// failures change nothing, and `steal` hands back exactly what went in.
     ///
-    /// This was a Kani proof (`cbuf::verify`) until it ran CBMC out of memory
-    /// over the `Vec`. The domain is small enough to try whole, and the bytes
+    /// This was a Kani proof until it ran CBMC out of memory over the `Vec`.
+    /// The domain is small enough to try whole, and the bytes
     /// are distinct per position, so a copy that misplaced or dropped one
     /// would show: the code under test never branches on a byte's value,
     /// which is all the proof's symbolic bytes added. Verus now proves the

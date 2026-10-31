@@ -152,7 +152,7 @@ fn simple<'p>(out: &mut Vec<u8>, s: Selector<'p>) -> Result<Option<Lists<'p>>, F
         Simple::Attribute(at) => {
             put(out, b"[")?;
             // Lexbor stores `*` for `[|a]` - no namespace - and rejects
-            // `[*|a]` itself, so `*` here is `[|a]`, as the XML lowering
+            // `[*|a]` itself, so `*` here is `[|a]`, as the XML matcher
             // reads it. An escaped `\*|` prefix is stored the same way and
             // comes back as `|`: as for a type selector (`namespace`), a
             // prefix named `*` needs an `@namespace` that declares one.
