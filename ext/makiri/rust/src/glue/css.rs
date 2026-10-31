@@ -21,6 +21,10 @@ use crate::init::EXC_CSS_SYNTAX_ERROR;
 use crate::limits::NODE_SET_MAX;
 use crate::selectors::ast::Lists;
 
+/// The longest prefix or URI a CSS namespace binding takes: an XPath
+/// binding's, so one Hash binds alike for `#css` and `#xpath`.
+const BINDING_MAX_BYTES: usize = crate::xpath::limits::Limits::DEFAULT.max_string_bytes;
+
 /// One call's `(selector, namespaces = nil)`, the argument list Nokogiri's
 /// CSS methods take too - so one call works on either representation - read
 /// and checked, ready to run over a representation's node.
@@ -39,7 +43,7 @@ use crate::selectors::ast::Lists;
 pub struct CssQuery {
     selector: Value,
     text: RubyText,
-    bindings: crate::glue::query::NamespaceBindings,
+    bindings: crate::glue::namespaces::Bindings,
 }
 
 impl CssQuery {
@@ -57,7 +61,7 @@ impl CssQuery {
                         "namespaces must be a Hash of prefix => uri",
                     ));
                 };
-                crate::glue::query::namespace_bindings(ruby, h)?
+                crate::glue::namespaces::owned(ruby, h, BINDING_MAX_BYTES)?
             }
         };
         let text = ruby_verified_text(ruby, selector, "CSS selector")?;
@@ -149,7 +153,7 @@ fn syntax_error(selector: Value, reason: Option<&str>) -> Error {
 /// A parse failure as the Ruby exception it maps to.
 fn parse_error(err: ParseError, selector: Value) -> Error {
     match err {
-        /* Lexbor's parser reports no reason of its own. */
+        /* The parser, as Lexbor's which it ports, reports no reason. */
         ParseError::Syntax => syntax_error(selector, None),
         ParseError::Oom => makiri_error("out of memory parsing CSS selector"),
         ParseError::Busy => makiri_error("CSS selector engine is already in use"),

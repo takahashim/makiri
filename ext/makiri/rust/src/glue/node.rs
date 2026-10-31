@@ -1,18 +1,14 @@
-//! The node methods both representations share - identity, and the child
-//! list readers over `ChildListHost` - and the pieces of the DOM's naming
-//! rules their factories raise alike.
+//! The node methods both representations share - identity, the child list
+//! readers over `ChildListHost` and the Document's edit versions.
 //!
-//! HTML (Lexbor) and XML (custom-arena) nodes are two representations of one
-//! Ruby-facing Node. `==`/`eql?`, `hash` and `pointer_id` never dereference
+//! HTML and XML nodes, each in its own index arena, are two representations
+//! of one Ruby-facing Node. `==`/`eql?`, `hash` and `pointer_id` never dereference
 //! the node, so one implementation serves both; the TypedData types behind it
 //! are [`crate::bridge::wrapper`]'s.
 
 #![forbid(unsafe_code)]
 
-use crate::bridge::rb::{Error, Ruby, Value};
-
-use crate::bridge::ruby::makiri_error;
-use crate::xml::dom_name;
+use crate::bridge::rb::{Ruby, Value};
 
 use crate::init::CLASS_NODE;
 
@@ -22,65 +18,6 @@ pub const DOCUMENT_NOT_REMOVABLE: &str = "cannot remove the document node";
 
 use crate::bridge::wrapper::{node_identity, node_key, ChildListHost};
 use crate::child_index::ChildList;
-
-/// `root`'s subtree in post-order, `root` last - Nokogiri's `traverse` order:
-/// each node after its children, siblings in order. Iterative, over the
-/// tree's links, so a deep tree costs no native stack.
-pub fn post_order<N: Copy>(
-    root: N,
-    is_root: impl Fn(N) -> bool,
-    first_child: impl Fn(N) -> Option<N>,
-    next: impl Fn(N) -> Option<N>,
-    parent: impl Fn(N) -> Option<N>,
-    out: &mut dyn FnMut(N),
-) {
-    let deepest = |mut n: N| {
-        while let Some(c) = first_child(n) {
-            n = c;
-        }
-        n
-    };
-    let mut n = deepest(root);
-    loop {
-        out(n);
-        if is_root(n) {
-            return;
-        }
-        n = match next(n) {
-            Some(s) => deepest(s),
-            None => match parent(n) {
-                Some(p) => p,
-                /* Not under `root` after all: a broken link, not a shorter
-                 * walk - but nothing more to visit either way. */
-                None => return,
-            },
-        };
-    }
-}
-
-/// The refusal of a namespace that does not fit the qualified name it came with.
-const NS_MISFIT: &str =
-    "the namespace does not fit the qualified name (a prefix needs a namespace; \
-xml and xmlns take only their own)";
-
-/// [`dom_name::validate_and_extract`] with its refusals as the `*_ns` methods
-/// of both representations raise them: `ArgumentError` for a name ("invalid
-/// `what` name"), `Makiri::Error` for a namespace. Returns (prefix, local
-/// name), the prefix empty when there is none.
-pub fn dom_extract<'q>(
-    ns: &[u8],
-    qname: &'q [u8],
-    local_ok: fn(&[u8]) -> bool,
-    what: &str,
-) -> Result<(&'q [u8], &'q [u8]), Error> {
-    dom_name::validate_and_extract(ns, qname, local_ok).map_err(|e| match e {
-        dom_name::ExtractError::Name => Error::new(
-            crate::bridge::rb::Builtin::ArgumentError,
-            format_args!("invalid {what} name"),
-        ),
-        dom_name::ExtractError::Namespace => makiri_error(NS_MISFIT),
-    })
-}
 
 /// Node identity: equal iff both wrappers name the same node of the same
 /// Document, so an HTML node is never equal to an XML one, nor a node to one

@@ -1,8 +1,8 @@
 //! `Node#to_html` / `#to_s` / `#outer_html` and `#inner_html`.
 //!
 //! Reads the receiver and the `pretty:` option, picks the tree or deep
-//! serializer, and copies the owned bytes into a String. The Lexbor callbacks
-//! and the buffer live in [`crate::html_dom::serialize`], which does not know
+//! serializer, and copies the owned bytes into a String. The serializer
+//! and its buffer live in [`crate::html_dom::serialize`], which does not know
 //! about Ruby.
 
 #![forbid(unsafe_code)]
@@ -27,7 +27,7 @@ fn layout_opt(ruby: &Ruby, args: &[Value]) -> Result<Layout, Error> {
 }
 
 /// The receiver's serialization as a UTF-8 String, or `Makiri::Error` on a
-/// Lexbor status failure.
+/// serializer failure.
 ///
 /// An Attr serializes to the empty string, as DOM Parsing's algorithm and
 /// Firefox have it (Chromium and WebKit write the escaped value) and as an

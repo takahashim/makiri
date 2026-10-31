@@ -4,8 +4,8 @@
 //!
 //! The layers around it: `bridge` is the unsafe seam - raw Ruby strings, the
 //! TypedData wrappers, `rb_protect` - and hands this layer safe primitives;
-//! `html`, `xml`, `xpath`, `selectors` and `css_match` are Ruby-free engines
-//! that take bytes and return their own error types. So this layer holds no unsafe, which the
+//! `html`, `xml`, `xpath`, `css_match` and `selectors` are Ruby-free engines that
+//! take bytes and return their own error types. So this layer holds no unsafe, which the
 //! `forbid` below and `rake unsafe:boundaries` both pin.
 //!
 //! # Two rules this layer lives by
@@ -46,11 +46,17 @@ pub mod html_doc;
 /// The identity methods (`==`, `hash`, `pointer_id`) both representations share.
 pub mod node;
 
+/// The DOM's naming rules, as both representations' factories raise them.
+pub mod dom_names;
+
 /// `Makiri::NodeSet`.
 pub mod node_set;
 
 /// `#xpath` / `#at_xpath` for both representations, and the query path.
 pub mod query;
+
+/// A `{prefix => uri}` Hash, as XPath and CSS both read one.
+pub mod namespaces;
 
 /// `Makiri::XPathContext`.
 pub mod xpath_context;

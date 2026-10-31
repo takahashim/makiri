@@ -21,7 +21,6 @@ use crate::method;
 
 use crate::bridge::args::Kwargs;
 use crate::bridge::ruby::makiri_error;
-use crate::bridge::string::ruby_try_verified_text_pair;
 use crate::bridge::wrapper::keepalive_document;
 use crate::bridge::xpath::{
     context_for, evaluate_to_ruby, parse_query, Answer, Cx, QueryAst, XPathCtx,
@@ -142,55 +141,6 @@ fn matching_lax(ruby: &Ruby, v: Value) -> Result<bool, Error> {
     ))
 }
 
-/// Bind every `{prefix => uri}` pair of `h` through `register`, which is what
-/// differs between a per-query context and an `XPathContext`.
-///
-/// On any bad entry the error is returned and nothing further is registered -
-/// the caller's owner then frees the context, so a partial registration is
-/// never handed out.
-fn bind_each(
-    ruby: &Ruby,
-    h: RHash,
-    mut register: impl FnMut(&[u8], &[u8]) -> Result<(), Error>,
-    cap: usize,
-) -> Result<(), Error> {
-    /* The pairs are copied out first and bound after (`hash::each_pair`). */
-    /* More pairs than a context may hold is refused before any is converted
-     * or copied, rather than after every one of them has been. */
-    let max = crate::xpath::ctx::MAX_NAMESPACES;
-    if h.len() > max {
-        return Err(makiri_error(format_args!(
-            "invalid namespace mapping: {} bindings (max {max})",
-            h.len()
-        )));
-    }
-    crate::bridge::hash::each_pair(ruby, h, |prefix, uri| {
-        bind_pair(ruby, prefix, uri, cap, &mut register)
-    })
-}
-
-/// Bind one `prefix => uri` pair through `register` - the one reading of a
-/// namespace binding, for a query's Hash, `XPathContext.new`'s and
-/// `#register_namespace` alike, so all three convert, check, cap and word a
-/// refusal the same way.
-///
-/// The prefix is a String or a Symbol (a keyword binding's key), the URI a
-/// String; nothing else converts.
-pub fn bind_pair(
-    ruby: &crate::bridge::rb::Ruby,
-    prefix: Value,
-    uri: Value,
-    cap: usize,
-    mut register: impl FnMut(&[u8], &[u8]) -> Result<(), Error>,
-) -> Result<(), Error> {
-    let ks = crate::bridge::ruby::name_arg(prefix)?;
-    let vs = crate::bridge::ruby::string_arg(uri)?;
-    let (pv, uv) = ruby_try_verified_text_pair(ruby, ks, vs, cap).map_err(|r| {
-        r.into_error(|reason| makiri_error(format_args!("invalid namespace mapping: {reason}")))
-    })?;
-    register(pv.as_bytes(), uv.as_bytes())
-}
-
 /// Register a `{prefix => uri}` Hash onto `ctx` for one query.
 ///
 /// RSS and Atom live in a default namespace, so a prefix is the strict-mode way
@@ -200,51 +150,19 @@ pub fn register_namespaces(ruby: &Ruby, ctx: &Cx, namespaces: Option<RHash>) -> 
         return Ok(());
     };
     let cap = ctx.limits().max_string_bytes;
-    bind_each(
-        ruby,
-        h,
-        |prefix, uri| {
-            ctx.register_ns(prefix, uri)
-                .map_err(|_| makiri_error("failed to register namespace"))
-        },
-        cap,
-    )
-}
-
-/// `(prefix, uri)` pairs, owned.
-pub type NamespaceBindings = Vec<(Vec<u8>, Vec<u8>)>;
-
-/// A `{prefix => uri}` Hash's bindings, copied out and checked as `#xpath`'s
-/// are (`bind_pair`) - for HTML CSS, whose matcher takes them as bytes.
-pub fn namespace_bindings(ruby: &Ruby, h: RHash) -> Result<NamespaceBindings, Error> {
-    use crate::falloc::{try_to_vec, VecGrow};
-    let oom = || makiri_error("out of memory reading namespace bindings");
-    let mut out = Vec::new();
-    bind_each(
-        ruby,
-        h,
-        |prefix, uri| {
-            let pair = (
-                try_to_vec(prefix).ok_or_else(oom)?,
-                try_to_vec(uri).ok_or_else(oom)?,
-            );
-            out.falloc_push(pair).map_err(|()| oom())
-        },
-        crate::xpath::limits::Limits::DEFAULT.max_string_bytes,
-    )?;
-    Ok(out)
+    crate::glue::namespaces::bind_each(ruby, h, cap, |prefix, uri| {
+        ctx.register_ns(prefix, uri)
+            .map_err(|_| makiri_error("failed to register namespace"))
+    })
 }
 
 /// Register a `{prefix => uri}` Hash onto an `XPathContext`, for every later
 /// evaluate.
 pub fn register_bindings(ruby: &Ruby, ctx: &XPathCtx, bindings: RHash) -> Result<(), Error> {
     let cap = ctx.limits().max_string_bytes;
-    bind_each(
-        ruby,
-        bindings,
-        |prefix, uri| ctx.bind_namespace(prefix, uri),
-        cap,
-    )
+    crate::glue::namespaces::bind_each(ruby, bindings, cap, |prefix, uri| {
+        ctx.bind_namespace(prefix, uri)
+    })
 }
 
 /// The context a query on `rb_self` runs under: rooted there (a Document's is
@@ -267,8 +185,6 @@ pub fn query_context(
 fn xpath_run(ruby: &Ruby, rb_self: Value, q: QueryArgs, answer: Answer) -> Result<Value, Error> {
     let document = keepalive_document(ruby, rb_self)?;
     let ctx = query_context(ruby, rb_self, document, &q)?;
-    /* Parsed AFTER the namespaces are registered: that step runs Ruby and may
-     * collect, and the borrowed expression bytes must not be live across it. */
     let ast = parse_query(ruby, &ctx, q.text)?;
     evaluate_to_ruby(ruby, ctx, QueryAst::owned(ast), document, answer)
 }

@@ -2,7 +2,7 @@
 //!
 //! The Ruby surface of each edit: reading and verifying the arguments, the
 //! error each refusal raises, and the value handed back. The DOM's rules about
-//! what may go where are the adapter's `Insertion`, and every edit starts at
+//! what may go where are [`crate::dom_rules::check`]'s, and every edit starts at
 //! `bridge::html::edit` and reaches the document through its
 //! `HtmlEdit::with_tree` (or its attribute and data twins), which drops the
 //! document's indexes and lends the document by `&mut` - so no method here can
@@ -10,7 +10,7 @@
 //! method converts its arguments BETWEEN the two: a conversion can allocate,
 //! and so raise, and must do so before the indexes are dropped. What touches a
 //! raw handle or a String's bytes - the adopt copy, the fragment import, the
-//! handoff of a verified String to Lexbor - is a primitive in
+//! handoff of a verified String to the arena - is a primitive in
 //! [`crate::bridge::html`], so this module holds no unsafe.
 
 #![forbid(unsafe_code)]
@@ -27,7 +27,8 @@ use crate::bridge::string::{
     namespace_arg, optional, ruby_verified_data, ruby_verified_name, ruby_verified_text, HtmlSource,
 };
 use crate::dom_rules::{self, TextContent};
-use crate::glue::node::{dom_extract as extract, DOCUMENT_NOT_REMOVABLE};
+use crate::glue::dom_names::dom_extract as extract;
+use crate::glue::node::DOCUMENT_NOT_REMOVABLE;
 use crate::html_dom::html::{CreatePiError, HtmlDocMut, NodeType, Place, RawNode};
 use crate::xml::dom_name;
 
@@ -50,6 +51,18 @@ fn check_dom_name(
         crate::bridge::rb::Builtin::ArgumentError,
         format_args!("invalid HTML {what} name"),
     ))
+}
+
+/// What an attribute setter raises on a node that is not an element.
+const NOT_AN_ELEMENT: &str = "cannot set an attribute on a non-element node";
+
+/// The receiver cleared for an edit ([`edit`]), when it is an element - asked
+/// before any argument is converted, so a non-element answers without reading
+/// one. `None` for any other node: each caller says what that means (a
+/// refusal, or nothing to do).
+fn element_edit<'a>(ruby: &Ruby, this: &'a mut HtmlSelf) -> Result<Option<HtmlEdit<'a>>, Error> {
+    let edit = edit(ruby, this)?;
+    Ok((edit.node_type()? == NodeType::Element).then_some(edit))
 }
 
 /// An attribute edit of the receiver as an element, once every argument is
@@ -131,11 +144,9 @@ pub fn aset(
     rb_name: Value,
     rb_value: Value,
 ) -> Result<Value, Error> {
-    const REFUSAL: &str = "cannot set an attribute on a non-element node";
-    let edit = edit(ruby, &mut this)?;
-    if edit.node_type()? != NodeType::Element {
-        return Err(makiri_error(REFUSAL));
-    }
+    let Some(edit) = element_edit(ruby, &mut this)? else {
+        return Err(makiri_error(NOT_AN_ELEMENT));
+    };
     let nv = ruby_verified_name(ruby, rb_name, "attribute name")?;
     let vv = ruby_verified_data(ruby, rb_value, "attribute value")?;
     check_dom_name(&nv, dom_name::valid_attribute_local_name, "attribute")?;
@@ -154,11 +165,9 @@ pub fn set_attribute_ns(
     rb_qname: Value,
     rb_value: Value,
 ) -> Result<Value, Error> {
-    const REFUSAL: &str = "cannot set an attribute on a non-element node";
-    let edit = edit(ruby, &mut this)?;
-    if edit.node_type()? != NodeType::Element {
-        return Err(makiri_error(REFUSAL));
-    }
+    let Some(edit) = element_edit(ruby, &mut this)? else {
+        return Err(makiri_error(NOT_AN_ELEMENT));
+    };
     let qv = ruby_verified_name(ruby, rb_qname, "attribute qualified name")?;
     let vv = ruby_verified_data(ruby, rb_value, "attribute value")?;
     let nv = namespace_arg(ruby, rb_ns, "namespace")?;
@@ -186,10 +195,9 @@ pub fn remove_attribute_ns(
     rb_ns: Value,
     rb_local: Value,
 ) -> Result<Value, Error> {
-    let edit = edit(ruby, &mut this)?;
-    if edit.node_type()? != NodeType::Element {
+    let Some(edit) = element_edit(ruby, &mut this)? else {
         return Ok(ruby.qnil().as_value());
-    }
+    };
     let lv = ruby_verified_text(ruby, rb_local, "attribute local name")?;
     let nv = namespace_arg(ruby, rb_ns, "namespace")?;
     let ns = nv.as_ref().map(|n| n.as_bytes());
@@ -220,10 +228,9 @@ pub fn set_content(ruby: &Ruby, mut this: HtmlSelf, rb_text: Value) -> Result<Va
 /// `element.delete(name)` -> self.
 pub fn delete(ruby: &Ruby, mut this: HtmlSelf, rb_name: Value) -> Result<Value, Error> {
     let rb_self = this.value;
-    let edit = edit(ruby, &mut this)?;
-    if edit.node_type()? != NodeType::Element {
+    let Some(edit) = element_edit(ruby, &mut this)? else {
         return Ok(rb_self);
-    }
+    };
     let nv = ruby_verified_text(ruby, rb_name, "attribute name")?;
     with_element(edit, |d, el| {
         crate::bridge::html::remove_attribute(d, el, &nv)
@@ -236,10 +243,9 @@ pub fn delete(ruby: &Ruby, mut this: HtmlSelf, rb_name: Value) -> Result<Value, 
 /// All or nothing: the new content is parsed and imported into a detached
 /// fragment first, and only then are the old children swapped for it.
 pub fn set_inner_html(ruby: &Ruby, mut this: HtmlSelf, rb_html: Value) -> Result<Value, Error> {
-    let edit = edit(ruby, &mut this)?;
-    if edit.node_type()? != NodeType::Element {
+    let Some(edit) = element_edit(ruby, &mut this)? else {
         return Err(makiri_error("inner_html= requires an element"));
-    }
+    };
     /* A String only, transcoded before the edit - nothing inside it may
      * run Ruby. */
     let src = HtmlSource::from_ruby(ruby, string_arg(rb_html)?)?;
@@ -294,6 +300,15 @@ pub fn set_outer_html(ruby: &Ruby, mut this: HtmlSelf, rb_html: Value) -> Result
         Ok(())
     })??;
     Ok(rb_html)
+}
+
+/// `Node#clone_node(deep = false)`: a copy owned by the same document and
+/// detached from any parent - the DOM cloneNode, whose `deep` defaults to false.
+pub fn clone_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Value, Error> {
+    let a = crate::bridge::args::scan(ruby, args, crate::bridge::args::Shape::positional(0, 1))?;
+    /* Truthiness: anything but nil and false. */
+    let deep = a.optional(0).is_some_and(|v| v.to_bool());
+    crate::bridge::html::document::clone_node(ruby, rb_self, deep)
 }
 
 /* ------------------------------------------------------------------ *
@@ -430,8 +445,9 @@ pub fn create_pi(
     let tv = ruby_verified_name(ruby, rb_target, "processing instruction target")?;
     let dv = ruby_verified_text(ruby, rb_data, "processing instruction data")?;
     /* DOM createProcessingInstruction: the target must match the XML Name
-     * production. Lexbor leaves that check as a TODO, and an unchecked
-     * target is written into the output as it is - markup included. */
+     * production. The arena's factory checks only the data (below), and
+     * an unchecked target is written into the output as it is - markup
+     * included. */
     check_dom_name(
         &tv,
         crate::xml::chars::validate_name,
@@ -459,8 +475,8 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
     check_owning_doc(&rb_self)?;
     let nv = ruby_verified_name(ruby, rb_name, "doctype name")?;
     if !crate::bridge::html::valid_doctype_name(&nv) {
-        /* The caller's error, not Lexbor's, so the exception class is picked
-         * here - the check itself is the DOM layer's. */
+        /* The caller's error, so the exception class is picked here - the
+         * check itself is the DOM layer's. */
         return Err(Error::new(
             crate::bridge::rb::Builtin::ArgumentError,
             "invalid doctype name",
