@@ -9,34 +9,8 @@ module Makiri
       # After #key?, which #has_attribute? aliases.
       ReaderAliases.define_on(self)
 
-      # CSS selector queries over XML, matched by the same engine as HTML's,
-      # as a browser's querySelectorAll matches them in an XML document: names
-      # and values compare as written, a type selector without a prefix
-      # matches its name in any namespace, and the context node's ancestors
-      # take part in the match while only its descendants are returned. An
-      # +ns+ hash of {prefix => uri} declares the prefixes the selector may
-      # use; its "xmlns" entry, if any, is the default namespace a bare type
-      # selector is then in.
-      #
-      #   doc.css("entry")                    # <entry> in any namespace
-      #   doc.css("a|entry", "a" => uri)      # <entry> in uri
-      #   doc.css("entry", "xmlns" => uri)    # the same, as a default
-      #
-      # @return [Makiri::NodeSet]
-      def css(selector, ns = nil)
-        _css(selector.to_s, ns)
-      end
-
-      # First descendant matching +selector+, or nil. @return [Makiri::Node, nil]
-      def at_css(selector, ns = nil)
-        _at_css(selector.to_s, ns)
-      end
-
-      # Whether this node matches +selector+ (full selector, combinators included).
-      # @return [Boolean]
-      def matches?(selector, ns = nil)
-        _css_matches(selector.to_s, ns)
-      end
+      # #css / #at_css / #matches? are native, as HTML's are, with the same
+      # arguments: what they mean over XML is in glue/xml_node/css.rs.
 
       private
 

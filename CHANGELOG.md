@@ -50,6 +50,11 @@
 
 ### Fixed
 
+* `Makiri::XML`'s `#css`, `#at_css` and `#matches?` take a selector as
+  `Makiri::HTML`'s do, as 0.17.0.rc2 said every name argument does: a
+  `String` or a `Symbol`, anything else a `TypeError`. They converted it
+  with `to_s`, running the caller's `#to_s`, so `nil` raised
+  `Makiri::CSS::SyntaxError` and `1` was parsed as the selector `"1"`.
 * Inserting a fragment one of whose children is frozen raises
   `FrozenError`, as inserting a frozen node does, in HTML and XML: the
   fragment's children are relinked. Nothing is inserted.
