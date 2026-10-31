@@ -153,7 +153,7 @@ fn syntax_error(selector: Value, reason: Option<&str>) -> Error {
 /// A parse failure as the Ruby exception it maps to.
 fn parse_error(err: ParseError, selector: Value) -> Error {
     match err {
-        /* Lexbor's parser reports no reason of its own. */
+        /* The parser, as Lexbor's which it ports, reports no reason. */
         ParseError::Syntax => syntax_error(selector, None),
         ParseError::Oom => makiri_error("out of memory parsing CSS selector"),
         ParseError::Busy => makiri_error("CSS selector engine is already in use"),

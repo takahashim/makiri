@@ -1,4 +1,4 @@
-//! The HTML (Lexbor) node surface: every method on `Makiri::HTML::NodeMethods`,
+//! The HTML node surface: every method on `Makiri::HTML::NodeMethods`,
 //! in a submodule per kind - `read`, `mutate`, `css`, `serialize`.
 //!
 //! The XML counterpart is `glue::xml_node`; what both share - identity by node
@@ -12,16 +12,7 @@
 //! [`crate::bridge::html::with_arg_node`] (an argument, for the length of a
 //! closure) reach the node a wrapper names, through its document-bound key;
 //! they live in [`crate::bridge::html`], the one seam that knows both the Ruby
-//! wrapper and the Lexbor handle.
-//!
-//! # Nothing here is declared twice
-//!
-//! Every Lexbor accessor comes from the `lexbor` layer, which re-exports the
-//! generated bindings - the `_noi` twins included. Allowlisting a name in
-//! build.rs and finding no binding is what identifies an `lxb_inline` function;
-//! eight of the eighteen readers this file needs turned out to be inline-only,
-//! and on macOS a hand-written declaration of one of those links to nothing and
-//! becomes a NULL call at run time rather than a link error.
+//! wrapper and the arena's handle.
 
 pub mod css;
 
@@ -50,7 +41,7 @@ use crate::glue::node::{
 };
 use crate::init::{CLASS_HTML_DOCUMENT_TYPE, CLASS_HTML_ELEMENT};
 
-/* The receiver and argument handles, from the Ruby <-> Lexbor seam
+/* The receiver and argument handles, from the Ruby <-> arena seam
  * (`bridge::html`), for the readers and for `glue::html_doc`. */
 pub use crate::bridge::html::{with_arg_node, wrap_node, HtmlSelf};
 

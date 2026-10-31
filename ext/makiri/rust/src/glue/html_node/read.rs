@@ -1,7 +1,7 @@
 //! The HTML node's readers: name and namespace, the DTD identifiers, content,
 //! navigation, attributes, source line and document order.
 //!
-//! Every read of the Lexbor tree goes through the typed handles of
+//! Every read of the document goes through the typed handles of
 //! `html_dom::html`, the node and text index through `bridge::wrapper` and `bridge::html`, and
 //! the NodeSet through its fill handle, so the readers are all safe.
 //!
@@ -77,7 +77,7 @@ fn attr_name_arg(
  * ------------------------------------------------------------------ */
 
 /// `#name`. Matches Nokogiri: the lowercase tag name for an HTML element
-/// (Lexbor lowercases during tokenization), and the un-prefixed DOM names
+/// (the tokenizer lower-cases it), and the un-prefixed DOM names
 /// `text` / `comment` / `#cdata-section` / `document` for the other kinds.
 pub fn name(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     let name = str_from_read(ruby, this.read()?, StrKind::Utf8, |v| {
@@ -103,8 +103,8 @@ pub fn name(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 /// `<div>`, `path` for an SVG `<path>`, `href` for an `xlink:href` attribute.
 /// Element and Attribute only; the DOM gives a Text/Comment/Document none.
 pub fn local_name(ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
-    /* The DOM's case-preserved name - `foreignObject`, `refX` - where Lexbor
-     * stores a lower-cased one; the same answer XPath's `local-name()` gives. */
+    /* The DOM's case-preserved name - `foreignObject`, `refX` - where the
+     * arena stores a lower-cased one; the same answer XPath's `local-name()` gives. */
     str_from_read(ruby, this.read()?, StrKind::DomName, |v| {
         let node = v.node();
         match (node.element(), node.attr()) {
@@ -163,14 +163,14 @@ pub fn pi_target(ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Er
     str_from_read(ruby, this.read()?, StrKind::Utf8, |v| v.node().pi_target())
 }
 
-/// `#node_type`: the numeric DOM node type (`LXB_DOM_NODE_TYPE_*`).
+/// `#node_type`: the numeric DOM node type (the DOM's `nodeType`).
 pub fn node_type(_ruby: &Ruby, this: super::HtmlSelf) -> Result<i64, Error> {
     Ok(i64::from(this.read()?.node().node_type() as u32))
 }
 
 /// `DocumentType#public_id` / `#system_id` (WHATWG DOM).
 ///
-/// Lexbor represents a missing id inconsistently - NULL after `SYSTEM`, but an
+/// The parser, as Lexbor's, represents a missing id inconsistently - NULL after `SYSTEM`, but an
 /// empty string for a bare `<!DOCTYPE html>` - so empty is treated as absent and
 /// both answer nil, matching Nokogiri. Defined only on DocumentType; for any
 /// other receiver the handle answers None as well.
@@ -194,8 +194,7 @@ pub fn doctype_system_id(ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Va
 ///
 /// nil for any node that is not an HTML `<template>`. CSS and XPath over the
 /// template ELEMENT deliberately do not descend into the content - matching the
-/// DOM, and unavoidable for CSS, which runs Lexbor's selector engine over the
-/// real tree - so query the fragment instead.
+/// DOM - so query the fragment instead.
 pub fn content_fragment(ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     this.read()?.wrap(ruby, |n| n.template_content())
 }
@@ -217,10 +216,9 @@ pub fn get_document(_ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error>
     Ok(this.document())
 }
 
-/// `#parent`. For an attribute, the element it is set on - Lexbor's own
-/// `attr->owner`, read live (see `HtmlNode::parent`), so a removed attribute
-/// answers nil and nothing needs building. (It used to go through an index
-/// whose build could fail, which is why this returned `Result`.)
+/// `#parent`. For an attribute, the element it is set on - the attribute
+/// node's own parent link, read live (see `HtmlNode::parent`), so a removed
+/// attribute answers nil and nothing needs building.
 pub fn parent(ruby: &Ruby, this: super::HtmlSelf) -> Result<Option<Value>, Error> {
     this.read()?.wrap(ruby, |n| n.parent())
 }
@@ -373,8 +371,7 @@ pub fn values(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 }
 
 /// `element.attribute_nodes` -> a NodeSet of Attribute nodes, in document order.
-/// Empty for a non-element. These wrap the bare `lxb_dom_attr_t`; navigating
-/// back with `Attribute#parent` reads its `attr->owner`.
+/// Empty for a non-element. `Attr#parent` navigates back to the element.
 pub fn attribute_nodes(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     this.read()?.set(ruby, false, |node, out| {
         node.element()

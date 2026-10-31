@@ -2,7 +2,7 @@
 //!
 //! The Ruby surface of each edit: reading and verifying the arguments, the
 //! error each refusal raises, and the value handed back. The DOM's rules about
-//! what may go where are the adapter's `Insertion`, and every edit starts at
+//! what may go where are [`crate::dom_rules::check`]'s, and every edit starts at
 //! `bridge::html::edit` and reaches the document through its
 //! `HtmlEdit::with_tree` (or its attribute and data twins), which drops the
 //! document's indexes and lends the document by `&mut` - so no method here can
@@ -10,7 +10,7 @@
 //! method converts its arguments BETWEEN the two: a conversion can allocate,
 //! and so raise, and must do so before the indexes are dropped. What touches a
 //! raw handle or a String's bytes - the adopt copy, the fragment import, the
-//! handoff of a verified String to Lexbor - is a primitive in
+//! handoff of a verified String to the arena - is a primitive in
 //! [`crate::bridge::html`], so this module holds no unsafe.
 
 #![forbid(unsafe_code)]
@@ -435,8 +435,9 @@ pub fn create_pi(
     let tv = ruby_verified_name(ruby, rb_target, "processing instruction target")?;
     let dv = ruby_verified_text(ruby, rb_data, "processing instruction data")?;
     /* DOM createProcessingInstruction: the target must match the XML Name
-     * production. Lexbor leaves that check as a TODO, and an unchecked
-     * target is written into the output as it is - markup included. */
+     * production. The arena's factory checks only the data (below), and
+     * an unchecked target is written into the output as it is - markup
+     * included. */
     check_dom_name(
         &tv,
         crate::xml::chars::validate_name,
@@ -464,8 +465,8 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
     check_owning_doc(&rb_self)?;
     let nv = ruby_verified_name(ruby, rb_name, "doctype name")?;
     if !crate::bridge::html::valid_doctype_name(&nv) {
-        /* The caller's error, not Lexbor's, so the exception class is picked
-         * here - the check itself is the DOM layer's. */
+        /* The caller's error, so the exception class is picked here - the
+         * check itself is the DOM layer's. */
         return Err(Error::new(
             crate::bridge::rb::Builtin::ArgumentError,
             "invalid doctype name",

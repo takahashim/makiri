@@ -2,8 +2,8 @@
 //! list readers over `ChildListHost` - and the pieces of the DOM's naming
 //! rules their factories raise alike.
 //!
-//! HTML (Lexbor) and XML (custom-arena) nodes are two representations of one
-//! Ruby-facing Node. `==`/`eql?`, `hash` and `pointer_id` never dereference
+//! HTML and XML nodes, each in its own index arena, are two representations
+//! of one Ruby-facing Node. `==`/`eql?`, `hash` and `pointer_id` never dereference
 //! the node, so one implementation serves both; the TypedData types behind it
 //! are [`crate::bridge::wrapper`]'s.
 

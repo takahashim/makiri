@@ -2,7 +2,7 @@
 //! navigation and attributes.
 //!
 //! A node is an index-arena `NodeId`, so every reader resolves through its
-//! Document. XML nodes never inherit the Lexbor HTML readers - those live on
+//! Document. XML nodes never inherit the HTML readers - those live on
 //! `Makiri::HTML::NodeMethods` - so the method names here follow that module's,
 //! one for one, where the two representations share a meaning.
 //!
