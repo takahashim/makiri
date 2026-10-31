@@ -13,36 +13,35 @@ task symbols: :compile do
   # ONLY Init_makiri (and ruby_abi_version, which Ruby reads at require time)
   # may be EXPORTED. The hazard was Lexbor's: another Lexbor-based gem in the
   # same process binding to our differently-versioned copy and segfaulting -
-  # see CLAUDE.md. No Lexbor is linked any more, and any name of ours in the
-  # dynamic table is the same hazard for whatever binds it.
+  # see docs/internals/ruby_boundary.md. No Lexbor is linked any more, and any
+  # name of ours in the dynamic table is the same hazard for whatever binds it.
   #
   # (This gate also refused an UNDEFINED lxb_/lexbor_/mkr_ symbol, which macOS's
   # -undefined dynamic_lookup turns into a NULL call. Nothing so named is linked
   # or declared in the extension now, so that half checked nothing and went.)
   #
-  #    This used to assert only "no lxb_ exported", which the flag-based link
-  #    made true as a side effect. rustc performs the cdylib link now and passes
-  #    its own export list, so the restriction is a post-link trim instead
-  #    (extconf.rb) - and a check that asserted less than the claim would have
-  #    passed happily while ~220 mkr_* names leaked into the dynamic table.
-  #    Assert the claim itself.
+  # Assert the claim itself, over every exported name, function or data: a
+  # check that asserted less (only "no lxb_ exported") passed happily while
+  # ~220 mkr_* names leaked into the dynamic table. What keeps the table to the
+  # two names is the source - nothing else of ours is #[no_mangle] or
+  # #[export_name] - so a name this finds is one of those, not a link setting.
   exported = if macos
-               `nm -gU #{lib.shellescape}`.lines.grep(/ T /)
+               `nm -gU #{lib.shellescape}`.lines
              elsif windows
                # nm/objdump on Windows are either the wrong tool, not on PATH,
                # or have output formats that vary by binutils version. Read the
                # PE export directory directly.
                MakiriBuild::PEExports.new(lib).names.map { |name| "#{name}\n" }
              else
-               `nm -D --defined-only #{lib.shellescape}`.lines.grep(/ T /)
+               `nm -D --defined-only #{lib.shellescape}`.lines
              end
   allowed = ["#{u}Init_makiri", "#{u}ruby_abi_version"]
   extra = exported.map { |l| l.split.last.to_s }.reject { |s| allowed.include?(s) }
   unless extra.empty?
     abort "#{lib} exports #{extra.size} symbol(s) beyond Init_makiri:\n  " \
           "#{extra.uniq.sort.first(20).join("\n  ")}\n" \
-          "The export trim in ext/makiri/rust/extconf.rb did not take effect. " \
-          "Do not relax this check - see the note there for the fallback."
+          "Nothing but Init_makiri and ruby_abi_version may be #[no_mangle] / " \
+          "#[export_name]; name the rest as Rust. Do not relax this check."
   end
   unless exported.any? { |l| l.include?("#{u}Init_makiri") }
     abort "#{lib} does not export Init_makiri - Ruby could not load it."
