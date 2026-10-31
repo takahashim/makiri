@@ -14,6 +14,9 @@ harnesses, which could check only short inputs or ran out of memory.
 | `utf8.rs` | `engine/src/utf8_decode.rs`, `engine/src/xml/chars/mod.rs` | The strict UTF-8 decoder and the XML Char scan agree with `vstd::utf8`, Verus's own statement of UTF-8 |
 | `xml_chars.rs` | `engine/src/xml/chars/mod.rs` | NameStartChar ⊆ NameChar ⊆ Char (XML 1.0 §2.2, §2.3), for every `u32` |
 | `xpath_number.rs` | `engine/src/xpath/number.rs` (`extent`) | The lexer's Number gate matches XPath 1.0's grammar and reads the longest Number |
+| `swar.rs` | `engine/src/swar.rs` (`word`, `has_zero`), the tokenizer's `seek4` | The word-at-a-time skip passes no byte it looks for and never runs past `end`, whatever the word |
+| `source_lines.rs` | `engine/src/source_lines.rs` (`lines_build`) | The line table is exactly 0 and the offset past each newline, in order |
+| `xml_expand.rs` | `engine/src/xml/chars/expand.rs` | A character reference answers its digits' exact value or is refused, never wrapped; `expand_into` writes no more than it reads, so never `Overflow` |
 
 Each file's module comment states its claims in full.
 
@@ -33,8 +36,8 @@ success. `rake verus` checks for that in two ways:
 
 - **What each proof trusts is pinned.** `VERUS_TRUSTED` records how many
   `#[verifier::external_body]`, `assume_specification`, `assume(` and
-  `admit()` each file holds (`ptr_table.rs` and `ceiling_buf.rs` 4 each, the
-  others 0). A change to a count fails the task until the record is updated.
+  `admit()` each file holds (`ptr_table.rs` and `ceiling_buf.rs` 4 each,
+  `xml_expand.rs` 3, `source_lines.rs` 1, the others 0). A change to a count fails the task until the record is updated.
 - **Canaries must fail.** Each `// [canary]` line marks a point the proved
   code reaches. The task makes a variant of the file with `assert(false)` at
   one mark at a time, and `canaries/<proof>` adds functions that call the
@@ -52,4 +55,5 @@ VERUS=path/to/verus bundle exec rake verus
 `rake verus` needs the Verus release `rakelib/verus.rake` pins
 (`VERUS_VERSION`) and the Rust toolchain that release names. CI runs it in
 `verify.yml`, on a change to the covered code and weekly. See
-`docs/internals/verification.md` for how it fits with Miri and Kani.
+`docs/internals/verification.md` for how it fits with Miri and the
+exhaustive tests.
