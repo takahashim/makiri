@@ -39,7 +39,7 @@ use makiri::html::dom::css::HtmlHost;
 use makiri::html_dom::html::HtmlNode;
 use makiri::html_dom::post_parse::parse_html;
 use makiri::html_dom::tree_guard::ParseLimits;
-use makiri::selectors::ast::{FunctionArg, Lists, PseudoClass, Simple};
+use makiri::selectors::ast::Lists;
 
 /// How many elements are asked `matches?` each: each is a full query, with
 /// its own budget, so this bounds the run, not the check.
@@ -103,37 +103,4 @@ fn check(root: HtmlNode<'_>, groups: Lists<'_>, scratch: &mut Scratch<HtmlHost>)
         );
     }
     true
-}
-
-/// Whether the selector holds `:scope`, nested or not. Walked on a work list
-/// (no input nests the harness's stack); one too large to walk counts as
-/// holding it.
-fn mentions_scope(groups: Lists<'_>) -> bool {
-    let mut pending = vec![groups];
-    let mut visited = 0usize;
-    while let Some(lists) = pending.pop() {
-        for list in lists {
-            let mut sel = list.first();
-            while let Some(s) = sel {
-                visited += 1;
-                if visited > 4096 {
-                    return true;
-                }
-                match s.simple() {
-                    Simple::PseudoClass(PseudoClass::Scope) => return true,
-                    Simple::PseudoClassFunction(FunctionArg::Selectors { lists, .. }) => {
-                        pending.push(lists)
-                    }
-                    Simple::PseudoClassFunction(FunctionArg::Nth { anb: Some(anb), .. }) => {
-                        if let Some(of) = anb.of {
-                            pending.push(of);
-                        }
-                    }
-                    _ => {}
-                }
-                sel = s.next();
-            }
-        }
-    }
-    false
 }
