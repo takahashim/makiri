@@ -50,7 +50,8 @@ impl Document {
                 None => Span::default(),
             },
         };
-        self.push_attr(local, ns, prefix, written, value)
+        let made = self.push_attr(local, ns, prefix, written, value);
+        self.release_on_err(made, &[value])
     }
 
     /// An element's or attribute's written-name id (0 for none).

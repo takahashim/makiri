@@ -15,8 +15,8 @@
 //! every node it ever made.
 
 use super::{
-    Document, DomOom, ElementData, Node, NodeId, NodeName, NodeType, Payload, ShortcutRule, Span,
-    HTML_NS,
+    Document, DomOom, ElementData, HtmlDoc, HtmlNode, Node, NodeId, NodeName, NodeType, Payload,
+    ShortcutRule, Span,
 };
 use crate::falloc::VecGrow;
 use crate::html::res::names as res;
@@ -92,15 +92,10 @@ impl Document {
 
     /// An HTML `<template>`'s contents, the only contents a copy carries.
     fn template_of(&self, n: NodeId) -> Option<NodeId> {
-        let node = self.node(n)?;
-        if node.kind == NodeType::Element
-            && node.local as usize == res::TAG_TEMPLATE
-            && node.ns == HTML_NS
-        {
-            self.template_content(n)
-        } else {
-            None
-        }
+        HtmlDoc::of(self)
+            .get(n)?
+            .template_content()
+            .map(HtmlNode::id)
     }
 
     /// One node, detached and without children: an element with copies of
@@ -128,7 +123,8 @@ impl Document {
                 let a = *self.src(from).attrs.get(i as usize).ok_or(DomOom)?;
                 let written = self.written_from(from, a.written)?;
                 let value = self.bytes_from(from, a.value)?;
-                let at = self.push_attr(local as usize, ns, prefix, written, value)?;
+                let made = self.push_attr(local as usize, ns, prefix, written, value);
+                let at = self.release_on_err(made, &[value])?;
                 /* The copy is in the namespace its source is in (D1). */
                 let own = self.src(from).attr_own_ns_kept(n);
                 self.set_attr_own_ns(at, own);
@@ -136,30 +132,39 @@ impl Document {
             }
             Payload::Data(span) => {
                 let span = self.bytes_from(from, span)?;
-                let id = self.push(node.kind, Payload::Data(span))?;
+                let made = self.push(node.kind, Payload::Data(span));
+                let id = self.release_on_err(made, &[span])?;
                 self.set_names(id, local as usize, ns, prefix);
                 id
             }
             Payload::Pi { target, data } => {
                 let target = self.bytes_from(from, target)?;
-                let data = self.bytes_from(from, data)?;
-                let id = self.push(NodeType::Pi, Payload::Pi { target, data })?;
+                let data = self.bytes_from(from, data);
+                let data = self.release_on_err(data, &[target])?;
+                let made = self.push(NodeType::Pi, Payload::Pi { target, data });
+                let id = self.release_on_err(made, &[target, data])?;
                 self.set_names(id, local as usize, ns, prefix);
                 id
             }
             Payload::Doctype(i) => {
                 let d = *self.src(from).doctypes.get(i as usize).ok_or(DomOom)?;
+                let name = self.bytes_from(from, d.name)?;
+                let public_id = self.bytes_from(from, d.public_id);
+                let public_id = self.release_on_err(public_id, &[name])?;
+                let system_id = self.bytes_from(from, d.system_id);
+                let system_id = self.release_on_err(system_id, &[name, public_id])?;
                 let dt = super::DoctypeData {
-                    name: self.bytes_from(from, d.name)?,
-                    public_id: self.bytes_from(from, d.public_id)?,
-                    system_id: self.bytes_from(from, d.system_id)?,
+                    name,
+                    public_id,
+                    system_id,
                 };
                 let names = NodeName {
                     local: local as usize,
                     ns,
                     prefix,
                 };
-                self.push_doctype(names, dt)?
+                let made = self.push_doctype(names, dt);
+                self.release_on_err(made, &[name, public_id, system_id])?
             }
             /* A fragment's copy is a plain new one, as the adapter makes it. */
             Payload::Fragment { .. } => self.create_fragment(None)?,

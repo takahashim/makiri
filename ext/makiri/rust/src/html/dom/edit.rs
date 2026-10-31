@@ -642,8 +642,11 @@ impl<'d> HtmlNewNodes<'d> {
     /// document holds (a fragment this lend made) - or, `node` being a
     /// fragment, its children.
     pub fn append_to_detached(&mut self, into: RawNode, node: RawNode) {
+        /* `place` takes `node` from wherever it is, so it must be detached
+         * too: moving it out of the tree would leave the kept indexes
+         * naming it there. */
         debug_assert!(
-            !self.d.is_connected(into.id()),
+            !self.d.is_connected(into.id()) && !self.d.is_connected(node.id()),
             "a node in the document's tree, whose indexes this lend keeps"
         );
         self.edit().place(into, node, Place::Child);
