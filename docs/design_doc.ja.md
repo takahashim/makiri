@@ -2,7 +2,7 @@
 
 ## 1. 基本方針
 
-### 達成すべきゴール
+### 目標
 
 * HTML5 scraping で使われる範囲で Nokogiri 互換の API を持つ
 * HTML5 parsing は WHATWG HTML Standard に沿ったパーサで高速に行う。
@@ -14,32 +14,31 @@
 * XPath 1.0 には仕様に準拠した独自エンジンを作成し、libxml2 等を持ち込まない
 * CSS selectors と stylesheet は、Lexbor の CSS 構文 tokenizer、構文パーサ、
   セレクタパーサを Rust に移植した自前のパーサで解析し、出荷するビルドは
-  Lexbor の CSS パーサを使わない。照合は Lexbor の state machine を安全な Rust に
-  移植した独自 matcher (`css_match`) で、HTML と XML の両方を同じトレイト
-  (`css_match::dom`) 越しに照合し、selector のネストを native stack に
-  載せない・照合前に selector 全体を検査する・確保はすべて fallible、を
-  守る。意味はブラウザの `querySelectorAll` に合わせる (HTML 文書かどうかと
-  要素の名前空間で規則を切り替える)。XML の CSS を XPath に落とす旧来の
-  変換は、XML の照合をブラウザとの比較で確かめるようになって削除した
+  Lexbor の CSS パーサを使わない。照合は、Lexbor の state machine を安全な
+  Rust に移植した独自 matcher (`css_match`) が行い、HTML と XML の両方を
+  同じトレイト (`css_match::dom`) 越しに扱う。matcher は selector のネストを
+  native stack に載せず、照合の前に selector 全体を検査し、確保をすべて
+  fallible にする。意味はブラウザの `querySelectorAll` に合わせ、HTML 文書
+  かどうかと要素の名前空間で規則を切り替える。XML の CSS を XPath に変換
+  する旧来の方式は、XML の照合をブラウザとの比較で確かめるようになって削除した
 * HTML の要素について source location (開始タグの行番号、1 始まり) を
   サポートする。行を特定できない node (parser が補った要素、fragment
   など) は推測せず nil を返す。column / byte offset は公開しない
-* DOM mutation も基本的な機能をサポート
-* XPath 評価は メモリ/DoS 耐性を持つ。文字列サイズ上限・再帰除去
-  (反復トラバーサル)・スタック枯渇回避まで fail-closed で徹底する
+* DOM の編集 (node の追加・取り外し・置換、属性と内容の書き換え、
+  `inner_html=`) をサポートする
+* XPath 評価はメモリ消費と DoS に耐える。文字列の大きさに上限を置き、
+  木は再帰ではなく反復で辿り、スタックの残量を検査する。上限に達したら
+  結果を切り詰めずに raise する (fail-closed)
 * parse も上限を持つ。HTML parse は木の深さ (`max_tree_depth:`、既定
   400) と、入力に対して作る文書の大きさ (`max_amplification:`、既定は
   入力の 256 倍で 64 MiB を下回らない) を制限し、超えたら `Makiri::Error`
   で拒む。XML の文書は arena の byte 予算 (`max_bytes:`、既定 256 MiB)
   を持ち、parse だけでなく編集も含めた文書の生涯にわたって数える
-* UTF-8 text-input 契約: HTML parse はブラウザ同様 lenient に
-  decode (不正バイト → U+FFFD、parse は失敗しない)、XPath/CSS/DOM
-  操作などプログラム API に渡す文字列は valid UTF-8 を要求し、違反は
-  `Makiri::Error` で fail-closed する。NUL (U+0000) は二層契約:
-  名前系 (要素/属性名・namespace・PI target/data・selector・XPath) と
-  engine 入力は NUL 厳格、data 系 (text/comment 内容・属性値) は HTML も
-  XML も DOM 準拠のため NUL を保持する。XML 1.0 の文字クラスにない文字を
-  持つ木は XML のシリアライザが書く時点で拒む
+* 入力の文字列は UTF-8 として扱う (§3)。HTML parse はブラウザと同じく
+  不正なバイトを U+FFFD に置き換えて必ず成功させる。XPath、CSS、DOM 操作
+  などのプログラム API に渡す文字列は valid UTF-8 でなければ
+  `Makiri::Error` にする。NUL (U+0000) は、名前と式では拒み、text、
+  comment、属性値では DOM に合わせて保持する
 * スレッドセーフ: parse は GVL を解放して並列スケール、XPath 評価は
   GVL 保持で共有 document/context のメモリ破壊を構造的に防ぐ
 * 内部の不変条件違反で host process 全体を落とさない。Ruby に公開する
@@ -67,12 +66,11 @@
 
 ### 意図的に避けていること
 
-* Lexbor の fork。Lexbor の不具合や欠落は移植版の側で扱い（差は
-  `docs/parser_differences.ja.md` に記録する）、同時に上流に報告して直して
-  もらう。移植版では、Lexbor の意味論と制御
-  フローを保って書き、仕様適合のための振る舞いの変更は所有権や安全性の
-  ための変更と分けて、独立した変更として入れる
-  (`docs/parser_differences.ja.md` が既知の差分とその分類を持つ)
+* Lexbor の fork。Lexbor の不具合や欠落は移植版の側で扱い、同時に上流に
+  報告して直してもらう。移植版は Lexbor の意味論と制御フローを保って書く。
+  仕様に合わせるための振る舞いの変更は、所有権や安全性のための変更と分けて、
+  独立した変更として入れる。既知の差分とその分類は
+  `docs/parser_differences.ja.md` に記録する
 * libxml2 互換を売りにすること。libxml2 と HTML5/XPath spec
   が衝突するときは spec 準拠を優先し、差分は document 化する。例外は
   XPath の数値の文字列化 (`string()`) で、XPath 1.0 §4.2 ではなく
@@ -130,10 +128,11 @@ Makiri::InternalError                (Exception 直下)
 
 入力起因のエラーはすべて `Makiri::Error` の下に置き、`rescue Makiri::Error`
 で捕まえられるようにする。XPath の budget 超過を `XPath::SyntaxError` の
-下に置くのは「式が原因で評価できなかった」という括りを一つにするため。
-`InternalError` だけは `StandardError` の下に置かない。内部不変条件の違反は
-引数エラーではないので `rescue => e` に混ぜてはならず、それでいて host が
-1 リクエストを 500 に落とすために rescue はできる、という位置づけにする。
+下に置くのは、「式が原因で評価できなかった」エラーを一つの class で
+捕まえられるようにするためである。`InternalError` だけは `StandardError`
+の下に置かない。内部不変条件の違反は引数の誤りではないので、`rescue => e`
+で入力起因のエラーと一緒に捕まえさせない。それでも host が名指しで rescue
+すれば、そのリクエストだけを 500 にできる。
 
 Node の method (scraping idiom の 9 割をカバー):
 
@@ -213,22 +212,22 @@ mutation は GVL により直列化されメモリ破壊しない。
 
 Makiri が内部で扱うテキストは UTF-8 だけとする。入力 String の encoding は
 尊重し、UTF-8 でなければ UTF-8 に変換してから境界を越えさせる
-(UTF-8 / US-ASCII / ASCII-8BIT は変換しない)。String のバイト列は
-どれも、読んでから copy するまでの間に Ruby を走らせずに一度 copy
-するので、その後に Ruby がすることは copy に届かない。そのうえで
-境界での挙動を 2 つに分ける:
+(UTF-8 / US-ASCII / ASCII-8BIT は変換しない)。String のバイト列は、
+読んでから copy し終えるまで Ruby のコードを挟まずに一度だけ copy する。
+copy の後で Ruby 側が String を変えても、copy には影響しない。境界での
+扱いは次のとおり:
 
 * HTML parse / fragment parse は lenient (ブラウザ互換)。
 * プログラム API は strict。コード内の文字列は valid UTF-8 を要求し、
   違反は `Makiri::Error` を上げる。切り詰め・修復・解釈はしない。
-* NUL (U+0000) は二層契約。名前系 (要素/属性名・qualified/local 名・
-  namespace・PI target/data)・selector・XPath 式/変数名・engine 入力は
-  NUL 厳格。data 系: text/comment
-  内容 (`create_text_node`/`create_comment`/`content=`) と属性値
-  (`[]=`/`set_attribute_ns`) — は HTML も XML も DOM 準拠のため NUL を
-  保持する。XML 1.0 の文字クラスにない文字 (U+0000 を含む) を持つ木は、
-  XML のシリアライザが書く時点で `Makiri::Error` で拒む。setter が flag を
-  残す方式ではなく、書くときのデータから判定する。
+* NUL (U+0000) は入力の種類で扱いを分ける。名前 (要素名、属性名、
+  qualified/local 名、namespace、PI の target と data)、selector、XPath の
+  式と変数名、engine への入力は、NUL を含めば拒む。data (text と comment の
+  内容 `create_text_node` / `create_comment` / `content=`、属性値 `[]=` /
+  `set_attribute_ns`) は、HTML でも XML でも DOM に合わせて NUL を保持する。
+  XML 1.0 の文字クラスにない文字 (U+0000 を含む) を持つ木は、XML の
+  シリアライザが書く時点で `Makiri::Error` で拒む。setter が flag を残す
+  のではなく、書くときのデータから判定する。
 
 XPath の独自関数（Nokogiri の handler）は受け付けない。
 評価中に Ruby のコードは走らず、XPath 1.0 にない関数の呼び出しは
@@ -302,11 +301,12 @@ Nokogiri と同じに答える。
 検証は GC.stress + compaction 下で行う。
 
 スレッド安全性: GVL を解放するのは HTML/XML の parse の2箇所だけ。
-parse は入力を Ruby heap の外の buffer に copy してから GVL を解放する
-(新規 document は未共有なので競合し得ないため並列にスケールする)。
-一方 XPath 評価は GVL を保持する。engine と DOM は並行 mutation に対して
-スレッドセーフでなく、GVL を保持することで「評価 vs 同一 document の mutation」
-「同一 contextへの並行 evaluate / register」を直列化しメモリを破壊しないようにする。
+parse は入力を Ruby heap の外の buffer に copy してから GVL を解放する。
+作っている document はまだ誰とも共有されていないので競合せず、parse は
+並列にスケールする。一方 XPath 評価は GVL を保持する。engine と DOM は
+並行 mutation に対してスレッドセーフではない。GVL を保持することで、
+評価と同じ document の mutation、同じ context への並行 evaluate / register
+を直列化し、メモリを破壊しないようにする。
 CSS/serialize/読み取りアクセサも GVL を保持する。`spec/threading_spec.rb`
 が GC.stress 下で共有 document/context を検証 (CI 必須)。
 
@@ -349,7 +349,7 @@ CSS/serialize/読み取りアクセサも GVL を保持する。`spec/threading_
   探索木、tree builder のタグの分類と調整表) は、Lexbor のヘッダとソース
   と WHATWG の `entities.json` から生成し、手で転記しない。生成物は
   Lexbor の表と要素ごとに一致することをテストで確かめる。
-* 拡張は五つのクレートからなる。参照実装のほかの四つが一つの workspace で、
+* Rust のクレートは五つある。参照実装を除く四つが拡張の workspace をなし、
   依存は一方向で、下のクレートは上のクレートを知らない。
   - 確保の基盤 (`falloc`): 失敗を値として返す確保と、その注入の hook。
     どのクレートにも依存しない。
@@ -417,9 +417,9 @@ CSS/serialize/読み取りアクセサも GVL を保持する。`spec/threading_
 * GVL を持っている証拠のトークンは、Ruby が呼ぶ入口 (メソッドの trampoline
   と初期化関数) だけが作る。その補助関数は `unsafe` で、`unsafe` を書けない
   拡張のコードからは、マクロの展開を通してしか呼べない。
-* 拡張は `cdylib` だけとしてビルドし、release では LTO を行う。エンジンと
-  境界の層への呼び出しはクレートをまたぐが、LTO の下でインライン化される。
-  拡張を `rlib` として同時に作ると rustc は LTO を行わないので、fuzz の
+* エンジンと境界の層への呼び出しはクレートをまたぐが、`cdylib` の LTO の
+  下でインライン化される。拡張を `rlib` として同時に作ると rustc は LTO を
+  行わないので、fuzz の
   クレートは拡張ではなく、参照実装 (エンジンを re-export する) に
   依存する。
 * フィーチャはクレートごとに持つ。エンジンは `html-dom` (既定。index
@@ -444,9 +444,8 @@ mutation, serialization, encoding, XPath, CSS, source location。
 ### 6.2 Robustness fuzz (`spec/fuzz/`)
 
 `rake fuzz` / `rake fuzz:sanitize` で実行する。
-grammar-aware に XPath / CSS 式を生成 + mutation し、Makiri が
-`Makiri::Error` 以外を絶対に上げない (foreign exception / crash /
-hang なし) ことを assertする。
+XPath / CSS の式を文法に沿って生成・変異させ、Makiri が `Makiri::Error`
+以外を上げない (foreign exception、crash、hang がない) ことを確かめる。
 
 cargo-fuzz の harness (`ext/makiri/rust/fuzz/`) は Ruby なしで engine を
 叩く。壊れないことを見るもの (`html`、`xml`、`xpath`、`xml_xpath`、
@@ -455,8 +454,7 @@ harness を持つ: `html_diff` (移植版の tree builder と Lexbor の木、�
 直列化、深さの上限の判定)、`selector_diff` (移植版と Lexbor のセレクタ
 解析)、`stylesheet_diff` (移植版と Lexbor の stylesheet 解析)、
 `html_css_diff` (自前の matcher と Lexbor の matcher)。`css` は XML の
-matcher の入口どうしの
-一致を見る。fuzz のクレートは拡張ではなく参照実装 (`makiri_lexbor`) に
+matcher の入口どうしの一致も見る。fuzz のクレートは拡張ではなく参照実装 (`makiri_lexbor`) に
 依存し、比べる相手は参照実装の `lexbor-reference` / `css-reference`
 フィーチャでだけ link する。
 
@@ -508,10 +506,9 @@ baseline として固定し、現在のビルドと突き合わせる。baseline
 
 * address sanitizer 下で spec と fuzz を通す。自前の arena は、大きな
   領域を切り出して渡す bump 方式ではなく、node と文字列を添字で引く構造に
-  する。arena 内の範囲外アクセスは境界検査で必ず捕まるので、sanitizer の
-  poisoning には頼らない (bump 方式では、切り出した領域どうしの間の
-  overflow を sanitizer に検出させるために poisoning が要る。その必要
-  自体をなくす)。
+  する。bump 方式では、切り出した領域どうしの間の overflow を sanitizer に
+  検出させるために poisoning が要る。添字で引く構造なら arena 内の範囲外
+  アクセスは境界検査で捕まるので、poisoning に頼る必要がない。
 * vendored 依存の bump arena も、必要なら依存自身を instrumented で
   ビルドして検査する。ここにもパッチは当てない (ビルド flag で行う)。
 * leak 検査は sanitizer と別立てで持つ。例外で脱出した経路も含めて
@@ -523,9 +520,9 @@ baseline として固定し、現在のビルドと突き合わせる。baseline
 
 ### 6.6 Performance (`bench/`)
 
-`rake bench` で Makiri vs Nokogiri を比較する。最適化は計測ゲート:
-bench で実測の改善があり spec/fuzz/sanitizer が green なときだけ採用、
-そうでなければその変更を revert する。移植版のパーサは、既定の切り替えの
+`rake bench` で Makiri と Nokogiri を比較する。最適化は、bench で改善を
+実測でき、spec、fuzz、sanitizer が green のときだけ採用し、そうでなければ
+revert する。移植版のパーサは、既定の切り替えの
 前に bench の各行で種類としての退行 (Nokogiri と同等以下に落ちる行) が
 ないことを確かめた (`docs/rewrite_parser.ja.md` の進捗)。
 
@@ -563,12 +560,11 @@ HTML パーサが仕様の固定した版から逸脱している点 (既定の 
 両方)、移植版が安全性のために Lexbor と違えた点、オラクル同士の食い違いは
 `docs/parser_differences.ja.md` に番号を付けて置く。
 
-HTML名前テストとHTML属性ではASCII caseを畳み込み、SVG/MathMLの名称は
-保持する。HTML の XPath 属性軸からは、foreign 要素 (SVG/MathML) の
+HTML の名前テストと HTML の属性では ASCII case を畳み込み、SVG/MathML の
+名称は保持する。HTML の XPath 属性軸からは、foreign 要素 (SVG/MathML) の
 `xmlns` / `xmlns:*` 属性 (XMLNS namespace の属性) を除外する。HTML 要素に
 書かれた `xmlns` は普通の属性として見える。Nokogiri は foreign 要素の
 `xmlns` も属性として返す。
-
 
 ## 8. 設計上の決定メモ
 
@@ -600,18 +596,18 @@ HTML名前テストとHTML属性ではASCII caseを畳み込み、SVG/MathMLの�
   同じ node を辿るたびに別の object が返ると、`equal?`・instance variable・
   singleton method・`freeze` といった object 側の状態が黙って失われる。
   NodeSet / Node の比較は引き続き node の identity で行う。
-* XPath 評価は GVL を解放しない。当初は XPath 評価で GVL を
-  解放しスレッド間で XPath をスケール (~3.3×) させていたが、GVL 解放中の
-  walk は「共有 document の mutation」「同一 context への並行 evaluate /
-  register」と競合し use-after-move / メモリ破壊を起こす。これを lock で
-  守る案 (per-document/per-context mutex) は検討したが、恒久的な不変条件
-  維持コスト (新しい engine 変更ごとに "GVL 解放区間は Ruby-free かつ
-  施錠済み state だけ触る" を守る) が高い。代わりに GVL を保持して構造的
-  に安全にした: GVL が全 Ruby スレッドの native code を直列化するので競合
-  自体が起きず lock 不要。単一スレッド性能は不変、parse は依然 GVL 解放で
-  並列。失うのは「単一の共有 document への XPath の並列実行」だけ。
-  GVL 解放する XPath 経路を再導入しない (document/context lock の整備が
-  済むまで)。
+* XPath 評価は GVL を解放しない。当初は GVL を解放し、XPath をスレッド間で
+  並列に走らせていた (約 3.3 倍にスケールした)。しかし GVL を外した間の
+  走査は、共有 document の mutation や、同じ context への並行 evaluate /
+  register と競合し、use-after-move やメモリ破壊を起こす。document ごと・
+  context ごとの mutex で守る案も検討したが、engine を変えるたびに「GVL を
+  外した区間は Ruby に触れず、施錠した state だけを読む」ことを守り続ける
+  必要があり、その保守の負担が大きい。GVL を保持すれば、GVL が全 Ruby
+  スレッドの native code を直列化するので、lock なしで競合そのものが
+  起きない。単一スレッドの性能は変わらず、parse は引き続き GVL を外して
+  並列に走る。失うのは、一つの共有 document に対する XPath の並列実行だけ
+  である。document と context の lock を整備するまでは、GVL を外す XPath
+  の経路を再導入しない。
 * エンジンをクレートとして分ける (§5)。分ける前からエンジンは Ruby も
   Lexbor も知らずに書かれ、Ruby なしで動いていた (`ruby` フィーチャを外した
   ビルド、Kani、Miri、Verus、cargo-fuzz、Ruby なしの計測)。ただしその境界は
@@ -623,10 +619,12 @@ HTML名前テストとHTML属性ではASCII caseを畳み込み、SVG/MathMLの�
   `nupur` の中の Ruby-free な一モジュール、`utf8_copy` のためだけに残る)。
   境界の層 (`nupur`) を分けたのと同じ考えであり、性能は `cdylib` 単体の
   ビルドの LTO で保つ。
-* 入力は lenient parse / strict API。HTML parse はブラウザ同様
-  decode して常に成功 (不正→U+FFFD、HTML5 適合・スクレイピング堅牢・
-  U+FFFD 置換は smuggling 防御)。一方プログラム API はバイト列ではなく
-  制御文字列なので valid UTF-8 / NUL なしを要求し fail-closed。
+* parse は lenient、API は strict にする。HTML parse はブラウザと同じく
+  decode し、不正なバイトを U+FFFD に置き換えて常に成功する。HTML5 に
+  適合し、壊れたページもスクレイピングでき、U+FFFD への置き換えは
+  smuggling も防ぐ。一方、プログラム API に渡す文字列はデータのバイト列
+  ではなく処理を指示する文字列なので、valid UTF-8 で NUL を含まないことを
+  要求し、違反は raise する。
 
 ## 9. Nokogiri からの移行 (非公式)
 
@@ -646,6 +644,6 @@ doc = Makiri::HTML(source)
 doc.css('.foo').map(&:text)
 ```
 
-HTML scraping idiom の ~90% は `Nokogiri` → `Makiri` の sed
-replace で動くようにする。残り ~10% は divergence
-(主に HTML5 conformance、Makiri の方が strict)。
+HTML scraping でよく使う書き方の約 9 割が、`Nokogiri` を `Makiri` に
+置換するだけで動くことを目標にする。残りの約 1 割は挙動が違い、その多くは
+HTML5 への適合で Makiri の方が厳格なことによる。
