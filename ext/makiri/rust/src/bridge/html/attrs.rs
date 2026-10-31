@@ -4,6 +4,7 @@
 #![forbid(unsafe_code)]
 
 use super::*;
+use crate::xml::dom_name::{Name, QName};
 
 /* ------------------------------------------------------------------ *
  * verified strings into the arena                                    *
@@ -17,10 +18,10 @@ use super::*;
 pub fn set_attribute(
     d: &mut HtmlDocMut<'_>,
     el: RawNode,
-    name: &RubyText,
+    name: Name<'_>,
     value: &RubyData,
 ) -> Result<(), AdapterOom> {
-    d.set_attribute(el, name.as_bytes(), value.as_bytes())
+    d.set_attribute(el, name, value.as_bytes())
 }
 
 /// Set the attribute `qname` in namespace `ns` (`None` = none), matching an
@@ -33,10 +34,10 @@ pub fn set_attribute_ns(
     d: &mut HtmlDocMut<'_>,
     el: RawNode,
     ns: Option<&[u8]>,
-    qname: &RubyText,
+    qname: QName<'_>,
     value: &RubyData,
 ) -> Result<(), AdapterOom> {
-    d.set_attribute_ns(el, ns, qname.as_bytes(), value.as_bytes())
+    d.set_attribute_ns(el, ns, qname, value.as_bytes())
 }
 
 /// Remove the attribute `local` in namespace `ns` (`None` = none) from the

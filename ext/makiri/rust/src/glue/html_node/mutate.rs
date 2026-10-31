@@ -32,20 +32,21 @@ use crate::glue::node::DOCUMENT_NOT_REMOVABLE;
 use crate::html_dom::html::{CreatePiError, HtmlDocMut, NodeType, Place, RawNode};
 use crate::xml::dom_name;
 
-/// `name` held to the WHATWG DOM rule `ok`, else `ArgumentError` - the DOM's
-/// InvalidCharacterError, and what the XML side raises for a bad name.
+/// `name` held to the WHATWG DOM rule `rule`, else `ArgumentError` - the DOM's
+/// InvalidCharacterError, and what the XML side raises for a bad name. What
+/// the rule made of it - a `dom_name::Name` - is what the factory takes.
 ///
 /// Unchecked, a name was written into the markup as it stood:
 /// `name = "img src=x onerror=alert(1)"` serialized as that tag with those
 /// attributes, and `e['x="y" onload'] = v` as two attributes. Nokogiri's HTML5
 /// does not check either; this is the DOM's rule, and XML already had its own.
-fn check_dom_name(
-    name: &crate::bridge::string::RubyText,
-    ok: impl Fn(&[u8]) -> bool,
+fn check_dom_name<'a, T>(
+    name: &'a crate::bridge::string::RubyText,
+    rule: impl Fn(&'a [u8]) -> Option<T>,
     what: &str,
-) -> Result<(), Error> {
-    if ok(name.as_bytes()) {
-        return Ok(());
+) -> Result<T, Error> {
+    if let Some(checked) = rule(name.as_bytes()) {
+        return Ok(checked);
     }
     Err(Error::new(
         crate::bridge::rb::Builtin::ArgumentError,
@@ -149,9 +150,9 @@ pub fn aset(
     };
     let nv = ruby_verified_name(ruby, rb_name, "attribute name")?;
     let vv = ruby_verified_data(ruby, rb_value, "attribute value")?;
-    check_dom_name(&nv, dom_name::valid_attribute_local_name, "attribute")?;
+    let name = check_dom_name(&nv, dom_name::Name::attribute, "attribute")?;
     with_element(edit, |d, el| {
-        crate::bridge::html::set_attribute(d, el, &nv, &vv)
+        crate::bridge::html::set_attribute(d, el, name, &vv)
     })?
     .map_err(|_| makiri_error("failed to set attribute"))?;
     Ok(rb_value)
@@ -174,7 +175,7 @@ pub fn set_attribute_ns(
     /* The DOM's "validate and extract". It named `(nil, "x:y")` a
      * prefixed attribute in no namespace. */
     let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
-    extract(
+    let qname = extract(
         ns,
         qv.as_bytes(),
         dom_name::valid_attribute_local_name,
@@ -182,7 +183,7 @@ pub fn set_attribute_ns(
     )?;
     let ns = nv.as_ref().map(|n| n.as_bytes());
     with_element(edit, |d, el| {
-        crate::bridge::html::set_attribute_ns(d, el, ns, &qv, &vv)
+        crate::bridge::html::set_attribute_ns(d, el, ns, qname, &vv)
     })?
     .map_err(|_| makiri_error("failed to set namespaced attribute"))?;
     Ok(rb_value)
@@ -330,10 +331,10 @@ fn created(ruby: &Ruby, node: Option<RawNode>, rb_self: Value, what: &str) -> Re
 pub fn create_element(ruby: &Ruby, rb_self: Value, rb_name: Value) -> Result<Value, Error> {
     check_owning_doc(&rb_self)?;
     let nv = ruby_verified_name(ruby, rb_name, "element name")?;
-    check_dom_name(&nv, dom_name::valid_element_local_name, "element")?;
+    let name = check_dom_name(&nv, dom_name::Name::element, "element")?;
     created(
         ruby,
-        new_node(ruby, &rb_self, |d| d.create_element(nv.as_bytes()))?,
+        new_node(ruby, &rb_self, |d| d.create_element(name))?,
         rb_self,
         "element",
     )
@@ -356,7 +357,7 @@ pub fn create_element_ns(
     let nv = namespace_arg(ruby, rb_ns, "namespace")?;
     let qv = ruby_verified_name(ruby, rb_qname, "element qualified name")?;
     let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
-    let (prefix, local) = extract(
+    let qname = extract(
         ns,
         qv.as_bytes(),
         dom_name::valid_element_local_name,
@@ -364,7 +365,9 @@ pub fn create_element_ns(
     )?;
     created(
         ruby,
-        new_node(ruby, &rb_self, |d| d.create_element_ns(local, ns, prefix))?,
+        new_node(ruby, &rb_self, |d| {
+            d.create_element_ns(qname.local, ns, qname.prefix)
+        })?,
         rb_self,
         "element",
     )
@@ -397,13 +400,13 @@ pub fn create_loose_dom_element(
     };
     let nv = namespace_arg(ruby, rb_ns, "namespace URI")?;
     let prefix = pv.as_ref().map(|p| p.as_bytes());
-    dom_name::split_loose_dom_name(qv.as_bytes(), prefix, lv.as_bytes())
+    let (_, local) = dom_name::split_loose_dom_name(qv.as_bytes(), prefix, lv.as_bytes())
         .map_err(|e| Error::new(crate::bridge::rb::Builtin::ArgumentError, e.message()))?;
     let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
     created(
         ruby,
         new_node(ruby, &rb_self, |d| {
-            d.create_element_ns(lv.as_bytes(), ns, prefix.unwrap_or_default())
+            d.create_element_ns(local, ns, prefix.unwrap_or_default())
         })?,
         rb_self,
         "element",
@@ -450,7 +453,7 @@ pub fn create_pi(
      * included. */
     check_dom_name(
         &tv,
-        crate::xml::chars::validate_name,
+        |t| crate::xml::chars::validate_name(t).then_some(()),
         "processing instruction target",
     )?;
     /* ... and the data must not hold `?>` - the factory's rule. */

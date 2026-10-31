@@ -9,6 +9,7 @@ use crate::html::dom::{
     has_ascii_uppercase, CreatePiError, HtmlDocMut, HtmlElement, HtmlNode, NodeId as HtmlId, NsId,
     Place, RawNode,
 };
+use crate::xml::dom_name::{Name, QName};
 use crate::xml::model::{ArenaKind, Document as XmlDoc, MutError, NodeId, Span};
 use crate::xml::mutate;
 
@@ -326,6 +327,7 @@ fn x2h_copy_attrs(
     let mut a = doc.first_attr(s);
     while let Some(attr) = a {
         let (val, qname, ns) = (doc.value(attr), doc.qname(attr), doc.ns(attr));
+        let qname = QName::held(qname, !ns.is_empty()).ok_or(MutError::BadName)?;
         d.append_attribute(el, (!ns.is_empty()).then_some(ns), qname, val)
             .map_err(|_| MutError::Oom)?;
         a = doc.next(attr);
@@ -345,9 +347,11 @@ fn x2h_make(d: &mut HtmlDocMut<'_>, doc: &XmlDoc, s: NodeId) -> Result<Option<Ra
                 && !has_ascii_uppercase(doc.local(s))
                 && d.read().lookup_ns(ns) == Some(NsId::HTML)
             {
-                d.create_element(doc.qname(s)).or_oom::<MutError>()?
+                let name = Name::held(doc.qname(s)).ok_or(MutError::BadName)?;
+                d.create_element(name).or_oom::<MutError>()?
             } else {
-                d.create_element_ns(doc.local(s), ns, prefix)
+                let local = Name::held(doc.local(s)).ok_or(MutError::BadName)?;
+                d.create_element_ns(local, ns, prefix)
                     .or_oom::<MutError>()?
             };
             x2h_copy_attrs(d, doc, s, el.id())?;

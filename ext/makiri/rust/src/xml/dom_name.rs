@@ -57,6 +57,75 @@ fn local_ok(p: &[u8]) -> bool {
     !p.iter().copied().any(forbidden)
 }
 
+/// A name a WHATWG DOM name rule accepted, and so never empty: what the
+/// factories that make an element or an attribute take, so an empty name
+/// cannot reach one. Made only here - by a rule ([`Name::element`],
+/// [`Name::attribute`], [`validate_and_extract`], [`split_loose_dom_name`]),
+/// or, for a name another tree already holds, by [`Name::held`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Name<'a>(&'a [u8]);
+
+impl<'a> Name<'a> {
+    /// `name`, if it is a valid element local name.
+    pub fn element(name: &'a [u8]) -> Option<Name<'a>> {
+        valid_element_local_name(name).then_some(Name(name))
+    }
+
+    /// `name`, if it is a valid attribute local name.
+    pub fn attribute(name: &'a [u8]) -> Option<Name<'a>> {
+        valid_attribute_local_name(name).then_some(Name(name))
+    }
+
+    /// A name another tree holds - an imported node's - which that tree's own
+    /// rules made, held here only to not being empty.
+    pub fn held(name: &'a [u8]) -> Option<Name<'a>> {
+        (!name.is_empty()).then_some(Name(name))
+    }
+
+    pub fn as_bytes(self) -> &'a [u8] {
+        self.0
+    }
+}
+
+/// A qualified name split at its first colon: as written, its prefix (empty
+/// for none) and its local name, which is a [`Name`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QName<'q> {
+    pub written: &'q [u8],
+    pub prefix: &'q [u8],
+    pub local: Name<'q>,
+}
+
+impl<'q> QName<'q> {
+    /// `name` unsplit: no prefix, the whole name the local name - a name
+    /// set with no namespace, which a colon does not split.
+    pub fn whole(name: Name<'q>) -> QName<'q> {
+        QName {
+            written: name.as_bytes(),
+            prefix: b"",
+            local: name,
+        }
+    }
+
+    /// A qualified name another tree holds ([`Name::held`]), split at its
+    /// first colon when `split` - when it is in a namespace.
+    pub fn held(written: &'q [u8], split: bool) -> Option<QName<'q>> {
+        let colon = if split {
+            written.iter().position(|&b| b == b':')
+        } else {
+            None
+        };
+        Some(match colon {
+            Some(i) => QName {
+                written,
+                prefix: &written[..i],
+                local: Name::held(&written[i + 1..])?,
+            },
+            None => QName::whole(Name::held(written)?),
+        })
+    }
+}
+
 /// Whether `name` is a WHATWG DOM "valid element local name" - what
 /// `createElement` accepts.
 pub fn valid_element_local_name(name: &[u8]) -> bool {
@@ -105,7 +174,7 @@ pub fn validate_and_extract<'q>(
     ns: &[u8],
     qname: &'q [u8],
     local_ok: fn(&[u8]) -> bool,
-) -> Result<(&'q [u8], &'q [u8]), ExtractError> {
+) -> Result<QName<'q>, ExtractError> {
     let (prefix, local) = match qname.iter().position(|&b| b == b':') {
         Some(i) => {
             let (prefix, local) = (&qname[..i], &qname[i + 1..]);
@@ -122,7 +191,13 @@ pub fn validate_and_extract<'q>(
     if !namespace_fits(ns, qname, prefix) {
         return Err(ExtractError::Namespace);
     }
-    Ok((prefix, local))
+    /* Every DOM local-name rule refuses the empty name. */
+    let local = Name::held(local).ok_or(ExtractError::Name)?;
+    Ok(QName {
+        written: qname,
+        prefix,
+        local,
+    })
 }
 
 /// Whether `ns` ("" = null) fits a name with this `prefix` ("" = none) - the
@@ -149,21 +224,21 @@ pub fn namespace_fits(ns: &[u8], qname: &[u8], prefix: &[u8]) -> bool {
 
 /// Check that `qname`, `prefix` and `local` describe one DOM element name -
 /// valid under the WHATWG rules, and `qname` exactly `prefix:local` (or
-/// `local` when there is no prefix) - and split it.
-pub fn split_loose_dom_name(
+/// `local` when there is no prefix) - and split it, with `local` as a [`Name`].
+pub fn split_loose_dom_name<'l>(
     qname: &[u8],
     prefix: Option<&[u8]>,
-    local: &[u8],
-) -> Result<Split, LooseNameError> {
-    if !local_ok(local) {
+    local: &'l [u8],
+) -> Result<(Split, Name<'l>), LooseNameError> {
+    let Some(name) = Name::element(local) else {
         return Err(LooseNameError::Local);
-    }
+    };
     let Some(p) = prefix else {
         let split = Split::unprefixed(qname.len() as u32);
         if !split.describes(qname, b"", local) {
             return Err(LooseNameError::UnprefixedMismatch);
         }
-        return Ok(split);
+        return Ok((split, name));
     };
     if !prefix_ok(p) {
         return Err(LooseNameError::Prefix);
@@ -172,5 +247,5 @@ pub fn split_loose_dom_name(
     if !split.describes(qname, p, local) {
         return Err(LooseNameError::PrefixedMismatch);
     }
-    Ok(split)
+    Ok((split, name))
 }

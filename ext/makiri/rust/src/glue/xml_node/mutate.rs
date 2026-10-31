@@ -304,8 +304,8 @@ pub fn create_element_ns(
     let qv = verified_name(ruby, qname, "element qualified name")?;
     let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
     let qname = qv.as_bytes();
-    let (prefix, local) =
-        dom_extract(ns, qname, dom_name::valid_element_local_name, "DOM element")?;
+    let q = dom_extract(ns, qname, dom_name::valid_element_local_name, "DOM element")?;
+    let (prefix, local) = (q.prefix, q.local.as_bytes());
     /* `verified_name` held the name to `u32`, and both halves are in it:
      * a refusal here is that broken. */
     let len = |n: usize| {
@@ -343,7 +343,7 @@ pub fn create_loose_dom_element(
     let nv = namespace_arg(ruby, ns, "namespace URI")?;
 
     let qname = qv.as_bytes();
-    let sp = split_loose_dom_name(qname, pv.as_ref().map(|p| p.as_bytes()), lv.as_bytes())
+    let (sp, _) = split_loose_dom_name(qname, pv.as_ref().map(|p| p.as_bytes()), lv.as_bytes())
         .map_err(|e| Error::new(crate::bridge::rb::Builtin::ArgumentError, e.message()))?;
     let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
     let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {

@@ -15,6 +15,7 @@ use super::{
 use crate::dom_rules::{self, At, PreInsertError, TextContent, Tree};
 use crate::falloc::VecGrow;
 use crate::html::res::names as res;
+use crate::xml::dom_name::{Name, QName};
 
 /// Where an insertion puts its node, relative to the node it is made on.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -312,37 +313,39 @@ impl<'d> HtmlDocMut<'d> {
 
     /// DOM `setAttribute(name, value)` on the element `el`; a no-op `Ok` for
     /// a non-element.
-    pub fn set_attribute(&mut self, el: RawNode, name: &[u8], value: &[u8]) -> Result<(), DomOom> {
+    pub fn set_attribute(
+        &mut self,
+        el: RawNode,
+        name: Name<'_>,
+        value: &[u8],
+    ) -> Result<(), DomOom> {
         let Some(e) = self.read().node(el).element() else {
             return Ok(());
         };
-        if let Some(at) = e.attr_by_name(name) {
+        if let Some(at) = e.attr_by_name(name.as_bytes()) {
             let at = at.node().id();
             return self.d.set_data(at, value);
         }
         let lower = self.is_html(self.id_of(el));
-        let at = self.create_attr(self.id_of(el), None, name, value, lower)?;
+        let at = self.create_attr(self.id_of(el), None, QName::whole(name), value, lower)?;
         let rule = ShortcutRule::take(self.shortcut_of_new(at, None));
         self.d.link_attribute(self.id_of(el), at, rule);
         Ok(())
     }
 
     /// DOM `setAttributeNS(ns, qname, value)` on the element `el`, `ns` a URI
-    /// or `None` for no namespace.
+    /// or `None` for no namespace, `qname` as "validate and extract" split it.
     pub fn set_attribute_ns(
         &mut self,
         el: RawNode,
         ns: Option<&[u8]>,
-        qname: &[u8],
+        qname: QName<'_>,
         value: &[u8],
     ) -> Result<(), DomOom> {
         let Some(e) = self.read().node(el).element() else {
             return Ok(());
         };
-        let local = match qname.iter().position(|&b| b == b':') {
-            Some(i) => &qname[i + 1..],
-            None => qname,
-        };
+        let local = qname.local.as_bytes();
         let existing = match ns {
             Some(uri) => self
                 .read()
@@ -363,7 +366,7 @@ impl<'d> HtmlDocMut<'d> {
         &mut self,
         el: NodeId,
         ns: Option<&[u8]>,
-        qname: &[u8],
+        qname: QName<'_>,
         value: &[u8],
     ) -> Result<(), DomOom> {
         let at = self.create_attr(el, ns, qname, value, false)?;
@@ -412,44 +415,31 @@ impl<'d> HtmlDocMut<'d> {
     /// A new attribute of `el`'s document named `qname` in `ns`, not linked,
     /// named as Lexbor's `set_name` / `set_name_ns` name it: the local name
     /// lower-cased; the name as written beside it unless `lower` (a
-    /// setAttribute on an HTML element); a namespaced prefixed name split at
-    /// its first colon. A no-namespace attribute carries its element's
-    /// namespace, Lexbor's spelling of "none".
+    /// setAttribute on an HTML element) and it has no prefix. A no-namespace
+    /// attribute carries its element's namespace, Lexbor's spelling of "none".
     fn create_attr(
         &mut self,
         el: NodeId,
         ns: Option<&[u8]>,
-        qname: &[u8],
+        qname: QName<'_>,
         value: &[u8],
         lower: bool,
     ) -> Result<NodeId, DomOom> {
-        /* The glue refuses an empty name, or an empty namespace URI, first
-         * (`ArgumentError`); refused here too, as no attribute is made. */
-        debug_assert!(!qname.is_empty(), "an empty attribute name");
-        if qname.is_empty() {
-            return Err(DomOom);
-        }
         let d = &mut *self.d;
-        let (ns_id, colon) = match ns {
-            Some(uri) => (
-                d.intern_ns(uri)?.ok_or(DomOom)?,
-                qname.iter().position(|&b| b == b':'),
-            ),
-            None => (d.ns(el), None),
+        let ns_id = match ns {
+            Some(uri) => d.intern_ns(uri)?.ok_or(DomOom)?,
+            None => d.ns(el),
         };
-        let (local_name, prefix) = match colon {
-            Some(i) => (&qname[i + 1..], d.intern_prefix(&qname[..i])?.unwrap_or(0)),
-            None => (qname, 0),
+        let prefix = if qname.prefix.is_empty() {
+            0
+        } else {
+            d.intern_prefix(qname.prefix)?.unwrap_or(0)
         };
-        debug_assert!(!local_name.is_empty(), "an empty attribute local name");
-        if local_name.is_empty() {
-            return Err(DomOom);
-        }
         let local = d
             .names
-            .attr_local_name_append(local_name)
+            .attr_local_name_append(qname.local.as_bytes())
             .map_err(|_| DomOom)?;
-        let written = (!lower || colon.is_some()).then_some(qname);
+        let written = (!lower || !qname.prefix.is_empty()).then_some(qname.written);
         let at = d.create_attr(local, ns_id, prefix, written, value)?;
         /* Made in `ns`, or in none - whatever element it goes on (D1). */
         let own = if ns.is_some() {
@@ -465,19 +455,14 @@ impl<'d> HtmlDocMut<'d> {
      *
      * The factories answer `None` for out of memory, and for a PI whose data
      * holds `?>`, which Lexbor refused as a failed creation (the glue refuses
-     * it first, with an `ArgumentError`). An empty name the glue
-     * refuses first with an `ArgumentError`, so here it is a broken
-     * invariant - caught in debug builds, refused in release. They keep the
-     * Lexbor adapter's `Option`, the shape they were ported in. */
+     * it first, with an `ArgumentError`). A name is a `dom_name::Name`, which
+     * a DOM name rule made, so never empty. They keep the Lexbor adapter's
+     * `Option`, the shape they were ported in. */
 
     /// A new element named `local_name` (DOM `createElement`): its tag
     /// lower-cased, in the HTML namespace.
-    pub fn create_element(&mut self, local_name: &[u8]) -> Option<RawNode> {
-        debug_assert!(!local_name.is_empty(), "an empty element name");
-        if local_name.is_empty() {
-            return None;
-        }
-        let tag = self.d.names.tag_append_lower(local_name).ok()?;
+    pub fn create_element(&mut self, local_name: Name<'_>) -> Option<RawNode> {
+        let tag = self.d.names.tag_append_lower(local_name.as_bytes()).ok()?;
         self.d
             .create_element(tag, HTML_NS, 0, None)
             .ok()
@@ -487,11 +472,13 @@ impl<'d> HtmlDocMut<'d> {
     /// A new element in namespace `ns` with `prefix` (DOM `createElementNS`,
     /// the name already validated and split) - see the adapter's: an HTML
     /// name with upper case gets a tag of its own, as written.
-    pub fn create_element_ns(&mut self, local: &[u8], ns: &[u8], prefix: &[u8]) -> Option<RawNode> {
-        debug_assert!(!local.is_empty(), "an empty element local name");
-        if local.is_empty() {
-            return None;
-        }
+    pub fn create_element_ns(
+        &mut self,
+        local: Name<'_>,
+        ns: &[u8],
+        prefix: &[u8],
+    ) -> Option<RawNode> {
+        let local = local.as_bytes();
         let d = &mut *self.d;
         let upper = has_ascii_uppercase(local);
         let html = d.lookup_ns(ns) == Some(HTML_NS);
@@ -665,12 +652,17 @@ impl<'d> HtmlNewNodes<'d> {
     }
 
     /// [`HtmlDocMut::create_element`].
-    pub fn create_element(&mut self, local_name: &[u8]) -> Option<RawNode> {
+    pub fn create_element(&mut self, local_name: Name<'_>) -> Option<RawNode> {
         self.edit().create_element(local_name)
     }
 
     /// [`HtmlDocMut::create_element_ns`].
-    pub fn create_element_ns(&mut self, local: &[u8], ns: &[u8], prefix: &[u8]) -> Option<RawNode> {
+    pub fn create_element_ns(
+        &mut self,
+        local: Name<'_>,
+        ns: &[u8],
+        prefix: &[u8],
+    ) -> Option<RawNode> {
         self.edit().create_element_ns(local, ns, prefix)
     }
 

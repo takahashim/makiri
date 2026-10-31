@@ -273,11 +273,11 @@ pub fn set_attribute_ns(
 /// the name, [`MutError::BadNsName`] when the namespace does not fit it.
 fn dom_split(ns: &[u8], name: &[u8]) -> Result<Split, MutError> {
     use crate::xml::dom_name::{valid_attribute_local_name, validate_and_extract, ExtractError};
-    let (prefix, local) =
-        validate_and_extract(ns, name, valid_attribute_local_name).map_err(|e| match e {
-            ExtractError::Name => MutError::BadDomName("invalid DOM attribute name"),
-            ExtractError::Namespace => MutError::BadNsName,
-        })?;
+    let q = validate_and_extract(ns, name, valid_attribute_local_name).map_err(|e| match e {
+        ExtractError::Name => MutError::BadDomName("invalid DOM attribute name"),
+        ExtractError::Namespace => MutError::BadNsName,
+    })?;
+    let (prefix, local) = (q.prefix, q.local.as_bytes());
     let (Ok(p), Ok(l)) = (u32::try_from(prefix.len()), u32::try_from(local.len())) else {
         return Err(MutError::BadName);
     };
