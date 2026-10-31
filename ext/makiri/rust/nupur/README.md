@@ -90,6 +90,40 @@ The test extension also wraps an object with a slot (`TypedType`, `Birth`),
 reads arguments and keywords (`args`), walks a Hash, reads Strings, and runs
 a body with the GVL released.
 
+## Compared with Magnus
+
+Nupur replaced Magnus in Makiri, and keeps many of its names (`Value`,
+`RString`, `Error`, `method!`). The comparison below is with Magnus 0.8.2,
+the version Makiri used until the replacement in October 2026.
+
+Magnus is a general binding that covers most of Ruby's C API. Nupur covers
+only the C functions and types Makiri uses: about 7,300 lines, comments
+included, where Magnus is about 69,000. Using Magnus meant trusting all of
+its internals and their `unsafe` for the thirty or so things Makiri needed
+from it; with Nupur, what is trusted is the C functions Makiri chose and
+wrote a contract for.
+
+Where the two differ on safety:
+
+| | Magnus | Nupur |
+| --- | --- | --- |
+| C calls that can raise | Many run under `protect`; which ones can raise is the implementers' judgement, which a user cannot check | Every one is a `raw` wrapper under `rb_protect`; which functions can raise is a table held to a survey of Ruby's C API, and a lint refuses an unlisted call |
+| A panic in a method | Raised as `fatal` (Magnus #118), which cannot be rescued where it happens | Raised as the extension's internal error, an `Exception` that a host can rescue by name |
+| Arguments | Converted with `to_str` / `to_int`, Ruby code the caller can redefine | Not converted: a method takes `Value` and checks the type; a method taking `RString` or `i64` does not compile |
+| Ruby values in a wrapped object | The user writes the mark function; a value can sit in a `Vec` or a field (`BoxValue` exists for the heap) | Fixed slots, written once and marked by Nupur; a payload holds no Ruby value, and a lint refuses one on the heap |
+| Borrowing a wrapped object's data | A borrowed `&T` could outlive its `Value`, which the optimizer had dropped, and point at freed memory (Magnus #131, #101) | Borrowed through a `Typed` handle that keeps the object visible to the GC until the last borrow ends |
+| A String's bytes | `RString::as_slice` lends them | Only copied out, never lent |
+| The GVL's token | `Ruby::get()`, checked at run time | Made only by the trampolines and `Init_`; not `Send`, so it cannot enter a GVL-released body |
+
+Magnus is easier to write against: it converts arguments and return values
+for you, its handles are `Copy`, it has far more of Ruby's API, and it is a
+published crate. Nupur gives these up on purpose: an error-prone way of
+writing something is either impossible or the longest way to write it. Part
+of its safety also rests on checks that live in Makiri's repository
+(`rake dylint`, `rake no_unwind`, `rake unsafe:boundaries`) rather than on
+its types, so a copy of Nupur used elsewhere needs those checks too. Nupur is
+not published, and is used only inside Makiri's workspace.
+
 ## Modules
 
 | Module | What it holds |
