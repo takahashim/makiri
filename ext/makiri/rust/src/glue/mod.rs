@@ -46,6 +46,9 @@ pub mod html_doc;
 /// The identity methods (`==`, `hash`, `pointer_id`) both representations share.
 pub mod node;
 
+/// The DOM's naming rules, as both representations' factories raise them.
+pub mod dom_names;
+
 /// `Makiri::NodeSet`.
 pub mod node_set;
 

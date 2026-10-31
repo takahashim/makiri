@@ -20,7 +20,8 @@ use crate::bridge::xml::{
     with_arena_for_new_node, wrap_xml_node as wrap, xml_mut_result, Editing, XmlSelf,
 };
 use crate::dom_rules::{self, TextContent};
-use crate::glue::node::{dom_extract, DOCUMENT_NOT_REMOVABLE};
+use crate::glue::dom_names::dom_extract;
+use crate::glue::node::DOCUMENT_NOT_REMOVABLE;
 use crate::node_type::NodeType;
 use crate::xml::arena::DoctypeId;
 use crate::xml::dom_name::{self, split_loose_dom_name};

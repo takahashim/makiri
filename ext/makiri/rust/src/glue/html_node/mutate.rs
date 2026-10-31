@@ -27,7 +27,8 @@ use crate::bridge::string::{
     namespace_arg, optional, ruby_verified_data, ruby_verified_name, ruby_verified_text, HtmlSource,
 };
 use crate::dom_rules::{self, TextContent};
-use crate::glue::node::{dom_extract as extract, DOCUMENT_NOT_REMOVABLE};
+use crate::glue::dom_names::dom_extract as extract;
+use crate::glue::node::DOCUMENT_NOT_REMOVABLE;
 use crate::html_dom::html::{CreatePiError, HtmlDocMut, NodeType, Place, RawNode};
 use crate::xml::dom_name;
 

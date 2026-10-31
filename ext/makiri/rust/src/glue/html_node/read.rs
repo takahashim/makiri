@@ -293,15 +293,7 @@ pub fn element_children(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Err
 /// one `children` set per level.
 pub fn traverse_order(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     this.read()?.set(ruby, false, |root, out| {
-        let root_word = crate::bridge::wrapper::NodeWord::from(RawNode::from(root));
-        crate::glue::node::post_order(
-            root,
-            |n| crate::bridge::wrapper::NodeWord::from(RawNode::from(n)) == root_word,
-            |n| n.first_child(),
-            |n| n.next(),
-            |n| n.parent(),
-            out,
-        )
+        child_index::post_order(&HtmlTree::new(), root, out)
     })
 }
 
