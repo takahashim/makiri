@@ -1,6 +1,6 @@
-//! The Document wrapper: its data, its TypedData types and GC hooks, the
-//! node table, [`new_html_document`] / [`new_xml_document`], and the accessors that reach a Document's
-//! content.
+//! The Document wrapper: its data, its TypedData types and GC hooks,
+//! [`new_html_document`] / [`new_xml_document`], and the accessors that reach
+//! a Document's content. The node table in its slot is `node_table`'s.
 
 #![forbid(unsafe_code)]
 
@@ -15,8 +15,6 @@ use crate::bridge::dom::{Body, Conflict, HtmlRead, HtmlWrite, XmlRead, XmlWrite}
 use crate::bridge::typed::{Payload, TypedType};
 use crate::child_index::ChildPositionMemo;
 use crate::html_dom::post_parse::HtmlParsed;
-use crate::init::RbConst;
-use crate::node_type::NodeType;
 use crate::token::Kind;
 use crate::xml::model::Document as XmlDoc;
 
@@ -49,8 +47,9 @@ impl EditState {
 }
 
 /// A Document wrapper's data: the parsed content (owned - GC frees it), the
-/// mutation gate's count, and the node table. The parse-warning Array is a
-/// hidden ivar of the object (`Document#errors` is read rarely).
+/// edit versions, what was reported to the GC, and the child-position memo.
+/// The node table is the object's slot 0 ([`DocType`]), and the
+/// parse-warning Array a hidden ivar (`Document#errors` is read rarely).
 ///
 /// Read and written through `&DocData` only - every field that changes is a
 /// cell - so a method may hold one while another reads it (a wrapper made
@@ -63,13 +62,8 @@ pub struct DocData {
     content: OnceCell<Body>,
     /* The node table is not here: it is the object's slot 0 ([`DocType`],
      * read by `node_table`). */
-    /// The mutation gate and the edit versions ([`EditState`]).
+    /// The edit versions ([`EditState`]).
     pub(super) edits: Cell<EditState>,
-    /// The node table: one Ruby wrapper per node, so navigating to the same
-    /// node twice gives the SAME object. Without it every navigation made a
-    /// fresh wrapper, and everything that lives on a Ruby object was lost:
-    /// `equal?`, an instance variable, a singleton method, `freeze`.
-    ///
     /// What the GC has been told about the content, which lives outside
     /// Ruby's allocator ([`account_document`]): the free callback takes back
     /// exactly that, and [`account_growth`] compares against it.
@@ -88,6 +82,12 @@ pub struct DocData {
 }
 
 impl DocData {
+    /// The content's document stamp, 0 before it is set: whose nodes the
+    /// node table holds ([`super::node_table`]).
+    pub(super) fn stamp(&self) -> u32 {
+        self.stamp.get()
+    }
+
     /// Change the edit state in place - the one read-modify-write of the
     /// cell, which holds a `Copy` value.
     pub(super) fn update_edits(&self, f: impl FnOnce(&mut EditState)) {
@@ -177,10 +177,9 @@ pub type DocHandle = crate::bridge::typed::Typed<DocData, 1>;
 pub static DOC_TYPE: DocType = TypedType::base(c"Makiri::Document");
 
 /// HTML and XML Documents share the layout and the GC functions but are wrapped
-/// under DISTINCT types deriving from the base, so `html_doc_unwrap` - which
-/// reinterprets the handle as an HTML document - raises TypeError on an XML
-/// Document through Ruby's own type machinery rather than relying on an assert
-/// that NDEBUG erases.
+/// under DISTINCT types deriving from the base, so an HTML-only check
+/// ([`html_doc_check`], `HTML_DOC_TYPE.check`) raises TypeError on an XML
+/// Document through Ruby's own type machinery.
 pub static HTML_DOC_TYPE: DocType = TypedType::derived(c"Makiri::HTML::Document", &DOC_TYPE);
 pub static XML_DOC_TYPE: DocType = TypedType::derived(c"Makiri::XML::Document", &DOC_TYPE);
 
@@ -339,10 +338,11 @@ fn body_known(doc: &DocHandle) -> Result<&Body, Error> {
 fn held_error(held: Conflict) -> Error {
     match held {
         Conflict::ByEdit => internal_error("a Document was read while an edit held it"),
-        /* A reader a Ruby call left suspended (a Fiber). */
-        Conflict::ByRead => makiri_error(
-            "cannot modify a document while a read of it is in progress (suspended in Ruby)",
-        ),
+        /* A read still held when an edit begins - a copy of the receiver's,
+         * say; no Ruby code runs under a read, so none is left suspended. */
+        Conflict::ByRead => {
+            makiri_error("cannot modify a document while a read of it is in progress")
+        }
     }
 }
 
@@ -379,6 +379,11 @@ pub fn xml_read(doc: &DocHandle) -> Result<XmlRead<'_>, Error> {
 }
 
 /// `rb_doc`'s XML arena, borrowed for an edit, as [`html_write`].
+///
+/// A write - a new node, a new byte span - can grow the arena's vectors under
+/// the slices a reader borrowed, so it is refused while any read is held.
+/// Every `&mut` to an XML arena is one of these - a tree edit's, a factory's
+/// and an import's alike - so the one guard covers them all.
 pub(in crate::bridge) fn xml_write(doc: &DocHandle) -> Result<XmlWrite<'_>, Error> {
     match body_known(doc)? {
         Body::Xml(c) => XmlWrite::of(c).map_err(held_error),
@@ -431,176 +436,18 @@ pub(in crate::bridge) fn with_html_parsed_if<R>(
     }
 }
 
-/// One representation's leaf classes, by node type: the mapping both
-/// `wrap_*_node` functions make, written once. The two tables differ only in
-/// which classes they name, so neither can grow a kind the other lacks.
-pub(in crate::bridge) struct NodeClasses {
-    pub node: &'static RbConst<crate::bridge::rb::DataClass>,
-    pub element: &'static RbConst<crate::bridge::rb::DataClass>,
-    pub attr: &'static RbConst<crate::bridge::rb::DataClass>,
-    pub text: &'static RbConst<crate::bridge::rb::DataClass>,
-    pub comment: &'static RbConst<crate::bridge::rb::DataClass>,
-    pub cdata: &'static RbConst<crate::bridge::rb::DataClass>,
-    pub pi: &'static RbConst<crate::bridge::rb::DataClass>,
-    pub doctype: &'static RbConst<crate::bridge::rb::DataClass>,
-    pub fragment: &'static RbConst<crate::bridge::rb::DataClass>,
-}
-
-impl NodeClasses {
-    /// The class a node of type `t` is wrapped as; the representation's
-    /// abstract `Node` for a type with no leaf of its own (entity, notation,
-    /// an unknown number). A DOCUMENT is the caller's to map back onto the
-    /// Ruby Document before asking.
-    #[inline]
-    pub fn class_for(
-        &self,
-        ruby: &Ruby,
-        t: NodeType,
-    ) -> Result<crate::bridge::rb::DataClass, Error> {
-        match t {
-            NodeType::Element => self.element,
-            NodeType::Attribute => self.attr,
-            NodeType::Text => self.text,
-            NodeType::Comment => self.comment,
-            NodeType::CDataSection => self.cdata,
-            NodeType::Pi => self.pi,
-            NodeType::DocumentType => self.doctype,
-            NodeType::DocumentFragment => self.fragment,
-            _ => self.node,
-        }
-        .defined(ruby)
-    }
-}
-
-/// The one wrapper of class `klass` (a `ty` object) for a node under
-/// `document`: the cached one, or a fresh one built from `source` and then
-/// cached. The shared half of the two `wrap_*_node` functions.
-///
-/// The candidate supplies both its cache identity and, on a miss, its stored
-/// handle. HTML key minting is therefore skipped on a cache hit, while the
-/// token and handle cannot come from different nodes.
-///
-/// One wrapper per node: navigating to a node twice must give the SAME object,
-/// or everything that lives on a Ruby object is silently lost - `equal?`, an
-/// instance variable, a singleton method, `freeze`. A Document is already its
-/// own wrapper, which is why it needs no entry. So a wrapper is handed out
-/// only once it is in the table: `Err` (`NoMemoryError`) when the entry
-/// cannot be made, and the fresh wrapper, which nothing refers to, is left
-/// for the GC - never an object outside the table.
-///
-/// The caller vouches that the node is a node of `document` of the
-/// representation `ty` wraps, and `klass` a class of it: only the two
-/// `wrap_*_node` functions call this, each for its own kind.
-pub(in crate::bridge) fn wrap_cached(
-    ruby: &Ruby,
-    ty: &'static NodeWrapperType,
-    klass: crate::bridge::rb::DataClass,
-    source: impl NodeHandleSource,
-    document: Value,
-) -> Result<Value, Error> {
-    let Some((table, key)) = table_and_key(document, &source)? else {
-        return Err(internal_error("a node of another document"));
-    };
-    if let Some(cached) = table.get(key)? {
-        return Ok(cached);
-    }
-    let node = source.into_handle(document);
-    let fresh = ty.wrap(ruby, klass, NodeData { node }, [document])?;
-    /* The table entry: a Ruby reference, which the GC marks and moves
-     * itself. A failure leaves `fresh` unseen and unreferenced. */
-    table.set(key, fresh)?;
-    Ok(fresh)
-}
-
-/// `document`'s node table and `source`'s key in it - its index - or `None`
-/// for a node of another document, whose index names another node here.
-/// One type check reads both.
-#[inline]
-fn table_and_key(
-    document: Value,
-    source: &impl NodeHandleSource,
-) -> Result<Option<(crate::nupur::table::IntTable, u32)>, Error> {
-    let (index, stamp) = source.index_and_stamp();
-    let doc = DOC_TYPE.check(document)?;
-    if doc.data().stamp.get() != stamp {
-        return Ok(None);
-    }
-    let table = crate::nupur::table::IntTable::from_value(doc.root::<0>())
-        .ok_or_else(|| internal_error("a Document without its node table"))?;
-    Ok(Some((table, index)))
-}
-
-/// The one wrapper for `source` under `rb_doc`, or None the first time -
-/// and for a node of another document, which has none here.
-pub(in crate::bridge) fn cached_node(
-    rb_doc: Value,
-    source: &impl NodeHandleSource,
-) -> Result<Option<Value>, Error> {
-    match table_and_key(rb_doc, source)? {
-        Some((table, key)) => table.get(key),
-        None => Ok(None),
-    }
-}
-
-/// The hidden ivars' names, interned at `Init_makiri` ([`init_ivars`]).
-struct Ivars {
-    document: crate::bridge::rb::HiddenId,
-    errors: crate::bridge::rb::HiddenId,
-    node: crate::bridge::rb::HiddenId,
-}
-
-static IVARS: std::sync::OnceLock<Ivars> = std::sync::OnceLock::new();
-
-/// The names, set before any method that reads one is defined.
-#[allow(
-    clippy::expect_used,
-    reason = "`Init_makiri` interns them before it defines a method that reads one; \
-              unset is a broken invariant, a panic the trampoline makes an InternalError"
-)]
-fn ivars() -> &'static Ivars {
-    IVARS
-        .get()
-        .expect("a hidden ivar's name was read before Init_makiri interned it")
-}
-
-/// The hidden ivar an XPathContext keeps its Document in.
-pub(in crate::bridge) fn ivar_document() -> crate::bridge::rb::HiddenId {
-    ivars().document
-}
-
 /// The hidden ivar a Document keeps its parse-warning Array in.
+static ERRORS: HiddenIvar = HiddenIvar::new(c"makiri_errors");
+
+/// The name of [`ERRORS`].
 pub(in crate::bridge) fn ivar_errors() -> crate::bridge::rb::HiddenId {
-    ivars().errors
+    ERRORS.id()
 }
 
-/// The hidden ivar an XPathContext keeps its context node in.
-pub(in crate::bridge) fn ivar_node() -> crate::bridge::rb::HiddenId {
-    ivars().node
-}
-
-/// Intern the hidden ivars' names. From `Init_makiri`; a second call keeps
-/// the first names.
+/// Intern the Document's hidden ivar's name. From `Init_makiri`, before any
+/// method that reads it is defined.
 pub fn init_ivars(ruby: &Ruby) -> Result<(), Error> {
-    let _ = IVARS.set(Ivars {
-        document: crate::bridge::rb::HiddenId::intern(ruby, c"makiri_document")?,
-        errors: crate::bridge::rb::HiddenId::intern(ruby, c"makiri_errors")?,
-        node: crate::bridge::rb::HiddenId::intern(ruby, c"makiri_node")?,
-    });
-    Ok(())
-}
-
-/// `FrozenError` when the node `source` names has a wrapper and that wrapper is
-/// frozen. A node with no wrapper yet cannot have been frozen. For an edit
-/// that reaches a node other than its receiver - an Attr's owner element,
-/// whose attribute list an Attr's `remove` or `content=` changes.
-pub(in crate::bridge) fn check_node_frozen(
-    rb_doc: Value,
-    source: impl NodeHandleSource,
-) -> Result<(), Error> {
-    match cached_node(rb_doc, &source)? {
-        Some(wrapper) => crate::bridge::rb::ReprValue::check_frozen(wrapper),
-        None => Ok(()),
-    }
+    ERRORS.intern(ruby)
 }
 
 /// A Document's wrapper data, for the fields that are the wrapper's own

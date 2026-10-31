@@ -42,7 +42,7 @@ pub fn encoding_arg(ruby: &Ruby, v: Value) -> Result<(Encoding, crate::cbuf::Own
 /// UTF-16 file with its BOM, or a Latin-1 one declaring ISO-8859-1, read that
 /// way was validated as UTF-8 and refused, where the same bytes tagged
 /// ASCII-8BIT decoded. (A US-ASCII a DOCUMENT declares is a claim:
-/// `xml_decode` holds the bytes to it.)
+/// `xml::decode` holds the bytes to it.)
 pub(in crate::bridge) fn claims_no_encoding(tag: Encoding) -> bool {
     tag.is_ascii8bit() || tag.is_usascii()
 }

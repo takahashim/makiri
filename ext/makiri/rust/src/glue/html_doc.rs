@@ -7,12 +7,12 @@
 //!   `DocumentFragment.parse(html, context:, max_tree_depth:, max_amplification:)`, `Node#parse(html)`
 //!
 //! The Document wrapper and its parsed handle, and the fragment pipeline, are
-//! the bridge's ([`crate::bridge::wrapper`], [`crate::bridge::doc`],
-//! [`crate::bridge::fragment`]); this module is the Ruby surface on them.
+//! the bridge's ([`crate::bridge::wrapper`], [`crate::bridge::html::document`],
+//! [`crate::bridge::html::fragment`]); this module is the Ruby surface on them.
 
 #![forbid(unsafe_code)]
 
-use crate::bridge::fragment;
+use crate::bridge::html::fragment;
 use crate::bridge::rb::{prelude::*, Error, Ruby, Value};
 use crate::bridge::string::GivenEncoding;
 use crate::glue::html_node::HtmlSelf;
@@ -34,7 +34,8 @@ fn doc_s_parse(
 ) -> Result<Value, Error> {
     let limit = crate::glue::kwargs::parse_limits(Some(depth), Some(amplification))?;
     let given = encoding_arg(ruby, encoding)?;
-    crate::bridge::doc::parse_document(ruby, source, limit, given)
+    let source = crate::bridge::ruby::string_arg(source)?;
+    crate::bridge::html::document::parse_document(ruby, source, limit, given)
 }
 
 /// The `encoding:` keyword, which `Document.parse` hands over as nil or a
@@ -77,17 +78,17 @@ fn encoding_arg(ruby: &Ruby, v: Value) -> Result<Option<GivenEncoding>, Error> {
 /// `Document#encoding`: the character encoding the document was read in, by
 /// its Encoding Standard name (`"UTF-8"`, `"Shift_JIS"`, `"windows-1252"`).
 fn doc_encoding(_ruby: &Ruby, this: Value) -> Result<&'static str, Error> {
-    crate::bridge::doc::document_encoding(this)
+    crate::bridge::html::document::document_encoding(this)
 }
 
 /* ---- read-only accessors ---- */
 
 fn doc_root(ruby: &Ruby, self_: Value) -> Result<Option<Value>, Error> {
-    crate::bridge::doc::document_root(ruby, self_)
+    crate::bridge::html::document::document_root(ruby, self_)
 }
 
 fn doc_title(ruby: &Ruby, self_: Value) -> Result<crate::bridge::rb::RString, Error> {
-    crate::bridge::doc::document_title(ruby, self_)
+    crate::bridge::html::document::document_title(ruby, self_)
 }
 
 /// The `<!DOCTYPE ...>` node, or nil - Nokogiri's `#internal_subset`. It is a
@@ -101,24 +102,24 @@ fn doc_internal_subset(ruby: &Ruby, this: HtmlSelf) -> Result<Option<Value>, Err
 
 /// `Makiri::HTML::Document.new`: an empty document - no children, no-quirks.
 fn doc_s_new(ruby: &Ruby, _klass: Value) -> Result<Value, Error> {
-    crate::bridge::doc::new_empty_document(ruby, 0, "UTF-8")
+    crate::bridge::html::document::new_empty_document(ruby, 0, "UTF-8")
 }
 
 /// `Document#_empty_copy` (private): an empty document in this one's quirks
 /// mode, for `#dup` to copy the children into.
 fn doc_empty_copy(ruby: &Ruby, this: HtmlSelf) -> Result<Value, Error> {
     let mode = u32::try_from(this.read()?.doc().compat_mode()).unwrap_or(0);
-    let encoding = crate::bridge::doc::document_encoding(this.document())?;
-    crate::bridge::doc::new_empty_document(ruby, mode, encoding)
+    let encoding = crate::bridge::html::document::document_encoding(this.document())?;
+    crate::bridge::html::document::new_empty_document(ruby, mode, encoding)
 }
 
 fn doc_quirks_mode(ruby: &Ruby, self_: Value) -> Result<Value, Error> {
-    crate::bridge::doc::document_quirks_mode(ruby, self_)
+    crate::bridge::html::document::document_quirks_mode(ruby, self_)
 }
 
 /// Parse warnings. Reserved; currently always empty.
 fn doc_errors(_ruby: &Ruby, self_: Value) -> Result<Value, Error> {
-    Ok(crate::bridge::doc::document_errors(self_))
+    Ok(crate::bridge::html::document::document_errors(self_))
 }
 
 /* ---- fragment entry points ---- */
@@ -154,7 +155,8 @@ fn fragment_from_args(
     let held = document(ruby)?;
     let document = held.value();
     let at = fragment::resolve_fragment_context(ruby, document, context)?;
-    fragment::build_fragment(ruby, document, a.required(0), at, limit)
+    let html = crate::bridge::ruby::string_arg(a.required(0))?;
+    fragment::build_fragment(ruby, document, html, at, limit)
 }
 
 /// `DocumentFragment.parse(html, context: ..., max_tree_depth: ...,
@@ -178,10 +180,11 @@ fn node_parse(ruby: &Ruby, this: HtmlSelf, rb_html: Value) -> Result<Value, Erro
     /* The element itself is the context, read whole as `inner_html=`
      * reads it. No keyword here, as in Nokogiri: the default limit. */
     let at = fragment::ContextArg::element(ruby, this.value)?;
+    let html = crate::bridge::ruby::string_arg(rb_html)?;
     let frag = fragment::build_fragment(
         ruby,
         this.document(),
-        rb_html,
+        html,
         at,
         fragment::ParseLimits::DEFAULT,
     )?;
@@ -198,7 +201,7 @@ fn doc_import_node(ruby: &Ruby, self_: Value, args: &[Value]) -> Result<Value, E
     let a = crate::bridge::args::scan(ruby, args, crate::bridge::args::Shape::positional(1, 1))?;
     /* `deep` is truthiness, anything but nil and false - the DOM default off. */
     let deep = a.optional(0).is_some_and(|v| v.to_bool());
-    crate::bridge::doc::import_node(ruby, self_, a.required(0), deep)
+    crate::bridge::html::document::import_node(ruby, self_, a.required(0), deep)
 }
 
 /// `Node#clone_node(deep = false)`: a copy owned by the same document and
@@ -207,7 +210,7 @@ pub fn node_clone_node(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Va
     let a = crate::bridge::args::scan(ruby, args, crate::bridge::args::Shape::positional(0, 1))?;
     /* Truthiness: anything but nil and false. */
     let deep = a.optional(0).is_some_and(|v| v.to_bool());
-    crate::bridge::doc::clone_node(ruby, rb_self, deep)
+    crate::bridge::html::document::clone_node(ruby, rb_self, deep)
 }
 
 /* ---- registration ---- */

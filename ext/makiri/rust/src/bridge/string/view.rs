@@ -151,23 +151,23 @@ fn read_error<P>(
 /// Why a String over a reader's cap was refused ([`ReadError::TooLong`]).
 const TOO_LONG: &str = "string exceeds the maximum length";
 
-/// [`ruby_verified_text`] for an optional argument: `nil` is `None`.
-pub fn ruby_verified_text_opt(
-    ruby: &Ruby,
-    in_: Value,
-    what: &str,
-) -> Result<Option<RubyText>, Error> {
-    if in_.is_nil() {
+/// An optional argument: `nil` is `None`, anything else what `read` makes
+/// of it - a checked view ([`ruby_verified_text`] and its kin), say.
+pub fn optional<T>(
+    v: Value,
+    read: impl FnOnce(Value) -> Result<T, Error>,
+) -> Result<Option<T>, Error> {
+    if v.is_nil() {
         return Ok(None);
     }
-    ruby_verified_text(ruby, in_, what).map(Some)
+    read(v).map(Some)
 }
 
 /// The `namespace_or_nil` argument of the namespaced APIs: `nil` and the empty
 /// string ALIKE mean "no namespace", so everything below receives `None` or a
 /// non-empty URI and never re-decides.
 pub fn namespace_arg(ruby: &Ruby, in_: Value, what: &str) -> Result<Option<RubyText>, Error> {
-    Ok(ruby_verified_text_opt(ruby, in_, what)?.filter(|t| !t.is_empty()))
+    Ok(optional(in_, |v| ruby_verified_text(ruby, v, what))?.filter(|t| !t.is_empty()))
 }
 
 /// Coerce to a String and enforce the strict contract (valid UTF-8, no NUL),

@@ -10,10 +10,9 @@
 //! dereferenced under an `unsafe` contract - "the Document is live, and nothing
 //! edits it while you hold this" - which each call site had to re-establish. A
 //! guard makes the second half a runtime check instead: an edit that begins
-//! while any read is held (a Fiber suspended mid-XPath, a reader that ran Ruby)
-//! is refused, and so is a read during an edit. The first half - the
-//! Document stays alive - is the caller's `&Value`, which the guard's lifetime
-//! is tied to; a guard is no GC root.
+//! while any read is held is refused, and so is a read during an edit. The
+//! first half - the Document stays alive - is the caller's `DocHandle`, which
+//! holds the Document and which the guard borrows.
 //!
 //! A guard is a `Drop`, so a raise that `longjmp`s past one would leave its
 //! borrow counted for good. None does: every raising call returns `Err`

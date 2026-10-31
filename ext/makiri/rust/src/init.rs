@@ -272,7 +272,7 @@ fn drop_exit(ruby: &Ruby) {
 fn xml_decode(ruby: &Ruby, str: Value) -> Result<Value, Error> {
     let s = crate::bridge::ruby::string_arg(str)?;
     /* decode-only: no arena, no budget */
-    crate::bridge::xml_decode::xml_decode_input(ruby, s, None)
+    crate::bridge::xml::decode::xml_decode_input(ruby, s, None)
         .and_then(|d| crate::bridge::string::utf8_str(ruby, d.as_slice()))
         .map(crate::bridge::rb::ReprValue::as_value)
 }
@@ -355,6 +355,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     crate::nupur::rb::method::declare_ractor_safe(ruby);
     let makiri = ruby.define_module("Makiri")?;
     crate::bridge::wrapper::init_ivars(ruby)?;
+    crate::bridge::xpath::init_ivars(ruby)?;
 
     // What this binary was built as, for `lib/makiri.rb` to check against the
     // gem it was loaded by and the Ruby it was loaded into - a stale

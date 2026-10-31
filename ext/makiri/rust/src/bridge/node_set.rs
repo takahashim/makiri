@@ -22,15 +22,16 @@
 //! (It was `ruby_xrealloc2`'s, behind a proven `RawVec`; the `Vec` measured
 //! 5-10% faster on large sets, and Ruby counted the reallocations ~20% over
 //! the bytes held, so it collected more often than the memory called for.) The glue builds a set through
-//! `node_set_with_fill`, `node_set_from` or `node_set_of_nodes`, all over
-//! the Document's opaque `VALUE`; the [`Fill`] handle carries the "this is a
-//! NodeSet" invariant so its pushes are safe.
+//! [`FreshSet`], [`node_set_from`], [`node_set_from_read`] or
+//! [`node_set_of_nodes`], all over the Document's opaque `VALUE`; the
+//! [`Fill`] handle carries the "this is a NodeSet" invariant so its pushes
+//! are safe.
 //!
 //! Mutation goes through a `RefCell`, and every borrow failure becomes a Ruby
-//! error rather than a panic: a panic would reach Ruby as `fatal` (the crate
-//! unwinds, it no longer aborts), which is still the wrong answer for an
-//! aliasing mistake a Ruby caller can provoke - this codebase fails closed by
-//! raising an ordinary error.
+//! error rather than a panic: a panic would reach Ruby as
+//! `Makiri::InternalError`, a broken invariant, which is the wrong answer for
+//! an aliasing mistake a Ruby caller can provoke - this codebase fails closed
+//! by raising an ordinary error.
 
 #![forbid(unsafe_code)]
 
@@ -254,12 +255,12 @@ impl NodeVec {
 
 /// Only the node array is mutable, and only it is behind the cell.
 ///
-/// That split is load-bearing, not tidiness. `mark` must reach `document` on
-/// every GC, and a GC can happen *while a push holds the mutable borrow* -
-/// `ruby_xrealloc2` is an allocation, so it is a GC point. If `document` lived
-/// inside the cell, `mark` would find it busy, fail to mark the Document, and
-/// the arena holding every node in this set could be collected underneath it.
-/// Fields that never change after construction belong outside the cell.
+/// A GC can happen *while a push holds the mutable borrow* - a growth reports
+/// its bytes to the GC, which may collect - and the size and free callbacks
+/// read the set then: they take no `&mut`, and read a busy cell as empty.
+/// The Document is not a field at all but the object's slot 0, which `nupur`
+/// marks without a borrow. Fields that never change after construction belong
+/// outside the cell.
 ///
 /// A [`TypedType`] like every other wrapped struct of Makiri's, but not an
 /// embedded one: a fill holds `&NodeSet` across the set's own growth, which
@@ -451,6 +452,20 @@ impl FreshSet {
         w.reserve(ruby, room)?;
         Ok(w)
     }
+
+    /// A NodeSet over `document`, filled by `fill` through its write borrow
+    /// ([`with_room`](Self::with_room), room for `room` nodes taken first):
+    /// what every operation that makes a set from sets it already has is.
+    fn build(
+        ruby: &Ruby,
+        document: Value,
+        room: usize,
+        fill: impl FnOnce(&mut NodeVec) -> Result<(), Error>,
+    ) -> Result<Value, Error> {
+        let result = FreshSet::new(ruby, document)?;
+        fill(&mut *result.with_room(ruby, room)?)?;
+        Ok(result.value())
+    }
 }
 
 /// The pushes into a [`FreshSet`]: one borrow of the set, so the "this
@@ -540,7 +555,7 @@ impl NodeSetSelf {
     /// The node at `i`, wrapped; `None` past the end.
     ///
     /// O(1): the one word is read under a short borrow that is released
-    /// before the wrap, which allocates and so can run arbitrary Ruby.
+    /// before the wrap, which needs nothing of it.
     pub fn at(&self, ruby: &Ruby, i: usize) -> Result<Option<Value>, Error> {
         let node = self.read()?.as_slice().get(i).copied();
         node.map(|n| wrap_doc_node(ruby, self.kind, n, self.document()))
@@ -563,15 +578,14 @@ impl NodeSetSelf {
 
     /// A new set of at most `len` nodes from `beg`.
     fn take(&self, ruby: &Ruby, beg: usize, len: usize) -> Result<Value, Error> {
-        let result = FreshSet::new(ruby, self.document())?;
-        let mut w = result.with_room(ruby, len)?;
-        let mine = self.read()?;
-        let tail = mine.as_slice().get(beg..).unwrap_or_default();
-        for &n in &tail[..len.min(tail.len())] {
-            w.push(ruby, n)?;
-        }
-        drop(w);
-        Ok(result.value())
+        FreshSet::build(ruby, self.document(), len, |w| {
+            let mine = self.read()?;
+            let tail = mine.as_slice().get(beg..).unwrap_or_default();
+            for &n in &tail[..len.min(tail.len())] {
+                w.push(ruby, n)?;
+            }
+            Ok(())
+        })
     }
 
     /// `other` as a set that can be combined with this one: a NodeSet, and of
@@ -615,50 +629,47 @@ impl NodeSetSelf {
     /// `self | other`: the union, deduped, self first.
     pub fn union(&self, ruby: &Ruby, other: &NodeSet) -> Result<Value, Error> {
         let room = self.count()?.saturating_add(other.count()?);
-        let result = FreshSet::new(ruby, self.document())?;
-        let mut w = result.with_room(ruby, room)?;
-        let (mine, theirs) = (self.read()?, other.read()?);
-        let mut seen = Index::empty(mine.len() + theirs.len());
-        for &n in mine.as_slice().iter().chain(theirs.as_slice()) {
-            if seen.insert(n, w.as_slice()) {
-                w.push(ruby, n)?;
+        FreshSet::build(ruby, self.document(), room, |w| {
+            let (mine, theirs) = (self.read()?, other.read()?);
+            let mut seen = Index::empty(mine.len() + theirs.len());
+            for &n in mine.as_slice().iter().chain(theirs.as_slice()) {
+                if seen.insert(n, w.as_slice()) {
+                    w.push(ruby, n)?;
+                }
             }
-        }
-        drop(w);
-        Ok(result.value())
+            Ok(())
+        })
     }
 
     /// `self + other`: the concatenation, duplicates kept.
     pub fn concat(&self, ruby: &Ruby, other: &NodeSet) -> Result<Value, Error> {
         let room = self.count()?.saturating_add(other.count()?);
-        let result = FreshSet::new(ruby, self.document())?;
-        let mut w = result.with_room(ruby, room)?;
-        let (mine, theirs) = (self.read()?, other.read()?);
-        for &n in mine.as_slice().iter().chain(theirs.as_slice()) {
-            w.push(ruby, n)?;
-        }
-        drop(w);
-        Ok(result.value())
+        FreshSet::build(ruby, self.document(), room, |w| {
+            let (mine, theirs) = (self.read()?, other.read()?);
+            for &n in mine.as_slice().iter().chain(theirs.as_slice()) {
+                w.push(ruby, n)?;
+            }
+            Ok(())
+        })
     }
 
     /// `&` ([`Membership::In`]) and `-` ([`Membership::NotIn`]): each node of
     /// self with that membership in `other`, deduped, in self's order.
     pub fn filter(&self, ruby: &Ruby, other: &NodeSet, keep: Membership) -> Result<Value, Error> {
-        let result = FreshSet::new(ruby, self.document())?;
-        let mut w = result.with_room(ruby, self.count()?)?;
-        let (mine, theirs) = (self.read()?, other.read()?);
-        let theirs_index = Index::build(theirs.as_slice());
-        let mut seen = Index::empty(mine.len());
-        for &n in mine.as_slice() {
-            if theirs_index.contains(n, theirs.as_slice()) != (keep == Membership::In) {
-                continue;
+        FreshSet::build(ruby, self.document(), self.count()?, |w| {
+            let (mine, theirs) = (self.read()?, other.read()?);
+            let theirs_index = Index::build(theirs.as_slice());
+            let mut seen = Index::empty(mine.len());
+            for &n in mine.as_slice() {
+                if theirs_index.contains(n, theirs.as_slice()) != (keep == Membership::In) {
+                    continue;
+                }
+                if seen.insert(n, w.as_slice()) {
+                    w.push(ruby, n)?;
+                }
             }
-            if seen.insert(n, w.as_slice()) {
-                w.push(ruby, n)?;
-            }
-        }
-        drop(w);
-        Ok(result.value())
+            Ok(())
+        })
     }
 }
 
@@ -674,21 +685,20 @@ pub fn node_set_of_nodes(
     document: Value,
     nodes: impl Iterator<Item = Value>,
 ) -> Result<Value, Error> {
-    let set = FreshSet::new(ruby, document)?;
-    let mut w = set.with_room(ruby, 0)?;
-    for item in nodes {
-        if !is_kind_of(ruby, item, &CLASS_NODE)
-            || !crate::bridge::ruby::same_value(keepalive_document(ruby, item)?, document)
-        {
-            return Err(Error::new(
-                crate::bridge::rb::Builtin::ArgumentError,
-                "every node must be a Makiri node belonging to the given document",
-            ));
+    FreshSet::build(ruby, document, 0, |w| {
+        for item in nodes {
+            if !is_kind_of(ruby, item, &CLASS_NODE)
+                || !crate::bridge::ruby::same_value(keepalive_document(ruby, item)?, document)
+            {
+                return Err(Error::new(
+                    crate::bridge::rb::Builtin::ArgumentError,
+                    "every node must be a Makiri node belonging to the given document",
+                ));
+            }
+            w.push(ruby, node_raw(ruby, item)?)?;
         }
-        w.push(ruby, node_raw(ruby, item)?)?;
-    }
-    drop(w);
-    Ok(set.value())
+        Ok(())
+    })
 }
 
 /// Which nodes of self [`NodeSet::filter`] keeps: those in the other set

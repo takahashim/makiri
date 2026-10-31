@@ -50,6 +50,9 @@
 
 ### Fixed
 
+* Inserting a fragment one of whose children is frozen raises
+  `FrozenError`, as inserting a frozen node does, in HTML and XML: the
+  fragment's children are relinked. Nothing is inserted.
 * An XML document declaring `encoding="US-ASCII"` must hold ASCII alone,
   whatever decodes it (a UTF-8 String, a byte order mark, the declaration):
   a character past ASCII raises `Makiri::XML::SyntaxError`, where it was
