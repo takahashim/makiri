@@ -8,9 +8,9 @@ use crate::selectors::ast::Lists;
 
 use super::compile::{Chain, Compound, Nesting, Step};
 use super::dom::Host;
+use super::plan::Name;
 use super::positions::Positions;
 use super::query::{HasCursor, Task};
-use super::simple::Name;
 use super::MatchFailure;
 
 /// One of a query's tables: a `falloc` vector, borrowed from a [`Scratch`]

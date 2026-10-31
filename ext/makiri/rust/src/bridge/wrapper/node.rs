@@ -10,7 +10,8 @@ use crate::bridge::rb::{Error, Value};
 use super::*;
 use crate::bridge::typed::EmbeddedType;
 use crate::html_dom::html::{HtmlNodeKey, RawNode};
-use crate::init::CLASS_DOCUMENT;
+use crate::init::{RbConst, CLASS_DOCUMENT};
+use crate::node_type::NodeType;
 use crate::token::Token;
 use crate::xml::model::NodeId;
 
@@ -308,4 +309,45 @@ pub fn keepalive_document(ruby: &Ruby, rb_node: Value) -> Result<Value, Error> {
         return Ok(rb_node);
     }
     Ok(read_node(&NODE_DATA_TYPE, rb_node)?.document)
+}
+
+/// One representation's leaf classes, by node type: the mapping both
+/// `wrap_*_node` functions make, written once. The two tables differ only in
+/// which classes they name, so neither can grow a kind the other lacks.
+pub(in crate::bridge) struct NodeClasses {
+    pub node: &'static RbConst<crate::bridge::rb::DataClass>,
+    pub element: &'static RbConst<crate::bridge::rb::DataClass>,
+    pub attr: &'static RbConst<crate::bridge::rb::DataClass>,
+    pub text: &'static RbConst<crate::bridge::rb::DataClass>,
+    pub comment: &'static RbConst<crate::bridge::rb::DataClass>,
+    pub cdata: &'static RbConst<crate::bridge::rb::DataClass>,
+    pub pi: &'static RbConst<crate::bridge::rb::DataClass>,
+    pub doctype: &'static RbConst<crate::bridge::rb::DataClass>,
+    pub fragment: &'static RbConst<crate::bridge::rb::DataClass>,
+}
+
+impl NodeClasses {
+    /// The class a node of type `t` is wrapped as; the representation's
+    /// abstract `Node` for a type with no leaf of its own (entity, notation,
+    /// an unknown number). A DOCUMENT is the caller's to map back onto the
+    /// Ruby Document before asking.
+    #[inline]
+    pub fn class_for(
+        &self,
+        ruby: &Ruby,
+        t: NodeType,
+    ) -> Result<crate::bridge::rb::DataClass, Error> {
+        match t {
+            NodeType::Element => self.element,
+            NodeType::Attribute => self.attr,
+            NodeType::Text => self.text,
+            NodeType::Comment => self.comment,
+            NodeType::CDataSection => self.cdata,
+            NodeType::Pi => self.pi,
+            NodeType::DocumentType => self.doctype,
+            NodeType::DocumentFragment => self.fragment,
+            _ => self.node,
+        }
+        .defined(ruby)
+    }
 }

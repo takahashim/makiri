@@ -82,6 +82,7 @@ fn register_variable(
     name: Value,
     value: Value,
 ) -> Result<Value, Error> {
+    let value = crate::bridge::ruby::string_arg(value)?;
     ctx.register_variable(ruby, name, value)?;
     Ok(ctx.value())
 }

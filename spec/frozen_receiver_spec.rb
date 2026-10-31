@@ -92,16 +92,56 @@ RSpec.describe "FrozenError from a frozen node's mutators" do
       expect(doc.root.to_xml).to eq("<r><b><a/></b></r>")
     end
 
-    # The reach is the nodes the caller NAMED. A fragment's children move too and
-    # cannot be checked: frozenness is a property of a Ruby object, and the arena
-    # keeps no map from a node back to its wrapper - so a child the caller never
-    # named is out of reach by construction. Pinned so the boundary is a decision
-    # rather than a surprise.
-    it "does not reach the children of a fragment argument" do
-      doc = Makiri::XML("<r/>")
-      frag = doc.fragment("<f/>")
-      doc.root.add_child(frag)
-      expect(doc.root.children.map(&:name)).to eq(%w[f])
+    # A fragment argument is spliced: its children are relinked, so a frozen
+    # child refuses the insertion as a frozen argument does. The child's wrapper
+    # is found through the document's node table, and a child that never had
+    # one cannot have been frozen.
+    describe "a fragment argument with a frozen child" do
+      it "refuses a splice within one XML document" do
+        doc = Makiri::XML("<r/>")
+        frag = doc.fragment("<f/><g/>")
+        frag.children.last.freeze
+        expect { doc.root.add_child(frag) }.to raise_error(FrozenError)
+        expect(doc.root.to_xml).to eq("<r/>")
+        expect(frag.children.map(&:name)).to eq(%w[f g])
+      end
+
+      it "refuses an adoption out of another XML document" do
+        src = Makiri::XML("<s/>")
+        frag = src.fragment("<f/>")
+        frag.children.first.freeze
+        dst = Makiri::XML("<d/>")
+        expect { dst.root.add_child(frag) }.to raise_error(FrozenError)
+        expect(dst.root.to_xml).to eq("<d/>")
+      end
+
+      it "refuses a splice within one HTML document" do
+        doc = Makiri::HTML("<div></div>")
+        frag = doc.fragment("<p>x</p><span>y</span>")
+        frag.children.first.freeze
+        expect { doc.at_css("div").add_child(frag) }.to raise_error(FrozenError)
+        expect(doc.at_css("div").inner_html).to eq("")
+        expect(frag.children.map(&:name)).to eq(%w[p span])
+      end
+
+      it "refuses an adoption out of another HTML document" do
+        frag = Makiri::HTML::DocumentFragment.parse("<p>x</p>")
+        frag.children.first.freeze
+        doc = Makiri::HTML("<div></div>")
+        expect { doc.at_css("div").add_child(frag) }.to raise_error(FrozenError)
+        expect(doc.at_css("div").inner_html).to eq("")
+      end
+
+      it "still splices a fragment none of whose children is frozen" do
+        doc = Makiri::XML("<r/>")
+        frag = doc.fragment("<f/><g/>")
+        frag.children.first # a wrapper made, not frozen
+        doc.root.add_child(frag)
+        expect(doc.root.children.map(&:name)).to eq(%w[f g])
+        html = Makiri::HTML("<div></div>")
+        html.at_css("div").add_child(html.fragment("<p>x</p>"))
+        expect(html.at_css("div").inner_html).to eq("<p>x</p>")
+      end
     end
   end
 end

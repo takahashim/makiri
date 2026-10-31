@@ -42,59 +42,30 @@
 //! 1.0-1.6x once the loop above took over.
 //!
 //! Deliberate, documented departures from a byte-for-byte semantic
-//! match, plus what is still open:
+//! match, plus what is still open. Those with an M number are stated, with
+//! their reasons and tests, in `docs/parser_differences.ja.md`; the
+//! harnesses that hold this matcher to Lexbor's engine run Lexbor's rules
+//! for them (`compat::as_lexbor`), or leave the shape out.
 //!
-//! - `:disabled`, `:enabled` and `:checked` follow the HTML Standard's
-//!   definitions (`is_disabled`'s doc), not `lxb_selectors_pseudo_class*`:
-//!   an `<input>` in a `<fieldset disabled>` is disabled, the legend
-//!   exemption is the fieldset's first `legend` element child (Lexbor reads
-//!   `first_child`, so whitespace defeats it and an empty fieldset is a NULL
-//!   read - `lxb_selectors_pseudo_class_disabled`), `option`/`optgroup`
-//!   count, `:enabled` is only for the elements `:disabled` is defined for
-//!   (Lexbor: any element), and an
-//!   element with a custom tag is neither `:disabled` nor `:checked` by its
-//!   attribute alone. `:read-write` / `:read-only` are the Standard's too
-//!   (M9): an `input` the `readonly` attribute applies to, a `textarea`, an
-//!   editable element - Lexbor takes every `input`, and no editable one.
-//!   Checked against the Standard
-//!   (`form_state_pseudo_classes_follow_the_html_standard`); the Lexbor
-//!   differential fuzzer leaves all five out.
-//! - `:any-link` / `:link` are an HTML `a` / `area` or an SVG `a` with an
-//!   `href` (M2), where Lexbor takes `link` and `map` in any namespace, and
-//!   `:empty` counts element and non-empty text children only (M10), where
-//!   Lexbor counts every child but a comment. Both as the browsers answer.
-//!   The harnesses that hold this matcher to Lexbor's engine run Lexbor's
-//!   rules (`compat::as_lexbor`).
+//! - Form state is the HTML Standard's: `:disabled` / `:enabled` /
+//!   `:checked` (M1; `is_disabled`'s doc) and `:read-write` / `:read-only`
+//!   (M9), checked by `form_state_pseudo_classes_follow_the_html_standard`.
+//! - `:any-link` / `:link` (M2) and `:empty` (M10) answer as the browsers do.
 //! - `lxb_selectors_anb_calc` tests `:nth-*`'s `An+B` with a `double`
 //!   division, which past 2^53 answers "divisible" for everything; this port
 //!   computes exactly, in `i128` (`anb_matches`'s doc).
-//! - `:nth-child(An+B of S)` / `:nth-last-child(An+B of S)` count by
-//!   the CSS definition - an element in `S`, ranked among its element
-//!   siblings that are in `S` - where Lexbor miscounts in many shapes: a
-//!   comma list in `S` (it starts from the LAST list, `anb->of->last`, so
-//!   `p:nth-child(2 of ul, p)` and `(2 of p, ul)` answer differently), a
-//!   combinator in `S` (`span:nth-child(2 of li span)` finds a `<span>` that
-//!   is first among `li span` siblings), and even simple pseudos such as
-//!   `:enabled` or `:empty` in `S`, or the ORDER of simple selectors in its
-//!   compound (`[data-n^='1']:nth-child(odd)` vs `:nth-child(odd)[data-n^='1']`).
-//!   This port's answer is checked against a spec oracle rather than Lexbor
+//! - `:nth-child(An+B of S)` counts by the CSS definition (M5), checked
+//!   against a spec oracle
 //!   (`lexbor::tests::css_match::nth_child_of_s_agrees_with_a_spec_oracle`);
-//!   the Lexbor differential fuzzer leaves `of S` out. The walk itself is
-//!   Lexbor's shape - candidate in `S`, then siblings one at a time
-//!   (`NthOfTask`) on the task stack.
+//!   the walk itself is Lexbor's shape (`NthOfTask`).
 //! - An attribute selector's NAME is looked up as the DOM's `getAttribute`
-//!   does - ASCII case-insensitive on an HTML element in an HTML document,
-//!   case-sensitive otherwise, the HTML Standard's rule for Selectors - where
-//!   Lexbor folds case everywhere (so `[viewbox]` finds an SVG `viewBox`
-//!   there, not here) - and by QUALIFIED name, so `[href]` does not find a
-//!   prefixed `xlink:href`, which Lexbor takes by its local name (Selectors:
-//!   a name without a namespace prefix means no namespace). Resolving names
-//!   to Lexbor's ids ([`Name`]) keeps this rule exactly (an id match is only
-//!   a pre-filter); `lexbor::tests::css_match::resolved_names_agree_with_the_old_engine`
-//!   pins that case is the only difference for an unprefixed attribute.
-//!   The pseudo-classes Lexbor answers from an attribute's presence
-//!   (`:any-link`, `:required`, `:placeholder-shown`, `:hover`, ...) keep
-//!   Lexbor's local-name rule, `xlink:href` included.
+//!   does: case-sensitive on SVG / MathML (M3) and by qualified name, so
+//!   `[href]` does not find `xlink:href` (M7). Resolving names to Lexbor's
+//!   ids ([`plan::Name`]) keeps the rule exactly; the pseudo-classes Lexbor
+//!   answers from an attribute's presence keep its local-name rule.
+//! - A type selector's case on a non-HTML element (M4) and namespace
+//!   prefix (M6), and the siblings the `:nth-child` family counts (M8),
+//!   follow the specifications likewise.
 //! - A compound that STARTS with `:is()` / `:where()` / `:not()` / `:has()`
 //!   is tried at every candidate its combinator allows - every ancestor for
 //!   a descendant combinator, every preceding sibling for `~`, and in a
@@ -176,6 +147,7 @@
 
 mod compile;
 pub mod dom;
+mod lang;
 mod ns;
 mod nth_of;
 mod plan;
@@ -332,20 +304,12 @@ pub fn matches_any<'d, N: CssNode<'d>>(
     ns: &Namespaces<'_>,
     node: N,
 ) -> Result<bool, MatchFailure> {
-    with_query(
-        scratch,
-        groups,
-        ns,
-        None,
-        Some(node),
-        DEFAULT_WORK_BUDGET,
-        |query| {
-            if node.element().is_none() {
-                return Ok(false);
-            }
-            query.matches_top(node)
-        },
-    )
+    with_query(scratch, groups, ns, QueryShape::one(node), |query| {
+        if node.element().is_none() {
+            return Ok(false);
+        }
+        query.matches_top(node)
+    })
 }
 
 /// What `:scope` is for a query made from `root`: `root` itself when it is
@@ -369,22 +333,51 @@ fn scope_of<'d, N: CssNode<'d>>(root: N) -> Option<N> {
     None
 }
 
+/// The two kinds of query: one that walks a subtree, and one that tests a
+/// single node (`matches?`).
+struct QueryShape<'d, N: CssNode<'d>> {
+    /// The document walked, whose names the plan resolves; `None` for one
+    /// node, where resolving costs more than it saves.
+    walk_in: Option<N::Doc>,
+    /// What `:scope` matches.
+    scope: Option<N>,
+    /// The work budget, in steps.
+    limit: usize,
+}
+
+impl<'d, N: CssNode<'d>> QueryShape<'d, N> {
+    /// A walk of `root`'s subtree under `limit` steps.
+    fn walking(root: N, limit: usize) -> Self {
+        QueryShape {
+            walk_in: Some(root.owner_document()),
+            scope: scope_of(root),
+            limit,
+        }
+    }
+
+    /// `node` alone, which is its own `:scope`.
+    fn one(node: N) -> Self {
+        QueryShape {
+            walk_in: None,
+            scope: Some(node),
+            limit: DEFAULT_WORK_BUDGET,
+        }
+    }
+}
+
 /// Compile `groups` ([`compile`]: a selector it refuses is refused before
-/// any node is matched), make a query over it - walking `walk_in` when
-/// given - and run `f`; every table and stack goes back to `scratch`
+/// any node is matched), make a query of `shape` over it and run `f`; every table and stack goes back to `scratch`
 /// whatever `f` answers. The one place the entry points borrow and return
 /// a [`Scratch`].
 fn with_query<'d, N: CssNode<'d>, R, E: From<MatchFailure>>(
     scratch: &mut Scratch<N::Host>,
     groups: Lists<'_>,
     ns: &Namespaces<'_>,
-    walk_in: Option<N::Doc>,
-    scope: Option<N>,
-    limit: usize,
+    shape: QueryShape<'d, N>,
     f: impl FnOnce(&mut Query<'_, '_, 'd, N>) -> Result<R, E>,
 ) -> Result<R, E> {
     let compiled = compile(&mut scratch.tables, groups, ns)?;
-    let answer = match Query::new(&compiled, walk_in, scope, limit, scratch) {
+    let answer = match Query::new(&compiled, shape, scratch) {
         Ok(mut query) => {
             let answer = f(&mut query);
             query.finish(scratch);
@@ -445,14 +438,11 @@ fn select_all_with_limit<'d, N: CssNode<'d>>(
     ns: &Namespaces<'_>,
     limit: usize,
 ) -> Result<Vec<N>, QueryFailure> {
-    let walk_in = Some(root.owner_document());
     with_query(
         scratch,
         groups,
         ns,
-        walk_in,
-        scope_of(root),
-        limit,
+        QueryShape::walking(root, limit),
         |query| {
             let mut out = Vec::new();
             let stopped = each_match(query, root, |n| {
@@ -496,14 +486,11 @@ pub fn select_first<'d, N: CssNode<'d>>(
     groups: Lists<'_>,
     ns: &Namespaces<'_>,
 ) -> Result<Option<N>, MatchFailure> {
-    let walk_in = Some(root.owner_document());
     with_query(
         scratch,
         groups,
         ns,
-        walk_in,
-        scope_of(root),
-        DEFAULT_WORK_BUDGET,
+        QueryShape::walking(root, DEFAULT_WORK_BUDGET),
         |query| each_match(query, root, ControlFlow::Break),
     )
 }

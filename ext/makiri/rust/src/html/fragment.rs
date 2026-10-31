@@ -47,7 +47,7 @@ impl From<GuardStop> for FragmentError {
 impl FragmentError {
     /// The message, for every error but [`Guard`](FragmentError::Guard),
     /// whose message names its limit and is the bridge's to word
-    /// (`bridge::doc::guard_error`, shared with a document parse).
+    /// (`bridge::html::document::guard_error`, shared with a document parse).
     pub fn message(self) -> &'static str {
         match self {
             FragmentError::Parser => "failed to create HTML parser",

@@ -82,6 +82,7 @@ fn s_parse(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     let a = crate::bridge::args::scan(ruby, args, crate::bridge::args::Shape::with_keywords(1, 0))?;
     let source = a.required(0);
     let limits = parse_limits(ruby, a.keywords())?;
+    let source = crate::bridge::ruby::string_arg(source)?;
     crate::bridge::xml::parse_xml_document(ruby, source, limits)
 }
 
@@ -115,6 +116,7 @@ fn fragment_s_parse(ruby: &Ruby, _klass: Value, source: Value) -> Result<Value, 
      * fragment's wrapper keeps it. */
     let held = crate::bridge::xml::new_empty_xml_document(ruby)?;
     let doc_obj = held.value();
+    let source = crate::bridge::ruby::string_arg(source)?;
     let frag = crate::bridge::xml::fragment_into(ruby, doc_obj, source, false)?;
     wrap(ruby, frag, doc_obj)
 }
@@ -128,6 +130,7 @@ fn doc_copy(ruby: &Ruby, rb_self: Value) -> Result<Value, Error> {
 /// `doc.fragment(source)` - a fragment bound to this document, resolving names
 /// against its in-scope (root) namespaces, so the nodes can be spliced in.
 fn doc_fragment(ruby: &Ruby, rb_self: Value, source: Value) -> Result<Value, Error> {
+    let source = crate::bridge::ruby::string_arg(source)?;
     let frag = crate::bridge::xml::fragment_into(ruby, rb_self, source, true)?;
     wrap(ruby, frag, rb_self)
 }

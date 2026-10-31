@@ -13,12 +13,11 @@
 use crate::bridge::rb::{prelude::*, Error, RHash, Ruby, Value};
 
 use crate::bridge::ruby::makiri_error;
-use crate::bridge::string::namespace_arg;
+use crate::bridge::string::{namespace_arg, optional};
 
 use crate::bridge::xml::{
-    begin_edit, import_copy, insert, verified_data, verified_data_opt, verified_name,
-    verified_name_opt, verified_text, verified_text_opt, with_arena_for_new_node,
-    wrap_xml_node as wrap, xml_mut_result, Editing, XmlSelf,
+    begin_edit, import_copy, insert, verified_data, verified_name, verified_text,
+    with_arena_for_new_node, wrap_xml_node as wrap, xml_mut_result, Editing, XmlSelf,
 };
 use crate::dom_rules::{self, TextContent};
 use crate::glue::node::{dom_extract, DOCUMENT_NOT_REMOVABLE};
@@ -260,7 +259,7 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
     }
 
     let nv = verified_name(ruby, name, "element name")?;
-    let cv = verified_data_opt(ruby, content, "element content")?;
+    let cv = optional(content, |v| verified_data(ruby, v, "element content"))?;
     let name = nv.as_bytes();
     let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
         mutate::new_element(d, name)
@@ -345,7 +344,7 @@ pub fn create_loose_dom_element(
 ) -> Result<Value, Error> {
     let qv = verified_name(ruby, qname, "qualified name")?;
     let lv = verified_name(ruby, local, "local name")?;
-    let pv = verified_name_opt(ruby, prefix, "prefix")?;
+    let pv = optional(prefix, |v| verified_name(ruby, v, "prefix"))?;
     let nv = namespace_arg(ruby, ns, "namespace URI")?;
 
     let qname = qv.as_bytes();
@@ -366,8 +365,12 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
     let name = a.required(0);
     let nil = ruby.qnil().as_value();
     let nv = verified_name(ruby, name, "doctype name")?;
-    let pv = verified_text_opt(ruby, a.optional(0).unwrap_or(nil), "doctype public id")?;
-    let sv = verified_text_opt(ruby, a.optional(1).unwrap_or(nil), "doctype system id")?;
+    let pv = optional(a.optional(0).unwrap_or(nil), |v| {
+        verified_text(ruby, v, "doctype public id")
+    })?;
+    let sv = optional(a.optional(1).unwrap_or(nil), |v| {
+        verified_text(ruby, v, "doctype system id")
+    })?;
     /* An empty id is absent, like nil, matching the HTML factory and
      * Nokogiri. Built as a `DoctypeId`, never an `Option<&[u8]>` (its doc
      * says why). */

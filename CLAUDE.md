@@ -1650,7 +1650,7 @@ an M-series Mac's 4 performance cores.
 
 Key decisions that got there, worth not regressing:
 
-- **Parsing releases the GVL; XPath evaluation does NOT** (`bridge::doc`,
+- **Parsing releases the GVL; XPath evaluation does NOT** (`bridge::html::document`,
   `glue/query.rs`): parse copies the source to a C buffer then runs
   `parse_html` under `rb_thread_call_without_gvl2` - safe because a freshly
   parsed document is not yet shared, so it can't race anything. The `2`
