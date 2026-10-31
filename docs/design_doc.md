@@ -58,9 +58,10 @@ This is the English version of the design document. The Japanese version,
   Every method exposed to Ruby turns a violation inside it into a dedicated
   exception that can be rescued, whether or not the input was untrusted.
   Outside a method (during initialization, say), the cleanup runs (`ensure`,
-  `at_exit`, resource release) and only the current thread ends. Code called
-  by the GC is the one place that aborts, since nothing can be raised there;
-  it is kept trivial for that reason.
+  `at_exit`, resource release) and only the current thread ends. Nothing can
+  be raised in code the GC calls, so that code is kept trivial: the mark
+  callback is proven by the compiler not to unwind, and the free and memsize
+  callbacks catch a panic and carry on, leaking the payload or answering 0.
 * Test with robustness fuzzing and hand-curated differential specs. The
   parser port is checked by differential fuzzing against its reference,
   Lexbor; by conformance data from fixed versions of the specifications
@@ -565,9 +566,9 @@ Checks against the specifications and the reference are grouped under
   for the sanitizer to catch an overflow from one piece into the next; with
   index addressing, an out-of-range access inside the arena is caught by a
   bounds check, so no poisoning is needed.
-* A vendored dependency's bump arena, too, is checked by building the
-  dependency itself instrumented when needed, still with no patches (only
-  build flags).
+* The vendored Lexbor is not in the shipping build; it is built plain, as
+  the reference only. Its bump arena is not a target of the sanitizer
+  checks, and it gets no patches.
 * Leak checks are kept separate from the sanitizer and cover paths that exit
   through an exception as well.
 * OOM injection fails every allocation site in turn and checks that each
@@ -645,8 +646,8 @@ These can change if circumstances do.
   bridge was first changed to treat a node as a reference into a document
   (`RawNode`) and to edit only inside a closure that borrows the document
   `&mut`, so that one facade could switch between the two backends.
-  `bridge::dom` holds the content a Document owns in a `RefCell`, with its
-  read and edit guards. The guards are the only way to the content, and an
+  The content a Document owns is held in the engine's `doc_cell::DocCell`
+  (a `RefCell` inside), and `bridge::dom` holds its read and edit guards. The guards are the only way to the content, and an
   edit is refused at run time while a read is still held.
 * Selector parsing is also a port of Lexbor's parser, so the parse results
   can be owned by a cache without being tied to the lifetime of Lexbor's
