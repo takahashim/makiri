@@ -143,8 +143,7 @@ stack-redzone poison behind. A later interceptor (memcpy & co.) in the
 uninstrumented interpreter then trips over the stale shadow: a
 layout-sensitive spurious report that ASan aborts on while rendering
 (`asan_thread.cpp` `kCurrentStackFrameMagic` CHECK). This took CI's sanitize
-jobs down via the XML-mutation PBT, which raises thousands of times; see
-`docs/ci-crash/INVESTIGATION.md`.
+jobs down via the XML-mutation PBT, which raises thousands of times.
 
 Heap red zones are unaffected; only stack-buffer checks are lost. Do not
 re-enable stack instrumentation without solving the `__builtin_longjmp`
