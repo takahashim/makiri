@@ -1,9 +1,14 @@
 //! Ruby values written into a message, without a call: `#inspect` and
 //! `#to_s` would be the caller's Ruby code, and a message is made on an
 //! error path, where nothing may raise.
+//!
+//! A String's bytes are written from a copy (`Head`), never from a slice
+//! of the String: a `Display` writes into whatever `fmt::Write` its caller
+//! chose, which this module cannot hold to running no Ruby.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
+use crate::msg::{floor_char_boundary, Lossy, Quoted, MSG_MAX};
 use crate::rb::{prelude::*, Error, RString, Ruby, Value};
 
 /// A lookup made only to word a message - a Symbol's name, a class's name,
@@ -28,6 +33,47 @@ pub(crate) fn for_message<T>(f: impl FnOnce() -> Result<T, Error>) -> Option<T> 
     crate::raw::keeping_errinfo(f).ok()
 }
 
+/// Room for a message's worth of a String and the start of the character
+/// that runs past it, so the cut can be put at a character boundary.
+const HEAD_ROOM: usize = MSG_MAX + 4;
+
+/// The first [`MSG_MAX`] bytes of a String, copied onto the stack: all of a
+/// message there is room for, since [`crate::msg::Msg`] keeps no more.
+/// `cut` says the String went on, so a message says it was cut even where
+/// the copy alone would fit.
+struct Head {
+    buf: [u8; HEAD_ROOM],
+    len: usize,
+    cut: bool,
+}
+
+impl Head {
+    fn of(s: RString) -> Head {
+        let mut buf = [0u8; HEAD_ROOM];
+        /* Copied, and its length read, with nothing run between. */
+        let n = s.copy_to(0, &mut buf);
+        let cut = n > MSG_MAX || s.len() > n;
+        let len = if cut {
+            floor_char_boundary(buf.get(..n).unwrap_or_default(), MSG_MAX)
+        } else {
+            n
+        };
+        Head { buf, len, cut }
+    }
+
+    fn bytes(&self) -> &[u8] {
+        self.buf.get(..self.len).unwrap_or_default()
+    }
+
+    /// `...` after a cut String, as [`crate::msg::Msg`] ends a cut message.
+    fn mark_cut(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if self.cut {
+            f.write_str("...")?;
+        }
+        Ok(())
+    }
+}
+
 /// `v` for an error message, written without calling it: a Symbol as
 /// `:name`, a String quoted, anything else by its class (`#inspect` would be
 /// the caller's Ruby).
@@ -39,13 +85,15 @@ impl core::fmt::Display for Describe {
         if let Some(sym) = crate::rb::Symbol::from_value(v) {
             /* A name that cannot be made is written by the class instead. */
             if let Some(s) = for_message(|| super::raw::sym2str(sym)) {
-                // SAFETY: written out at once; formatting runs no Ruby.
-                return write!(f, ":{}", crate::msg::Lossy(unsafe { s.as_slice() }));
+                let head = Head::of(s);
+                write!(f, ":{}", Lossy(head.bytes()))?;
+                return head.mark_cut(f);
             }
         }
         if let Some(s) = RString::from_value(v) {
-            // SAFETY: as above.
-            return crate::msg::Quoted(unsafe { s.as_slice() }).fmt(f);
+            let head = Head::of(s);
+            Quoted(head.bytes()).fmt(f)?;
+            return head.mark_cut(f);
         }
         if v.is_nil() {
             return f.write_str("nil");
@@ -74,8 +122,9 @@ impl core::fmt::Display for AsText {
             },
         };
         if let Some(s) = text {
-            // SAFETY: written out at once; formatting runs no Ruby.
-            return crate::msg::Lossy(unsafe { s.as_slice() }).fmt(f);
+            let head = Head::of(s);
+            Lossy(head.bytes()).fmt(f)?;
+            return head.mark_cut(f);
         }
         Describe(v).fmt(f)
     }
@@ -112,13 +161,13 @@ impl core::fmt::Display for ExceptionText<'_> {
         let Some(r) = RString::from_value(crate::rb::object::ivar_get(self.1, id)) else {
             return f.write_str("error");
         };
-        // SAFETY: written out at once; formatting runs no Ruby.
-        let bytes = unsafe { r.as_slice() };
+        let head = Head::of(r);
+        let bytes = head.bytes();
         let n = bytes
             .iter()
             .position(|&b| b == 0)
             .unwrap_or(bytes.len())
             .min(EXCEPTION_MESSAGE_MAX);
-        crate::msg::Lossy(&bytes[..n]).fmt(f)
+        Lossy(bytes.get(..n).unwrap_or_default()).fmt(f)
     }
 }

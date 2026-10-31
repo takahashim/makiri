@@ -21,12 +21,20 @@ pub struct Encoding(*mut rb_sys::rb_encoding);
  * as UTF-8 bytes - asked once, at `Init_` ([`init`]), and only read after.
  * Ruby keeps them as constants, but hides them from extensions
  * (`ruby_preserved_encindex`), so they are asked rather than written here.
- * -1 is no encoding's index: read before `init`, every test answers "not
- * read as UTF-8 bytes", which sends a String to Ruby's transcode - slower,
- * never wrong. (No method runs before `Init_`.) */
+ * They are the one way the layer tells these three encodings: by index, as
+ * a String's flags carry it, so an `Encoding` and a String are asked alike.
+ * -1 is no encoding's index: read before `init`, no test matches, which
+ * sends a String to Ruby's transcode - slower, never wrong. (No method runs
+ * before `Init_`.) */
 static UTF8: AtomicI32 = AtomicI32::new(-1);
 static USASCII: AtomicI32 = AtomicI32::new(-1);
 static ASCII8BIT: AtomicI32 = AtomicI32::new(-1);
+
+/// Whether `index` is the builtin encoding `builtin` holds the index of.
+#[inline]
+fn is_builtin(builtin: &AtomicI32, index: c_int) -> bool {
+    builtin.load(Ordering::Relaxed) == index
+}
 
 /// Ask Ruby the builtin encodings' indices, once: the first thing
 /// `rb::method::run_init` does, before the extension's own `Init_` code.
@@ -53,13 +61,13 @@ pub(crate) fn init(_: &crate::rb::Ruby) {
 pub(crate) fn reads_as_utf8_index(index: c_int) -> bool {
     [&UTF8, &USASCII, &ASCII8BIT]
         .iter()
-        .any(|i| i.load(Ordering::Relaxed) == index)
+        .any(|b| is_builtin(b, index))
 }
 
 /// Whether the encoding of index `index` is UTF-8.
 #[inline]
 pub(crate) fn is_utf8_index(index: c_int) -> bool {
-    UTF8.load(Ordering::Relaxed) == index
+    is_builtin(&UTF8, index)
 }
 
 /// What a transcode ([`Encoding::encode`]) does with a byte sequence that is
@@ -135,7 +143,7 @@ impl Encoding {
         if name.is_empty() {
             return Ok(None);
         }
-        let Some(c) = crate::rb::class::CName::new(name) else {
+        let Some(c) = crate::cname::CName::new(name) else {
             return Ok(None);
         };
         use crate::rb::Builtin::{ArgumentError, LoadError};
@@ -162,13 +170,11 @@ impl Encoding {
     }
 
     pub fn is_usascii(self) -> bool {
-        // SAFETY: Ruby's immutable global encoding.
-        self.0 == unsafe { rb_sys::rb_usascii_encoding() }
+        is_builtin(&USASCII, self.index())
     }
 
     pub fn is_ascii8bit(self) -> bool {
-        // SAFETY: Ruby's immutable global encoding.
-        self.0 == unsafe { rb_sys::rb_ascii8bit_encoding() }
+        is_builtin(&ASCII8BIT, self.index())
     }
 
     /// The encoding's index (`rb_enc_to_index`), as a String's flags carry
@@ -181,8 +187,9 @@ impl Encoding {
 
     /// UTF-8 or US-ASCII: text in it is already UTF-8, character for
     /// character. What a serialized String needs no transcoding into.
-    pub fn is_utf8_or_ascii(self, ruby: &crate::rb::Ruby) -> bool {
-        self == Encoding::utf8(ruby) || self.is_usascii()
+    pub fn is_utf8_or_ascii(self) -> bool {
+        let index = self.index();
+        is_utf8_index(index) || is_builtin(&USASCII, index)
     }
 
     /// UTF-8, US-ASCII or ASCII-8BIT: an encoding whose text is read as

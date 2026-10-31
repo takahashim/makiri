@@ -43,7 +43,7 @@ use crate::bridge::rb::{prelude::*, Error, Ruby, Value};
 use crate::bridge::ruby::makiri_error;
 
 use crate::bridge::node_wrap::wrap_doc_node;
-use crate::bridge::typed::{Payload, Typed, TypedType};
+use crate::bridge::typed::{Birth, Payload, Typed, TypedType};
 use crate::bridge::wrapper::{keepalive_document, node_raw, DocKind, NodeWord};
 use crate::init::{CLASS_DOCUMENT, CLASS_NODE, CLASS_NODE_SET};
 
@@ -402,12 +402,14 @@ fn node_set_new(ruby: &Ruby, document: Value) -> Result<Typed<NodeSet, 1>, Error
     let kind = DocKind::of(document);
     NODE_SET_TYPE.wrap(
         ruby,
-        CLASS_NODE_SET.defined(ruby)?,
-        NodeSet {
-            kind,
-            nodes: RefCell::new(NodeVec::new()),
+        Birth {
+            klass: CLASS_NODE_SET.defined(ruby)?,
+            data: NodeSet {
+                kind,
+                nodes: RefCell::new(NodeVec::new()),
+            },
+            roots: [document],
         },
-        [document],
     )
 }
 

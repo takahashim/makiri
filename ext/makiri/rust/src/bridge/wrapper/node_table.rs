@@ -7,6 +7,7 @@
 use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, Value};
 use crate::bridge::ruby::internal_error;
+use crate::bridge::typed::Birth;
 
 use super::*;
 
@@ -43,7 +44,14 @@ pub(in crate::bridge) fn wrap_cached(
         return Ok(cached);
     }
     let node = source.into_handle(document);
-    let fresh = ty.wrap(ruby, klass, NodeData { node }, [document])?;
+    let fresh = ty.wrap(
+        ruby,
+        Birth {
+            klass,
+            data: NodeData { node },
+            roots: [document],
+        },
+    )?;
     /* The table entry: a Ruby reference, which the GC marks and moves
      * itself. A failure leaves `fresh` unseen and unreferenced. */
     table.set(key, fresh)?;

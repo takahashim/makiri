@@ -170,6 +170,9 @@ pub mod rb;
 // Every Ruby C call that can raise, each under `rb_protect`.
 pub(crate) mod raw;
 
+// A short name as a C string on the stack, as Ruby's C API takes one.
+pub(crate) mod cname;
+
 // Every conversion between Rust's integer widths and C's `long` - the
 // layer's own: what it hands an extension is in Rust's widths.
 pub(crate) mod int;
@@ -209,7 +212,7 @@ pub mod hash;
 // Ruby values written into a message without a call.
 pub mod describe;
 
-// The Ruby API version, built against and running.
+// What the binary assumes of the running Ruby, and the load checks of it.
 pub mod abi;
 
 // The native-stack check, for a token.

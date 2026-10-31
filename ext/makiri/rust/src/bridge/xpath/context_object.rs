@@ -205,13 +205,15 @@ impl XPathCtx {
         XPATH_CTX_TYPE
             .wrap_hidden::<Value>(
                 ruby,
-                CLASS_XPATH_CONTEXT.defined(ruby)?,
-                XPathCtx {
-                    cache: RefCell::new(AstCache(HashMap::new())),
-                    cache_bytes: crate::bridge::typed::External::new(),
-                    ctx,
+                crate::bridge::typed::Birth {
+                    klass: CLASS_XPATH_CONTEXT.defined(ruby)?,
+                    data: XPathCtx {
+                        cache: RefCell::new(AstCache(HashMap::new())),
+                        cache_bytes: crate::bridge::typed::External::new(),
+                        ctx,
+                    },
+                    roots: [],
                 },
-                [],
                 /* The Document and the context node, as hidden ivars: ordinary
                  * Ruby references. A write that raises leaves the context hidden,
                  * where no Ruby code can find it without them. */

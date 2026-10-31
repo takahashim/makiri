@@ -124,7 +124,7 @@ impl DocumentSource {
             Some(GivenEncoding::Ruby(e)) => e,
             None => own,
         };
-        match transport_for(super::encoding_kind(ruby, enc)) {
+        match transport_for(super::encoding_kind(enc)) {
             Transport::Unlabelled => {
                 /* The bytes are read as `enc`'s, whatever the String says. */
                 Ok(DocumentSource {

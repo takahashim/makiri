@@ -71,13 +71,7 @@ pub unsafe fn finish(f: impl FnOnce(&Ruby) -> Result<Value, Error>) -> Value {
                 Some(exit) => exit,
             },
             Ok(Err(e)) => e,
-            Err(payload) => {
-                let msg = crate::caught::quietly(crate::msg::Msg::copy("a panic"), || {
-                    crate::msg::Msg::copy(crate::caught::message(payload.as_ref()))
-                });
-                crate::caught::quietly((), || drop(payload));
-                crate::rb::error::internal_error(msg)
-            }
+            Err(payload) => crate::rb::error::internal_error(crate::caught::panic_message(payload)),
         };
         e.raise(&ruby)
     })
@@ -293,27 +287,7 @@ where
 /// for `define_method`.
 #[macro_export]
 macro_rules! method {
-    ($f:expr, -1) => {{
-        extern "C" fn anon(
-            argc: ::core::ffi::c_int,
-            argv: $crate::rb::method::CArgv,
-            rb_self: $crate::rb::Value,
-        ) -> $crate::rb::Value {
-            #[allow(unused_imports)]
-            use $crate::rb::method::{MethodCAry as _, RubyMethodCAry as _};
-            /* Bound OUTSIDE the `unsafe` block: inside it, an unsafe
-             * operation written in `$f` would need no `unsafe` of its own,
-             * and the caller's `forbid(unsafe_code)` sees none in an
-             * external macro's expansion. */
-            let f = $f;
-            // SAFETY: Ruby is calling this trampoline, with the arguments it
-            // passed.
-            unsafe {
-                $crate::rb::method::finish_cary(argc, argv, |ruby, args| f.invoke(ruby, rb_self, args))
-            }
-        }
-        $crate::rb::method::Func::cary(anon)
-    }};
+    ($f:expr, -1) => { $crate::__trampoline!(cary $f, MethodCAry, RubyMethodCAry) };
     ($f:expr, 0) => { $crate::__trampoline!(method $f, new0, Method0, RubyMethod0;) };
     ($f:expr, 1) => { $crate::__trampoline!(method $f, new1, Method1, RubyMethod1; a0) };
     ($f:expr, 2) => { $crate::__trampoline!(method $f, new2, Method2, RubyMethod2; a0, a1) };
@@ -325,14 +299,25 @@ macro_rules! method {
 /// arity `n` - a singleton method, say.
 #[macro_export]
 macro_rules! function {
-    ($f:expr, -1) => {{
+    ($f:expr, -1) => { $crate::__trampoline!(cary $f, FunctionCAry, RubyFunctionCAry) };
+    ($f:expr, 0) => { $crate::__trampoline!(function $f, new0, Function0, RubyFunction0;) };
+    ($f:expr, 1) => { $crate::__trampoline!(function $f, new1, Function1, RubyFunction1; a0) };
+    ($f:expr, 2) => { $crate::__trampoline!(function $f, new2, Function2, RubyFunction2; a0, a1) };
+    ($f:expr, 3) => { $crate::__trampoline!(function $f, new3, Function3, RubyFunction3; a0, a1, a2) };
+    ($f:expr, 4) => { $crate::__trampoline!(function $f, new4, Function4, RubyFunction4; a0, a1, a2, a3) };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __trampoline {
+    (cary $f:expr, $plain:ident, $ruby:ident) => {{
         extern "C" fn anon(
             argc: ::core::ffi::c_int,
             argv: $crate::rb::method::CArgv,
             rb_self: $crate::rb::Value,
         ) -> $crate::rb::Value {
             #[allow(unused_imports)]
-            use $crate::rb::method::{FunctionCAry as _, RubyFunctionCAry as _};
+            use $crate::rb::method::{$plain as _, $ruby as _};
             /* Bound OUTSIDE the `unsafe` block: inside it, an unsafe
              * operation written in `$f` would need no `unsafe` of its own,
              * and the caller's `forbid(unsafe_code)` sees none in an
@@ -346,16 +331,6 @@ macro_rules! function {
         }
         $crate::rb::method::Func::cary(anon)
     }};
-    ($f:expr, 0) => { $crate::__trampoline!(function $f, new0, Function0, RubyFunction0;) };
-    ($f:expr, 1) => { $crate::__trampoline!(function $f, new1, Function1, RubyFunction1; a0) };
-    ($f:expr, 2) => { $crate::__trampoline!(function $f, new2, Function2, RubyFunction2; a0, a1) };
-    ($f:expr, 3) => { $crate::__trampoline!(function $f, new3, Function3, RubyFunction3; a0, a1, a2) };
-    ($f:expr, 4) => { $crate::__trampoline!(function $f, new4, Function4, RubyFunction4; a0, a1, a2, a3) };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __trampoline {
     ($kind:ident $f:expr, $new:ident, $plain:ident, $ruby:ident; $($a:ident),*) => {{
         extern "C" fn anon(
             rb_self: $crate::rb::Value
@@ -363,7 +338,7 @@ macro_rules! __trampoline {
         ) -> $crate::rb::Value {
             #[allow(unused_imports)]
             use $crate::rb::method::{$plain as _, $ruby as _};
-            /* Bound outside the `unsafe` block, as `method!`'s `-1` arm. */
+            /* Bound outside the `unsafe` block, as the `cary` arm's. */
             let f = $f;
             // SAFETY: Ruby is calling this trampoline.
             unsafe { $crate::rb::method::finish(|ruby| f.invoke(ruby, rb_self $(, $a)*)) }
@@ -478,27 +453,14 @@ pub unsafe fn run_init(
                         ))
                     },
                 ),
-                Err(payload) => panic_message(payload),
+                Err(payload) => crate::caught::panic_message(payload),
             },
             Ok(Err(e)) => e.raise(&ruby),
-            Err(payload) => panic_message(payload),
+            Err(payload) => crate::caught::panic_message(payload),
         };
         match crate::raw::exception_new(&ruby, ruby.exception_runtime_error(), msg.as_bytes()) {
             Ok(exc) => crate::raw::exc_fatal(exc),
             Err(e) => e.raise(&ruby),
         }
     })
-}
-
-/// A caught panic's message, the payload dropped - both `quietly`, since a
-/// payload's drop and its downcast are what the compiler cannot show
-/// unwind-free. Inlined into `run_init`, or `rake no_unwind` cannot see
-/// that its call does not unwind.
-#[inline(always)]
-fn panic_message(payload: Box<dyn core::any::Any + Send>) -> crate::msg::Msg {
-    let msg = crate::caught::quietly(crate::msg::Msg::copy("a panic"), || {
-        crate::msg::Msg::copy(crate::caught::message(payload.as_ref()))
-    });
-    crate::caught::quietly((), || drop(payload));
-    msg
 }
