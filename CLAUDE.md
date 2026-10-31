@@ -552,7 +552,7 @@ bundle exec rake miri              # the Ruby-free unsafe code's tests - the fal
                                    # std-only, and included in falloc's test build (`#[path]`)
 bundle exec rake verus             # Verus proofs (ext/makiri/rust/verus/): falloc's
                                    # grow_capacity, ptr_table's probing and
-                                   # load factor, cbuf's Buf (content, ceiling,
+                                   # load factor, ceiling_buf's Buf (content, ceiling,
                                    # fail-closed) with copy_small, and limits::admit,
                                    # the one rule every work budget charges through, copied and checked against the source
                                    # (`verus:sync`) - unbounded.
@@ -567,7 +567,7 @@ bundle exec rake verus             # Verus proofs (ext/makiri/rust/verus/): fall
 bundle exec rake kani              # Kani proofs over the Ruby-free core (needs cargo-kani).
                                    # The successor to the C-era CBMC harnesses: UTF-8
                                    # validate/decode, XML characters, XPath numbers
-                                   # (the allocator and cbuf are Verus's now).
+                                   # (the allocator and ceiling_buf are Verus's now).
                                    # KANI_GROUPS=utf8,xml,xpath picks groups
                                    # (rakelib/rust.rake's KANI_GROUPS, with the code each
                                    # depends on); CI runs only the groups whose
@@ -713,7 +713,7 @@ by the check that concluded "every undefined symbol is legitimate".
   allocator, or - for the glue's Ruby-side storage - through Ruby's xmalloc;
   ASan red-zones both per allocation.
 - **The fallible-allocation line.** The engine (`html`, `xml`, `xpath`, `css`,
-  `selectors`, `css_match`, `css_cache`, `cbuf`) allocates only through `falloc`: `clippy.toml` bans the
+  `selectors`, `css_match`, `css_cache`, `ceiling_buf`) allocates only through `falloc`: `clippy.toml` bans the
   infallible `Box::new` / `Vec::with_capacity` / `reserve`, and every growth too
   (`push`, `insert`, `extend`, `extend_from_slice`, `resize`, a map or set's
   `insert`, `collect`), and `rake oom` fails each site in turn, so an OOM there
@@ -837,10 +837,12 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
     src/doc_cell.rs        `DocCell`: a Document's content behind counted
                            read/write guards (`bridge::dom` wraps it; here so
                            its compile_fail doctests run without a Ruby)
-    src/cbuf.rs            `Buf`: the owned, capped, growable byte buffer
-    src/cutf8.rs           the one UTF-8 validator + strict 1-codepoint decoder
+    src/ceiling_buf.rs     `Buf`: the owned, growable byte buffer with a
+                           content ceiling (`cbuf` while it was C's libc memory)
+    src/utf8_decode.rs     the one UTF-8 validator + strict 1-codepoint decoder
+                           (`cutf8`, the port of the C one)
     src/utf8_input.rs      HTML input sanitiser: invalid UTF-8 -> U+FFFD, per
-                           WHATWG; `cbuf`+`cutf8` only
+                           WHATWG; `ceiling_buf`+`utf8_decode` only
     src/no_unwind.rs       the engine's no_unwind sites and the check's control
     src/xpath/, xml/, html/, css_match/, selectors/ - below, after the extension's
   reference/               the Lexbor reference (crate `makiri_lexbor`, its own
@@ -958,7 +960,7 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            each table is the `Map` it stands for (`view`): `get`
                            finds exactly what was put, since `wf` keeps keys
                            `unique` and probe paths `clustered`;
-                           `cbuf.rs` for `engine/src/cbuf.rs`: a `Buf` holds exactly
+                           `ceiling_buf.rs` for `engine/src/ceiling_buf.rs`: a `Buf` holds exactly
                            what was appended, its room never passes the ceiling,
                            a failure changes nothing, and `copy_small` copies
                            exactly - at every length, where Kani ran out of memory -
@@ -1565,7 +1567,7 @@ text is written raw only inside the elements the Standard names
 (`raw_text`); the void test reads the tag id (`shape`). `pretty: true` is
 the same walk in Lexbor's pretty layout (not the Standard's; it quotes text
 nodes). Output goes to a `Sink` chunk by chunk; the shipping one is a
-`cbuf::Buf`, pre-reserved only for the document or its root element (sizing
+`ceiling_buf::Buf`, pre-reserved only for the document or its root element (sizing
 reads the whole arena, so a subtree grows from empty), copied into one UTF-8
 Ruby String at the end - faster than appending to a Ruby String, whose
 growth is GC-tracked. The ceiling (`ceiling`) is 64 KiB + 32x the bytes the

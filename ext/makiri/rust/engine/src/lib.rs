@@ -29,7 +29,7 @@
 /// harness's `#[kani::unwind]`, which cannot be computed because Kani wants a
 /// literal. Getting it wrong fails loudly (`unwinding assertion`), not silently,
 /// so the override is safe to use for an experiment without editing the default.
-/// The buffer's content ceilings (`cbuf`) use it for a different reason: they
+/// The buffer's content ceilings (`ceiling_buf`) use it for a different reason: they
 /// were `-D`-overridable C macros, and standing alone that override has to
 /// arrive from the environment instead.
 ///
@@ -52,8 +52,9 @@ pub mod kani_bounds {
     }
 }
 
-/// `Buf`, the capped byte buffer more than one subsystem writes into.
-pub mod cbuf;
+/// `Buf`, the byte buffer with a content ceiling that more than one
+/// subsystem writes into.
+pub mod ceiling_buf;
 
 /// A Document's content, reachable only through a counted borrow guard -
 /// what the extension's `bridge::dom` holds each Document's parse in, against
@@ -78,12 +79,12 @@ pub mod css_match;
 #[cfg(feature = "html-dom")]
 pub mod css_cache;
 
-/// The shared UTF-8 primitives. Unconditional, like `cbuf`: the XML and XPath
+/// The shared UTF-8 primitives. Unconditional, like `ceiling_buf`: the XML and XPath
 /// layers use the strict decoder whatever the feature set.
-pub mod cutf8;
+pub mod utf8_decode;
 
 /// The HTML input sanitiser: invalid UTF-8 becomes U+FFFD, per WHATWG
-/// byte-stream decoding. It is `cbuf` and `cutf8` only, and sits here even
+/// byte-stream decoding. It is `ceiling_buf` and `utf8_decode` only, and sits here even
 /// though only the HTML parse path calls it.
 pub mod utf8_input;
 

@@ -12,7 +12,7 @@
 use super::bindings::{Bindings, Prefix};
 use super::out::{put, put_comment, put_pi, C14N, W};
 use super::Failure;
-use crate::cbuf::Buf;
+use crate::ceiling_buf::Buf;
 use crate::stack::Depth;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 use falloc::{OomResult, VecGrow};

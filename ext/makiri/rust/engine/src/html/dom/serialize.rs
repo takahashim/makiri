@@ -16,7 +16,7 @@
 
 use super::handle::{HtmlAttr, HtmlElement, HtmlNode, NsId};
 use super::{Document, NodeType};
-use crate::cbuf::{Buf, BufError};
+use crate::ceiling_buf::{Buf, BufError};
 use crate::compat::{self, Fix};
 use crate::html::res::names as res;
 

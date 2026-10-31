@@ -1,7 +1,7 @@
-//! Verus proofs over `engine/src/cbuf.rs`: `Buf`, the capped byte buffer output is
+//! Verus proofs over `engine/src/ceiling_buf.rs`: `Buf`, the capped byte buffer output is
 //! collected into, holds exactly what was appended, never past its ceiling,
 //! and a failure changes nothing - for every length, where the exhaustive
-//! test (`cbuf::tests`) covers ceilings up to 6 bytes and the Kani proof it
+//! test (`ceiling_buf::tests`) covers ceilings up to 6 bytes and the Kani proof it
 //! replaced ran CBMC out of memory.
 //!
 //! What is proved is the shipped code: `Buf`'s `as_slice`, `append`,

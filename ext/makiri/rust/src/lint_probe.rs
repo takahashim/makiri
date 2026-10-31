@@ -74,7 +74,7 @@ mod engine {
     }
 
     pub fn names_only_the_engine(b: &[u8]) -> bool {
-        crate::cutf8::valid(b)
+        crate::utf8_decode::valid(b)
     }
 }
 

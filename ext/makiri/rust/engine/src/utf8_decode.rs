@@ -1,4 +1,5 @@
-//! The shared UTF-8 primitives.
+//! The shared UTF-8 primitives, named for the one that is ours, the strict
+//! decoder (`cutf8` while it was the C one's port).
 //!
 //! Two functions:
 //!

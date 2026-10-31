@@ -61,14 +61,14 @@ pub fn is_name_char(c: u32) -> bool {
         || (0x203F..=0x2040).contains(&c)
 }
 
-/// Decode ONE code point strictly (`cutf8::decode1`): truncation, bad
+/// Decode ONE code point strictly (`utf8_decode::decode1`): truncation, bad
 /// continuation bytes, overlong forms, surrogates and values above U+10FFFF are
 /// all rejected.
 ///
-/// Re-exported from `crate::cutf8` rather than written again here: there must be
+/// Re-exported from `crate::utf8_decode` rather than written again here: there must be
 /// exactly ONE strict decoder of ours, and `verify::accepted_is_utf8`
 /// cross-checks it against `core::str::from_utf8` to keep it honest.
-pub use crate::cutf8::decode1;
+pub use crate::utf8_decode::decode1;
 
 /// Every code point of `s` decodes strictly AND satisfies `ok`.
 ///

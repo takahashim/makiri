@@ -1047,13 +1047,13 @@ fn fn_translate<'e, 'd, D: Dom<'d>>(
         };
         if let Some(e) = emit {
             buf.append(e.as_bytes()).map_err(|e| match e {
-                crate::cbuf::BufError::Limit => err_setf!(
+                crate::ceiling_buf::BufError::Limit => err_setf!(
                     err,
                     ErrorKind::Limit,
                     "string size limit exceeded ({} bytes) in translate()",
                     ev.budget.limits.max_string_bytes
                 ),
-                crate::cbuf::BufError::Oom => {
+                crate::ceiling_buf::BufError::Oom => {
                     err_setf!(err, ErrorKind::Oom, "out of memory in translate()")
                 }
             })?;

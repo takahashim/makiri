@@ -13,7 +13,7 @@ use super::abi::*;
 use super::axis::walk_descendants;
 use super::dom::*;
 use super::number;
-use crate::cbuf::OwnedBuf;
+use crate::ceiling_buf::OwnedBuf;
 use crate::err_setf;
 use crate::token::Token;
 use core::ops::ControlFlow;

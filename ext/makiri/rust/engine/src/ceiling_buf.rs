@@ -1,9 +1,13 @@
-//! `Buf`: the owned, capped, growable byte buffer that output is collected
-//! into.
+//! `Buf`: the owned, growable byte buffer with a content ceiling that output
+//! is collected into, and `OwnedBuf`, the bytes detached from one or copied
+//! on their own.
 //!
-//! Declared here rather than inside one subsystem because more than one of them
-//! now writes into it - the XPath engine's string values and the glue's
-//! serializers.
+//! A module of its own rather than inside one subsystem because several
+//! write into it - the HTML and XML serializers and the XPath engine's string
+//! values - and the extension borrows `OwnedBuf` for the copies it must make
+//! fallibly (an encoding name, a parse's source, an XML decode). Named by the
+//! ceiling, which is what sets it apart from a `Vec`; it was `cbuf` while it
+//! was C's libc memory.
 //!
 //! A `Vec<u8>` grown through `falloc`, so `rake oom` reaches every growth and
 //! a failure leaves the buffer as it was. It used to be libc memory under a
@@ -11,7 +15,7 @@
 //! terminator any more - every reader takes [`Buf::as_slice`] - so there is
 //! none, and no `unsafe` either.
 //!
-//! Verus proves `Buf` at every length (`verus/cbuf.rs`, its copy held to this
+//! Verus proves `Buf` at every length (`verus/ceiling_buf.rs`, its copy held to this
 //! file by `rake verus:sync`): the content is what was appended, the room
 //! never passes the ceiling - which `append`'s fast path rests on - and a
 //! failure changes nothing, a `Limit` exactly when the content would pass
@@ -125,7 +129,7 @@ impl Buf {
          * is a copy into room already there. `n` fits the room, so `len + n`
          * cannot overflow; and the room is never past the ceiling (`grow_to`,
          * the one place it changes, is handed a clamped size, and
-         * verus/cbuf.rs proves it), so content that fits it is within the ceiling. */
+         * verus/ceiling_buf.rs proves it), so content that fits it is within the ceiling. */
         if let Some(dst) = self.data.get_mut(len..len + n) {
             copy_small(dst, bytes);
             self.len = len + n;
@@ -354,7 +358,7 @@ mod tests {
     /// are distinct per position, so a copy that misplaced or dropped one
     /// would show: the code under test never branches on a byte's value,
     /// which is all the proof's symbolic bytes added. Verus now proves the
-    /// same at every length (`verus/cbuf.rs`); this stays as the test that
+    /// same at every length (`verus/ceiling_buf.rs`); this stays as the test that
     /// runs the real `Vec`.
     #[test]
     fn append_matches_a_shadow_model_over_the_whole_small_domain() {

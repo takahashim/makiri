@@ -185,7 +185,7 @@ const DETECT_MAX: usize = 64 * 1024;
 /// reported as the end (`last`), so an ISO-2022-JP sequence left open by the
 /// cut does not count against it.
 fn detect(input: &[u8]) -> (&'static Encoding, bool) {
-    if !input.contains(&0x1B) && crate::cutf8::valid(input) {
+    if !input.contains(&0x1B) && crate::utf8_decode::valid(input) {
         return (UTF_8, true);
     }
     let mut detector = chardetng::EncodingDetector::new(chardetng::Iso2022JpDetection::Allow);

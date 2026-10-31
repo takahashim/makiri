@@ -21,7 +21,7 @@
 
 use super::out::{put, put_comment, put_pi, writable_chars, W, XML};
 use super::Failure;
-use crate::cbuf::Buf;
+use crate::ceiling_buf::Buf;
 use crate::stack::Depth;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 use crate::xml::XML_NS_URI;

@@ -24,9 +24,9 @@
 
 /// The engine's modules, by the paths the Ruby layer names them with.
 pub use makiri_engine::{
-    cbuf, child_index, compat, css_cache, css_match, cutf8, doc_cell, dom_rules, engine_error,
+    ceiling_buf, child_index, compat, css_cache, css_match, doc_cell, dom_rules, engine_error,
     html, html_dom, kani_bounds, limits, no_unwind, node_type, ptr_table, selectors, source_lines,
-    stack, text, token, utf8_input, xml, xpath,
+    stack, text, token, utf8_decode, utf8_input, xml, xpath,
 };
 
 /// The Ruby binding layer the bridge is built on, a crate of its own that

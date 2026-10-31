@@ -13,18 +13,18 @@ VERUS_COPIES = [
       PtrMap::clear PtrMap::get PtrMap::insert PtrMap::set PtrMap::grow].map do |name|
     ["ext/makiri/rust/engine/src/ptr_table.rs", "ext/makiri/rust/verus/ptr_table.rs", name]
   end,
-  ["ext/makiri/rust/falloc/src/lib.rs", "ext/makiri/rust/verus/cbuf.rs", "grow_capacity"],
+  ["ext/makiri/rust/falloc/src/lib.rs", "ext/makiri/rust/verus/ceiling_buf.rs", "grow_capacity"],
   ["ext/makiri/rust/engine/src/limits.rs", "ext/makiri/rust/verus/limits.rs", "admit"],
-  ["ext/makiri/rust/engine/src/cbuf.rs", "ext/makiri/rust/verus/cbuf.rs", "copy_small"],
+  ["ext/makiri/rust/engine/src/ceiling_buf.rs", "ext/makiri/rust/verus/ceiling_buf.rs", "copy_small"],
   # nupur's copy of it, which writes a String in place (`utf8_str_filled`).
-  ["ext/makiri/rust/nupur/src/string/make.rs", "ext/makiri/rust/verus/cbuf.rs", "copy_small"],
+  ["ext/makiri/rust/nupur/src/string/make.rs", "ext/makiri/rust/verus/ceiling_buf.rs", "copy_small"],
   *%w[as_slice append append_growing raise_limit reserve steal content_limit
       content_limit_for grow_to].map do |name|
-    ["ext/makiri/rust/engine/src/cbuf.rs", "ext/makiri/rust/verus/cbuf.rs", "Buf::#{name}"]
+    ["ext/makiri/rust/engine/src/ceiling_buf.rs", "ext/makiri/rust/verus/ceiling_buf.rs", "Buf::#{name}"]
   end
 ].freeze
 # The files `rake verus` verifies.
-VERUS_PROOFS = %w[ptr_table.rs cbuf.rs limits.rs].freeze
+VERUS_PROOFS = %w[ptr_table.rs ceiling_buf.rs limits.rs].freeze
 
 # The body of `fn name` in `src` - `Type::name` for the one in `impl ... Type`
 # - as tokens: lines marked `// [verus]` and
@@ -69,7 +69,7 @@ end
 # (std's spec assumed), an `assume(` or `admit(`. Each one is named in its
 # file's module doc; a new one is a new axiom, and this count moves with it on
 # purpose. The canaries may hold none.
-VERUS_TRUSTED = { "ptr_table.rs" => 4, "cbuf.rs" => 4, "limits.rs" => 0 }.freeze
+VERUS_TRUSTED = { "ptr_table.rs" => 4, "ceiling_buf.rs" => 4, "limits.rs" => 0 }.freeze
 # Verus's `admit()` takes no argument, which tells it from a function named
 # `admit` (`limits.rs`).
 VERUS_TRUST = /#\[verifier::external(?:_body)?\]|\bassume_specification\b|\bassume\(|\badmit\(\s*\)/

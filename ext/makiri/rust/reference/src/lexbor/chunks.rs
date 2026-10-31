@@ -12,7 +12,7 @@
 use core::ffi::c_void;
 
 use crate::caught::PanicLatch;
-use crate::cbuf::Buf;
+use crate::ceiling_buf::Buf;
 use crate::lexbor::abi::consts as k;
 use falloc::Reserve;
 

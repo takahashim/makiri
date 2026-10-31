@@ -18,7 +18,7 @@ use libfuzzer_sys::fuzz_target;
 
 mod common;
 use common::*;
-use makiri::cutf8::valid;
+use makiri::utf8_decode::valid;
 use makiri::xml::chars::validate_chars;
 
 fuzz_target!(|data: &[u8]| {

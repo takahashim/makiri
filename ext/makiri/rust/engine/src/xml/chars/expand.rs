@@ -11,7 +11,7 @@
 #![forbid(unsafe_code)]
 
 use super::{is_char, validate_name, Utf8Char};
-use crate::cutf8::decode1;
+use crate::utf8_decode::decode1;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ExpandMode {
