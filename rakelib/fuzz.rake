@@ -56,8 +56,7 @@ namespace :fuzz do
   # itself, with its own instrumentation. It does need the vendored Lexbor
   # library and headers (the reference crate's build.rs links the archive and
   # generates the layout from the headers), which `rake lexbor` produces -
-  # hence that dependency. The `compile` one builds the extension as well,
-  # which the harnesses do not use.
+  # hence the one dependency.
   FUZZ_TARGETS = %w[xml xpath xml_xpath css html html_xpath html_css html_css_diff html_diff selector_diff stylesheet_diff].freeze
   # The targets whose input starts with a CSS selector take its dictionary.
   FUZZ_CSS_DICT = %w[html_css html_css_diff].freeze
@@ -103,7 +102,7 @@ namespace :fuzz do
   end
 
   desc "Build the cargo-fuzz harnesses (requires cargo-fuzz and a nightly toolchain)"
-  task :libfuzzer_build => %i[compile lexbor] do
+  task :libfuzzer_build => :lexbor do
     cargo_fuzz_available? or
       abort "fuzz:libfuzzer_build: cargo-fuzz is not installed " \
             "(`cargo install cargo-fuzz`; it needs a nightly toolchain)."
