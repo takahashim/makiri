@@ -1,30 +1,49 @@
-//! `:lang()`: an element's language - the nearest `lang` (in XML,
-//! `xml:lang`) of it and its ancestors - matched by RFC 4647's extended
-//! filtering, as Selectors 4 has it. What an element IS, like `state`'s,
-//! apart only for its size.
+//! `:lang()`: an element's language - the nearest `xml:lang` or `lang` of it
+//! and its ancestors - matched by RFC 4647's extended filtering, as
+//! Selectors 4 has it. What an element IS, like `state`'s, apart only for
+//! its size.
 
 use crate::selectors::ast::LangRanges;
 
-use super::dom::{CssElement, CssNode, Host};
+use super::dom::{CssAttr, CssElement, CssNode, Host};
+use super::{Budget, MatchFailure};
 
-/// `:lang()`: the element's language (the nearest `lang` - or, in XML,
-/// `xml:lang` - of it and its ancestors) matched by any of the ranges.
+/// The XML namespace, which an HTML document's `xml:lang` is in.
+const XML_NS: &[u8] = b"http://www.w3.org/XML/1998/namespace";
+
+/// `:lang()`: the element's language (the nearest `xml:lang` or `lang` of it
+/// and its ancestors) matched by any of the ranges. Every element climbed
+/// charges `budget`, as the form states' climbs do.
 #[inline(never)]
 #[cold]
-pub(super) fn lang_matches<'d, N: CssNode<'d>>(node: N, ranges: LangRanges<'_>) -> bool {
-    language_of(node).is_some_and(|tag| ranges.iter().any(|range| extended_filter(range, tag)))
+pub(super) fn lang_matches<'d, N: CssNode<'d>>(
+    node: N,
+    ranges: LangRanges<'_>,
+    budget: &Budget,
+) -> Result<bool, MatchFailure> {
+    Ok(language_of(node, budget)?
+        .is_some_and(|tag| ranges.iter().any(|range| extended_filter(range, tag))))
 }
 
-/// The language of the element `node`: the value of the first `lang` on it
-/// or an ancestor - in an XML document `xml:lang`, then `lang` on an XHTML
-/// element. An empty value is a language of its own ("unknown"), which stops
-/// the climb. `None` when no element up the tree gives one.
-fn language_of<'d, N: CssNode<'d>>(node: N) -> Option<&'d [u8]> {
+/// The language of the element `node`, the HTML Standard's: the value of
+/// the first `xml:lang` (in the XML namespace) or `lang` on it or an
+/// ancestor, `xml:lang` first - in an XML document read by its qualified
+/// name, and `lang` only on an XHTML element. An empty value is a language
+/// of its own ("unknown"), which stops the climb. `None` when no element up
+/// the tree gives one.
+fn language_of<'d, N: CssNode<'d>>(
+    node: N,
+    budget: &Budget,
+) -> Result<Option<&'d [u8]>, MatchFailure> {
     let mut at = Some(node);
     while let Some(n) = at {
+        budget.charge()?;
         if let Some(el) = n.element() {
             let lang = if <N::Host as Host>::RESOLVES_NAMES {
-                el.get_attribute(b"lang")
+                el.attrs()
+                    .find(|a| a.ns_uri() == Some(XML_NS) && a.dom_local_name() == b"lang")
+                    .map(CssAttr::value)
+                    .or_else(|| el.get_attribute(b"lang"))
             } else {
                 el.get_attribute(b"xml:lang").or_else(|| {
                     if n.is_html() {
@@ -35,12 +54,12 @@ fn language_of<'d, N: CssNode<'d>>(node: N) -> Option<&'d [u8]> {
                 })
             };
             if lang.is_some() {
-                return lang;
+                return Ok(lang);
             }
         }
         at = n.parent();
     }
-    None
+    Ok(None)
 }
 
 /// RFC 4647 section 3.3.2, extended filtering, as Selectors 4 uses it: does

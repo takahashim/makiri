@@ -538,11 +538,11 @@ CSS Syntax Level 3 と Selectors Level 4（w3c/csswg-drafts の `7b4c69ecaf9289d
 ### C34 `:lang()`
 
 - **分類**：参照実装の未対応。移植版で直した。
-- **仕様**：`:lang()` の引数は、識別子か文字列の language range をコンマで並べたもの。要素の言語（自分か祖先の最も近い `lang`。XML は `xml:lang`）が、どれかの range に RFC 4647 の extended filtering で一致すれば真。大文字小文字は区別しない。`*` は任意の subtag に一致し、range の subtag は、tag の中に順に見つかればよい（一文字の subtag を越えては探さない）。`lang=""` はその要素の言語が不明であることを示し、祖先の値を継がない。
+- **仕様**：`:lang()` の引数は、識別子か文字列の language range をコンマで並べたもの。要素の言語（自分か祖先の最も近い `xml:lang` か `lang`。`xml:lang` が先）が、どれかの range に RFC 4647 の extended filtering で一致すれば真。大文字小文字は区別しない。`*` は任意の subtag に一致し、range の subtag は、tag の中に順に見つかればよい（一文字の subtag を越えては探さない）。`lang=""` はその要素の言語が不明であることを示し、祖先の値を継がない。
 - **再現**：`:lang(en)`、`:lang("*-US")`、`:lang(zh-TW)`（`zh-Hant-TW` に一致する）。Lexbor は `:lang()` を拒むので `CSS::SyntaxError` になる。
-- **移植版**：`selectors/parser.rs` の `pseudo_lang_begin` が range を AST の文字列に NUL 区切りで置き、`css_match/simple.rs` の `lang_matches` が `extended_filter` で照合する。HTML は `lang`、XML は `xml:lang` に続けて XHTML 要素の `lang` を見る。差分の許可は、入力に `:` があるとき。
+- **移植版**：`selectors/parser.rs` の `pseudo_lang_begin` が range を AST の文字列に NUL 区切りで置き、`css_match/lang.rs` の `lang_matches` が `extended_filter` で照合する。HTML Standard の要素の言語のとおり、HTML は XML 名前空間の `xml:lang`（SVG の中に置かれる）に続けて `lang` を、XML は修飾名の `xml:lang` に続けて XHTML 要素の `lang` を見る。祖先をたどる一段ごとに work budget を数える。差分の許可は、入力に `:` があるとき。
 - **対応しないもの**：`<meta http-equiv="content-language">` による文書の既定の言語（`lang` が祖先のどこにもない要素は、何にも一致しない）。`:dir()` も同じ理由（向きの継承と `auto` の判定が要る）で、拒むままにする。
-- **テスト**：`spec/css_standard_steps_spec.rb`、`css_match::simple::lang_tests`。
+- **テスト**：`spec/css_standard_steps_spec.rb`、`css_match::lang::tests`。
 
 ## パーサの外の項目
 
