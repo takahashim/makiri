@@ -100,7 +100,17 @@ pub struct Tokenizer<'a> {
     pub with_comment: bool,
     pub with_unicode_range: bool,
     pub status: Status,
+    /// Tokens [`Self::lookup_declaration`] may still read ahead, over the
+    /// whole parse: each lookup reads to where its answer is settled, which
+    /// for a value opening with a `{}`-block is the block's end, so blocks
+    /// nested that way would read the input once per level.
+    ahead_left: usize,
 }
+
+/// Read-ahead tokens per input byte, over a whole parse: a value that opens
+/// with a block costs its block, so this is how deep such values may nest
+/// before the parse is refused.
+const AHEAD_PER_BYTE: usize = 64;
 
 impl<'a> Tokenizer<'a> {
     pub fn new(input: &'a [u8]) -> Tokenizer<'a> {
@@ -115,6 +125,10 @@ impl<'a> Tokenizer<'a> {
             with_comment: false,
             with_unicode_range: false,
             status: Status::Ok,
+            ahead_left: input
+                .len()
+                .saturating_mul(AHEAD_PER_BYTE)
+                .saturating_add(1 << 16),
         }
     }
 
@@ -179,12 +193,26 @@ impl<'a> Tokenizer<'a> {
     /// `}` or the end - does not hold a top-level `{}` block beside other
     /// values (consume a declaration, step 8; C9), else it is a rule. `fix_colon`
     /// and `fix_block` choose each; with neither this is [`Self::lookup_colon`].
-    /// `Err` is the status when reading ahead failed.
+    /// `Err` is the status when reading ahead failed, or ran past what a
+    /// parse may read ahead (`ErrorOverflow`).
     pub fn lookup_declaration(
+        &mut self,
+        name: &Token,
+        fix_colon: bool,
+        fix_block: bool,
+    ) -> Result<bool, Status> {
+        let mut left = self.ahead_left;
+        let answer = self.declaration_ahead(name, fix_colon, fix_block, &mut left);
+        self.ahead_left = left;
+        answer
+    }
+
+    fn declaration_ahead(
         &self,
         name: &Token,
         fix_colon: bool,
         fix_block: bool,
+        left: &mut usize,
     ) -> Result<bool, Status> {
         if !fix_colon && !fix_block {
             return Ok(self.lookup_colon());
@@ -198,8 +226,9 @@ impl<'a> Tokenizer<'a> {
         };
         let mut t = Tokenizer::new(rest);
         t.with_comment = true;
-        fn next(t: &mut Tokenizer<'_>) -> Result<Token, Status> {
+        fn next(t: &mut Tokenizer<'_>, left: &mut usize) -> Result<Token, Status> {
             loop {
+                *left = left.checked_sub(1).ok_or(Status::ErrorOverflow)?;
                 let tok = t.token().ok_or(t.status)?;
                 t.consume();
                 if !matches!(tok.ty, TokenType::Whitespace | TokenType::Comment) {
@@ -207,7 +236,7 @@ impl<'a> Tokenizer<'a> {
                 }
             }
         }
-        if next(&mut t)?.ty != TokenType::Colon {
+        if next(&mut t, left)?.ty != TokenType::Colon {
             return Ok(false);
         }
         if !fix_block || self.string(name.string).starts_with(b"--") {
@@ -236,7 +265,7 @@ impl<'a> Tokenizer<'a> {
         let mut last = [Comp::Other, Comp::Other];
         let mut depth = 0usize;
         loop {
-            let tok = next(&mut t)?;
+            let tok = next(&mut t, left)?;
             if depth > 0 {
                 if matches!(
                     tok.ty,
@@ -253,6 +282,13 @@ impl<'a> Tokenizer<'a> {
             let comp = match tok.ty {
                 TokenType::Eof | TokenType::Semicolon | TokenType::RcBracket => break,
                 TokenType::LcBracket => {
+                    /* A component before the block is never one of a
+                     * trailing `! important` (those come last, after the
+                     * block), so it stays: settled without reading the
+                     * block - `a:b{...}`, a nested rule, costs nothing. */
+                    if others > 0 {
+                        return Ok(false);
+                    }
                     block = true;
                     depth += 1;
                     last = [last[1], Comp::Other];
