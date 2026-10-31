@@ -29,46 +29,28 @@ use rustc_hir::{Expr, ExprKind, HirId, Path, QPath};
 use rustc_lint::LateContext;
 use rustc_span::Span;
 
-use crate::paths::{NUPUR, callee, is_extension, module_of, ours, path_of, within};
+use crate::paths::{
+    NUPUR, callee, in_engine_crate, is_extension, module_of, ours, path_of, within,
+};
 use crate::{
     INFALLIBLE_ALLOCATION, RAW_NODE_CROSSING, RAW_RUBY_OUTSIDE_BRIDGE, RUBY_IN_GVL_RELEASED_BODY,
     RUBY_LAYER_IN_ENGINE, RUBY_SURFACE_IN_BRIDGE, RUNS_CALLERS_RUBY,
 };
 
-/// The modules of the engine: Ruby-free, Lexbor-free code that an edit's
-/// closure and a GVL-released body may run. `lint_probe::engine` stands in
-/// for one in the lint's self-test.
-const ENGINE: &[&str] = &[
-    "xml",
-    "xpath",
-    "css",
-    "selectors",
-    "html",
-    "html_dom",
-    "child_index",
-    "dom_rules",
-    "falloc",
-    "cbuf",
-    "cutf8",
-    "limits",
-    "node_type",
-    "ptr_table",
-    "text",
-    "token",
-    "utf8_input",
-    /* nupur's one Ruby-free module, by its full path (`paths::within`): the
-     * checked copy, which Miri runs without a Ruby. */
-    "nupur::utf8_copy",
-    "css_match",
-];
-
+/// Whether `module` is the engine's: Ruby-free, Lexbor-free code that an
+/// edit's closure and a GVL-released body may run. That is the engine crate,
+/// which names no Ruby because it depends on none (so `ruby_layer_in_engine`
+/// can find nothing there), and nupur's one Ruby-free module, the checked
+/// copy Miri runs without a Ruby, which sits beside the Ruby layer in its
+/// crate and is held to it here. `lint_probe::engine` stands in for one in
+/// the lint's self-test.
 fn in_engine(module: &str) -> bool {
-    /* A path of a library is in no engine: an extension module by its path
-     * inside the extension, or the layer's one engine module. */
     if !ours(module) {
         return false;
     }
-    within(module, "lint_probe::engine") || ENGINE.iter().any(|m| within(module, m))
+    in_engine_crate(module)
+        || within(module, "nupur::utf8_copy")
+        || within(module, "lint_probe::engine")
 }
 
 /// Whether `module` is in `bridge/`; `lint_probe::bridge` stands in for one
@@ -341,7 +323,7 @@ fn is_definition(name: &str) -> bool {
 
 /* ---- raw_node_crossing ---- */
 
-const RAW_NODE: &str = "makiri::html::dom::handle::RawNode";
+const RAW_NODE: &str = "makiri_engine::html::dom::handle::RawNode";
 
 /// `RawNode::from(node)` (as a call or a path, `.map(RawNode::from)`), a
 /// `.into()` that makes one, and `HtmlNodeKey::raw_node`, in `bridge/`.
@@ -369,7 +351,7 @@ fn check_raw_node_crossing<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>)
     let crossing = match path.as_str() {
         "core::convert::From::from" => made(0),
         "core::convert::Into::into" => made(1),
-        "makiri::html::dom::parsed::raw_node" => true,
+        "makiri_engine::html::dom::parsed::raw_node" => true,
         _ => false,
     };
     if crossing && in_bridge(&module_of(cx, expr.hir_id)) {

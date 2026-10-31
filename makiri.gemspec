@@ -45,11 +45,15 @@ Gem::Specification.new do |spec|
     vendor/lexbor/LICENSE vendor/lexbor/NOTICE
     ext/makiri/rust/Cargo.toml ext/makiri/rust/Cargo.lock
     ext/makiri/rust/build.rs ext/makiri/rust/extconf.rb
-    ext/makiri/rust/nupur/Cargo.toml
+    ext/makiri/rust/nupur/Cargo.toml ext/makiri/rust/engine/Cargo.toml
+    ext/makiri/rust/falloc/Cargo.toml
   ]
-  # The extension's crate and the binding layer it depends on by path
-  # (`nupur/`, a member of the same workspace, whose one Cargo.lock is above).
-  shipped_dirs = %w[lib/ sig/ ext/makiri/rust/src/ ext/makiri/rust/nupur/src/]
+  # The extension's crate and what it depends on by path - the engine, the
+  # fallible allocation under it and the binding layer, members of the same
+  # workspace, whose one Cargo.lock is above. The Lexbor reference
+  # (`reference/`) is a workspace of its own and not shipped.
+  shipped_dirs = %w[lib/ sig/ ext/makiri/rust/src/ ext/makiri/rust/nupur/src/
+                    ext/makiri/rust/engine/src/ ext/makiri/rust/falloc/src/]
   spec.files = IO.popen(%w[git ls-files -z --recurse-submodules], chdir: __dir__, err: IO::NULL) do |ls|
     ls.readlines("\x0", chomp: true).select do |f|
       shipped.include?(f) || f.start_with?(*shipped_dirs)

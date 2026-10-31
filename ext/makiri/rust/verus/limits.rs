@@ -1,4 +1,4 @@
-//! Verus proofs over `src/limits.rs`'s `admit`: the one rule every work
+//! Verus proofs over `engine/src/limits.rs`'s `admit`: the one rule every work
 //! budget keeps - XPath's evaluator ops, AST nodes and recursion depth, and
 //! the CSS matcher's steps, each charged through it.
 //!

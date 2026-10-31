@@ -1,23 +1,22 @@
 # frozen_string_literal: true
 
-# Miri over the Ruby-free modules that hold `unsafe` - `utf8_copy` and
-# `falloc` (`try_box`, the injection hook): their tests on Miri's interpreter,
-# which reports undefined behaviour a run on hardware passes over (CI:
-# verify.yml). `cbuf` and `ptr_table` were here while they held `unsafe`;
-# both are `forbid(unsafe_code)` now, so Miri would only be running std.
-# Needs the nightly toolchain with the `miri` component. MIRI_FILTERS
-# replaces the module list.
-MIRI_FILTERS = %w[utf8_copy:: falloc::].freeze
+# Miri over the Ruby-free code that holds `unsafe` - the `falloc` crate
+# (`try_box`) and `nupur::utf8_copy`, which its test build includes: their
+# tests on Miri's interpreter, which reports undefined behaviour a run on
+# hardware passes over (CI: verify.yml). The engine forbids `unsafe`, so Miri
+# would only be running std there. Needs the nightly toolchain with the
+# `miri` component. MIRI_FILTERS narrows the tests.
+MIRI_FILTERS = [].freeze
 desc "Run the Ruby-free unsafe modules' tests under Miri (nightly)"
 task :miri do
   filters = ENV["MIRI_FILTERS"] ? ENV["MIRI_FILTERS"].split(",") : MIRI_FILTERS
   env = { "MIRIFLAGS" => ENV.fetch("MIRIFLAGS", "-Zmiri-strict-provenance") }
   Dir.chdir("ext/makiri/rust") do
-    sh env, "cargo", "+nightly", "miri", "test", "--no-default-features", "--lib", "--", *filters
+    sh env, "cargo", "+nightly", "miri", "test", "-p", "falloc", "--lib", "--", *filters
   end
 end
 
-# The places that must not unwind (`src/no_unwind.rs`): every `extern "C"`
+# The places that must not unwind (`engine/src/no_unwind.rs`): every `extern "C"`
 # function of ours, and the `Drop`s the GC's free callback runs. An unwind out
 # of one aborts the process. Each body runs under a guard whose `Drop` - which
 # only an unwind runs - calls `makiri_unwinds_<site>`, a symbol nobody
@@ -43,8 +42,8 @@ task :no_unwind do
        "--", *link
   end
   lib = Dir[File.join(target, "release", "libmakiri.{dylib,so}")].first or abort "no_unwind: no library built"
-  # Two mechanisms, one per layer: Makiri's (`src/no_unwind.rs`, its types'
-  # and the engine's `Drop`s) and nupur's (`nupur/src/no_unwind.rs`, the GC
+  # Two mechanisms, one per layer: Makiri's (`engine/src/no_unwind.rs`, the
+  # engine's `Drop`s) and nupur's (`nupur/src/no_unwind.rs`, the GC
   # callbacks, the protect thunk, the trampolines), each with its control.
   left = `nm -u #{lib.shellescape}`.lines.map(&:strip)
                                        .filter_map { |l| l[/(?:\A|\s)_?((?:makiri|nupur)_unwinds_\w+)\z/, 1] }.uniq.sort
@@ -52,6 +51,6 @@ task :no_unwind do
   dead = controls - left
   abort "no_unwind: a control site was optimized away - the check is not live: #{dead.join(", ")}" unless dead.empty?
   sites = left - controls
-  abort "no_unwind: these sites can unwind (see src/no_unwind.rs, nupur/src/no_unwind.rs): #{sites.join(", ")}" unless sites.empty?
+  abort "no_unwind: these sites can unwind (see engine/src/no_unwind.rs, nupur/src/no_unwind.rs): #{sites.join(", ")}" unless sites.empty?
   puts "no_unwind: every site is unwind-free; both controls are live"
 end

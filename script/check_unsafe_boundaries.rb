@@ -8,28 +8,33 @@
 # `static mut` - what the compiler cannot do is notice that an island grew.
 #
 # Why the count check runs over EVERY file rather than only the islands: an
-# `allow` propagates to child modules, so the one on `falloc/mod.rs` covers all
-# of `falloc/`. A new file added there could use unsafe with the compiler silent
+# `allow` propagates to child modules, so one on a module root would cover the
+# whole directory under it. A new file added there could use unsafe with the compiler silent
 # AND carry no allow of its own, so a check that only looked at files carrying
 # an allow would miss it. Counting everything and demanding an exact match does
 # not.
 
 ROOT = File.expand_path("..", __dir__)
 RUST = File.join(ROOT, "ext/makiri/rust/src")
+# The other crates, each read as if it were a directory under `src/`: their
+# files are keyed `<crate dir>/<path under its src/>` below - the binding
+# layer's `nupur/...`, the engine's `engine/...`, the fallible allocation's
+# `falloc/...` and the Lexbor reference's `reference/...`.
+CRATES = %w[nupur engine falloc reference].to_h do |dir|
+  [dir, File.join(ROOT, "ext/makiri/rust/#{dir}/src")]
+end.freeze
 # Every source file the gates read. `lint_probe.rs` is left out: it is
 # compiled only under `--cfg makiri_lint_probe`, by `rake dylint`, and holds
 # on purpose the very uses the lints there must report.
-# The binding layer is a crate of its own (`ext/makiri/rust/nupur`), read as
-# if it were still `src/nupur/`: its files are keyed `nupur/<path>` below.
-NUPUR = File.join(ROOT, "ext/makiri/rust/nupur/src")
-RUST_FILES = (Dir.glob(File.join(RUST, "**", "*.rs")) + Dir.glob(File.join(NUPUR, "**", "*.rs"))).sort
-                .reject { |p| p.end_with?("/lint_probe.rs") }.freeze
+RUST_FILES = ([RUST, *CRATES.values].flat_map { |d| Dir.glob(File.join(d, "**", "*.rs")) }).sort
+               .reject { |p| p.end_with?("/lint_probe.rs") }.freeze
 
-# A file's key in the tables: its path under `src/`, or `nupur/<path>` for
-# the binding layer's.
+# A file's key in the tables: its path under the extension's `src/`, or
+# `<crate dir>/<path>` for another crate's.
 def rust_rel(path)
-  return "nupur/#{path.delete_prefix("#{NUPUR}/")}" if path.start_with?("#{NUPUR}/")
-
+  CRATES.each do |dir, src|
+    return "#{dir}/#{path.delete_prefix("#{src}/")}" if path.start_with?("#{src}/")
+  end
   path.delete_prefix("#{RUST}/")
 end
 
@@ -45,30 +50,9 @@ end
 # (the unsafe did not disappear, it moved); what ratchets is the total, and the
 # summary prints the `glue/` + `xpath/` subtotal that must reach 0.
 UNSAFE_ISLANDS = {
-  "falloc/mod.rs" => 1,
+  "engine/no_unwind.rs" => 2,
+  "falloc/lib.rs" => 1,
   "init.rs" => 1,
-  "lexbor/abi.rs" => 4,
-  "lexbor/adapter/arena_bytes.rs" => 14,
-  "lexbor/adapter/html/attrs.rs" => 19,
-  "lexbor/adapter/html/build.rs" => 14,
-  "lexbor/adapter/html/mod.rs" => 66,
-  "lexbor/adapter/html/serialize.rs" => 18,
-  "lexbor/adapter/post_parse.rs" => 8,
-  "lexbor/adapter/source_loc.rs" => 1,
-  "lexbor/adapter/tree_guard.rs" => 7,
-  "lexbor/chunks.rs" => 2,
-  "lexbor/conformance_tests.rs" => 24,
-  "lexbor/css_engine.rs" => 10,
-  "lexbor/css_parser.rs" => 20,
-  "lexbor/css_tokens.rs" => 10,
-  "lexbor/fragment.rs" => 7,
-  "lexbor/res_tests.rs" => 3,
-  "lexbor/selector_port_tests.rs" => 1,
-  "lexbor/selectors.rs" => 10,
-  "lexbor/serialize.rs" => 1,
-  "lexbor/stylesheet_diff.rs" => 5,
-  "lexbor/tests.rs" => 3,
-  "no_unwind.rs" => 2,
   "nupur/abi.rs" => 1,
   "nupur/encoding.rs" => 6,
   "nupur/gvl.rs" => 3,
@@ -98,6 +82,27 @@ UNSAFE_ISLANDS = {
   "nupur/typed/external.rs" => 1,
   "nupur/typed/mod.rs" => 13,
   "nupur/utf8_copy.rs" => 1,
+  "reference/lexbor/abi.rs" => 4,
+  "reference/lexbor/adapter/arena_bytes.rs" => 14,
+  "reference/lexbor/adapter/html/attrs.rs" => 19,
+  "reference/lexbor/adapter/html/build.rs" => 14,
+  "reference/lexbor/adapter/html/mod.rs" => 66,
+  "reference/lexbor/adapter/html/serialize.rs" => 18,
+  "reference/lexbor/adapter/post_parse.rs" => 8,
+  "reference/lexbor/adapter/source_loc.rs" => 1,
+  "reference/lexbor/adapter/tree_guard.rs" => 7,
+  "reference/lexbor/chunks.rs" => 2,
+  "reference/lexbor/conformance_tests.rs" => 24,
+  "reference/lexbor/css_engine.rs" => 10,
+  "reference/lexbor/css_parser.rs" => 20,
+  "reference/lexbor/css_tokens.rs" => 10,
+  "reference/lexbor/fragment.rs" => 7,
+  "reference/lexbor/res_tests.rs" => 3,
+  "reference/lexbor/selector_port_tests.rs" => 1,
+  "reference/lexbor/selectors.rs" => 10,
+  "reference/lexbor/serialize.rs" => 1,
+  "reference/lexbor/stylesheet_diff.rs" => 5,
+  "reference/lexbor/tests.rs" => 3,
 }.freeze
 
 # Files whose safety is compiler-enforced. Checked by containment, so adding one
@@ -108,8 +113,8 @@ UNSAFE_ISLANDS = {
 # The subtree roots in FORBID_ROOTS make whole directories compiler-forbidden:
 # `forbid` is inherited, so a new file under `glue/` or `xpath/` cannot slip in
 # with an `allow`, however few its `unsafe`s.
-FORBID_ROOTS = %w[bridge/mod.rs glue/mod.rs css_match/mod.rs selectors/mod.rs xml/mod.rs
-                  xpath/mod.rs].freeze
+FORBID_ROOTS = %w[bridge/mod.rs glue/mod.rs engine/css_match/mod.rs engine/selectors/mod.rs
+                  engine/xml/mod.rs engine/xpath/mod.rs].freeze
 
 FORBID_FILES = %w[
   bridge/dom.rs bridge/dom_error.rs bridge/html/attrs.rs
@@ -124,46 +129,46 @@ FORBID_FILES = %w[
   bridge/xml/decode.rs bridge/xml/document.rs bridge/xml/edit.rs
   bridge/xml/error.rs bridge/xml/insert.rs bridge/xml/mod.rs
   bridge/xml/receiver.rs bridge/xml/strings.rs bridge/xml/wrap.rs
-  bridge/xpath/context_object.rs bridge/xpath/mod.rs cbuf.rs
-  child_index.rs conformance/mod.rs css_cache.rs
-  css_match/mod.rs cutf8.rs cutf8/verify.rs
-  doc_cell.rs dom_rules.rs engine_error.rs
-  glue/css.rs glue/dom_names.rs glue/html_doc.rs
-  glue/html_node/css.rs glue/html_node/mutate.rs glue/html_node/read.rs
-  glue/html_node/serialize.rs glue/mod.rs glue/namespaces.rs
-  glue/node.rs glue/node_set.rs glue/query.rs
-  glue/xml_doc.rs glue/xml_node/css.rs glue/xml_node/mod.rs
-  glue/xml_node/mutate.rs glue/xml_node/ns.rs glue/xml_node/read.rs
-  glue/xml_node/serialize.rs glue/xpath_context.rs gvl.rs
-  html/dom/mod.rs html/encoding/mod.rs html/mod.rs
-  html/tokenizer/mod.rs html/tree/mod.rs html_dom.rs
-  lexbor/contains_guard.rs limits.rs node_type.rs
-  nupur/args.rs nupur/build.rs nupur/cname.rs
-  nupur/describe.rs nupur/hash.rs nupur/int.rs
-  nupur/msg.rs nupur/rb/class.rs nupur/rb/convert.rs
-  nupur/rb/error.rs nupur/table.rs ptr_table.rs
-  rust_tests.rs selectors/mod.rs selectors/stylesheet.rs
-  selectors/text.rs source_lines.rs stack.rs
-  text.rs token.rs utf8_input.rs
-  xml/arena.rs xml/attr_key.rs xml/chars/expand.rs
-  xml/chars/mod.rs xml/css.rs xml/css_tests.rs
-  xml/dom_name.rs xml/encoding_names.rs xml/encoding_sniff.rs
-  xml/index.rs xml/mod.rs xml/model.rs
-  xml/mutate/attr.rs xml/mutate/copy.rs xml/mutate/edit.rs
-  xml/mutate/factory.rs xml/mutate/insert.rs xml/mutate/mod.rs
-  xml/mutate/ns.rs xml/ns_scope.rs xml/qname.rs
-  xml/selftest.rs xml/serialize/bindings.rs xml/serialize/c14n.rs
-  xml/serialize/mod.rs xml/serialize/out.rs xml/serialize/xml.rs
-  xml/tree/cursor.rs xml/tree/decl.rs xml/tree/dtd.rs
-  xml/tree/mod.rs xml/tree/scope.rs xml/verify.rs
-  xml/xpath.rs xpath/abi.rs xpath/ast.rs
-  xpath/ast_ops.rs xpath/attr_pred.rs xpath/axis.rs
-  xpath/ctx.rs xpath/dom.rs xpath/eval.rs
-  xpath/funcs/ext.rs xpath/funcs/mod.rs xpath/lex.rs
-  xpath/limits.rs xpath/mod.rs xpath/nodetest.rs
-  xpath/number.rs xpath/order.rs xpath/parse.rs
-  xpath/step_index.rs xpath/str_cache.rs xpath/tests.rs
-  xpath/value.rs xpath/verify.rs
+  bridge/xpath/context_object.rs bridge/xpath/mod.rs engine/cbuf.rs
+  engine/child_index.rs engine/conformance/mod.rs engine/css_cache.rs
+  engine/css_match/mod.rs engine/cutf8.rs engine/cutf8/verify.rs
+  engine/doc_cell.rs engine/dom_rules.rs engine/engine_error.rs
+  engine/html/dom/mod.rs engine/html/encoding/mod.rs engine/html/mod.rs
+  engine/html/tokenizer/mod.rs engine/html/tree/mod.rs engine/html_dom.rs
+  engine/limits.rs engine/node_type.rs engine/ptr_table.rs
+  engine/rust_tests.rs engine/selectors/mod.rs engine/selectors/stylesheet.rs
+  engine/selectors/text.rs engine/source_lines.rs engine/stack.rs
+  engine/text.rs engine/token.rs engine/utf8_input.rs
+  engine/xml/arena.rs engine/xml/attr_key.rs engine/xml/chars/expand.rs
+  engine/xml/chars/mod.rs engine/xml/css.rs engine/xml/css_tests.rs
+  engine/xml/dom_name.rs engine/xml/encoding_names.rs engine/xml/encoding_sniff.rs
+  engine/xml/index.rs engine/xml/mod.rs engine/xml/model.rs
+  engine/xml/mutate/attr.rs engine/xml/mutate/copy.rs engine/xml/mutate/edit.rs
+  engine/xml/mutate/factory.rs engine/xml/mutate/insert.rs engine/xml/mutate/mod.rs
+  engine/xml/mutate/ns.rs engine/xml/ns_scope.rs engine/xml/qname.rs
+  engine/xml/selftest.rs engine/xml/serialize/bindings.rs engine/xml/serialize/c14n.rs
+  engine/xml/serialize/mod.rs engine/xml/serialize/out.rs engine/xml/serialize/xml.rs
+  engine/xml/tree/cursor.rs engine/xml/tree/decl.rs engine/xml/tree/dtd.rs
+  engine/xml/tree/mod.rs engine/xml/tree/scope.rs engine/xml/verify.rs
+  engine/xml/xpath.rs engine/xpath/abi.rs engine/xpath/ast.rs
+  engine/xpath/ast_ops.rs engine/xpath/attr_pred.rs engine/xpath/axis.rs
+  engine/xpath/ctx.rs engine/xpath/dom.rs engine/xpath/eval.rs
+  engine/xpath/funcs/ext.rs engine/xpath/funcs/mod.rs engine/xpath/lex.rs
+  engine/xpath/limits.rs engine/xpath/mod.rs engine/xpath/nodetest.rs
+  engine/xpath/number.rs engine/xpath/order.rs engine/xpath/parse.rs
+  engine/xpath/step_index.rs engine/xpath/str_cache.rs engine/xpath/tests.rs
+  engine/xpath/value.rs engine/xpath/verify.rs glue/css.rs
+  glue/dom_names.rs glue/html_doc.rs glue/html_node/css.rs
+  glue/html_node/mutate.rs glue/html_node/read.rs glue/html_node/serialize.rs
+  glue/mod.rs glue/namespaces.rs glue/node.rs
+  glue/node_set.rs glue/query.rs glue/xml_doc.rs
+  glue/xml_node/css.rs glue/xml_node/mod.rs glue/xml_node/mutate.rs
+  glue/xml_node/ns.rs glue/xml_node/read.rs glue/xml_node/serialize.rs
+  glue/xpath_context.rs nupur/args.rs nupur/build.rs
+  nupur/cname.rs nupur/describe.rs nupur/hash.rs
+  nupur/int.rs nupur/msg.rs nupur/rb/class.rs
+  nupur/rb/convert.rs nupur/rb/error.rs nupur/table.rs
+  reference/gvl.rs reference/lexbor/contains_guard.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/
@@ -176,9 +181,10 @@ STATIC_MUT_COUNTS = {}.freeze
 # What this script checked besides unsafe is elsewhere now: the layer rules
 # (Ruby-free engine, `rb_sys::` and raw `VALUE`s in the bridge, raising calls
 # under protection, no infallible allocation) are `rake dylint`'s, on resolved
-# paths. The reference Lexbor's own rules went with it being built only for
-# the tests and fuzz targets: no build that ships compiles `lexbor/`, so
-# nothing that ships can name it.
+# paths, and the engine's is its dependencies: it names no Ruby because it
+# depends on none. The reference Lexbor's own rules went with it being built
+# only for the tests and fuzz targets: it is a crate nothing that ships
+# depends on, so nothing that ships can name it.
 
 def rust_code(path)
   File.binread(path).lines.reject { |line| line.match?(%r{\A\s*//}) }.join
@@ -213,6 +219,12 @@ errors = []
 
 unless File.binread(File.join(RUST, "lib.rs")).include?("#![deny(unsafe_code)]")
   errors << "lib.rs: must retain #![deny(unsafe_code)] - it is what makes the rest a ratchet"
+end
+# The engine forbids it outright, outside the one check build that calls an
+# undefined symbol (`no_unwind`).
+unless File.binread(File.join(CRATES["engine"], "lib.rs"))
+           .include?("#![cfg_attr(not(makiri_no_unwind), forbid(unsafe_code))]")
+  errors << "engine/lib.rs: must retain its forbid(unsafe_code) - the engine holds no unsafe"
 end
 
 unsafe_actual = Hash.new(0)
@@ -290,10 +302,10 @@ if FIX && !errors.empty?
 end
 abort "unsafe-boundaries: #{errors.join("\nunsafe-boundaries: ")}" unless errors.empty?
 
-glue_xpath_unsafe = unsafe_actual
-  .select { |f, _| f.start_with?("glue/", "xpath/") }
+glue_engine_unsafe = unsafe_actual
+  .select { |f, _| f.start_with?("glue/", "engine/") }
   .values.sum
 puts "unsafe-boundaries: #{forbidding.length} forbid files; " \
      "#{unsafe_actual.values.sum} unsafe uses in #{unsafe_actual.length} islands " \
-     "(glue+xpath #{glue_xpath_unsafe}); " \
+     "(glue+engine #{glue_engine_unsafe}); " \
      "#{actual.values.sum} reviewed static mut declarations"

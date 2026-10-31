@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
-# The vendored Lexbor, built alone. The extension no longer needs it - the
+# The vendored Lexbor, built alone. The extension does not need it - the
 # arena DOM and the ported parsers are all Rust - so `rake compile` does not
-# build it; what still does is everything that compares against Lexbor or
-# builds its reference layers (`--all-features`, the `lexbor` feature, the
-# differential fuzz targets), and those depend on this. Rebuilds only when the
+# build it; what does is everything that compares against Lexbor (the
+# reference crate, `reference/`, and the differential fuzz targets), and
+# those depend on this. Rebuilds only when the
 # install is missing (script/build_lexbor.rb).
 desc "Build the vendored Lexbor (the reference the ports are tested against)"
 task :lexbor do
@@ -12,27 +12,30 @@ task :lexbor do
 end
 
 # The lint gate, with CI's OWN arguments. It exists because a narrower spelling
-# looks like it passes and is not: `cargo clippy --no-default-features --features
-# lexbor` never compiles `bridge/` or `glue/` at all, so five `clippy.toml`
-# violations there went unseen locally and turned CI red. `--all-features` is
-# every configuration the crate has, which is why CI uses it - and why this task
-# does, rather than leaving the arguments to be remembered.
-desc "Clippy and rustfmt exactly as CI runs them (--all-features, warnings are errors)"
+# looks like it passes and is not: a command run in the workspace root reaches
+# the root crate alone, so five `clippy.toml` violations in a crate it did not
+# reach went unseen locally and turned CI red. So every crate is named here,
+# with every configuration it has, rather than left to be remembered.
+desc "Clippy and rustfmt exactly as CI runs them (every crate, warnings are errors)"
 task lint: :lexbor do
   Dir.chdir("ext/makiri/rust") do
-    sh "cargo", "clippy", "--all-features", "--tests", "--", "-D", "warnings"
-    # The binding layer is a workspace member of its own, which a command run
-    # in the root does not reach.
-    sh "cargo", "clippy", "-p", "nupur", "--all-features", "--tests", "--", "-D", "warnings"
-    # The build that ships has no Lexbor: code only the reference layers use
-    # is dead there, which `--all-features` cannot see - and so are test
-    # helpers only a Lexbor test calls, which the html-dom test build sees.
-    sh "cargo", "clippy", "--no-default-features", "--features", "ruby", "--", "-D", "warnings"
-    sh "cargo", "clippy", "--no-default-features", "--features", "html-dom", "--tests", "--", "-D", "warnings"
+    # The extension, the engine, falloc and nupur, each with every feature.
+    sh "cargo", "clippy", "--workspace", "--all-features", "--tests", "--", "-D", "warnings"
+    # The engine as Kani builds it - no HTML DOM - where code only the DOM
+    # uses is dead; and as the extension builds it, where test helpers only
+    # the Lexbor reference calls are (`--all-features` sees neither).
+    sh "cargo", "clippy", "-p", "makiri_engine", "--no-default-features", "--tests", "--", "-D", "warnings"
+    sh "cargo", "clippy", "-p", "makiri_engine", "--tests", "--", "-D", "warnings"
     sh "cargo", "fmt", "--all", "--", "--check"
     # nupur's documentation is what an extension on the layer reads first:
     # a link that resolves nowhere, or to an item it cannot see, fails.
     sh({ "RUSTDOCFLAGS" => "-D warnings" }, "cargo", "doc", "-p", "nupur", "--no-deps", "--all-features")
+  end
+  # The Lexbor reference is a workspace of its own, which `--workspace` does
+  # not reach.
+  Dir.chdir("ext/makiri/rust/reference") do
+    sh "cargo", "clippy", "--all-features", "--tests", "--", "-D", "warnings"
+    sh "cargo", "fmt", "--", "--check"
   end
   # The lints are a crate of their own (rake dylint builds them); their
   # formatting is checked here, with everything else's.
@@ -62,8 +65,11 @@ end
 # `--cfg makiri_lint_probe`, ends with `//~` each line the lint must report,
 # and the task fails unless exactly those lines are reported - so a lint that
 # has stopped seeing a case cannot pass by reporting nothing.
-DYLINT = %w[cargo dylint --path lints/makiri_lints --no-deps --
-            --no-default-features --features ruby].freeze
+DYLINT = %w[cargo dylint --path lints/makiri_lints --no-deps -- -p makiri_rs].freeze
+# The engine: what it may allocate (`infallible_allocation`) and call
+# (`runs_callers_ruby` has nothing to find there - it cannot name Ruby - but
+# the shipped crate is the extension and the engine together).
+DYLINT_ENGINE = %w[cargo dylint --path lints/makiri_lints --no-deps -- -p makiri_engine].freeze
 # The binding layer, a workspace member of its own: the same lints, which
 # read its items as `nupur::...` (`paths::path_of`).
 # With `alloc-inject` on, so the raise sweep's hook (`set_raise_injector`,
@@ -80,8 +86,10 @@ task :dylint do
     # and dylint then answers from it - the old lints' verdict. A touch makes
     # every run check afresh.
     FileUtils.touch("src/lib.rs")
+    FileUtils.touch("engine/src/lib.rs")
     FileUtils.touch("nupur/src/lib.rs")
     sh(*DYLINT)
+    sh(*DYLINT_ENGINE)
     sh(*DYLINT_NUPUR)
     # The self-test, once per crate: the extension's probe, and the binding
     # layer's, which holds the cases only code naming rb-sys can write.

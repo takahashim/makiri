@@ -7,17 +7,14 @@ on:
   push:
     branches: [main, master]
     paths: &kani-paths
-      # The proofs build `--no-default-features`, so the Ruby/Lexbor layers
-      # below are compiled out of them; a change confined to those cannot
-      # change a proof's outcome. Everything else under src/ stays in, since
-      # the harnesses reach the engine's shared modules (limits, text, ...).
-      - "ext/makiri/rust/src/**"
-      - "!ext/makiri/rust/src/bridge/**"
-      - "!ext/makiri/rust/src/glue/**"
-      - "!ext/makiri/rust/src/lexbor/**"
-      - "!ext/makiri/rust/src/init.rs"
+      # The proofs build the engine alone, with no feature: a change to the
+      # extension or the Lexbor reference cannot change a proof's outcome.
+      # Every engine module stays in, since the harnesses reach its shared
+      # modules (limits, text, ...), and so does falloc, which it allocates
+      # through.
+      - "ext/makiri/rust/engine/**"
+      - "ext/makiri/rust/falloc/**"
       - "ext/makiri/rust/verus/**"
-      - "ext/makiri/rust/build.rs"
       - "ext/makiri/rust/Cargo.toml"
       - "ext/makiri/rust/Cargo.lock"
       - "Rakefile"
@@ -110,12 +107,12 @@ jobs:
           KANI_JOBS: "4"
         run: bundle exec rake kani
 
-  # Miri over the Ruby-free modules that hold `unsafe` (`utf8_copy`,
-  # `falloc`): their tests run on Miri's interpreter, which reports undefined
-  # behaviour - an out-of-bounds or dangling access, a misaligned or
-  # provenance-less pointer - that a test on hardware passes over. `cbuf` and
-  # `ptr_table` are `forbid(unsafe_code)`, so they are not here, and neither
-  # is nupur's Ruby-facing `unsafe`, which needs a Ruby.
+  # Miri over the Ruby-free code that holds `unsafe` - the `falloc` crate,
+  # with `nupur::utf8_copy` included in its test build: their tests run on
+  # Miri's interpreter, which reports undefined behaviour - an out-of-bounds
+  # or dangling access, a misaligned or provenance-less pointer - that a test
+  # on hardware passes over. The engine forbids `unsafe`, and nupur's
+  # Ruby-facing `unsafe` needs a Ruby.
   miri:
     name: Miri (Ruby-free unsafe)
     runs-on: ubuntu-24.04
@@ -134,7 +131,7 @@ jobs:
         env:
           MIRIFLAGS: "-Zmiri-strict-provenance"
         # Quoted: an unquoted `name:: ` would be read as a YAML mapping.
-        run: "cargo +nightly miri test --no-default-features --lib -- utf8_copy:: falloc::"
+        run: "cargo +nightly miri test -p falloc --lib"
 
   # Verus over ext/makiri/rust/verus/: `falloc::grow_capacity`,
   # `ptr_table`, `cbuf::Buf` and `limits::admit` (copied, and checked against the source by

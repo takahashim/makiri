@@ -18,10 +18,10 @@ description = "The Makiri gem's extension: HTML5 parsing, XPath 1.0 and an XML r
 # what `fuzz/Cargo.toml` depends on by name, and it distinguishes the crate from
 # the gem in cargo output.)
 name = "makiri"
-# cdylib is what Ruby loads; rlib is what the cargo-fuzz crate under fuzz/
-# depends on. The staticlib that used to be linked into the C extension is gone
-# with it - nothing consumed it any more, and building it cost every build.
-crate-type = ["cdylib", "rlib"]
+# cdylib is what Ruby loads, and all it is: the cargo-fuzz crate depends on
+# the engine and the Lexbor reference, not on this, and with an `rlib` beside
+# it rustc would run no LTO.
+crate-type = ["cdylib"]
 path = "src/lib.rs"
 
 # `kani` is set by cargo-kani, not by cargo, so declare it or every build warns
@@ -31,11 +31,15 @@ path = "src/lib.rs"
 workspace = true
 
 [workspace]
-# The extension and the binding layer it is built on. `fuzz/` (cargo-fuzz's
+# The extension, the engine and the fallible allocation it allocates through,
+# and the binding layer the extension is built on. `reference/` (the Lexbor
+# reference, with its vendored C library and bindgen), `fuzz/` (cargo-fuzz's
 # own nightly crate) and `lints/makiri_lints` (dylint's, on its own pinned
-# nightly) are crates of their own, run from their directories.
-members = [".", "nupur"]
-exclude = ["fuzz", "lints"]
+# nightly) are workspaces of their own, run from their directories - so this
+# workspace's Cargo.lock, the one a source install builds from, holds nothing
+# of Lexbor's, and no build script here reads a Lexbor header.
+members = [".", "nupur", "engine", "falloc"]
+exclude = ["fuzz", "lints", "reference"]
 
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(fuzzing)', 'cfg(makiri_lint_probe)', 'cfg(makiri_no_unwind)', 'cfg(nupur_lint_probe)', 'cfg(nupur_no_unwind)', 'cfg(dylint_lib, values(any()))'] }
@@ -59,66 +63,24 @@ expect_used = "warn"
 panic = "warn"
 
 [features]
-# Six features. Three name a real optional dependency rather than a step of
-# the C port - a Ruby runtime, a vendored C library, and a test hook - two,
-# `css-reference` and `lexbor-reference`, test references, and the last,
-# `html-dom`, the HTML DOM and everything over it (below).
-#
-# The port's thirty-seven per-file flags are gone. They existed so one C file at
-# a time could be replaced behind an identical ABI; there is no C left to
-# replace, so a flag per former file only described history.
-default = ["ruby"]
+# The extension is the Ruby surface over the engine and nothing else: the
+# engine's own features (`html-dom`, `lexbor-compat`) are the engine's, and
+# the Lexbor references are `makiri_lexbor`'s.
 
-# The Ruby boundary: rb-sys, and everything under `bridge/`, `glue/`
-# and `init.rs`. Off, the crate is the engine alone - which is what Kani and
-# cargo-fuzz build, since neither can link a live Ruby. It needs no Lexbor:
-# its HTML DOM is the arena's (`html-dom`).
-ruby = ["dep:nupur", "html-dom"]
-
-# The vendored Lexbor: build.rs runs bindgen over its headers, so this also
-# decides whether a build needs `vendor/lexbor/dist` to exist at all. `rake
-# kani` turns it OFF deliberately - the proofs are over the XML reader and the
-# XPath front end, and not needing a Lexbor build is what lets them run without
-# `rake compile` first. Lexbor is only ever the reference the ports are
-# tested against; the HTML DOM beside it is still the arena's.
-lexbor = ["html-dom"]
-
-# Allocation-failure injection, the Rust half of `rake oom`. Off,
-# `falloc::should_fail` is a const false and the branch disappears.
-alloc-inject = ["nupur?/alloc-inject"]
-
-# The OLD `lxb_selectors` engine (`lexbor::selectors`) outside `cfg(test)`, as
-# the reference the `html_css_diff` fuzz harness holds `css_match` to. Never
-# part of a build that ships.
-css-reference = ["lexbor"]
-
-# Lexbor as the parser port's reference (`lexbor::tree_diff`): its tree,
-# copied into the arena, beside the ported tree builder's, for the
-# `html_diff` fuzz harness. Never part of a build that ships.
-lexbor-reference = ["lexbor"]
-
-# The parser port's index-arena DOM (`crate::html::dom`) behind its facade
-# (`crate::html_dom`), parsed by the ported tree builder (`crate::html::tree`),
-# and what sits over it: the HTML CSS matcher, XPath's HTML instance, the
-# bridge's HTML half. Off only in the bare engine (Kani). `ruby` and `lexbor`
-# both turn it on. The document parse's encoding sniffing and decoders
-# (`html::encoding`) come with it.
-html-dom = ["dep:encoding_rs", "dep:chardetng"]
+# Allocation-failure injection, the Rust half of `rake oom`: the engine's
+# allocations (`falloc`) and the binding layer's raising calls.
+alloc-inject = ["makiri_engine/alloc-inject", "falloc/alloc-inject", "nupur/alloc-inject"]
 
 [dependencies]
-# The WHATWG Encoding Standard's decoders (`encoding_rs`) and Firefox's
-# detector for a document that declares no encoding (`chardetng`), for the
-# HTML document parse (`html::encoding`). Neither allocates through the
-# global allocator on the paths used: a decoder writes into a buffer we hand
-# it (`falloc`'s), and the detector keeps fixed-size state.
-chardetng = { version = "=1.0.0", optional = true }
-encoding_rs = { version = "=0.8.35", optional = true }
-# Only the `ruby` feature needs it; the engine builds without it, which is
-# what lets Kani and cargo-fuzz compile it. `nupur` is the binding layer
-# (`nupur/`): rb-sys, and every `unsafe` that talks to Ruby, behind safe
-# types - the one layer between the glue and Ruby (magnus stood here until
-# 2026-10). rb-sys comes with it; nothing here names it directly.
-nupur = { path = "nupur", version = "0.0.1", optional = true }
+# The engine: the HTML parser and DOM, the XML reader, XPath and CSS - no
+# Ruby, no Lexbor (`engine/`).
+makiri_engine = { path = "engine", version = "0.0.1" }
+falloc = { path = "falloc", version = "0.0.1" }
+# `nupur` is the binding layer (`nupur/`): rb-sys, and every `unsafe` that
+# talks to Ruby, behind safe types - the one layer between the glue and Ruby
+# (magnus stood here until 2026-10). rb-sys comes with it; nothing here names
+# it directly.
+nupur = { path = "nupur", version = "0.0.1" }
 
 # `unwind`, so a panic reaches Ruby as an exception instead of killing the host
 # process. Every method's trampoline (`bridge::rb::method::finish`) catches a
@@ -152,8 +114,3 @@ debug = false
 
 [profile.dev]
 panic = "unwind"
-
-[build-dependencies]
-# Reads the vendored Lexbor headers so the layout is not transcribed by hand.
-# libclang is already required by rb-sys, so this adds no new system dependency.
-bindgen = "0.72"

@@ -5,18 +5,6 @@
 
 use super::*;
 
-/// The arena for [`crate::child_index`]: a node's token is its `NodeId`'s,
-/// which the arena never reuses. The links are the arena's `Tree` ones,
-/// which `#children` follows (attributes are not on them).
-impl TokenTree for XmlDoc {
-    fn token(&self, n: NodeId) -> usize {
-        n.to_token()
-    }
-    fn node_of(&self, token: usize) -> Option<NodeId> {
-        NodeId::from_token(token)
-    }
-}
-
 impl ChildListHost for XmlSelf {
     type Tree<'a> = XmlDoc;
     fn document(&self) -> Value {

@@ -9,9 +9,9 @@
 //! The fields are private, so nothing outside this module can change the
 //! bytes once they are checked.
 //!
-//! It depends on std alone, so the extension's Ruby-free test build includes
-//! this same file (`#[path]`), where Miri runs its tests without a Ruby
-//! (`rake miri`). A copy's heap allocation is fallible, and the extension's
+//! It depends on std alone, so the test build of Makiri's `falloc` crate (the
+//! one of its crates that may hold `unsafe`) includes this same file
+//! (`#[path]`), where Miri runs its tests without a Ruby (`rake miri`). A copy's heap allocation is fallible, and the extension's
 //! OOM sweep can fail it (`set_alloc_injector`).
 
 #![allow(unsafe_code)]

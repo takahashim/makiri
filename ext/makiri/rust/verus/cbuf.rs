@@ -1,4 +1,4 @@
-//! Verus proofs over `src/cbuf.rs`: `Buf`, the capped byte buffer output is
+//! Verus proofs over `engine/src/cbuf.rs`: `Buf`, the capped byte buffer output is
 //! collected into, holds exactly what was appended, never past its ceiling,
 //! and a failure changes nothing - for every length, where the exhaustive
 //! test (`cbuf::tests`) covers ceilings up to 6 bytes and the Kani proof it
@@ -249,7 +249,7 @@ impl Buf {
             return Err(BufError::Limit);
         }
         if need > self.data.len() {
-            let room = crate::falloc::grow_capacity(self.data.len().max(FIRST_ROOM), need, 1)
+            let room = falloc::grow_capacity(self.data.len().max(FIRST_ROOM), need, 1)
                 .or_oom()?
                 .min(limit);
             let ghost before = self.view(); // [verus]

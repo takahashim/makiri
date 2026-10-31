@@ -16,7 +16,7 @@ use crate::paths::{callee, is_extension, path_of};
 /// The calls that put a body under `must_not_unwind`: it, and the
 /// trampolines' and `Init_makiri`'s helpers, which do.
 const GUARDS: &[&str] = &[
-    "makiri::no_unwind::must_not_unwind",
+    "makiri_engine::no_unwind::must_not_unwind",
     "nupur::no_unwind::must_not_unwind",
     "nupur::rb::method::finish",
     "nupur::rb::method::finish_cary",

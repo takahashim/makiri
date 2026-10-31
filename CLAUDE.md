@@ -22,9 +22,13 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
 - **No libxml2 / libxslt** anywhere - not linked, vendored, or derived. The
   XPath engine is original. See `NOTICE`.
 - **One language.** The extension is Rust - a cargo workspace at
-  `ext/makiri/rust` of two crates, the extension (`makiri_rs`) and the Ruby
-  binding layer it is built on (`nupur/`, which does not depend on the
-  extension) - and no C ships at all: the vendored Lexbor is built
+  `ext/makiri/rust` of four crates: the extension (`makiri_rs`, the Ruby
+  surface), the engine it puts that surface on (`engine/`, `makiri_engine`,
+  which depends on no Ruby and no Lexbor), the fallible allocation the engine
+  allocates through (`falloc/`), and the Ruby binding layer the extension is
+  built on (`nupur/`, which depends on neither); the Lexbor reference
+  (`reference/`, `makiri_lexbor`) is a workspace of its own - and no C ships
+  at all: the vendored Lexbor is built
   only for the tests (`rake lexbor`) and keeps its `lxb_*` names. No SYMBOL of ours carries a C-style prefix any more: the crate
   exports only `Init_makiri` and `ruby_abi_version`, so every other item is
   named as Rust. (The `mkr_` prefix was the C ABI's symbol convention and went
@@ -87,7 +91,7 @@ API list lives in the code + specs + `CHANGELOG.md`, not here.
   latched (above) and raises nothing.
 
   **Nothing that must not unwind can, and the compiler proves it**
-  (`src/no_unwind.rs`, `rake no_unwind`). An unwind out of an `extern "C"`
+  (`engine/src/no_unwind.rs`, `rake no_unwind`). An unwind out of an `extern "C"`
   function aborts, so does a panic in a `Drop` the GC runs or that runs
   while another panic unwinds. Each such body is a `Site` run through
   `must_not_unwind`; a release build with `--cfg makiri_no_unwind` (and
@@ -445,12 +449,14 @@ bundle exec rake lexbor            # the reference Lexbor (script/build_lexbor.r
                                    # conformance:parser and the diff fuzzers need it
                                    # and depend on it
 bundle exec rake spec
-bundle exec rake rust:test         # Ruby-free core tests, Lexbor-feature tests, fuzz-crate check
+bundle exec rake rust:test         # the engine (bare and as shipped), falloc, nupur and the
+                                   # Lexbor reference's tests, and the fuzz-crate check
 bundle exec rake nupur:spec        # nupur alone: its test extension (nupur/test/ext, a
                                    # cdylib over the layer and nothing of Makiri's) and
                                    # the specs beside it - trampolines, panics, exits,
                                    # slots under GC, checked String reads, arguments
-bundle exec rake lint              # cargo clippy --all-features -D warnings + cargo fmt --check
+bundle exec rake lint              # cargo clippy -D warnings over every crate and configuration
+                                   # (the workspace, the bare engine, the reference) + fmt
 bundle exec rake unsafe:boundaries # each file's unsafe count, the forbid files, static mut
 bundle exec rake dylint            # the crate's own lints (lints/makiri_lints), on the
                                    # compiled code by resolved path: ruby_value_on_heap
@@ -502,7 +508,7 @@ bundle exec rake deny              # cargo-deny over the extension's dependencie
                                    # apply is ignored in deny.toml with its reason
 bundle exec rake symbols           # THE export gate - see Hard constraints
 bundle exec rake no_unwind         # release build proving no extern "C" fn / GC-run Drop
-                                   # can unwind (src/no_unwind.rs) - see Hard constraints
+                                   # can unwind (engine/src/no_unwind.rs) - see Hard constraints
 bundle exec rake diff              # answers vs the recorded C-build baseline (see below)
 bundle exec rake sanitize          # rebuild w/ -Zsanitizer=address (nightly), run suite
 bundle exec rake debug             # rebuild as a dev profile (debug_assert! compiled
@@ -538,10 +544,10 @@ bundle exec rake oom               # OOM-injection sweep: rebuilds with
                                    # borrowed (`Makiri.__borrowed?`) or unusable - the
                                    # runtime check of the guards-across-raises rule.
                                    # Prefix with MAKIRI_SANITIZE=address to combine ASan.
-bundle exec rake miri              # the Ruby-free unsafe modules' tests (utf8_copy,
-                                   # falloc) under Miri, strict provenance (nightly + miri;
-                                   # CI: verify.yml). utf8_copy is nupur's, std-only, and
-                                   # included in this crate's test build (`#[path]`) for it
+bundle exec rake miri              # the Ruby-free unsafe code's tests - the falloc crate,
+                                   # with nupur's utf8_copy - under Miri, strict provenance
+                                   # (nightly + miri; CI: verify.yml). utf8_copy is nupur's,
+                                   # std-only, and included in falloc's test build (`#[path]`)
 bundle exec rake verus             # Verus proofs (ext/makiri/rust/verus/): falloc's
                                    # grow_capacity, ptr_table's probing and
                                    # load factor, cbuf's Buf (content, ceiling,
@@ -696,7 +702,7 @@ by the check that concluded "every undefined symbol is legitimate".
   `-fstack-protector-strong` covered stack smashing in the C, and there is no C.
   Rust's own bounds checking is what covers the class now on every path that is
   not `unsafe`, which is why `unsafe` blocks carry a stated contract.
-- **The XML arena (`src/xml/arena.rs`) needs no ASan poisoning, and has none.**
+- **The XML arena (`engine/src/xml/arena.rs`) needs no ASan poisoning, and has none.**
   The C build's bump arena did (poisoned 64 KiB chunks, the Lexbor-mraw blind
   spot); the Rust one is an index arena - a `Vec<Node>` and a `Vec<u8>` under
   `#![forbid(unsafe_code)]`, addressed by `NodeId` and spans - so a write past
@@ -777,18 +783,23 @@ by the check that concluded "every undefined symbol is legitimate".
 ```
 lib/makiri/                Ruby API (Document, Node, Element, NodeSet, XPathContext, ...)
 ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and the
-                           root of a workspace with `nupur/` (`fuzz/` and
-                           `lints/` are crates of their own, each `[workspace]`)
+                           root of a workspace with `engine/`, `falloc/` and
+                           `nupur/` (`reference/`, `fuzz/` and `lints/` are
+                           crates of their own, each `[workspace]`, so this
+                           workspace's Cargo.lock - the one a source install
+                           builds from - holds nothing of Lexbor's, and its build
+                           scripts read no Lexbor header)
   extconf.rb               hands the crate to cargo via create_rust_makefile; owns
                            the link arguments and the export trim (it builds no
                            Lexbor: `rake lexbor` does, for the tests). It builds
-                           `--crate-type cdylib` alone: with the crate's `rlib`
-                           (the fuzz crate's) in, rustc runs NO LTO, and every
-                           call into `nupur` is an opaque cross-crate call (the
-                           light readers measured 9-25% slower; with LTO they
-                           are 12-14% faster than the one-crate build, which
-                           never had LTO either). `rake no_unwind` builds the
-                           same way, since its proof is of the shipped binary
+                           `--crate-type cdylib` alone: with an `rlib` in, rustc
+                           runs NO LTO, and every call into `nupur` and the
+                           engine is an opaque cross-crate call (the light
+                           readers measured 9-25% slower when nupur was split;
+                           with LTO they are 12-14% faster than the one-crate
+                           build, which never had LTO either). `rake no_unwind`
+                           builds the same way, since its proof is of the
+                           shipped binary
   nupur/                   the Ruby binding layer, a crate of its own over rb-sys.
                            `nupur/src/lib.rs` is the one statement of what it
                            guarantees, what an extension must uphold and what
@@ -802,24 +813,42 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            path is `#[inline]`, or the proof cannot see into
                            it across the crate. `test/` is its own extension
                            and specs (`rake nupur:spec`)
-  build.rs                 bindgen over Lexbor's own headers -> the layout and
-                           constants the crate reads (never transcribed by hand)
-  src/
+  build.rs                 the gem's version, embedded for `Makiri::NATIVE_VERSION`
+  falloc/                  fallible allocation (crate `falloc`) - every engine
+                           allocation goes through here, so `rake oom` can fail
+                           it and OOM raises rather than aborting the host
+                           process (the glue's Ruby-side storage is Ruby's
+                           xmalloc; see the gotchas). Its `try_box` holds the
+                           ONE `unsafe` block of ours outside nupur (a fallible
+                           `Box<T>` has no stable safe spelling), which is why
+                           it is a crate of its own; its test build includes
+                           `nupur/src/utf8_copy.rs` for Miri
+  engine/                  the engine (crate `makiri_engine`): no Ruby, no
+                           Lexbor - it depends on `falloc`, `encoding_rs` and
+                           `chardetng` alone, so a Ruby name there does not
+                           compile. `forbid(unsafe_code)` at its root (bar the
+                           `rake no_unwind` check build). Features: `html-dom`
+                           (default), `alloc-inject`, `lexbor-compat` (the
+                           Lexbor reference's switches and harnesses). The
+                           extension and the reference re-export its modules
+                           at their roots, so `crate::xml` there is its
+    src/doc_cell.rs        `DocCell`: a Document's content behind counted
+                           read/write guards (`bridge::dom` wraps it; here so
+                           its compile_fail doctests run without a Ruby)
+    src/cbuf.rs            `Buf`: the owned, capped, growable byte buffer
+    src/cutf8.rs           the one UTF-8 validator + strict 1-codepoint decoder
+    src/utf8_input.rs      HTML input sanitiser: invalid UTF-8 -> U+FFFD, per
+                           WHATWG; `cbuf`+`cutf8` only
+    src/no_unwind.rs       the engine's no_unwind sites and the check's control
+    src/xpath/, xml/, html/, css_match/, selectors/ - below, after the extension's
+  reference/               the Lexbor reference (crate `makiri_lexbor`, its own
+                           workspace): `build.rs` (bindgen over Lexbor's own
+                           headers -> the layout and constants it reads, never
+                           transcribed by hand), `src/lexbor/` (below), `gvl.rs`
+                           and `caught.rs`. Depends on the engine with
+                           `lexbor-compat`; nothing that ships depends on it
+  src/                     the extension (`makiri_rs`): the Ruby surface alone
     init.rs                Init_makiri: the class hierarchy and the registration seam
-    falloc/                fallible allocation - every engine allocation goes
-                           through here, so `rake oom` can fail it and OOM raises
-                           rather than aborting the host process (the glue's
-                           Ruby-side storage is Ruby's xmalloc; see the gotchas).
-                           Its `try_box` holds the ONE `unsafe` block left in
-                           the shipping crate outside `bridge/` (a fallible
-                           `Box<T>` has no stable safe spelling); everything
-                           else Ruby-free is `forbid(unsafe_code)`
-    doc_cell.rs            `DocCell`: a Document's content behind counted
-                           read/write guards (Ruby-free; `bridge::dom` wraps it)
-    cbuf.rs                `Buf`: the owned, capped, growable byte buffer
-    cutf8.rs               the one UTF-8 validator + strict 1-codepoint decoder
-    utf8_input.rs          HTML input sanitiser: invalid UTF-8 -> U+FFFD, per
-                           WHATWG; `cbuf`+`cutf8` only, so Ruby/Lexbor-free
     bridge/                the Ruby boundary - the ONLY layer allowed raw Ruby String
                            access (RSTRING) and verified-string minting. `rb/` is
                            its value and method layer over rb-sys (`Value` and the
@@ -856,6 +885,7 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            `rake dylint`'s `ruby_surface_in_bridge` fails on a
                            method defined - or an argument list split - in
                            `bridge/`
+  engine/src/
     xpath/                 native XPath 1.0 engine, generic over a `Dom` trait;
                            `#![forbid(unsafe_code)]` and Lexbor/Ruby-free. The
                            two `Dom` instances live with their layers:
@@ -884,6 +914,21 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            instances), `encoding/` (sniffing, decoders),
                            `fragment.rs`, and `res/` (tables generated from
                            Lexbor's)
+    css_match/             the CSS matcher, over any DOM that implements its
+                           traits (`css_match::dom`: the HTML arena's in
+                           `html/dom/css.rs`, the XML arena's in `xml/css.rs`);
+                           `#![forbid(unsafe_code)]`, Ruby- and Lexbor-free,
+                           and naming no host. The compiled-selector cache in
+                           front of it, which names both, is `css_cache.rs`
+    selectors/             the CSS parser ported from Lexbor (its CSS syntax
+                           tokenizer, rule/state stacks, selector states, and
+                           the stylesheet rule phases and callbacks in
+                           `parser/syntax.rs`) into an owned AST and rule arena
+                           (`rules.rs`), plus `parse_stylesheet`'s reader
+                           (`stylesheet.rs`) and the CSSOM selector writer
+                           (`text.rs`); Ruby- and Lexbor-free,
+                           `#![forbid(unsafe_code)]` at its root
+  reference/src/
     lexbor/                the Lexbor boundary: `abi` - the generated layout and
                            functions (the `_noi` twins included), the ONE place
                            a Lexbor function is declared (a second `extern "C"`
@@ -900,37 +945,24 @@ ext/makiri/rust/           the extension: package makiri_rs, lib `makiri`, and t
                            (`xpath.rs`). All of it is the reference the ports
                            are tested against: nothing here ships, and every
                            `lxb_*`/`Lxb*` name outside it is 0
-    css_match/             the CSS matcher, over any DOM that implements its
-                           traits (`css_match::dom`: the HTML arena's in
-                           `html/dom/css.rs`, the XML arena's in `xml/css.rs`);
-                           `#![forbid(unsafe_code)]`, Ruby- and Lexbor-free,
-                           and naming no host. The compiled-selector cache in
-                           front of it, which names both, is `css_cache.rs`
-    selectors/             the CSS parser ported from Lexbor (its CSS syntax
-                           tokenizer, rule/state stacks, selector states, and
-                           the stylesheet rule phases and callbacks in
-                           `parser/syntax.rs`) into an owned AST and rule arena
-                           (`rules.rs`), plus `parse_stylesheet`'s reader
-                           (`stylesheet.rs`) and the CSSOM selector writer
-                           (`text.rs`); Ruby- and Lexbor-free,
-                           `#![forbid(unsafe_code)]` at its root
   verus/                   Verus proofs, each over code copied from the source (lines
                            only Verus needs end in `// [verus]`, and `rake verus:sync`
                            holds the rest to the source token for token):
-                           `ptr_table.rs` for `src/ptr_table.rs`: `probe`
+                           `ptr_table.rs` for `engine/src/ptr_table.rs`: `probe`
                            always stops (at the key or an empty slot), every
                            `PtrTable` / `PtrMap` operation, `grow` included, keeps
                            a slot free - the load factor - so it always can, and
                            each table is the `Map` it stands for (`view`): `get`
                            finds exactly what was put, since `wf` keeps keys
                            `unique` and probe paths `clustered`;
-                           `cbuf.rs` for `src/cbuf.rs`: a `Buf` holds exactly
+                           `cbuf.rs` for `engine/src/cbuf.rs`: a `Buf` holds exactly
                            what was appended, its room never passes the ceiling,
                            a failure changes nothing, and `copy_small` copies
                            exactly - at every length, where Kani ran out of memory -
                            with falloc's `grow_capacity`; `limits.rs`: `admit`, the
                            one rule every work budget charges through
-  fuzz/                    cargo-fuzz harnesses (xml/html, xpath/xml_xpath/
+  fuzz/                    cargo-fuzz harnesses, over the reference crate (as
+                           `makiri`) and so the engine (xml/html, xpath/xml_xpath/
                            html_xpath, css = the XML matcher's entry points held
                            to each other, html_css = the
                            HTML matcher over an arbitrary document, asserting
@@ -952,28 +984,27 @@ bench/                     Nokogiri-comparison benchmark
 docs/design_doc.ja.md      authoritative design (read this)
 ```
 
-Six features, and the default is the extension: **`ruby`** (the
-Ruby boundary over `nupur` - `bridge`, whose `bridge::rb` is nupur's value
-and method layer - + `glue` + `init`; with it off, neither `nupur` nor
-rb-sys is in the dependency graph), **`html-dom`** (the parser port's
-index-arena DOM, `html::dom`, behind the `html_dom` facade and parsed by the
-ported tree builder `html::tree`, with what sits over it - the HTML CSS
-matcher, XPath's HTML instance, the bridge's HTML half; `ruby` and `lexbor`
-both turn it on, and only the bare engine - Kani - is without it),
-**`lexbor`** (the vendored Lexbor, only the reference: the generated ABI,
-Lexbor's DOM through `lexbor/adapter` and its XPath instance, and the
-reference parsers; no build that ships has it, so `nm` finds no `lxb_`
-symbol), **`alloc-inject`** (the `rake oom` hook, off in any normal build),
-**`css-reference`** (the OLD CSS engine, `lexbor::selectors`, for the
-`html_css_diff` fuzz target) and **`lexbor-reference`** (`lexbor::tree_diff`,
-`lexbor::selector_diff` and `lexbor::stylesheet_diff`, Lexbor's tree, selector
-lists and stylesheets beside the ports', for the `html_diff`, `selector_diff`
-and `stylesheet_diff` fuzz targets). (The CSS-to-XPath lowering XML's CSS ran
-on before `css_match` stayed as the XML matcher's reference, behind
-`xml-css-reference`, until the browser comparison made it redundant.) A
-plain `cargo build` is the shipping
-configuration; `rake rust:test` runs the engine alone, `html-dom` and
-`lexbor`. Lexbor's DOM is not an extension build any more
+Features are per crate. The **engine** has **`html-dom`** (default: the
+parser port's index-arena DOM, `html::dom`, behind the `html_dom` facade and
+parsed by the ported tree builder `html::tree`, with what sits over it - the
+HTML CSS matcher, XPath's HTML instance; only the bare engine - Kani - is
+without it), **`alloc-inject`** (the `rake oom` hook, through to `falloc`'s)
+and **`lexbor-compat`** (`compat::as_lexbor`, the conformance harness and the
+tokenizer's traced run - what only the Lexbor reference reads; never in a build
+that ships). The **extension** has **`alloc-inject`** alone (to the engine,
+`falloc` and nupur). The **reference** has **`css-reference`** (the OLD CSS
+engine, `lexbor::selectors`, for the `html_css_diff` fuzz target) and
+**`lexbor-reference`** (`lexbor::tree_diff`, `lexbor::selector_diff` and
+`lexbor::stylesheet_diff`, Lexbor's tree, selector lists and stylesheets beside
+the ports', for the `html_diff`, `selector_diff` and `stylesheet_diff` fuzz
+targets). There is no `ruby` feature (the extension is the Ruby surface, and
+the engine has no Ruby to turn off) and no `lexbor` one (the reference crate
+is Lexbor, and nothing that ships depends on it, so `nm` finds no `lxb_`
+symbol). (The CSS-to-XPath lowering XML's CSS ran on before `css_match` stayed
+as the XML matcher's reference, behind `xml-css-reference`, until the browser
+comparison made it redundant.) `rake rust:test` runs the engine bare and as
+shipped, `falloc`, nupur and the reference. Lexbor's DOM is not an
+extension build any more
 (`MAKIRI_LEXBOR_DOM=1` was retired in stage 9; the tests that held the
 arena's edits and XPath to Lexbor's DOM retired with the migration):
 `lexbor::tree_port_tests` and the `html_diff` fuzz target hold the tree
@@ -984,11 +1015,10 @@ byte store is append-only between compactions: an edit's start
 (`HtmlParsed::edit`, after the indexes - which hold spans - are dropped)
 rewrites it once the dead bytes outweigh the live ones
 (`html/dom/compact.rs`), so repeated `content=` does not grow a document.
-The engine - `xml`, `xpath`, `falloc`, `cbuf`, `cutf8`, `html` (the
-tokenizer, the tree builder and the arena), `selectors` (the selector
-parser) - is behind no gate at all. So the fuzz crate builds `--no-default-features --features lexbor,css-reference,lexbor-reference` and Kani
-builds `--no-default-features`. The ~30 features that used to stand here were
-migration scaffolding, one per ported C file, and went with the C.
+The fuzz crate builds the reference with `css-reference,lexbor-reference`,
+and Kani builds the engine with `--no-default-features`. The ~30 features that
+used to stand here were migration scaffolding, one per ported C file, and went
+with the C.
 
 ## Subsystems
 
@@ -1190,7 +1220,7 @@ byte store is compacted - moving every span - only right after
   the slices, one copy). Verify with `spec/text_index_spec.rb`, which holds
   it byte-identical to a plain walk across subtrees and mutations.
 
-**Child counting and indexing** (`src/child_index.rs`). `#child_count` /
+**Child counting and indexing** (`engine/src/child_index.rs`). `#child_count` /
 `#child_at` and their element twins walk `dom_rules::Tree`'s links - the
 insertion rules' description of each tree, so the three cannot disagree -
 and remember where they were in a per-document `ChildPositionMemo` (a
@@ -1206,7 +1236,7 @@ in `glue::node`, and the element-only navigation (`first_element_child`,
 `next_element`, ...) is `child_index`'s too, over the same links and element
 test.
 
-**XPath engine** (`src/xpath/`). Original implementation: lexer →
+**XPath engine** (`engine/src/xpath/`). Original implementation: lexer →
 recursive-descent parser → AST → evaluator + 26 built-in functions. The only
 external hook is `Dom::qualified_name` (in `xpath/dom.rs`). Per-evaluate
 budgets (op count, recursion depth, step/predicate/arg counts, node-set & string

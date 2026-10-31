@@ -93,7 +93,7 @@ fn alloc_inject(nth: Value) -> Result<(), Error> {
     let nth = crate::bridge::ruby::integer_arg(nth)?.to_i64()?;
     #[cfg(feature = "alloc-inject")]
     {
-        crate::falloc::alloc_inject_arm(nth);
+        falloc::alloc_inject_arm(nth);
         Ok(())
     }
     #[cfg(not(feature = "alloc-inject"))]
@@ -111,7 +111,7 @@ fn alloc_inject(nth: Value) -> Result<(), Error> {
 fn alloc_inject_calls() -> Result<u64, Error> {
     #[cfg(feature = "alloc-inject")]
     {
-        Ok(crate::falloc::alloc_inject_call_count())
+        Ok(falloc::alloc_inject_call_count())
     }
     #[cfg(not(feature = "alloc-inject"))]
     {
@@ -129,7 +129,7 @@ fn raise_inject(nth: Value) -> Result<(), Error> {
     let nth = crate::bridge::ruby::integer_arg(nth)?.to_i64()?;
     #[cfg(feature = "alloc-inject")]
     {
-        crate::falloc::raise_inject_arm(nth);
+        falloc::raise_inject_arm(nth);
         Ok(())
     }
     #[cfg(not(feature = "alloc-inject"))]
@@ -147,7 +147,7 @@ fn raise_inject(nth: Value) -> Result<(), Error> {
 fn raise_inject_calls() -> Result<u64, Error> {
     #[cfg(feature = "alloc-inject")]
     {
-        Ok(crate::falloc::raise_inject_call_count())
+        Ok(falloc::raise_inject_call_count())
     }
     #[cfg(not(feature = "alloc-inject"))]
     {
@@ -344,8 +344,8 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
      * checked copy's heap allocation. */
     #[cfg(feature = "alloc-inject")]
     crate::nupur::inject::install(crate::nupur::inject::Injectors {
-        raise: crate::falloc::raise_inject_should_raise,
-        alloc: crate::falloc::allocation_should_fail,
+        raise: falloc::raise_inject_should_raise,
+        alloc: falloc::allocation_should_fail,
     });
     /* Every method defined below may be called from any Ractor
      * (`spec/ractor_spec.rb`). The layer's half is nupur's (its `lib.rs`);

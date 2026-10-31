@@ -71,9 +71,9 @@ jobs:
       - name: Compile the extension (the crate alone; no Lexbor)
         run: bundle exec rake compile
 
-      # The reference Lexbor, which the extension no longer links: Clippy's
-      # `--all-features`, the Rust tests and the fuzz crate build the layers
-      # that compare against it.
+      # The reference Lexbor, which the extension does not link: the reference
+      # crate (`reference/`), the Rust tests and the fuzz crate build against
+      # it.
       - name: Build the reference Lexbor
         if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
         run: bundle exec rake lexbor
@@ -84,39 +84,40 @@ jobs:
       # exists to exercise. An unsafe block without a stated contract and a
       # raw-pointer compare that should be `ptr::eq` are the others.
       #
-      # After `rake compile`, because build.rs generates the Lexbor layout from
-      # the vendored headers and those only exist once cmake has installed them.
-      # One cell, not twelve: `--all-features` is every configuration the crate
-      # has, so the other matrix cells would re-run it. This step was
-      # lost when the per-flag port matrix was deleted - it used to run once per
-      # leg with that leg's features - and nothing noticed, because the comment
-      # claiming it ran was in a different file.
+      # After `rake lexbor`, because the reference's build.rs generates the
+      # Lexbor layout from the vendored headers and those only exist once cmake
+      # has installed them. One cell, not twelve: every crate with every
+      # configuration it has, so the other matrix cells would re-run it. This
+      # step was lost when the per-flag port matrix was deleted - it used to
+      # run once per leg with that leg's features - and nothing noticed,
+      # because the comment claiming it ran was in a different file.
       - name: Clippy
         if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
         working-directory: ext/makiri/rust
         run: |
-          cargo clippy --all-features --tests -- -D warnings
-          cargo clippy -p nupur --all-features --tests -- -D warnings
-          cargo clippy --no-default-features --features ruby -- -D warnings
-          cargo clippy --no-default-features --features html-dom --tests -- -D warnings
+          cargo clippy --workspace --all-features --tests -- -D warnings
+          cargo clippy -p makiri_engine --no-default-features --tests -- -D warnings
+          cargo clippy -p makiri_engine --tests -- -D warnings
+          cargo clippy --manifest-path reference/Cargo.toml --all-features --tests -- -D warnings
 
       # The same lints where a C `long` is 32 bits. On every other runner
       # `c_long` is `i64` itself, so a cast that truncates on Windows is a
       # no-op there and clippy's cast lints (nupur's lib.rs) see nothing;
-      # here they see the real types. Without `--all-features` on the
-      # extension: this cell builds no Lexbor.
+      # here they see the real types. The workspace only: the Lexbor reference
+      # is not built on Windows.
       - name: Clippy at a 32-bit long
         if: runner.os == 'Windows' && matrix.ruby == '3.4'
         working-directory: ext/makiri/rust
         shell: bash
         run: |
-          cargo clippy -p nupur --all-features --tests --target x86_64-pc-windows-gnu -- -D warnings
-          cargo clippy --no-default-features --features ruby --target x86_64-pc-windows-gnu -- -D warnings
+          cargo clippy --workspace --all-features --tests --target x86_64-pc-windows-gnu -- -D warnings
 
       - name: Rust formatting
         if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
         working-directory: ext/makiri/rust
-        run: cargo fmt --all -- --check
+        run: |
+          cargo fmt --all -- --check
+          cargo fmt --manifest-path reference/Cargo.toml -- --check
 
       # The cargo-fuzz crate is a separate crate that nothing else here builds,
       # so an engine API change used to break it silently until the nightly
@@ -160,7 +161,7 @@ jobs:
       # No extern "C" function of ours, and no Drop the GC runs, can unwind -
       # an unwind there aborts the process. A release build with a guard per
       # site whose call survives only where the optimizer cannot prove the
-      # body unwind-free (src/no_unwind.rs); one cell, as the release build
+      # body unwind-free (engine/src/no_unwind.rs); one cell, as the release build
       # does not vary by Ruby.
       - name: No-unwind proof
         if: matrix.os == 'ubuntu-latest' && matrix.ruby == '3.4'
@@ -199,8 +200,8 @@ jobs:
   # kept where the GC's stack scan does not see it. It is a rustc plugin, so
   # it runs on the nightly its rust-toolchain.toml pins (with
   # rustc-dev) rather than the stable the build uses; `rake dylint` runs it
-  # over the `ruby` build and then its self-test. No Lexbor: the `ruby`
-  # configuration's build.rs does not read it.
+  # over the extension, the engine and nupur, and then its self-test. No
+  # Lexbor: none of the three reads it.
   dylint:
     name: makiri_lints
     runs-on: ubuntu-latest
@@ -306,4 +307,6 @@ jobs:
         working-directory: ext/makiri/rust
         env:
           RUSTFLAGS: -Zsanitizer=address
-        run: cargo test --no-default-features --features lexbor --target x86_64-unknown-linux-gnu
+        run: |
+          cargo test -p makiri_engine --target x86_64-unknown-linux-gnu
+          cargo test --manifest-path reference/Cargo.toml --target x86_64-unknown-linux-gnu

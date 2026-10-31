@@ -44,8 +44,9 @@ spec/fuzz/regressions/*
 # Conformance test data (fetched on demand & pinned by the runner; not vendored)
 spec/conformance/data/
 
-# Rust build output
+# Rust build output (the Lexbor reference is a workspace of its own)
 ext/makiri/rust/target/
+ext/makiri/rust/reference/target/
 
 # cargo-fuzz: build output, the accumulated corpus (kept in CI cache, not here)
 # and any crash reproducers it saves.

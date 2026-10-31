@@ -11,16 +11,16 @@ VERUS_VERSION = "0.2026.10.04.426d8b0"
 VERUS_COPIES = [
   *%w[capacity_for probe lookup PtrTable::with_keys PtrTable::insert PtrTable::get
       PtrMap::clear PtrMap::get PtrMap::insert PtrMap::set PtrMap::grow].map do |name|
-    ["ext/makiri/rust/src/ptr_table.rs", "ext/makiri/rust/verus/ptr_table.rs", name]
+    ["ext/makiri/rust/engine/src/ptr_table.rs", "ext/makiri/rust/verus/ptr_table.rs", name]
   end,
-  ["ext/makiri/rust/src/falloc/mod.rs", "ext/makiri/rust/verus/cbuf.rs", "grow_capacity"],
-  ["ext/makiri/rust/src/limits.rs", "ext/makiri/rust/verus/limits.rs", "admit"],
-  ["ext/makiri/rust/src/cbuf.rs", "ext/makiri/rust/verus/cbuf.rs", "copy_small"],
+  ["ext/makiri/rust/falloc/src/lib.rs", "ext/makiri/rust/verus/cbuf.rs", "grow_capacity"],
+  ["ext/makiri/rust/engine/src/limits.rs", "ext/makiri/rust/verus/limits.rs", "admit"],
+  ["ext/makiri/rust/engine/src/cbuf.rs", "ext/makiri/rust/verus/cbuf.rs", "copy_small"],
   # nupur's copy of it, which writes a String in place (`utf8_str_filled`).
   ["ext/makiri/rust/nupur/src/string/make.rs", "ext/makiri/rust/verus/cbuf.rs", "copy_small"],
   *%w[as_slice append append_growing raise_limit reserve steal content_limit
       content_limit_for grow_to].map do |name|
-    ["ext/makiri/rust/src/cbuf.rs", "ext/makiri/rust/verus/cbuf.rs", "Buf::#{name}"]
+    ["ext/makiri/rust/engine/src/cbuf.rs", "ext/makiri/rust/verus/cbuf.rs", "Buf::#{name}"]
   end
 ].freeze
 # The files `rake verus` verifies.

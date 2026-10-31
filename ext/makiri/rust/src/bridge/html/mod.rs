@@ -23,7 +23,7 @@ use crate::init::{
 use crate::bridge::dom::{HtmlRead, HtmlWrite};
 use crate::bridge::string::{utf8_str, RubyData, RubyText};
 use crate::bridge::wrapper::*;
-use crate::child_index::{ChildList, Children, TokenTree};
+use crate::child_index::{ChildList, Children};
 use crate::html_dom::html::{HtmlDoc, HtmlDocMut, HtmlNewNodes};
 use crate::html_dom::AdapterOom;
 

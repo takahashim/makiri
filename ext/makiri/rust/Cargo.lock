@@ -21,8 +21,6 @@ dependencies = [
  "cexpr",
  "clang-sys",
  "itertools",
- "log",
- "prettyplease",
  "proc-macro2",
  "quote",
  "regex",
@@ -90,6 +88,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "falloc"
+version = "0.0.1"
+
+[[package]]
 name = "glob"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -127,18 +129,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "log"
-version = "0.4.34"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+name = "makiri_engine"
+version = "0.0.1"
+dependencies = [
+ "chardetng",
+ "encoding_rs",
+ "falloc",
+]
 
 [[package]]
 name = "makiri_rs"
 version = "0.0.1"
 dependencies = [
- "bindgen",
- "chardetng",
- "encoding_rs",
+ "falloc",
+ "makiri_engine",
  "nupur",
 ]
 
@@ -169,16 +173,6 @@ name = "nupur"
 version = "0.0.1"
 dependencies = [
  "rb-sys",
-]
-
-[[package]]
-name = "prettyplease"
-version = "0.2.37"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
-dependencies = [
- "proc-macro2",
- "syn",
 ]
 
 [[package]]
