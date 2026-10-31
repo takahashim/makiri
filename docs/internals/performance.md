@@ -109,11 +109,15 @@ handlers were delivered.
 ### `//tag` from the element index
 
 `//tag` is served from the element index (`xpath/step_index.rs`): a
-document-rooted, predicate-free, unprefixed descendant name-test pushes the
-tag bucket instead of walking. This is pure-HTML only (the `has_foreign`
-guard), and each candidate is re-checked with the step's `CompiledTest`, so
-the result is identical to the walk. Custom and unknown tag names fall
-through. See the element index in `subsystems.md`.
+document-rooted, predicate-free descendant name-test pushes the bucket
+`Dom::name_bucket` answers instead of walking. HTML answers an unprefixed test
+alone from its tag-id index, and only for a pure-HTML document (the
+`has_foreign` and `has_case_kept` guards); each candidate is re-checked with
+the step's `CompiledTest`, so the result is identical to the walk, and custom
+and unknown tag names fall through. XML answers any `//tag` or `//p:tag` from
+its (local name, namespace) name index, exactly, with no re-check. `//tag[N]`
+has an index path of its own (`try_descendant_index_nth`). See the element
+index in `subsystems.md`.
 
 ### CSS matching: per query, not per candidate
 
@@ -245,7 +249,7 @@ position-independent `[@a]`/`[@a='v']` predicate" shapes - `//x`, `//x[@a]`,
 `//*[@a='v']`, `.//x`, `descendant::x[...]` (after the `//` peephole; one or
 two steps) - it walks the subtree in **document order and stops at the first
 match** instead of materialising and sorting the whole set. This is the XPath
-analogue of at_css's `MATCH_FIRST`.
+analogue of at_css's first-match search (`css_match`'s `select_first`).
 
 The cost becomes O(position of first match): a front hit is ~µs (against
 ~280µs for a full evaluation), and trailing or absent matches fall back to a

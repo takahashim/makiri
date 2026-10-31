@@ -29,6 +29,8 @@ bundle exec rake diff              # answers vs the recorded C-build baseline
 bundle exec rake sanitize          # rebuild w/ -Zsanitizer=address (nightly), run suite
 bundle exec rake debug             # rebuild with debug_assert!, run the suite
 bundle exec rake fuzz              # robustness fuzzer (spec/fuzz/); FUZZ_ARGS to tune
+bundle exec rake fuzz:xml          # the fuzzer's XML parser target; FUZZ_ARGS to tune
+bundle exec rake fuzz:mutate       # the fuzzer's XML mutation target; FUZZ_ARGS to tune
 bundle exec rake invariants        # randomized property checks (spec/invariants/)
 bundle exec rake fuzz:sanitize     # fuzz under ASan - the engine's memory-safety net
 bundle exec rake fuzz:libfuzzer    # cargo-fuzz harnesses
@@ -37,6 +39,8 @@ bundle exec rake oom               # OOM-injection sweep, then the raise sweep
 bundle exec rake miri              # the Ruby-free unsafe code's tests under Miri
 bundle exec rake verus             # Verus proofs (ext/makiri/rust/verus/)
 bundle exec rake kani              # Kani proofs over the Ruby-free core
+bundle exec rake coverage          # llvm-cov report of our sources over the suite (macOS);
+                                   # leaves the instrumented build: `rake clean compile`
 bundle exec rake bench             # perf vs Nokogiri (bench-only gems; runs outside bundle)
 ```
 
@@ -68,7 +72,8 @@ gems are published per platform, so most users never compile.
 ## Lints and dependency checks
 
 `rake lint` runs `cargo clippy -D warnings` over every crate and configuration
-(the workspace, the bare engine, the reference), plus fmt.
+(the workspace, the engine bare and as shipped, the reference, nupur's test
+extension, the fuzz crate), plus fmt and nupur's rustdoc with `-D warnings`.
 
 ### `rake dylint`
 
@@ -147,6 +152,16 @@ build in place; `rake clean compile` goes back to release.
 
 ## Fuzzing and property checks
 
+- `rake fuzz:sanitize` rebuilds under ASan and runs the robustness fuzzer over
+  five surfaces: XPath over the default fixtures, `css`, `xml`, `mutate` and
+  `xmlcss` (CSS over an XML document). `FUZZ_TIME` sets the seconds per
+  surface (default 90; CI's `security.yml` passes 30). Each surface runs
+  isolated (a fork per query) by default; `FAST=1` (or `ISOLATED=0`) runs in
+  process. `SKIP_BUILD=1` reuses the current build and refuses one that is not
+  a sanitizer build, and `FUZZ_ARGS` runs one custom invocation instead of the
+  five surfaces.
+- `rake fuzz:xml` and `rake fuzz:mutate` run the plain fuzzer's `xml` and
+  `mutate` targets alone.
 - `rake fuzz:libfuzzer` runs the cargo-fuzz harnesses (needs cargo-fuzz and
   nightly). `TARGETS=css,html_xpath` narrows the set; `FUZZ_TIME` sets the
   time per target, or `FUZZ_BUDGET` the total. ASan is on for Linux only: an

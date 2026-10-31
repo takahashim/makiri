@@ -95,6 +95,13 @@ anything.
 `nm -u lib/makiri/makiri.bundle | grep -c __asan` (0 on a plain build) is the
 check.
 
+The same holds for every build extconf configures from the environment: its
+features (`MAKIRI_ALLOC_INJECT`), rustflags (`MAKIRI_SANITIZE`,
+`MAKIRI_COVERAGE`) and profile (`MAKIRI_CARGO_PROFILE`) are written into that
+Makefile. So `rake sanitize`, `rake debug`, `rake oom`, `rake coverage` and
+the sanitized fuzz and invariant runs each leave their build in place, and a
+later `rake bench` or `rake diff` runs on it until `rake clean compile`.
+
 ### Adding a source file
 
 **Adding a source file needs no special step.** cargo discovers modules from
@@ -140,8 +147,8 @@ more; see `ruby_boundary.md`.
 (`-Cllvm-args=-asan-stack=0`, passed by extconf). CRuby is built with
 `RUBY_SETJMP = __builtin_setjmp`, so a raise unwinds via `__builtin_longjmp`,
 which ASan cannot intercept. A raise crossing an instrumented frame (ours, or
-a Ruby raise through `rb_protect` under the evaluator) leaves that frame's
-stack-redzone poison behind. A later interceptor (memcpy & co.) in the
+a Ruby raise caught by one of `nupur::raw`'s `rb_protect` wrappers) leaves that
+frame's stack-redzone poison behind. A later interceptor (memcpy & co.) in the
 uninstrumented interpreter then trips over the stale shadow: a
 layout-sensitive spurious report that ASan aborts on while rendering
 (`asan_thread.cpp` `kCurrentStackFrameMagic` CHECK). This took CI's sanitize

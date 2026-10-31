@@ -68,8 +68,10 @@ no walk of its own, so there is no latch-less one to call, as magnus's
 Two kinds of `extern "C"` function have no latch, on purpose:
 
 - The GC callbacks in `nupur/src/typed/callbacks.rs` run where nothing can be
-  raised, and a half-freed object is worse than a stop, so they keep
-  aborting. Keep their bodies trivial.
+  raised, and a half-freed object is worse than a stop. mark is proven
+  unwind-free as it is; free and memsize run what the compiler cannot see
+  through under `caught::quietly`, so a panic there leaks the payload or
+  answers 0 rather than unwinding (below). Keep their bodies trivial.
 - The `rb_protect` thunk of `nupur::raw::call` holds one C call and the
   `Copy` values it reads (`F: Copy`, `T: Copy`), so there is no Rust there to
   panic and no `catch_unwind` for a raise to cross. Keep it that way.
@@ -132,11 +134,12 @@ per-type trace to forget. The ordering rule behind the `DocData.errors`
 crash, "store a VALUE into a struct only after its wrapper exists", has no
 step left to happen in.
 
-A slot is read back by `root_known::<I>()`, or with an embedded payload by
-`read`. `root_known` checks `I < N` when it compiles and asserts the
-object's type at run time with one `rb_typeddata_is_kind_of`; a mismatch is
-a panic. Nothing re-points a slot and none is movable, so there is no
-compaction callback.
+A slot is read back through the object's handle, `Typed::root::<I>()`, or
+with an embedded payload by `read`. `root` checks `I < N` when it compiles
+and makes no type check of its own: the type was established when the
+handle was made, by `check` (a `TypeError`) or `known` (one
+`rb_typeddata_is_kind_of`, asserted; a mismatch is a panic). Nothing
+re-points a slot and none is movable, so there is no compaction callback.
 
 **Three objects have a slot, one each**, for the reads too hot for an ivar:
 
@@ -293,8 +296,10 @@ in `raising.rs`:
   the reason.
 
 Every other rb-sys function is taken to raise, so an unclassified one is
-refused until someone classifies it. The list of raising functions this
-replaced let `rb_undef_alloc_func` and `rb_obj_freeze` through.
+refused until someone classifies it. rb-sys's `stable_api` is exempt as a
+whole, with no entry: the lint takes its inline reads to raise nothing. The
+list of raising functions this replaced let `rb_undef_alloc_func` and
+`rb_obj_freeze` through.
 
 The survey (<https://takahashim.github.io/ruby-c-apis/>,
 github.com/takahashim/ruby-c-apis) builds every public C function to LLVM IR
@@ -380,11 +385,12 @@ key's kind, a substring's bounds, `to_encoding`'s argument. One with no
 Ruby value takes `&Ruby` as the GVL's proof.
 
 Only those over raw memory stay `unsafe`, and they are `nupur`'s alone:
-`typed_object_zalloc` and `check_typeddata`, both `pub(crate)`. So are the
-three that longjmp - `exc_raise`, `jump_tag`, `exc_fatal` - which only a
-trampoline's raise may call. A String made in place is `utf8_str_filled`,
-which is safe; its `fill` writes front to back through an `Unwritten` and
-must reach the end.
+`typed_object_zalloc`, `check_typeddata` and `utf8_str_unwritten` (the raw
+half under `utf8_str_filled`), all `pub(crate)`. So are the three that
+longjmp - `exc_raise`, `resume` (over a private `jump_tag`), `exc_fatal` -
+which only a trampoline's raise may call. A String made in place is
+`utf8_str_filled`, which is safe; its `fill` writes front to back through an
+`Unwritten` and must reach the end.
 
 ### Where a raw `VALUE` may appear
 
@@ -392,7 +398,9 @@ A raw `VALUE` is an integer to Rust, which no lint can tell from a `u64` in
 a `Vec`. It is spelled, or read from a C global of Ruby's (`rb_cObject`),
 only in `raw/`, `int.rs`, `typed/` and the `bridge::rb` files that are the
 typed values. `rake dylint`'s `raw_ruby_outside_bridge` enforces this, and
-also fails on any `rb_sys::` outside `bridge/`.
+also fails on any `rb_sys::` outside `nupur`, which it counts as part of
+the bridge. The extension has no rb-sys dependency, so its `bridge/` names
+none.
 
 Everything else therefore holds typed values, and `TypedType::wrap` is safe
 for that reason: it takes `&Ruby`, and a payload keeps no Ruby value, since

@@ -54,7 +54,10 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
   * Nokogiri answers a function XPath does not define by calling a method of
     a handler object (`xpath("my-fn(.)", handler)`). Makiri runs no Ruby while
     it evaluates: a call to a function XPath 1.0 does not define is an
-    `XPath::SyntaxError`, and a handler argument is an `ArgumentError`.
+    `XPath::SyntaxError`, and a handler argument is an `ArgumentError`. The
+    exception is Nokogiri's own builtins, `css-class` and `local-name-is`,
+    which answer under a prefix bound to Nokogiri's builtin namespace
+    (`https://www.nokogiri.org/default_ns/ruby/builtins`).
 
 * A number literal is read as the nearest double; libxml2's own reader is not
   correctly rounded for a literal with more digits than a double holds, so

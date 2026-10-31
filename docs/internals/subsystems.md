@@ -34,8 +34,9 @@ Fragment parsing takes text, so it has no sniffing; it honours the input
 String's encoding instead (`nupur::string::to_utf8`, replacing):
 
 - UTF-8, US-ASCII and ASCII-8BIT pass through untouched. The UTF-8 common
-  case is one read of the encoding index from the String's flags: no call,
-  no transcode, no copy.
+  case is one read of the encoding index from the String's flags: no call
+  and no transcode. The bytes are then copied once (`HtmlSource`), as every
+  String's are.
 - Any other encoding (Shift_JIS, EUC-JP, ISO-8859-1, ...) is
   `rb_str_encode`'d to UTF-8 (invalid/undef → U+FFFD), so its content
   survives instead of being read as raw UTF-8.
@@ -316,7 +317,9 @@ test.
 ## XPath engine
 
 The XPath engine (`engine/src/xpath/`) is an original implementation: lexer
-→ recursive-descent parser → AST → evaluator + 26 built-in functions. The
+→ recursive-descent parser → AST → evaluator + the 27 XPath 1.0 core
+functions, plus Nokogiri's `css-class` and `local-name-is` in its builtin
+namespace (`funcs::BUILTINS`, `NS_NOKOGIRI_BUILTIN_URI`). The
 only external hook is `Dom::qualified_name` (in `xpath/dom.rs`). Per-evaluate
 budgets (op count, recursion depth, step/predicate/arg counts, node-set and
 string caps) live in `xpath/limits.rs` and fail closed with
@@ -356,7 +359,10 @@ String, Float or boolean. Errors map SYNTAX → `XPath::SyntaxError`, LIMIT →
 An unprefixed call the core library lacks is an `XPath::SyntaxError` when
 the expression is parsed (`parse_function_call`, over
 `funcs::is_core_function`), a prefixed one when it is evaluated (the prefix
-is bound then). A Nokogiri-style handler argument is an `ArgumentError`.
+is bound then). The one namespace with functions is Nokogiri's builtin
+namespace (`https://www.nokogiri.org/default_ns/ruby/builtins`): with a
+prefix bound to it, `css-class` and `local-name-is` answer as Nokogiri's do.
+A Nokogiri-style handler argument is an `ArgumentError`.
 
 The handler bridge that used to answer such calls went with them
 (`notes/ruby_boundary_simplification_plan.ja.md`): an `rb_protect` per call,
@@ -445,10 +451,14 @@ Selector PARSING is the parser port (`crate::selectors`,
 `docs/rewrite_parser.ja.md` stage 5): Lexbor's CSS syntax tokenizer, its
 rule and state stacks and its selector states, line for line, into an owned
 index-arena AST. The AST is read through views of the same shape as
-`lexbor::css_parser`'s (`List`, `Lists`, `Selector`, `Simple`, ...), so the
-matcher reads either. `lexbor::selector_diff` holds the port to Lexbor's
-parser view for view (the `selector_diff` fuzz target too); the two answers
-that differ on purpose are `docs/parser_differences.ja.md` S2/S3.
+`lexbor::css_parser`'s (`List`, `Lists`, `Selector`, `Simple`, ...), so
+`lexbor::selector_diff` dumps both with one macro; the matcher reads only
+the port's AST. `selector_diff` holds the port to Lexbor's parser view for
+view (the `selector_diff` fuzz target too). The answers that differ on
+purpose are `docs/parser_differences.ja.md` S2/S3 (safety) and its C items
+(the Standard's answers): `selector_diff` compares the port run as Lexbor
+ran (`compat::as_lexbor`) and admits the rest through
+`compat::css_explains`.
 
 The glue reaches the parser through `css_cache`: an adaptive
 compiled-selector cache (`CachePolicy`, the OLD HTML engine's - same
@@ -548,7 +558,9 @@ them. The XML arena's impls (`xml/css.rs`) resolve no names
 (`Host::RESOLVES_NAMES`, bytes compared) and have no `id`/`class` shortcut.
 They answer a type selector from the document node out of the XML name
 indexes (`CssNode::candidates`; `LocalIndex` for a bare name in any
-namespace), every candidate re-tested.
+namespace). Every candidate is re-tested unless the selector is that type
+selector alone, where the bucket is the answer (`Candidates::all_match`), so
+the index must hold exactly the elements of that name.
 
 The rules follow a browser's `querySelectorAll` (`rake
 conformance:css_browsers` holds them to Chromium/Firefox/WebKit):
@@ -593,10 +605,10 @@ element.
 
 `matches?` (one candidate) does not resolve, even lazily: a lookup costs
 more than the one comparison it saves (`ul > li.item` 85 -> 117 ns when
-tried). It compares the stored local name, one Lexbor call rather than the
-two `dom_local_name` makes. An attribute whose Lexbor `qualified_name` is 0
-is named by its lower-cased local name, so a local-id match confirms without
-reading the name.
+tried). It compares the stored local name, one read rather than the two
+(qualified and local name) `dom_local_name` makes. An attribute with no
+written name stored beside it is named by its lower-cased local name, so a
+local-id match confirms without reading the name.
 
 Whether a value compares case-insensitively by default (the 46-name table of
 `lxb_selectors_match_attribute_html_case_insensitive`) is settled per
@@ -698,8 +710,9 @@ Lexbor's engine parse as Lexbor did (`compat::as_lexbor`).
 
 ### Scope and the work budget
 
-`select_all`/`select_first`/`matches_any` are **descendant-only** (context
-node excluded, like Nokogiri) and in document order. `select_all` is capped
+`select_all`/`select_first` are **descendant-only** (context node
+excluded, like Nokogiri) and in document order; `matches_any` (`#matches?`)
+tests the node itself, with no traversal. `select_all` is capped
 at `NODE_SET_MAX`, and every entry point shares one per-call work `Budget`
 of 50M steps (XPath's `max_eval_ops`), charged by every compound tested,
 `:has()` candidate, sibling counted and fieldset ancestor climbed.
@@ -863,8 +876,10 @@ has none.
 ### Copies and fragments
 
 Copies - `clone_node`, `import_node`, an insert from another document, a
-fragment's import - are `html/dom/copy.rs` (`HtmlDocMut::import`,
-`import_xml`). `DocumentFragment.parse(html)` (own backing doc) and
+fragment's import - are `html/dom/copy.rs` for a copy between HTML
+documents (`HtmlDocMut::import` / `copy`) and `html/dom/cross_import.rs` for
+one between XML and HTML (`HtmlDocMut::import_xml`).
+`DocumentFragment.parse(html)` (own backing doc) and
 `Document#fragment(html)` (bound to a doc) parse in a throwaway document
 (`html::fragment`) and import each child; inserting a fragment splices its
 **children**.
