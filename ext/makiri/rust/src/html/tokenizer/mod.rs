@@ -75,7 +75,10 @@ pub struct TokenAttr {
 }
 
 /// `lxb_html_token_t`.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+///
+/// Not `Clone`: it holds a `Vec`, and a clone would allocate outside
+/// `falloc`, where `rake oom` cannot fail it.
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Token {
     pub begin: Option<usize>,
     pub end: Option<usize>,

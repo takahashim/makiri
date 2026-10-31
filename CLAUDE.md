@@ -722,8 +722,8 @@ by the check that concluded "every undefined symbol is legitimate".
   the room is known and a failure part-way could not be undone (a compaction
   sized to its total, a push back after a pop) - keep those few and say why.
   Not covered: a `clone()` of a type that holds a heap container (clippy
-  cannot ban `Clone::clone` per type; the tokenizer's `Token` derives `Clone`
-  with a `Vec` inside, and nothing that ships clones one), and what a
+  cannot ban `Clone::clone` per type, so no engine type that holds one
+  derives `Clone` - the tokenizer's `Token` did, and no longer does), and what a
   third-party crate allocates inside itself (`encoding_rs`, `chardetng`). The glue's
   Ruby-side storage is Ruby's own memory instead. A TypedData wrapper's struct
   is its object's data, made with it in one call by
