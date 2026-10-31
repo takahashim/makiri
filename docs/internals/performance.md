@@ -180,7 +180,8 @@ It matters more than it did. The port parses at 1.5-2.5x Lexbor's time
 Lexbor reuses one parser. A cache hit hides that, so only the per-call paths
 pay it: one-off selectors, ~5-10% on a uniquely-named `at_css`. XML's CSS
 shares the cache, and has its own `Scratch` and `Kept`. Reusing the parser's
-work space is stage 9's (`docs/rewrite_parser.ja.md`).
+work space was measured in stage 9 and not taken (~4% on an uncached call;
+`docs/rewrite_parser.ja.md`).
 
 Verify with `spec/css_selector_cache_spec.rb` (flush, bypass/retest, and
 reject-without-disturbing-the-cache) and the Rust-level `css_cache::tests`.
@@ -253,9 +254,10 @@ matcher, so it is **byte-identical to `xpath(e).first`** (asserted by
 `spec/at_xpath_first_spec.rb`).
 
 Anything else (positional predicates, functions/variables, reverse axes,
-unions, prefixes, longer paths) returns 0 from the recogniser and goes to the
-full evaluator. Only `at_xpath` uses this path; `xpath` always builds the full
-set.
+unions, prefixed attribute predicates, longer paths) is not recognised
+(`first_shape` answers `None`) and goes to the full evaluator; a prefixed name
+test is recognised and resolves its prefix exactly as the step driver does.
+Only `at_xpath` uses this path; `xpath` always builds the full set.
 
 ### The per-context compiled-AST cache
 

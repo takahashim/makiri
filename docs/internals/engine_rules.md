@@ -2,8 +2,8 @@
 
 ## The fallible-allocation line
 
-The engine (`html`, `xml`, `xpath`, `css`, `selectors`, `css_match`,
-`css_cache`, `ceiling_buf`) allocates only through `falloc`. `clippy.toml`
+The engine (`html`, `xml`, `xpath`, `selectors`, `css_match`, `css_cache`,
+`ceiling_buf`) allocates only through `falloc`. `clippy.toml`
 bans the infallible `Box::new` / `Vec::with_capacity` / `reserve`, and every
 growth too (`push`, `insert`, `extend`, `extend_from_slice`, `resize`, a map
 or set's `insert`, `collect`). `rake oom` fails each site in turn, so an OOM
@@ -49,17 +49,19 @@ in-place sort without it.
 The glue's Ruby-side storage is Ruby's own memory instead. A TypedData
 wrapper's struct is its object's data, made with it in one call by
 `rb_data_typed_object_zalloc` (`TypedData_Make_Struct`'s function;
-`bridge::typed::wrap_built`) and freed by running the struct's `Drop` in
-place. A non-embedded type's data is `xcalloc`'d, which is also where Ruby
-decides whether malloc pressure calls for a GC, so a Document's arena report
-(`rb_gc_adjust_memory_usage`, which only adds to that pressure) gets its
-collection (`spec/gc_accounting_spec.rb`).
+`typed::TypedType::wrap`, over nupur's private `wrap_built`) and freed by
+running the struct's `Drop` in place. A non-embedded type's data is
+`xcalloc`'d, which is also where Ruby decides whether malloc pressure calls
+for a GC, so a Document's arena report (`rb_gc_adjust_memory_usage`, which
+only adds to that pressure) gets its collection
+(`spec/gc_accounting_spec.rb`).
 
 `NodeSet`'s node array is a `falloc` `Vec`, reported to the GC the same way
-as it grows and given back in its `Drop`. It reports exactly the bytes held;
-`ruby_xrealloc2`, which it used to be, was counted ~20% over them. Their
-failure is `NoMemoryError`, Ruby's own, which `nupur::raw`'s protected calls
-hand back as `Err`.
+as it grows and given back by `nupur`'s free callback
+(`Payload::reported_external`), as a Document's arena report is. It reports
+exactly the bytes held; `ruby_xrealloc2`, which it used to be, was counted
+~20% over them. Their failure is `NoMemoryError`, Ruby's own, which
+`nupur::raw`'s protected calls hand back as `Err`.
 
 ### Error messages
 
@@ -68,7 +70,7 @@ An exception message allocates nothing at all. A `bridge::rb::Error` holds a
 inline; longer is cut with `...`), and the exception is made only when the
 trampoline raises it. So an error can be made inside an edit's closure, which
 must run no Ruby. What a message quotes is written in by `Display` types that
-read without a call (`bridge::ruby::Describe` / `Display` / `ExceptionText`,
+read without a call (`bridge::ruby::Describe` / `AsText` / `ExceptionText`,
 `msg::Lossy`).
 
 ### The `infallible_allocation` lint

@@ -80,7 +80,8 @@ callback is latched (above) and raises nothing.
 ### Proving unwind-freedom
 
 **Nothing that must not unwind can, and the compiler proves it**
-(`engine/src/no_unwind.rs`, `rake no_unwind`). An unwind out of an
+(`nupur/src/no_unwind.rs` for nupur's sites, `engine/src/no_unwind.rs` for
+the engine's, `rake no_unwind`). An unwind out of an
 `extern "C"` function aborts, and so does a panic in a `Drop` that the GC
 runs or that runs while another panic unwinds. Each such body is a `Site`
 run through `must_not_unwind`.
@@ -90,9 +91,10 @@ The proof rests on a symbol nobody defines. A release build with
 `nupur_unwinds_<site>`) gives each site's guard a `Drop` that calls
 `makiri_unwinds_<site>`. Only an unwind reaches that call, so the optimizer
 removes it exactly where it proves the body unwind-free, and `nm -u` lists
-the sites that can unwind. The `self_test` control site can unwind by design
-and must be the one left, or the check is not live. CI runs the proof in one
-cell.
+the sites that can unwind. The two `self_test` control sites
+(`makiri_unwinds_self_test`, `nupur_unwinds_self_test`) can unwind by design
+and must be the only ones left, or the check is not live. CI runs the proof
+in one cell.
 
 `rake dylint`'s `unguarded_no_unwind_site` fails on an `extern "C"` fn or a
 `Drop` in the compiled crate, macro-generated ones included, whose body does
@@ -109,8 +111,8 @@ What the proof needed:
   free callback (the XPath AST's recursive glue), and the memsize callback,
   whose answer is advisory (0 on a panic).
 
-mark and compact are not caught, because a value left unmarked is freed
-while referenced; they are proven unwind-free as they are.
+mark is not caught, because a value left unmarked is freed while
+referenced; it is proven unwind-free as it is.
 
 ## Slots, hidden ivars and handles
 
@@ -314,8 +316,8 @@ The survey's result is vendored in `lints/makiri_lints/raise_survey.json`
 - an entry that is not in the survey.
 
 It also holds both lists to Ruby's headers, as rb-sys's bindings carry their
-doc comments: an entry documented to raise (`@exception`) or that never
-returns fails.
+doc comments: a `NON_RAISING` entry documented to raise (`@exception`), or
+an entry of either table that never returns, fails.
 
 The survey took `rb_obj_reveal` out: its write barrier can allocate, so it is
 a protected `raw::obj_reveal`, and `wrap_hidden` / `new_*_document` return
@@ -450,8 +452,10 @@ Outside a registered method a panic does not become `InternalError`:
 - The GC callbacks abort (see "Panics and unwinding").
 - In `Init_makiri`, a panic - or an `Err` - once the extension has begun to
   define itself is `fatal`, since `InternalError` may not exist yet and a
-  half-defined extension must not be used. Only the check that comes first,
-  the Ruby API one, raises an ordinary `LoadError`
+  half-defined extension must not be used. Only the checks that come first
+  raise an ordinary `LoadError`: the Ruby API one
+  (`nupur::abi::check_running_api`) and that `rb_protect`'s raise state is
+  the one nupur knows (`nupur::abi::check_raise_state`)
   (`bridge::rb::method::run_init(check, init)`).
 
 ## C integers
@@ -483,12 +487,16 @@ one carries an `#[allow]` with a reason.
 - kind 6 panics in the token-done path of a real document parse
   (`html::tree`'s `parse_with_panicking_hook`, its own sink, so no real parse
   carries it).
+- kind 7 panics part-way through `nupur::string::utf8_str_filled`; the spec
+  checks that no String holding unwritten bytes is left.
 
 ## Hardening flags and exports
 
 The C-era hardening flags (`-D_FORTIFY_SOURCE=2`,
 `-fstack-protector-strong`, `-fvisibility=hidden`, `-Wformat-security`) are
 **gone rather than relaxed**: they hardened C sources, and there are none.
+On Linux `extconf.rb` still passes `-Wl,-z,relro` and `-Wl,-z,now`, since
+they are properties of the link, not of the C sources.
 
 The job of `-fvisibility=hidden` is the one that survives, and it is
 enforced at the source: nothing but `Init_makiri` is `#[no_mangle]`, so

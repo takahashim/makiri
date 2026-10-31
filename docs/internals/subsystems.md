@@ -17,9 +17,9 @@ decides, `html::tree::parse_document_bytes` drives. It follows:
 
 - the HTML Standard's encoding sniffing algorithm: the BOM; the transport
   layer's encoding (`encoding:`, else the String's own when it has one); for
-  an ASCII-8BIT String, the 1024-byte `<meta>` prescan, then UTF-8 if the
-  bytes are valid UTF-8, then `chardetng` over 64 KiB from the first
-  non-ASCII byte (`DETECT_MAX`);
+  an ASCII-8BIT or US-ASCII String, the 1024-byte `<meta>` prescan, then
+  UTF-8 if the bytes are valid UTF-8, then `chardetng` over 64 KiB from the
+  first non-ASCII byte (`DETECT_MAX`);
 - "change the encoding": a `<meta>` met while the confidence is tentative
   re-reads the document;
 - the Encoding Standard's decoders (`encoding_rs`, into a `falloc` buffer).
@@ -184,8 +184,9 @@ line table (`source_lines::Lines`, built once per parse) resolves it to a
 1-based line. `Node#line` returns an Integer, or **nil** when the node
 cannot be placed - never a wrong line. The nil cases are every element the
 parser invents, text, comment and attribute nodes, nodes copied from another
-document, and fragments (their parse stamps nothing). The first `#line` is
-O(1), and a mutation needs no ordering.
+document, and fragments (their parse stamps nothing). The first `#line` costs
+what every later one does (a binary search of the line table; nothing is
+built on demand), and a mutation needs no ordering.
 
 The Lexbor-era design stamped from a token-done hook around Lexbor's tree
 builder. An even earlier one paired recorded tokens with elements after the
@@ -285,25 +286,27 @@ cover half the document (`HtmlParsed::ensure_text_index` /
 one-off `li.text` walks its own few nodes instead.
 
 It is reached via `HtmlParsed::text_slices`. `None` (not due, a fragment, a
-build OOM) means the caller walks (`bridge::html::subtree_text`: one walk
-collecting the slices, one copy). Verify with `spec/text_index_spec.rb`,
-which holds it byte-identical to a plain walk across subtrees and
-mutations.
+build OOM) means the caller walks (`bridge::html::receiver::subtree_text`:
+one walk collecting the slices, one copy). Verify with
+`spec/text_index_spec.rb`, which holds it byte-identical to a plain walk
+across subtrees and mutations.
 
 ## Child counting and indexing
 
 `#child_count` / `#child_at` and their element twins
 (`engine/src/child_index.rs`) walk `dom_rules::Tree`'s links - the insertion
 rules' description of each tree, so the three cannot disagree. They remember
-where they were in a per-document `ChildPositionMemo` (a `PtrMap` per list,
-emptied past `CHILD_MEMO_MAX`), so an index loop is O(1) a step.
+where they were in a per-document `ChildPositionMemo` (one `PtrMap` keyed by
+parent and list, emptied past `CHILD_MEMO_MAX` lists), so an index loop is
+O(1) a step.
 
 The memo answers only for the `tree_version` it was filled under. That
 invariant is what makes a recorded token, read back through
 `TokenTree::node_of`, name the right node; the lookup is checked, so a stale
 token is walked afresh rather than answered. So keep every child-list edit
-moving the version BEFORE it changes anything (`record_edit`). Any edit
-empties the whole memo (the module doc's known limit).
+moving the version BEFORE it changes anything (`record_edit`). Any child-list
+edit empties the whole memo (the module doc's known limit); attribute and
+character-data edits move no `tree_version` and leave it.
 
 The four Ruby methods are generic over `bridge::wrapper::ChildListHost` in
 `glue::node`. The element-only navigation (`first_element_child`,
@@ -316,7 +319,8 @@ The XPath engine (`engine/src/xpath/`) is an original implementation: lexer
 → recursive-descent parser → AST → evaluator + 26 built-in functions. The
 only external hook is `Dom::qualified_name` (in `xpath/dom.rs`). Per-evaluate
 budgets (op count, recursion depth, step/predicate/arg counts, node-set and
-string caps) live in `xpath/limits.rs` and fail closed with `Status::Limit`.
+string caps) live in `xpath/limits.rs` and fail closed with
+`ErrorKind::Limit`.
 
 ### Recursion and the native stack
 
@@ -338,9 +342,11 @@ stack. The writers did, and a 500-deep document killed the process in a
 
 ### Ruby API and errors
 
-`Node#{xpath,at_xpath}(expr, [namespaces])` and `Makiri::XPathContext`
-(`.new`, `#evaluate`, `#register_namespace`/`#register_ns`,
-`#register_variable`). `#xpath` returns a NodeSet for node-sets, else a
+`Node#{xpath,at_xpath}(expr, [namespaces], namespace_matching:,
+**prefix_bindings)` and `Makiri::XPathContext` (`.new`, which takes the same
+keywords, `#evaluate`, `#register_namespace`/`#register_ns`,
+`#register_namespaces`, `#register_variable`, `#register_variables`,
+`#node=`). `#xpath` returns a NodeSet for node-sets, else a
 String, Float or boolean. Errors map SYNTAX → `XPath::SyntaxError`, LIMIT →
 `XPath::LimitExceeded`, anything else → `Makiri::Error`.
 
@@ -486,11 +492,11 @@ looks a list up.
 `Query::step_chain` matches a chain right to left with Lexbor's
 `find`/`found_check`/`not_found` loop: a failed compound backtracks to the
 nearest descendant or subsequent-sibling combinator to its right
-(exhaustive, like Lexbor's). A `:is()`/`:where()`/`:not()`/`:has()`/`of S`
-is a nested context - a `Task` on a heap stack, Lexbor's
-`lxb_selectors_nested_t` - that the loop returns to with its verdict. The
-rightmost compound is tested before any of that is set up, so most
-candidates cost one compound test.
+(Lexbor's moves, less the retries `Fail` rules out - below). A
+`:is()`/`:where()`/`:not()`/`:has()`/`of S` is a nested context - a `Task`
+on a heap stack, Lexbor's `lxb_selectors_nested_t` - that the loop returns
+to with its verdict. The rightmost compound is tested before any of that is
+set up, so most candidates cost one compound test.
 
 An `:is()`/`:where()`/`:not()` whose every alternative is one compound with
 nothing nested in it (`Step::inline`, decided by `compile`) is answered in
@@ -567,7 +573,7 @@ host-free AST cache.
 
 **Tag and attribute names are resolved to Lexbor's ids once per query**,
 each the first time a candidate reaches it - Lexbor's own lazily set
-`entry->id` (`css_match::simple::Name`, `HtmlDoc::resolve_attr_name`,
+`entry->id` (`css_match::plan::Name`, `HtmlDoc::resolve_attr_name`,
 `HtmlElement::attr_by_resolved_name`). Lexbor keys element and attribute
 local names by their ASCII-lower-cased form. So a tag-id match IS the
 case-folded name comparison, and an attribute local-id match is a
@@ -661,7 +667,7 @@ process - not just crashing the one call.
 Lexbor's own C engine never had this problem: `:has()`/`:is()` nesting is
 handled by `lxb_selectors_nested_t`, a heap structure, not C recursion
 (`lxb_selectors_run`'s loop). The fix works the same way:
-`ForwardTask`/`HasCursor` (`css_match/query.rs`) answer `:has()`'s forward
+`ForwardTask`/`HasCursor` (`css_match/query/has.rs`) answer `:has()`'s forward
 search - candidate iteration over Descendant/Child/NextSibling/
 SubsequentSibling, multi-compound stepping, and nesting - entirely on the
 SAME heap task stack `:is()` uses. There is NO nesting-depth cap, matching
@@ -755,7 +761,7 @@ inheritance, first `legend` element child, `option`/`optgroup`, the `input`
 types `readonly` applies to, `contenteditable`), which Lexbor only
 approximates. `:any-link` / `:link` are an HTML `a`/`area` or an SVG `a`
 with an `href`, and `:empty` ignores comments and processing instructions,
-as browsers have them (M2, M9, M10 in `docs/parser_differences.ja.md`;
+as browsers have them (M1, M2, M9, M10 in `docs/parser_differences.ja.md`;
 `compat::as_lexbor` runs Lexbor's).
 
 ### A per-thread engine
@@ -777,7 +783,8 @@ Both used to be `UnsafeCell`s that only the GVL made sound.
 
 `Node#{to_html,to_s,outer_html}` and `#inner_html` are one iterative walk
 over the arena (`write`, in `html/dom/serialize.rs`), byte for byte what
-Lexbor's serializers write but for the documented departures (R1, R2). The
+Lexbor's serializers write but for the documented departures (R1-R3; R3
+writes an attribute's name by its DOM localName and its own namespace). The
 `html_diff` fuzz target (`tree_diff::check_serialization`) holds it there:
 
 - a `<template>` writes its CONTENTS, not its own children, as the HTML
@@ -928,6 +935,8 @@ Conveniences:
   doc-order). `#{css,xpath,search}` run per node and union (returning
   `self` when empty, so an empty set stays a NodeSet). Also
   `#{last,at,remove}`.
-- `Element.new(name, doc)` / `Text.new(content, doc)` delegate to
-  `Document#create_*` (they override `.new`, since the allocator is
-  undef'd).
+- `Element.new(name, doc)`, `Text.new(content, doc)`,
+  `Comment.new(doc, content)`, `CDATASection.new(doc, content)` and
+  `ProcessingInstruction.new(doc, target, content)` delegate to
+  `Document#create_*`, in Nokogiri's argument order for each (they override
+  `.new`, since the allocator is undef'd).

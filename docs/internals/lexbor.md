@@ -46,7 +46,8 @@ differential baseline's 81 affected lines were edited with the bump.
 `spec/conformance/html5lib_runner.rb` reads its tree-construction data from
 WPT (`html/syntax/parsing/resources`, where the html5lib .dat files have lived
 since June 2026), which carries the new expectations. What this Lexbor pin
-still answers the old way is listed in `KNOWN_DIVERGENCES` there and in
+still answers the old way is listed as the `lexbor` entries of
+`spec/conformance/parser_known_divergences.txt` and in
 `docs/parser_differences.ja.md`.
 
 ## The lexbor-contains guard
