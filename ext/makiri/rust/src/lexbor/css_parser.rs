@@ -10,8 +10,8 @@
 //!
 //! The parsed selector list lives in the parser's memory arena, which is reset
 //! between calls. That is a `Drop`, so a path added later cannot forget - and
-//! the lowering borrows the list, so the reset must not happen before the
-//! lowering is done.
+//! the views borrow the list, so the reset must not happen before they are
+//! done.
 
 #![allow(unsafe_code)]
 
@@ -21,7 +21,7 @@
 //! the only CSS module allowed to retain those pointers or mutate the
 //! process-global parser state, which it reaches through a [`GvlCell`].
 //!
-//! It is also the only reader of what a parse builds: the lowering walks the
+//! It is also the only reader of what a parse builds: a caller walks the
 //! selectors through [`List`] and [`Selector`], borrowed from [`Parsed`], so
 //! no pointer into the arena outlives the parse and every union read is keyed
 //! by the tag Lexbor stored beside it.
@@ -119,7 +119,7 @@ pub fn parse<'g>(gvl: &'g Gvl, selector: VerifiedText) -> Result<Parsed<'g>, Par
  * ------------------------------------------------------------------ */
 
 /// Lexbor's generated enum values. Nothing outside this module sees them: the
-/// views below translate each into a Rust enum, so a value the lowering does
+/// views below translate each into a Rust enum, so a value a caller does
 /// not handle reaches it as an explicit `Other` - never as a number that a
 /// catch-all arm could mistake for one it does handle.
 mod raw {
@@ -176,8 +176,7 @@ mod raw {
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_LAST_OF_TYPE;
     pub const ONLY_OF_TYPE: Pc =
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ONLY_OF_TYPE;
-    // The rest are for `css_match` (HTML matching), not the XML
-    // lowering, which treats all of them as unsupported (`PseudoClass::Other`).
+    // The rest are for `css_match` (HTML matching).
     pub const ANY_LINK: Pc =
         l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_ANY_LINK;
     pub const LINK: Pc = l::lxb_css_selector_pseudo_class_id_t_LXB_CSS_SELECTOR_PSEUDO_CLASS_LINK;
@@ -360,9 +359,7 @@ pub struct Attribute<'p> {
 /// apart, because an explicit `s` forces a case-sensitive compare even for an
 /// attribute in HTML's case-insensitive table
 /// (`lxb_selectors_match_attribute_html_case_insensitive`, `type` for one),
-/// while no modifier defers to that table. The XML lowering refuses
-/// `Insensitive` and treats the other two alike: XML attribute values always
-/// compare case-sensitively.
+/// while no modifier defers to that table.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CaseModifier {
     /// No modifier written.
@@ -373,7 +370,7 @@ pub enum CaseModifier {
     Sensitive,
 }
 
-/// The non-functional pseudo-classes the lowering can express.
+/// The non-functional pseudo-classes the views decode.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PseudoClass {
     FirstChild,
@@ -384,9 +381,7 @@ pub enum PseudoClass {
     FirstOfType,
     LastOfType,
     OnlyOfType,
-    // The rest are for `css_match` (HTML matching) only; the XML
-    // lowering's exhaustive match (`css::lower::lower_pseudo_simple`) groups
-    // them with `Other` - unsupported, same as before this was added.
+    // The rest are for `css_match` (HTML matching) only.
     AnyLink,
     Link,
     Blank,
@@ -425,7 +420,7 @@ pub enum ListPseudo {
 /// A functional pseudo-class, with the argument its id says Lexbor stored.
 ///
 /// The id is resolved HERE, once: each variant carries what tells its members
-/// apart, so the lowering never reads the id a second time.
+/// apart, so no caller reads the id a second time.
 #[derive(Clone, Copy)]
 pub enum FunctionArg<'p> {
     /// The `:nth-*` family; `anb` is None when Lexbor stored nothing.
@@ -449,7 +444,7 @@ pub enum FunctionArg<'p> {
     /// `:current(S)`. Kept apart from [`FunctionArg::Selectors`] so no
     /// consumer gives it `:is(S)`'s answer by falling into a catch-all arm:
     /// Lexbor's matcher does match it as `:is(S)`, but `css_match` refuses
-    /// it as unsupported (its module doc), and so does the XML lowering.
+    /// it as unsupported (its module doc).
     /// Each consumer decides here, explicitly.
     Current(Lists<'p>),
     /// Any other functional pseudo-class - one whose argument, if any,

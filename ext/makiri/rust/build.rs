@@ -105,7 +105,7 @@ fn main() {
         .allowlist_type("lxb_css_rule_declaration_t")
         .allowlist_type("lxb_css_rule_declaration_list_t")
         .allowlist_type("lxb_css_selector_list_t")
-        // The selector tree `css::lower` turns into XPath. A union-carrying
+        // The selector tree `lexbor::css_parser` reads. A union-carrying
         // layout from a pinned dependency: exactly what generating is for.
         .allowlist_type("lxb_css_selector_t")
         .allowlist_type("lxb_css_selector_attribute_t")

@@ -1,7 +1,7 @@
 //! CSS selectors over a parsed HTML document, through the HTML matcher.
 //!
-//! `css` covers `Makiri::XML`'s CSS (the lowering to XPath) and `html` the HTML
-//! parse. This is the path `Node#css` / `#at_css` / `#matches?` run: the
+//! `css` covers `Makiri::XML`'s CSS (the same matcher over the XML arena) and
+//! `html` the HTML parse. This is the path `Node#css` / `#at_css` / `#matches?` run: the
 //! compiled-selector cache (`css_cache::with_compiled` - the parser
 //! port, the cached lists, the flush at the cap,
 //! the bypass and its re-test, and the engine's kept `Scratch`), then
