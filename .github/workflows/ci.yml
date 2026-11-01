@@ -103,7 +103,7 @@ jobs:
           # nupur's documentation is what an extension on the layer reads
           # first: a link that resolves nowhere, or to an item it cannot see,
           # fails.
-          RUSTDOCFLAGS="-D warnings" cargo doc -p nupur --no-deps --all-features
+          RUSTDOCFLAGS="-D warnings" cargo doc -p nupur -p nupur_sys --no-deps --all-features
 
       # The same lints where a C `long` is 32 bits. On every other runner
       # `c_long` is `i64` itself, so a cast that truncates on Windows is a

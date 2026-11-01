@@ -1,11 +1,11 @@
 # Nupur
 
-Nupur is the Ruby binding layer under Makiri's extension, built on rb-sys
-alone, which it reaches through `nupur_sys` (`sys/`), the one crate that
-depends on it. It holds every `unsafe` the extension needs to talk to Ruby, and gives
-the extension a safe API over it: Ruby values and their class-checked
+Nupur is the Ruby binding layer under Makiri's extension. It gives the
+extension a safe API over Ruby's C: Ruby values and their class-checked
 handles, exceptions, method trampolines, TypedData, the GVL, and a wrapper
-for every C call that can raise.
+for every C call that can raise. Every `unsafe` the extension needs to talk
+to Ruby is in Nupur or in the crate under it, `nupur_sys` (`sys/`), which is
+the one crate that depends on rb-sys.
 
 Nupur does not depend on the extension and knows nothing of it. What it needs
 from the extension (the exception class for a broken internal invariant, the
@@ -15,28 +15,39 @@ Nupur as `crate::nupur`, and its `bridge` re-exports `rb`, `typed`, `gvl`,
 
 ## What it guarantees
 
-`src/lib.rs` states each guarantee in full, with what checks it. In short:
+`src/lib.rs` states each guarantee in full, and what holds it: the types and
+the crates' dependencies where they can, a check of the code where they
+cannot. In short:
 
-- **No raise crosses Rust.** Every C call that can raise runs under
-  `rb_protect` (`raw`) and comes back as an `Err`. A method's `Err` is raised
-  by its trampoline once every Rust frame of the method has returned.
+- **No raise crosses Rust.** Every C call that can raise is a wrapper in
+  `nupur_sys::raising` that takes a `&Protected`, which only `rb_protect`'s
+  thunk lends, to the closure `raw::call` runs. So a raise comes back as an
+  `Err`, and a method's `Err` is raised by its trampoline once every Rust
+  frame of the method has returned. Nupur cannot call a C function any
+  other way: it does not depend on rb-sys, and `nupur_sys` re-exports none.
 - **No panic reaches C.** A trampoline turns a panic into the internal error;
   a callback C calls catches one (`caught::PanicLatch`) for its caller to
   resume. Code that must not unwind is a `no_unwind` site, and a release
   build with `--cfg nupur_no_unwind` proves it cannot (`rake no_unwind`).
-- **The GVL is a token.** A `Ruby` is made only where Ruby calls in (a
-  method trampoline and `rb::method::run_init`), and everything that calls
-  Ruby takes one, or a Ruby value, which can exist only where a token did.
+- **The GVL is a type.** A Ruby value (`nupur_sys::value::Value`, which
+  Nupur's `Value` holds) is the proof that the GVL is held, and the token
+  `Ruby` is the proof where no value is at hand. Both are `!Send`, so
+  neither can enter a GVL-released body. A value is made only inside
+  `nupur_sys`, and a token only in `rb::method`, where Ruby calls in.
+- **No Ruby value is an integer.** `nupur_sys` re-exports no `VALUE`, and
+  keeps the conversions between a value and its word to itself, so Nupur
+  holds a value only as a `Value`.
 - **A wrapped object's Ruby values are its slots.** A payload holds no Ruby
-  value; the slots are written once, when the object is made, and Nupur's
-  mark callback marks them. A payload is reached only through a
-  `typed::Typed` handle, which keeps the object alive while its data is
-  borrowed.
+  value; the slots (`nupur_sys::value::Root`) are written once, when the
+  object is made, and Nupur's mark callback marks them. A payload is reached
+  only through a `typed::Typed` handle, which keeps the object alive while
+  its data is borrowed.
 - **A String is read by copying.** No slice of one is handed out. Text is a
   copy checked to be UTF-8 by std's validator, never trusted from the
   String's cached coderange.
-- **A C integer is converted in one place** (`int`): a C `long` is 32 bits on
-  Windows, so the conversions are written once for either width.
+- **A C integer is converted in one place** (`nupur_sys::int`): a C `long`
+  is 32 bits on Windows, so the conversions are written once for either
+  width.
 - **Two Ractors may run the layer at once**, once the extension declares
   itself Ractor-safe (`rb::method::declare_ractor_safe`). Nothing of Nupur's
   is shared between them but what any Ractor may read.
@@ -98,32 +109,34 @@ Nupur replaced Magnus in Makiri, and keeps many of its names (`Value`,
 the version Makiri used until the replacement in October 2026.
 
 Magnus is a general binding that covers most of Ruby's C API. Nupur covers
-only the C functions and types Makiri uses: about 7,300 lines, comments
-included, where Magnus is about 69,000. Using Magnus meant trusting all of
-its internals and their `unsafe` for the thirty or so things Makiri needed
-from it; with Nupur, what is trusted is the C functions Makiri chose and
-wrote a contract for.
+only the C functions and types Makiri uses. Using Magnus meant trusting all
+of its internals and their `unsafe` for the thirty or so things Makiri
+needed from it; with Nupur, what is trusted is the C functions Makiri chose
+and wrote a contract for.
 
 Where the two differ on safety:
 
 | | Magnus | Nupur |
 | --- | --- | --- |
-| C calls that can raise | Many run under `protect`; which ones can raise is the implementers' judgement, which a user cannot check | Every one is a `raw` wrapper under `rb_protect`; which functions can raise is a table held to a survey of Ruby's C API, and a lint refuses an unlisted call |
+| C calls that can raise | Many run under `protect`; which ones can raise is the implementers' judgement, which a user cannot check | Every one is a wrapper that takes the protection's token, so it cannot be called outside `rb_protect`; which functions can raise is a table held to a survey of Ruby's C API |
 | A panic in a method | Raised as `fatal` (Magnus #118), which cannot be rescued where it happens | Raised as the extension's internal error, an `Exception` that a host can rescue by name |
 | Arguments | Converted with `to_str` / `to_int`, Ruby code the caller can redefine | Not converted: a method takes `Value` and checks the type; a method taking `RString` or `i64` does not compile |
 | Ruby values in a wrapped object | The user writes the mark function; a value can sit in a `Vec` or a field (`BoxValue` exists for the heap) | Fixed slots, written once and marked by Nupur; a payload holds no Ruby value, and a lint refuses one on the heap |
 | Borrowing a wrapped object's data | A borrowed `&T` could outlive its `Value`, which the optimizer had dropped, and point at freed memory (Magnus #131, #101) | Borrowed through a `Typed` handle that keeps the object visible to the GC until the last borrow ends |
 | A String's bytes | `RString::as_slice` lends them | Only copied out, never lent |
-| The GVL's token | `Ruby::get()`, checked at run time | Made only by the trampolines and `Init_`; not `Send`, so it cannot enter a GVL-released body |
+| The GVL's token | `Ruby::get()`, checked at run time | A Ruby value is the proof, and the token where there is none; made only where Ruby calls in, and not `Send`, so neither enters a GVL-released body |
+| Raw `VALUE`s | Available with its `rb-sys` feature (`AsRawValue`, `FromRawValue`) | Not reachable from Nupur: `nupur_sys` re-exports no `VALUE` |
 
 Magnus is easier to write against: it converts arguments and return values
 for you, its handles are `Copy`, it has far more of Ruby's API, and it is a
 published crate. Nupur gives these up on purpose: an error-prone way of
-writing something is either impossible or the longest way to write it. Part
-of its safety also rests on checks that live in Makiri's repository
-(`rake dylint`, `rake no_unwind`, `rake unsafe:boundaries`) rather than on
-its types, so a copy of Nupur used elsewhere needs those checks too. Nupur is
-not published, and is used only inside Makiri's workspace.
+writing something is either impossible or the longest way to write it. Most
+of its rules are its types and its crates' dependencies, but some rest on
+checks that live in Makiri's repository (`rake dylint`, `rake no_unwind`,
+`rake unsafe:boundaries`): where a token may be made, that no Ruby value is
+kept on the heap, and the rules inside `nupur_sys`, which can name rb-sys.
+A copy of Nupur used elsewhere needs those checks too. Nupur is not
+published, and is used only inside Makiri's workspace.
 
 ## Modules
 
@@ -140,20 +153,26 @@ not published, and is used only inside Makiri's workspace.
 | `caught`, `no_unwind` | Catching a panic at a C boundary; the bodies that must not unwind |
 | `stack`, `table`, `inject` | The native-stack check, a private integer-keyed table, the `rake oom` hooks |
 
-`raw` (the C calls that can raise), `int` and `cname` are private to the
-crate.
+`raw` (the protected calls), `int` (`nupur_sys::int`, re-exported) and
+`cname` are private to the crate.
+
+`nupur_sys` (`sys/`) holds what touches rb-sys: the protection (`protect`),
+the raising C calls (`raising`), the calls that raise nothing
+(`non_raising`), the value types (`value`), the `rb_data_type_t`
+(`data_type`), the integer conversions (`int`) and `no_unwind`.
 
 ## Features and dependencies
 
-The one feature, `alloc-inject`, compiles in the `rake oom` hooks; the
-extension's own `alloc-inject` turns it on. rb-sys is used without
-`link-ruby`, since the extension is loaded into a Ruby that already provides
-the `rb_*` symbols.
+Nupur depends on `nupur_sys` alone, and `nupur_sys` on rb-sys alone. The one
+feature, `alloc-inject`, compiles in the `rake oom` hooks (Nupur's turns on
+`nupur_sys`'s); the extension's own `alloc-inject` turns it on. rb-sys is
+used without `link-ruby`, since the extension is loaded into a Ruby that
+already provides the `rb_*` symbols.
 
 ## Tests
 
 ```bash
-cargo test -p nupur
+cargo test -p nupur -p nupur_sys
 bundle exec rake nupur:spec
 ```
 
@@ -163,6 +182,9 @@ the layer and nothing of Makiri's) and runs the specs beside it
 a block's exits; a slot under GC and compaction; checked String reads.
 CI runs it on Linux and macOS.
 
-Makiri's `rake dylint` (`lints/makiri_lints`), `rake no_unwind` and
-`rake unsafe:boundaries` hold the layer's own code to its rules; a copy of
-the layer elsewhere needs checks of its own (`src/lib.rs` lists them).
+`nupur_sys`'s compile-fail doctests show that its tokens and values cannot
+be made outside it; only nightly's rustdoc checks their error codes
+(`rake rust:compile_fail`). Makiri's `rake dylint` (`lints/makiri_lints`),
+`rake no_unwind` and `rake unsafe:boundaries` hold the layer's own code to
+the rules its types do not; a copy of the layer elsewhere needs checks of
+its own (`src/lib.rs` lists them).
