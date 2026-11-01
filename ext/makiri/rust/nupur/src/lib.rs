@@ -227,5 +227,6 @@ pub mod msg;
 pub mod caught;
 
 // The layer's bodies that must not unwind, and the build that checks they
-// cannot (`rake no_unwind`).
-pub mod no_unwind;
+// cannot (`rake no_unwind`). It is `nupur_sys`'s, where the protect thunk
+// runs under it; the path is nupur's for the other sites and the extension.
+pub use nupur_sys::no_unwind;

@@ -78,7 +78,8 @@ extension, the fuzz crate), plus fmt and Nupur's rustdoc with `-D warnings`.
 ### `rake dylint`
 
 `rake dylint` runs the crate's own lints (`lints/makiri_lints`) on the
-compiled code, by resolved path. A sanctioned site is an allow with its
+compiled code, by resolved path: on the extension, the engine, Nupur and
+`nupur_sys`. A sanctioned site is an allow with its
 reason. The lints:
 
 - `ruby_value_on_heap`: a Ruby value in a heap container, a static or a
@@ -97,9 +98,10 @@ reason. The lints:
   in the extension, so no allow: handle the error with `Error::rescue`, which
   hands every throw/break/kill back. Nupur denies it; its drops are
   `describe::for_message` and the `yield_dropping_error_for_test` hook.
-- `ffi_without_gvl_proof` (in Nupur): a safe fn calling `rb_sys::` whose
-  signature holds no `&Ruby`, Ruby value or handle made from one. `extern "C"`
-  entries and unsafe fns are exempt.
+- `ffi_without_gvl_proof` (in Nupur and `nupur_sys`): a safe fn calling
+  `rb_sys::`, or an unsafe fn of `nupur_sys` (whose contract is the GVL),
+  whose signature holds no `&Ruby`, Ruby value or handle made from one.
+  `extern "C"` entries and unsafe fns are exempt.
 - `c_integer_outside_int`: an integer `as` or a named `c_long` at the Ruby
   boundary outside `nupur::int`.
 - `gvl_token_outside_entry`: the GVL's token, `Ruby`, made anywhere but where
@@ -110,7 +112,7 @@ reason. The lints:
   `ManuallyDrop`. A handle is the only way to a payload.
 
 The task then runs their self-test (`src/lint_probe.rs`,
-`nupur/src/lint_probe.rs`): each `//~` line must be reported by exactly the
+`nupur/src/lint_probe.rs`, `nupur/sys/src/lint_probe.rs`): each `//~` line must be reported by exactly the
 lints it names. It needs the nightly that `rust-toolchain.toml` pins, plus
 cargo-dylint and dylint-link.
 
@@ -125,7 +127,7 @@ advisory that does not apply is ignored in `deny.toml` with its reason.
 
 `rake symbols` is THE export gate. `rake no_unwind` is a release build
 proving that no `extern "C"` fn or GC-run `Drop` can unwind
-(`nupur/src/no_unwind.rs` for Nupur's sites, `engine/src/no_unwind.rs` for
+(`nupur/sys/src/no_unwind.rs` for Nupur's sites, `engine/src/no_unwind.rs` for
 the engine's). `ruby_boundary.md` explains both.
 
 ## `rake diff` and the C baseline

@@ -30,7 +30,8 @@ use rustc_lint::LateContext;
 use rustc_span::Span;
 
 use crate::paths::{
-    NUPUR, callee, in_engine_crate, is_extension, module_of, ours, path_of, within,
+    NUPUR, NUPUR_SYS, callee, in_engine_crate, in_layer, is_extension, module_of, ours, path_of,
+    within,
 };
 use crate::{
     INFALLIBLE_ALLOCATION, RAW_NODE_CROSSING, RAW_RUBY_OUTSIDE_BRIDGE, RUBY_IN_GVL_RELEASED_BODY,
@@ -56,7 +57,7 @@ fn in_engine(module: &str) -> bool {
 /// Whether `module` is in `bridge/`; `lint_probe::bridge` stands in for one
 /// in the self-test.
 fn in_bridge(module: &str) -> bool {
-    within(module, "bridge") || within(module, "nupur") || within(module, "lint_probe::bridge")
+    within(module, "bridge") || in_layer(module) || within(module, "lint_probe::bridge")
 }
 
 /// The modules that may spell a raw `VALUE`: the C calls, TypedData and
@@ -70,6 +71,7 @@ const VALUE_HOMES: &[&str] = &[
     "nupur::rb::object",
     "nupur::rb::ruby",
     "nupur::rb::method",
+    "nupur_sys",
 ];
 
 /// What the engine may not name: the Ruby layer (`bridge`, `glue`, `init`)
@@ -77,7 +79,7 @@ const VALUE_HOMES: &[&str] = &[
 fn ruby_layer(path: &str) -> bool {
     path.starts_with("rb_sys::")
         || (ours(path)
-            && ["bridge", "glue", "init", NUPUR]
+            && ["bridge", "glue", "init", NUPUR, NUPUR_SYS]
                 .iter()
                 .any(|m| within(path, m))
             && !in_engine(path))

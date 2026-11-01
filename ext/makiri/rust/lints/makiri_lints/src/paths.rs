@@ -3,8 +3,10 @@
 //! a macro expansion cannot hide a reference, and a comment or a string
 //! cannot fake one.
 //!
-//! Three crates are linted: the binding layer, `nupur`, whose items are
-//! spelled `nupur::...` whichever crate names them; the extension built on it
+//! Four crates are linted: the binding layer, `nupur`, whose items are
+//! spelled `nupur::...` whichever crate names them, and the crate under it
+//! that alone depends on rb-sys ([`NUPUR_SYS`], `nupur_sys::...`); the
+//! extension built on it
 //! ([`EXTENSION`]), whose items are `makiri::...`; and the engine the
 //! extension is the Ruby surface of ([`ENGINE`]), whose items are
 //! `makiri_engine::...`. The layer's lints name only `nupur::` paths (and
@@ -21,6 +23,11 @@ use rustc_lint::LateContext;
 
 /// The binding layer's crate name.
 pub const NUPUR: &str = "nupur";
+
+/// The crate under the binding layer that alone depends on rb-sys: the
+/// `rb_protect` thunk, `$!`, the `no_unwind` guards, and Ruby's C through
+/// it. Held to the layer's rules, as part of the layer.
+pub const NUPUR_SYS: &str = "nupur_sys";
 
 /// The extension's crate name - the one name a copy of the layer's lints
 /// under another extension changes.
@@ -48,7 +55,7 @@ pub fn path_of(cx: &LateContext<'_>, did: DefId) -> String {
 /// layer, not a build script or a test target.
 pub(crate) fn is_extension(cx: &LateContext<'_>) -> bool {
     let krate = cx.tcx.crate_name(rustc_span::def_id::LOCAL_CRATE);
-    krate.as_str() == EXTENSION || krate.as_str() == ENGINE || krate.as_str() == NUPUR
+    [EXTENSION, ENGINE, NUPUR, NUPUR_SYS].contains(&krate.as_str())
 }
 
 /// The path of the module the code at `hir_id` is in, crate first.
@@ -84,7 +91,7 @@ pub(crate) fn within(path: &str, m: &str) -> bool {
 /// Whether `path` is one of the three crates' own - the extension's, the
 /// engine's or the layer's - rather than a library's.
 pub(crate) fn ours(path: &str) -> bool {
-    within(path, NUPUR) || path.starts_with(&format!("{EXTENSION}::")) || in_engine_crate(path)
+    in_layer(path) || path.starts_with(&format!("{EXTENSION}::")) || in_engine_crate(path)
 }
 
 /// The function an expression calls, when it can be named: a path call or
@@ -101,4 +108,9 @@ pub(crate) fn callee(cx: &LateContext<'_>, expr: &Expr<'_>) -> Option<DefId> {
         ExprKind::MethodCall(..) => cx.typeck_results().type_dependent_def_id(expr.hir_id),
         _ => None,
     }
+}
+
+/// Whether `path` is the binding layer's: `nupur`'s or `nupur_sys`'s.
+pub(crate) fn in_layer(path: &str) -> bool {
+    within(path, NUPUR) || within(path, NUPUR_SYS)
 }

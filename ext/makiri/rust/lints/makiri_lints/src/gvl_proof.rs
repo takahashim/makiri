@@ -9,7 +9,8 @@
 //! (`ReprValue`: a value is `!Send` and made only where a token is), or a
 //! handle of the layer's that is made only from one of those (`Encoding`,
 //! `Typed`, `Unwritten`), or such a `self`. So a function whose
-//! body calls `rb_sys::` must take one of them - checked on every function
+//! body calls `rb_sys::` - or an `unsafe fn` of `nupur_sys`, whose contract
+//! is the GVL (`nupur_sys::protect::call`) - must take one of them - checked on every function
 //! of the crate, private ones included, so a public function cannot lend its
 //! proof to a helper that has none: the helper needs its own. A call inside a
 //! closure counts against the function the closure is in.
@@ -26,20 +27,23 @@ use rustc_lint::LateContext;
 use rustc_middle::ty::{self, Ty};
 
 use crate::FFI_WITHOUT_GVL_PROOF;
-use crate::paths::{NUPUR, callee, path_of};
+use crate::paths::{NUPUR, NUPUR_SYS, callee, path_of};
 
 /// The layer's handles that exist only where a token or a Ruby value did.
 const PROOF_TYPES: &[&str] = &["Ruby", "Encoding", "Typed", "Unwritten"];
 
 pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
-    if cx.tcx.crate_name(rustc_span::def_id::LOCAL_CRATE).as_str() != NUPUR {
+    let krate = cx.tcx.crate_name(rustc_span::def_id::LOCAL_CRATE);
+    if krate.as_str() != NUPUR && krate.as_str() != NUPUR_SYS {
         return;
     }
     let Some(did) = callee(cx, expr) else {
         return;
     };
     let target = path_of(cx, did);
-    if !target.starts_with("rb_sys::") {
+    let of_sys = target.starts_with(&format!("{NUPUR_SYS}::"))
+        && cx.tcx.fn_sig(did).skip_binder().safety().is_unsafe();
+    if !target.starts_with("rb_sys::") && !of_sys {
         return;
     }
     let owner = cx.tcx.hir_enclosing_body_owner(expr.hir_id);

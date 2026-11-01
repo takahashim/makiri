@@ -95,8 +95,10 @@ const REVIEWED: &[(&str, &str)] = &[(
      not follow a flag's value",
 )];
 
-/// Where the protection, `$!` and the raises on purpose live.
-const PROTECT: &str = "nupur::raw::protect";
+/// Where the protection, `$!` and the raises on purpose live: the
+/// `rb_protect` thunk and its state (`nupur_sys`), and their safe face in
+/// Nupur's types, with the raise sweep's hook.
+const PROTECT: &[&str] = &["nupur::raw::protect", "nupur_sys::protect"];
 
 /// The modules held to `unraising_call_in_raw`: `raw` itself, and the
 /// self-test's stand-in.
@@ -132,7 +134,9 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         return;
     };
     let module = module_of(cx, expr.hir_id);
-    let in_protect = module == PROTECT || module.starts_with(&format!("{PROTECT}::"));
+    let in_protect = PROTECT
+        .iter()
+        .any(|p| module == *p || module.starts_with(&format!("{p}::")));
     let inside = inside_call(cx, expr.hir_id);
     if may_raise(name) && !inside && !in_protect {
         span_lint_and_help(

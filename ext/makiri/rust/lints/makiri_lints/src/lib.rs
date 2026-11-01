@@ -368,7 +368,8 @@ impl<'tcx> LateLintPass<'tcx> for MakiriLints {
 /// Whether `did` is the extension's or its binding layer's (the crate
 /// `nupur`, where `ReprValue`, `Payload` and `Opaque` are defined).
 pub fn ours(cx: &LateContext<'_>, did: DefId) -> bool {
-    did.is_local() || cx.tcx.crate_name(did.krate).as_str() == paths::NUPUR
+    did.is_local()
+        || [paths::NUPUR, paths::NUPUR_SYS].contains(&cx.tcx.crate_name(did.krate).as_str())
 }
 
 #[derive(Default)]

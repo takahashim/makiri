@@ -13,6 +13,13 @@ fn raising() {
     let _ = unsafe { nupur_sys::rb_ary_new_capa(0) }; //~ ffi_without_gvl_proof raising_call_outside_protect
 }
 
+/// An `unsafe fn` of `nupur_sys`, whose contract is the GVL, from a safe
+/// function with no proof (`ffi_without_gvl_proof`).
+#[allow(unsafe_code)]
+fn sys_contract() {
+    unsafe { nupur_sys::protect::forget_errinfo() } //~ ffi_without_gvl_proof
+}
+
 /// A raw `VALUE` outside the files that are the typed values
 /// (`raw_ruby_outside_bridge`).
 fn raw_type(_: nupur_sys::VALUE) {} //~ raw_ruby_outside_bridge

@@ -23,6 +23,9 @@ namespace :rust do
       # The binding layer (its Ruby-free tests: the message buffer, and
       # `caught`'s panic latch and payload reading).
       sh "cargo test -p nupur"
+      # The crate under it: the compile-fail doctests that keep the
+      # `Protected` token inside its call.
+      sh "cargo test -p nupur_sys --doc"
       sh "cargo test --manifest-path reference/Cargo.toml"
       # The fuzz crate is a separate one, so `cargo test` above never sees it;
       # without this check an engine API change can silently break the nightly

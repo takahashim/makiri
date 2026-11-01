@@ -79,6 +79,9 @@ DYLINT_ENGINE = %w[cargo dylint --path lints/makiri_lints --no-deps -- -p makiri
 # only a build without it compiles.
 DYLINT_NUPUR = %w[cargo dylint --path lints/makiri_lints --no-deps -- -p nupur
                   --features alloc-inject].freeze
+# The crate under it that alone depends on rb-sys (`nupur/sys/`): the
+# protect thunk, `$!` and the `no_unwind` guards, held to the layer's rules.
+DYLINT_NUPUR_SYS = %w[cargo dylint --path lints/makiri_lints --no-deps -- -p nupur_sys].freeze
 
 desc "Run the crate's own lint (makiri_lints; needs cargo-dylint and its nightly)"
 task :dylint do
@@ -91,9 +94,11 @@ task :dylint do
     FileUtils.touch("src/lib.rs")
     FileUtils.touch("engine/src/lib.rs")
     FileUtils.touch("nupur/src/lib.rs")
+    FileUtils.touch("nupur/sys/src/lib.rs")
     sh(*DYLINT)
     sh(*DYLINT_ENGINE)
     sh(*DYLINT_NUPUR)
+    sh(*DYLINT_NUPUR_SYS)
     # The self-test, once per crate: the extension's probe, and the binding
     # layer's, which holds the cases only code naming rb-sys can write. Each
     # `//~` names the lints that must report its line, and the reports must
@@ -101,7 +106,8 @@ task :dylint do
     # report kept passing with one of them dead (`ruby_in_gvl_released_body`
     # did, once `without_gvl` took the token).
     probes = [[DYLINT, "src/lint_probe.rs", "makiri_lint_probe"],
-              [DYLINT_NUPUR, "nupur/src/lint_probe.rs", "nupur_lint_probe"]]
+              [DYLINT_NUPUR, "nupur/src/lint_probe.rs", "nupur_lint_probe"],
+              [DYLINT_NUPUR_SYS, "nupur/sys/src/lint_probe.rs", "nupur_sys_lint_probe"]]
     total = probes.sum do |cmd, probe, cfg|
       expected = File.readlines(probe).each_with_index.flat_map do |line, i|
         names = line[%r{//~((?: [a-z_]+)*)\s*\z}, 1] or next []

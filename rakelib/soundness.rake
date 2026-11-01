@@ -43,7 +43,7 @@ task :no_unwind do
   end
   lib = Dir[File.join(target, "release", "libmakiri.{dylib,so}")].first or abort "no_unwind: no library built"
   # Two mechanisms, one per layer: Makiri's (`engine/src/no_unwind.rs`, the
-  # engine's `Drop`s) and nupur's (`nupur/src/no_unwind.rs`, the GC
+  # engine's `Drop`s) and nupur's (`nupur/sys/src/no_unwind.rs`, the GC
   # callbacks, the protect thunk, the trampolines), each with its control.
   left = `nm -u #{lib.shellescape}`.lines.map(&:strip)
                                        .filter_map { |l| l[/(?:\A|\s)_?((?:makiri|nupur)_unwinds_\w+)\z/, 1] }.uniq.sort
@@ -51,6 +51,6 @@ task :no_unwind do
   dead = controls - left
   abort "no_unwind: a control site was optimized away - the check is not live: #{dead.join(", ")}" unless dead.empty?
   sites = left - controls
-  abort "no_unwind: these sites can unwind (see engine/src/no_unwind.rs, nupur/src/no_unwind.rs): #{sites.join(", ")}" unless sites.empty?
+  abort "no_unwind: these sites can unwind (see engine/src/no_unwind.rs, nupur/sys/src/no_unwind.rs): #{sites.join(", ")}" unless sites.empty?
   puts "no_unwind: every site is unwind-free; both controls are live"
 end

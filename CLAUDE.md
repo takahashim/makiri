@@ -64,8 +64,9 @@ When a rule here changes, change its reasoning there in the same commit.
   - a callback C calls must not panic into C: it latches the panic
     (`caught::PanicLatch`), returns "stop", and the caller re-raises;
   - the GC callbacks (`nupur/src/typed/callbacks.rs`) abort on purpose -
-    keep their bodies trivial; `raw::call`'s `rb_protect` thunk holds one C
-    call over `Copy` values - keep it so.
+    keep their bodies trivial; the `rb_protect` thunk
+    (`nupur_sys::protect::call`, under `raw::call`) holds one C call over
+    `Copy` values - keep it so.
 - **Nothing that must not unwind can, and the compiler proves it**
   (`rake no_unwind`, `engine/src/no_unwind.rs`). Every `extern "C"` fn and
   GC-run `Drop` body runs through `must_not_unwind` (`rake dylint`'s

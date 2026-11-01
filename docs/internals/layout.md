@@ -49,9 +49,11 @@ ext/makiri/rust/           the extension (package makiri_rs, lib `makiri`)
                            specs (`rake nupur:spec`). See "nupur and the
                            extension"
     sys/                   Ruby's C API for nupur (crate `nupur_sys`), the
-                           one crate that depends on rb-sys. For now it
-                           re-exports rb-sys whole, and nupur reaches every
-                           rb-sys item through it
+                           one crate that depends on rb-sys. It holds the
+                           protection (`protect`: the `rb_protect` thunk,
+                           `$!`, a pending exit) and `no_unwind`; for the
+                           rest it re-exports rb-sys whole, and nupur
+                           reaches every rb-sys item through it
   falloc/                  fallible allocation (crate `falloc`): every engine
                            allocation goes through here, so `rake oom` can
                            fail it and OOM raises rather than aborting the
@@ -289,7 +291,8 @@ These gates hold the boundary:
   `raw_ruby_outside_bridge` refuses an rb-sys item outside Nupur (and
   `bridge/`, which cannot reach one). The lint resolves the item to where
   rb-sys defines it, so the re-export does not hide it. `rake dylint` also
-  holds the C calls that can raise to `nupur`'s `raw/`.
+  holds the C calls that can raise to `nupur`'s `raw/` and to
+  `nupur_sys::protect`.
 - `Value::from_raw` is Nupur's, `pub(crate)` and `unsafe`, so the extension
   cannot make a `Value` from a raw `VALUE`.
 - Making a borrowed HTML handle into a lifetime-free `RawNode` in `bridge/` is

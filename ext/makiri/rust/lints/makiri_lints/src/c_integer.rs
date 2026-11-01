@@ -28,7 +28,7 @@ use rustc_lint::LateContext;
 use rustc_middle::ty;
 
 use crate::C_INTEGER_OUTSIDE_INT;
-use crate::paths::{NUPUR, module_of, ours, path_of, within};
+use crate::paths::{NUPUR, NUPUR_SYS, module_of, ours, path_of, within};
 
 /// Whether code in `module` is held to the rule: the binding layer and the
 /// extension's Ruby boundary, bar the module that converts. The self-tests'
@@ -37,7 +37,7 @@ fn held(module: &str) -> bool {
     if !ours(module) || within(module, "nupur::int") {
         return false;
     }
-    [NUPUR, "bridge", "glue", "init", "lint_probe"]
+    [NUPUR, NUPUR_SYS, "bridge", "glue", "init", "lint_probe"]
         .iter()
         .any(|m| within(module, m))
 }

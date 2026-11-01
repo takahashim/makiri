@@ -72,9 +72,13 @@ Two kinds of `extern "C"` function have no latch, on purpose:
   unwind-free as it is; free and memsize run what the compiler cannot see
   through under `caught::quietly`, so a panic there leaks the payload or
   answers 0 rather than unwinding (below). Keep their bodies trivial.
-- The `rb_protect` thunk of `nupur::raw::call` holds one C call and the
-  `Copy` values it reads (`F: Copy`, `T: Copy`), so there is no Rust there to
-  panic and no `catch_unwind` for a raise to cross. Keep it that way.
+- The `rb_protect` thunk (`nupur_sys::protect::call`, which `nupur::raw::call`
+  runs) holds one C call and the `Copy` values it reads (`F: Copy`,
+  `T: Copy`), so there is no Rust there to panic and no `catch_unwind` for a
+  raise to cross. Keep it that way. The closure it runs is lent a
+  `&Protected`, a token only the thunk makes, so a function that takes one
+  can run only inside the protection. The closure takes it for any lifetime
+  and returns a `T` chosen outside, so the token cannot leave the call.
 
 The one C call that calls back into Rust is `rb_hash_foreach`, and its
 callback is latched (above) and raises nothing.
@@ -82,7 +86,7 @@ callback is latched (above) and raises nothing.
 ### Proving unwind-freedom
 
 **Nothing that must not unwind can, and the compiler proves it**
-(`nupur/src/no_unwind.rs` for Nupur's sites, `engine/src/no_unwind.rs` for
+(`nupur/sys/src/no_unwind.rs` for Nupur's sites, `engine/src/no_unwind.rs` for
 the engine's, `rake no_unwind`). An unwind out of an
 `extern "C"` function aborts, and so does a panic in a `Drop` that the GC
 runs or that runs while another panic unwinds. Each such body is a `Site`
@@ -358,10 +362,13 @@ the code disagree. A read that raises nothing belongs to `rb::value`, to
 `rb::object` for an object's ivars and class, or to `rb::method` for the
 current frame.
 
-`call` is `raw::protect`'s, together with the rest of the protection (`$!`
-taken and kept, a `break` / `throw` pending until the trampoline resumes it)
-and the calls that raise on purpose; this is the one part of `raw` outside
-the rule. A new raising call is a new wrapper with its raise stated.
+The protection itself is `nupur_sys::protect`'s: the thunk, `$!` taken and
+kept, a `break` / `throw` pending until the trampoline resumes it, and the
+calls that raise on purpose. Each is an `unsafe fn` whose contract is the
+GVL, and a raise comes back as the raw exception. `raw::protect` is its
+safe face in Nupur's types: `call`, which makes the exception an `Error`,
+and the raise sweep's hook. These two modules are the part outside the
+rule. A new raising call is a new wrapper with its raise stated.
 
 ### Building values, and the cost
 

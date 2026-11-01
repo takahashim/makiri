@@ -57,14 +57,13 @@ UNSAFE_ISLANDS = {
   "nupur/abi.rs" => 1,
   "nupur/encoding.rs" => 6,
   "nupur/gvl.rs" => 3,
-  "nupur/no_unwind.rs" => 2,
   "nupur/raw/check.rs" => 4,
   "nupur/raw/data.rs" => 4,
   "nupur/raw/define.rs" => 22,
   "nupur/raw/exception.rs" => 5,
   "nupur/raw/iterate.rs" => 6,
   "nupur/raw/mod.rs" => 1,
-  "nupur/raw/protect.rs" => 13,
+  "nupur/raw/protect.rs" => 9,
   "nupur/raw/string.rs" => 11,
   "nupur/raw/symbol.rs" => 3,
   "nupur/raw/values.rs" => 21,
@@ -78,6 +77,8 @@ UNSAFE_ISLANDS = {
   "nupur/stack.rs" => 1,
   "nupur/string/make.rs" => 5,
   "nupur/string/read.rs" => 2,
+  "nupur/sys/no_unwind.rs" => 2,
+  "nupur/sys/protect.rs" => 24,
   "nupur/typed/callbacks.rs" => 10,
   "nupur/typed/data_type.rs" => 12,
   "nupur/typed/external.rs" => 1,
@@ -168,8 +169,7 @@ FORBID_FILES = %w[
   nupur/build.rs nupur/cname.rs nupur/describe.rs
   nupur/hash.rs nupur/int.rs nupur/msg.rs
   nupur/rb/class.rs nupur/rb/convert.rs nupur/rb/error.rs
-  nupur/sys/lib.rs nupur/table.rs reference/gvl.rs
-  reference/lexbor/contains_guard.rs
+  nupur/table.rs reference/gvl.rs reference/lexbor/contains_guard.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/

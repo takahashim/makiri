@@ -17,7 +17,7 @@ use crate::paths::{callee, is_extension, path_of};
 /// trampolines' and `Init_makiri`'s helpers, which do.
 const GUARDS: &[&str] = &[
     "makiri_engine::no_unwind::must_not_unwind",
-    "nupur::no_unwind::must_not_unwind",
+    "nupur_sys::no_unwind::must_not_unwind",
     "nupur::rb::method::finish",
     "nupur::rb::method::finish_cary",
     "nupur::rb::method::run_init",
