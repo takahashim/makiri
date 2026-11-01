@@ -103,7 +103,9 @@ When a rule here changes, change its reasoning there in the same commit.
   `LoadError` (`run_init`).
 - **A C integer is converted only in `nupur::int`.** No integer `as` cast and
   no `c_long` / `c_ulong` in Nupur, `bridge`, `glue` or `init`
-  (`c_integer_outside_int`): a `long` is 32 bits on Windows.
+  (`c_integer_outside_int`): a `long` is 32 bits on Windows. Verus proves
+  `int`'s conversions at both widths (`verus/int.rs`); a change goes
+  through `rake verus:sync`.
 - `clippy::unwrap_used` / `expect_used` / `panic` are on; a site that wants
   one carries an `#[allow]` with its reason.
 - **No argument is converted.** A string argument is a `String`, a name a

@@ -9,14 +9,15 @@ on:
       # The engine alone, with no feature: a change to the extension or the
       # Lexbor reference cannot change these outcomes. Every engine module
       # stays in, since the proofs reach its shared modules (limits, text,
-      # ...), and so does falloc, which it allocates through. Two nupur files
-      # are checked here as well: Miri runs `utf8_copy` inside falloc's test
-      # build, and `rake verus:sync` holds `copy_small` in `string/make.rs` to
-      # the Verus proof.
+      # ...), and so does falloc, which it allocates through. Three nupur
+      # files are checked here as well: Miri runs `utf8_copy` inside falloc's
+      # test build, and `rake verus:sync` holds `copy_small` in
+      # `string/make.rs` and the conversions in `int.rs` to the Verus proofs.
       - "ext/makiri/rust/engine/**"
       - "ext/makiri/rust/falloc/**"
       - "ext/makiri/rust/nupur/src/utf8_copy.rs"
       - "ext/makiri/rust/nupur/src/string/make.rs"
+      - "ext/makiri/rust/nupur/src/int.rs"
       - "ext/makiri/rust/verus/**"
       - "ext/makiri/rust/Cargo.toml"
       - "ext/makiri/rust/Cargo.lock"

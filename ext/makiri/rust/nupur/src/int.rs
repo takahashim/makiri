@@ -10,7 +10,8 @@
 //! the rules are written once, over a [`Long`] of either width, and
 //! instantiated at this target's: the tests run them at both widths on any
 //! machine, and hold the host's instance to rb-sys's own constants and
-//! `long2fix`.
+//! `long2fix`. `verus/int.rs` proves the rules at both widths for every
+//! input (`rake verus`), over copies `rake verus:sync` holds to this file.
 //!
 //! Everything else converts with `From` / `TryFrom`, which compile to what
 //! each target allows and fail where a value does not fit, and never names
@@ -49,7 +50,7 @@ impl Long for i64 {
 /// Fixnum is a `long` less its flag bit, `MIN / 2 ..= MAX / 2`.
 #[inline]
 pub(crate) fn fixable_in<L: Long>(n: i64) -> Option<L> {
-    let (min, max) = (L::MIN.into() / 2, L::MAX.into() / 2);
+    let (min, max) = (Into::<i64>::into(L::MIN) / 2, Into::<i64>::into(L::MAX) / 2);
     if n < min || n > max {
         return None;
     }
