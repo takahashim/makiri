@@ -1,8 +1,10 @@
 //! The places in the Ruby layer that must not unwind, and the check that they
-//! cannot - `nupur`'s own copy of the mechanism, for its sites (the GC
-//! callbacks, the protect thunk, the trampolines). An extension keeps its own for
-//! its types' `Drop`s and the engine's (`crate::no_unwind`): the engine is
-//! built without Ruby, where this module does not exist.
+//! cannot - the layer's own copy of the mechanism, for its sites (the GC
+//! callbacks, the protect thunk, the trampolines). It lives here, under
+//! nupur, because the protect thunk does ([`crate::protect`]); nupur
+//! re-exports it as `nupur::no_unwind`, where its other sites name it. An
+//! extension keeps its own for its types' `Drop`s and the engine's: the engine
+//! is built without Ruby, where this module does not exist.
 //!
 //! An unwind out of an `extern "C"` function aborts the process (Rust stops it
 //! at the boundary, since C frames have no unwind tables), and so does a panic
@@ -77,7 +79,7 @@ sites! {
     GcFreeEmbedded => "nupur_unwinds_gc_free_embedded",
     /// `typed`'s memsize callback.
     GcMemsize => "nupur_unwinds_gc_memsize",
-    /// `raw::call`'s `rb_protect` thunk.
+    /// [`crate::protect::call`]'s `rb_protect` thunk.
     ProtectThunk => "nupur_unwinds_protect_thunk",
     /// `raw::hash_foreach`'s `rb_hash_foreach` callback.
     HashEach => "nupur_unwinds_hash_each",

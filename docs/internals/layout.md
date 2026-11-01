@@ -49,9 +49,16 @@ ext/makiri/rust/           the extension (package makiri_rs, lib `makiri`)
                            specs (`rake nupur:spec`). See "nupur and the
                            extension"
     sys/                   Ruby's C API for nupur (crate `nupur_sys`), the
-                           one crate that depends on rb-sys. For now it
-                           re-exports rb-sys whole, and nupur reaches every
-                           rb-sys item through it
+                           one crate that depends on rb-sys. It holds the
+                           protection (`protect`: the `rb_protect` thunk,
+                           `$!`, a pending exit), the raising C calls, each
+                           taking the protection's token (`raising`), the
+                           other calls, each taking a value or the GVL's
+                           token (`non_raising`, `value`), the
+                           `rb_data_type_t`
+                           (`data_type`), `int` and `no_unwind`. Of rb-sys
+                           it re-exports a few types and constants nupur
+                           names, and no function and no `VALUE`
   falloc/                  fallible allocation (crate `falloc`): every engine
                            allocation goes through here, so `rake oom` can
                            fail it and OOM raises rather than aborting the
@@ -184,7 +191,7 @@ ext/makiri/rust/           the extension (package makiri_rs, lib `makiri`)
                            `end`, whatever the word
     source_lines.rs        `lines_build`: the line table is exactly 0 and
                            the offset past each newline, for every input
-    int.rs                 `nupur::int` at both widths of a C `long`: the
+    int.rs                 `nupur_sys::int` at both widths of a C `long`: the
                            Fixnum range exactly, the Fixnum's bits, and a
                            length and a capacity that never truncate
     xml_expand.rs          `xml::chars::expand`: `scan_char_ref` answers the
@@ -284,14 +291,15 @@ These gates hold the boundary:
   `#![forbid(unsafe_code)]`, as the engine's root does for the whole engine.
   The gate pins the roots in `FORBID_ROOTS` (`bridge`, `glue` and the
   engine's `css_match`, `selectors`, `xml` and `xpath`).
-- rb-sys is Nupur's, reached through `nupur_sys`: the extension depends on
-  neither, so no file of it names Ruby's C API, and `rake dylint`'s
-  `raw_ruby_outside_bridge` refuses an rb-sys item outside Nupur (and
-  `bridge/`, which cannot reach one). The lint resolves the item to where
-  rb-sys defines it, so the re-export does not hide it. `rake dylint` also
-  holds the C calls that can raise to `nupur`'s `raw/`.
-- `Value::from_raw` is Nupur's, `pub(crate)` and `unsafe`, so the extension
-  cannot make a `Value` from a raw `VALUE`.
+- rb-sys is `nupur_sys`'s alone among the shipped crates: the extension,
+  the engine and Nupur do not depend on it, so none can name Ruby's C API,
+  and `nupur_sys` re-exports no C function and no `VALUE`. (Nupur's test
+  extension, `nupur/test/ext`, depends on rb-sys for its build, and names
+  none of it.) That is the dependencies' rule, not a lint's. `rake dylint`
+  holds the C calls that can raise, inside `nupur_sys`, to its protection.
+- A `Value` is made from a raw `VALUE` only in `nupur_sys`
+  (`nupur_sys::value::Value::from_raw`, `unsafe`); Nupur and the extension
+  have no way to.
 - Making a borrowed HTML handle into a lifetime-free `RawNode` in `bridge/` is
   a `raw_node_crossing`, and each crossing is an allow with its reason.
   `with_html_node` / `HtmlParsed::mint_key` / `resolve` are the checked

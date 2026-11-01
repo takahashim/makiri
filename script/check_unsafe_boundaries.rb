@@ -54,34 +54,34 @@ UNSAFE_ISLANDS = {
   "engine/no_unwind.rs" => 2,
   "falloc/lib.rs" => 1,
   "init.rs" => 1,
-  "nupur/abi.rs" => 1,
   "nupur/encoding.rs" => 6,
   "nupur/gvl.rs" => 3,
-  "nupur/no_unwind.rs" => 2,
   "nupur/raw/check.rs" => 4,
   "nupur/raw/data.rs" => 4,
-  "nupur/raw/define.rs" => 22,
+  "nupur/raw/define.rs" => 16,
   "nupur/raw/exception.rs" => 5,
-  "nupur/raw/iterate.rs" => 6,
-  "nupur/raw/mod.rs" => 1,
-  "nupur/raw/protect.rs" => 13,
+  "nupur/raw/iterate.rs" => 4,
+  "nupur/raw/protect.rs" => 8,
   "nupur/raw/string.rs" => 11,
   "nupur/raw/symbol.rs" => 3,
-  "nupur/raw/values.rs" => 21,
+  "nupur/raw/values.rs" => 16,
   "nupur/rb/global.rs" => 2,
-  "nupur/rb/kept.rs" => 2,
-  "nupur/rb/method.rs" => 17,
+  "nupur/rb/method.rs" => 20,
   "nupur/rb/object.rs" => 5,
-  "nupur/rb/ruby.rs" => 5,
-  "nupur/rb/value.rs" => 18,
+  "nupur/rb/value.rs" => 10,
   "nupur/rb/value/header.rs" => 3,
-  "nupur/stack.rs" => 1,
   "nupur/string/make.rs" => 5,
   "nupur/string/read.rs" => 2,
-  "nupur/typed/callbacks.rs" => 10,
-  "nupur/typed/data_type.rs" => 12,
+  "nupur/sys/data_type.rs" => 7,
+  "nupur/sys/no_unwind.rs" => 2,
+  "nupur/sys/non_raising.rs" => 58,
+  "nupur/sys/protect.rs" => 28,
+  "nupur/sys/raising.rs" => 27,
+  "nupur/sys/value.rs" => 11,
+  "nupur/typed/callbacks.rs" => 12,
+  "nupur/typed/data_type.rs" => 5,
   "nupur/typed/external.rs" => 1,
-  "nupur/typed/mod.rs" => 12,
+  "nupur/typed/mod.rs" => 8,
   "nupur/utf8_copy.rs" => 1,
   "reference/lexbor/abi.rs" => 4,
   "reference/lexbor/adapter/arena_bytes.rs" => 14,
@@ -164,12 +164,12 @@ FORBID_FILES = %w[
   glue/node.rs glue/node_set.rs glue/query.rs
   glue/xml_doc.rs glue/xml_node/css.rs glue/xml_node/mod.rs
   glue/xml_node/mutate.rs glue/xml_node/ns.rs glue/xml_node/read.rs
-  glue/xml_node/serialize.rs glue/xpath_context.rs nupur/args.rs
-  nupur/build.rs nupur/cname.rs nupur/describe.rs
-  nupur/hash.rs nupur/int.rs nupur/msg.rs
+  glue/xml_node/serialize.rs glue/xpath_context.rs nupur/abi.rs
+  nupur/args.rs nupur/build.rs nupur/cname.rs
+  nupur/describe.rs nupur/hash.rs nupur/msg.rs
   nupur/rb/class.rs nupur/rb/convert.rs nupur/rb/error.rs
-  nupur/sys/lib.rs nupur/table.rs reference/gvl.rs
-  reference/lexbor/contains_guard.rs
+  nupur/rb/kept.rs nupur/stack.rs nupur/sys/int.rs
+  nupur/table.rs reference/gvl.rs reference/lexbor/contains_guard.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/

@@ -25,7 +25,7 @@ pub(crate) fn c_name(name: &str) -> Result<CName, Error> {
 pub trait Module: ReprValue {
     /// `class name < superclass` under this module.
     fn define_class(self, name: &str, superclass: RClass) -> Result<RClass, Error> {
-        let v = crate::raw::define_class_under(self.as_value(), &c_name(name)?, Some(superclass))?;
+        let v = crate::raw::define_class_under(self.as_value(), &c_name(name)?, superclass)?;
         Ok(RClass::from_known(v))
     }
 
@@ -38,7 +38,7 @@ pub trait Module: ReprValue {
         name: &str,
         superclass: Option<DataClass>,
     ) -> Result<DataClass, Error> {
-        let sup = superclass.map(|d| d.0);
+        let sup = superclass.map_or_else(|| crate::rb::value::object_class(&self), |d| d.0);
         let v = crate::raw::define_class_under(self.as_value(), &c_name(name)?, sup)?;
         let class = RClass::from_known(v);
         crate::raw::undef_alloc_func(class)?;
@@ -48,7 +48,7 @@ pub trait Module: ReprValue {
     /// An exception class `name < superclass` under this module.
     fn define_error(self, name: &str, superclass: ExceptionClass) -> Result<ExceptionClass, Error> {
         let sup = RClass::from_known(superclass.as_value());
-        let v = crate::raw::define_class_under(self.as_value(), &c_name(name)?, Some(sup))?;
+        let v = crate::raw::define_class_under(self.as_value(), &c_name(name)?, sup)?;
         Ok(ExceptionClass::from_known(v))
     }
 

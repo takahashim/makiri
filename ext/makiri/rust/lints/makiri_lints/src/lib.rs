@@ -28,17 +28,19 @@
 //! - `ruby_value_on_heap` ([`value_on_heap`]): a Ruby value kept where Ruby's
 //!   GC cannot see it.
 //! - `c_integer_outside_int` ([`c_integer`]): an integer `as` cast, or a C
-//!   `long` named, at the Ruby boundary outside `nupur::int`.
-//! - From [`boundaries`]: `raw_ruby_outside_bridge`'s half that holds a raw
-//!   `VALUE` to the layer's files, `runs_callers_ruby` and
+//!   `long` named, at the Ruby boundary outside `nupur_sys::int`.
+//! - From [`boundaries`]: `runs_callers_ruby` and
 //!   `ruby_in_gvl_released_body`.
+//!
+//! Where a raw `VALUE` and rb-sys may be named is no lint's: only
+//! `nupur_sys` depends on rb-sys, and it re-exports no `VALUE`, so Nupur
+//! holds a Ruby value only as `nupur_sys`'s `Value` (or a slot's `Root`).
 //!
 //! # The extension's own layout (Makiri)
 //!
 //! Where Makiri draws its own lines - its engine, its glue and bridge, its
 //! allocation policy - in [`boundaries`]: `ruby_layer_in_engine`,
-//! `infallible_allocation`, `raw_ruby_outside_bridge`'s half that holds
-//! rb-sys to `bridge/`, `raw_node_crossing`, `ruby_surface_in_bridge`. The
+//! `infallible_allocation`, `raw_node_crossing`, `ruby_surface_in_bridge`. The
 //! engine is a crate of its own (`makiri_engine`, [`paths::ENGINE`]) that
 //! depends on no Ruby, so `ruby_layer_in_engine` has nothing to find there;
 //! it holds nupur's one Ruby-free module, `utf8_copy`, which shares a crate
@@ -91,7 +93,6 @@ pub fn register_lints(sess: &Session, lint_store: &mut LintStore) {
         RUBY_IN_GVL_RELEASED_BODY,
         INFALLIBLE_ALLOCATION,
         RAISING_CALL_OUTSIDE_PROTECT,
-        RAW_RUBY_OUTSIDE_BRIDGE,
         RUNS_CALLERS_RUBY,
         RAW_NODE_CROSSING,
         RUBY_SURFACE_IN_BRIDGE,
@@ -216,12 +217,6 @@ declare_lint! {
 }
 
 declare_lint! {
-    pub RAW_RUBY_OUTSIDE_BRIDGE,
-    Deny,
-    "Ruby's C API outside bridge/, or a raw VALUE outside the typed values"
-}
-
-declare_lint! {
     pub RUNS_CALLERS_RUBY,
     Deny,
     "a call that runs the caller's Ruby code"
@@ -256,24 +251,24 @@ declare_lint! {
 declare_lint! {
     /// ### What it does
     /// Reports, in the binding layer and the extension's Ruby boundary
-    /// (`bridge`, `glue`, `init`) outside `nupur::int`, an `as` cast between
+    /// (`bridge`, `glue`, `init`) outside `nupur_sys::int`, an `as` cast between
     /// integer types and any naming of `c_long` / `c_ulong`.
     ///
     /// ### Why is this bad?
     /// A C `long` is 32 bits on Windows and 64 where the code is linted, where
     /// `c_long` is `i64` itself - so a truncation there is invisible to rustc
-    /// and clippy alike. The conversions are written once, in `nupur::int`.
+    /// and clippy alike. The conversions are written once, in `nupur_sys::int`.
     pub C_INTEGER_OUTSIDE_INT,
     Deny,
-    "an integer cast or a C long at the Ruby boundary outside nupur::int"
+    "an integer cast or a C long at the Ruby boundary outside nupur_sys::int"
 }
 
 declare_lint! {
     /// ### What it does
-    /// Reports a call of `Ruby::get_unchecked` outside `nupur::rb::method`, of
-    /// `rb::method::finish` / `finish_cary` outside a `method!` / `function!`
-    /// expansion, and of `rb::method::run_init` outside an `extern "C" fn
-    /// Init_*`.
+    /// Reports a call of `rb::method::finish` / `finish_cary` outside a
+    /// `method!` / `function!` expansion, of `rb::method::run_init` outside an
+    /// `extern "C" fn Init_*`, and of `nupur_sys`'s `Ruby::assume_gvl`
+    /// outside `rb::method::entry_token`.
     ///
     /// ### Why is this bad?
     /// Each makes the GVL's token, `Ruby`, which every call into Ruby takes
@@ -311,7 +306,6 @@ declare_lint_pass!(MakiriLints => [
     RUBY_IN_GVL_RELEASED_BODY,
     INFALLIBLE_ALLOCATION,
     RAISING_CALL_OUTSIDE_PROTECT,
-    RAW_RUBY_OUTSIDE_BRIDGE,
     RUNS_CALLERS_RUBY,
     RAW_NODE_CROSSING,
     RUBY_SURFACE_IN_BRIDGE,
@@ -368,7 +362,8 @@ impl<'tcx> LateLintPass<'tcx> for MakiriLints {
 /// Whether `did` is the extension's or its binding layer's (the crate
 /// `nupur`, where `ReprValue`, `Payload` and `Opaque` are defined).
 pub fn ours(cx: &LateContext<'_>, did: DefId) -> bool {
-    did.is_local() || cx.tcx.crate_name(did.krate).as_str() == paths::NUPUR
+    did.is_local()
+        || [paths::NUPUR, paths::NUPUR_SYS].contains(&cx.tcx.crate_name(did.krate).as_str())
 }
 
 #[derive(Default)]

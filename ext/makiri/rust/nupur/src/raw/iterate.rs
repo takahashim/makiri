@@ -14,10 +14,9 @@ use super::*;
     )
 )]
 pub fn yield_value(_: &Ruby, v: Value) -> Result<Value, Error> {
-    let v = v.as_raw();
-    let out = call(|| unsafe { nupur_sys::rb_yield(v) })?;
-    // SAFETY: what the block returned, live on this frame.
-    Ok(unsafe { Value::from_raw(out) })
+    let v = v.as_sys();
+    let out = call(|inside| unsafe { nupur_sys::raising::rb_yield(inside, v) })?;
+    Ok(Value::from_sys(out))
 }
 
 /// [`yield_value`], and what the block's exit or exception came back as
@@ -54,14 +53,18 @@ pub fn hash_foreach(h: RHash, visit: &mut dyn FnMut(Value, Value) -> bool) -> Re
         visit: &'a mut dyn FnMut(Value, Value) -> bool,
         latch: crate::caught::PanicLatch,
     }
-    unsafe extern "C" fn each(k: VALUE, v: VALUE, arg: VALUE) -> c_int {
+    unsafe extern "C" fn each(
+        k: nupur_sys::value::Value,
+        v: nupur_sys::value::Value,
+        arg: *mut c_void,
+    ) -> c_int {
         const CONTINUE: c_int = nupur_sys::st_retval::ST_CONTINUE as c_int;
         const STOP: c_int = nupur_sys::st_retval::ST_STOP as c_int;
         crate::no_unwind::must_not_unwind::<crate::no_unwind::HashEach, _>(|| {
             // SAFETY: `arg` is the `Walk` `hash_foreach` passed, live for the
             // walk; `k` and `v` are the Hash's, live while it is walked.
             let walk = unsafe { &mut *(arg as *mut Walk<'_>) };
-            let (k, v) = unsafe { (Value::from_raw(k), Value::from_raw(v)) };
+            let (k, v) = (Value::from_sys(k), Value::from_sys(v));
             let visit = &mut walk.visit;
             if walk.latch.guard(false, || visit(k, v)) {
                 CONTINUE
@@ -74,10 +77,9 @@ pub fn hash_foreach(h: RHash, visit: &mut dyn FnMut(Value, Value) -> bool) -> Re
         visit,
         latch: crate::caught::PanicLatch::new(),
     };
-    let (h, arg) = (h.as_raw(), &mut walk as *mut Walk<'_> as VALUE);
-    let walked = call(|| unsafe {
-        nupur_sys::rb_hash_foreach(h, Some(each), arg);
-        nupur_sys::Qnil as VALUE
+    let (h, arg) = (h.as_sys(), (&mut walk as *mut Walk<'_>).cast::<c_void>());
+    let walked = call(|inside| unsafe {
+        nupur_sys::raising::rb_hash_foreach(inside, h, each, arg);
     });
     /* Out of the C frames: safe to unwind from here. */
     walk.latch.resume();

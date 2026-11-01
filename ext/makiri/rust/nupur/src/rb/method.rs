@@ -28,10 +28,22 @@ use super::error::Error;
 use super::ruby::Ruby;
 use super::value::Value;
 
+/// The token, made where Ruby has called in with the GVL held: private to
+/// this module, so only its two entries, [`finish`] and [`run_init`], can make
+/// one - the compiler's rule, not a lint's.
+///
+/// # Safety
+/// On a Ruby thread holding the GVL.
+#[inline(always)]
+unsafe fn entry_token() -> Ruby {
+    // SAFETY: the caller's.
+    Ruby(unsafe { nupur_sys::value::Ruby::assume_gvl() })
+}
+
 /// A trampoline and its arity, for `define_method` and its kin.
 #[derive(Clone, Copy)]
 pub struct Func {
-    pub(crate) ptr: unsafe extern "C" fn() -> nupur_sys::VALUE,
+    pub(crate) ptr: unsafe extern "C" fn() -> nupur_sys::value::Value,
     pub(crate) arity: c_int,
 }
 
@@ -58,11 +70,12 @@ pub unsafe fn finish(f: impl FnOnce(&Ruby) -> Result<Value, Error>) -> Value {
     crate::no_unwind::must_not_unwind::<crate::no_unwind::Method, _>(|| {
         // SAFETY: only a trampoline Ruby calls runs this: its thread, the GVL
         // held. The one token a method's body sees is this one.
-        let ruby = unsafe { Ruby::get_unchecked() };
+        let ruby = unsafe { entry_token() };
         /* A method starts with no exit pending: every trampoline resumes its
          * own before it returns (below, and `Error::raise`), so this only
          * makes sure. */
-        crate::raw::reset_pending_exit();
+        // SAFETY: a method starts here, so no exit of its is pending.
+        unsafe { crate::raw::reset_pending_exit() };
         let e = match std::panic::catch_unwind(AssertUnwindSafe(|| f(&ruby))) {
             /* An exit the method caught and dropped is resumed, not lost:
              * a `throw`'s catcher is waiting, a killed thread must end. */
@@ -351,9 +364,9 @@ macro_rules! __trampoline {
 /// Raises nothing and runs no Ruby code; like [`keyword_given`], it reads
 /// the current frame.
 #[inline]
-pub fn block_given(_: &Ruby) -> bool {
+pub fn block_given(ruby: &Ruby) -> bool {
     // SAFETY: under the GVL (`&Ruby`); a read of the current control frame.
-    unsafe { nupur_sys::rb_block_given_p() != 0 }
+    unsafe { nupur_sys::non_raising::rb_block_given_p(ruby.sys()) != 0 }
 }
 
 /// Yield `v` to the method's block (`rb_yield`): the caller's Ruby, which
@@ -388,9 +401,9 @@ pub fn yield_dropping_error_for_test(ruby: &Ruby) {
 /// answers for a method only from that method's own body, before the method
 /// calls into Ruby (a method's argument scan is called first thing).
 #[inline]
-pub fn keyword_given(_: &Ruby) -> bool {
+pub fn keyword_given(ruby: &Ruby) -> bool {
     // SAFETY: under the GVL (`&Ruby`); a read of the current control frame.
-    unsafe { nupur_sys::rb_keyword_given_p() != 0 }
+    unsafe { nupur_sys::non_raising::rb_keyword_given_p(ruby.sys()) != 0 }
 }
 
 /// `rb_ext_ractor_safe(true)`: every method the running `Init_` defines from
@@ -405,10 +418,10 @@ pub fn keyword_given(_: &Ruby) -> bool {
 /// extension's part is its own: its statics, what its methods assume the GVL
 /// serialises (only one Ractor's threads now), and no Marshal hook on a
 /// class of wrapped objects, through which a Ractor would copy one.
-pub fn declare_ractor_safe(_: &Ruby) {
+pub fn declare_ractor_safe(ruby: &Ruby) {
     // SAFETY: under the GVL (`&Ruby`); sets the running thread's extension
     // config.
-    unsafe { nupur_sys::rb_ext_ractor_safe(true) }
+    unsafe { nupur_sys::non_raising::rb_ext_ractor_safe(ruby.sys(), true) }
 }
 
 /// What the extension's `Init_` runs its two phases through.
@@ -432,7 +445,7 @@ pub unsafe fn run_init(
 ) {
     crate::no_unwind::must_not_unwind::<crate::no_unwind::Init, _>(|| {
         // SAFETY: Ruby calls an extension's `Init_` on its thread, with the GVL.
-        let ruby = unsafe { Ruby::get_unchecked() };
+        let ruby = unsafe { entry_token() };
         let msg = match std::panic::catch_unwind(AssertUnwindSafe(|| check(&ruby))) {
             Ok(Ok(())) => match std::panic::catch_unwind(AssertUnwindSafe(|| {
                 /* What the layer asks Ruby once, before any of the extension

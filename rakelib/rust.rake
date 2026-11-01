@@ -23,6 +23,10 @@ namespace :rust do
       # The binding layer (its Ruby-free tests: the message buffer, and
       # `caught`'s panic latch and payload reading).
       sh "cargo test -p nupur"
+      # The crate under it: the integer conversions at both widths of a
+      # `long`, and the compile-fail doctests that keep its tokens (`Value`,
+      # `Ruby`, `Protected`) where they are made.
+      sh "cargo test -p nupur_sys"
       sh "cargo test --manifest-path reference/Cargo.toml"
       # The fuzz crate is a separate one, so `cargo test` above never sees it;
       # without this check an engine API change can silently break the nightly
@@ -39,6 +43,18 @@ namespace :rust do
   task :exhaustive do
     Dir.chdir("ext/makiri/rust") do
       sh "cargo test --release -p makiri_engine --no-default-features --lib -- --ignored exhaustive::"
+    end
+  end
+
+  # The compile-fail doctests, on nightly. Each names the error it expects
+  # (`compile_fail,E0451`), and only nightly's rustdoc checks that code: a
+  # stable run passes a snippet that fails for any reason at all, a typo
+  # included. The workspace's crates that have them; the Lexbor reference's
+  # one is left to its own run.
+  desc "Check the compile-fail doctests' error codes (nightly)"
+  task :compile_fail do
+    Dir.chdir("ext/makiri/rust") do
+      sh "cargo +nightly test --doc -p makiri_engine -p falloc -p nupur_sys"
     end
   end
 end

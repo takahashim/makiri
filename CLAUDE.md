@@ -64,8 +64,9 @@ When a rule here changes, change its reasoning there in the same commit.
   - a callback C calls must not panic into C: it latches the panic
     (`caught::PanicLatch`), returns "stop", and the caller re-raises;
   - the GC callbacks (`nupur/src/typed/callbacks.rs`) abort on purpose -
-    keep their bodies trivial; `raw::call`'s `rb_protect` thunk holds one C
-    call over `Copy` values - keep it so.
+    keep their bodies trivial; the `rb_protect` thunk
+    (`nupur_sys::protect::call`, under `raw::call`) holds one C call over
+    `Copy` values - keep it so.
 - **Nothing that must not unwind can, and the compiler proves it**
   (`rake no_unwind`, `engine/src/no_unwind.rs`). Every `extern "C"` fn and
   GC-run `Drop` body runs through `must_not_unwind` (`rake dylint`'s
@@ -83,14 +84,19 @@ When a rule here changes, change its reasoning there in the same commit.
   the GC goes through a `typed::External`, and `nupur`'s free callback gives
   it back.
 - **Every C call that can raise is a wrapper in `nupur/src/raw/`, run under
-  `rb_protect` through `raw::call`, returning `Result`.** A raise must never
+  `rb_protect` through `raw::call`, returning `Result`.** The C call is
+  `nupur_sys::raising`'s, which takes the `&Protected` only `call` lends.
+  A raise must never
   `longjmp` over a Rust frame. Which calls raise is classified in
   `lints/makiri_lints/src/raising.rs` (`NON_RAISING`, `REVIEWED`), held to
   the vendored C API raise survey and Ruby's headers; an unclassified
-  function is refused. A call that can raise but not where we call it is an
-  `allow` at that call with its reason, never a crate-wide entry.
-- **A raw `VALUE` and `rb_sys::` stay in `nupur`'s `raw/`, `int.rs`,
-  `typed/` and the `bridge::rb` value files** (`raw_ruby_outside_bridge`).
+  function is refused. A call that can raise but not under a precondition
+  is never a crate-wide entry: it is a `nupur_sys::non_raising` wrapper named for
+  the precondition (`enc_get_of_string`), its `allow` at the one C call and
+  the precondition its `unsafe` contract, upheld at each call.
+- **A raw `VALUE` and `rb_sys::` stay in `nupur_sys`**, the one crate that
+  depends on rb-sys; it re-exports no `VALUE` and no C function, so Nupur
+  holds a value as `nupur_sys::value::Value` (a slot's as `Root`).
   `bridge/` is `#![forbid(unsafe_code)]`; every `unsafe` that touches Ruby
   is `nupur`'s.
 - **A Document's content is reached only through a guard** (`bridge::dom`
@@ -102,7 +108,8 @@ When a rule here changes, change its reasoning there in the same commit.
   bare `rescue` passes it through. In `Init_makiri` a failure after
   definition has begun is `fatal`; only the first, Ruby API check is a
   `LoadError` (`run_init`).
-- **A C integer is converted only in `nupur::int`.** No integer `as` cast and
+- **A C integer is converted only in `nupur_sys::int`** (Nupur's
+  `crate::int`). No integer `as` cast and
   no `c_long` / `c_ulong` in Nupur, `bridge`, `glue` or `init`
   (`c_integer_outside_int`): a `long` is 32 bits on Windows. Verus proves
   `int`'s conversions at both widths (`verus/int.rs`); a change goes

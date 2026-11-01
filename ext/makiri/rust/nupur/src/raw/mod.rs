@@ -7,7 +7,9 @@
 //! every one runs inside [`call`] ([`protect`]): a bare `rb_protect` whose `extern "C"`
 //! thunk holds nothing but that one C call and the `Copy` values it reads. The
 //! only frame a raise crosses is the thunk's own, which owns nothing. A
-//! caller gets a `Result` and owns whatever it likes across the call.
+//! caller gets a `Result` and owns whatever it likes across the call. The C
+//! call is `nupur_sys::raising`'s, which takes the `&Protected` that only
+//! `call` lends its closure.
 //! `rake dylint`'s `raising_call_outside_protect` refuses a raising C call
 //! anywhere else, so a new one is a new wrapper here, with its raise stated.
 //!
@@ -39,12 +41,11 @@
 
 use core::ffi::{c_char, c_int, c_void};
 
-use crate::rb::value::AsRawValue;
+use crate::rb::value::AsSys;
 use crate::rb::{
     Error, ExceptionClass, Float, Id, Integer, RArray, RClass, RHash, RModule, RString, Range,
     Ruby, Symbol, Value,
 };
-use nupur_sys::{rb_data_type_t, VALUE};
 
 use crate::encoding::Encoding;
 
@@ -62,12 +63,14 @@ pub(crate) use protect::{
 /// a C function that answered with another kind is an error, not a value read
 /// as the wrong type.
 #[inline]
-fn typed<T>(v: VALUE, of: fn(Value) -> Option<T>, what: &'static str) -> Result<T, Error> {
-    // SAFETY: `v` is what a Ruby C call just returned: a live value, on this
-    // frame's stack until it is converted.
+fn typed<T>(
+    v: nupur_sys::value::Value,
+    of: fn(Value) -> Option<T>,
+    what: &'static str,
+) -> Result<T, Error> {
     /* `what` is the whole message, a literal: this runs on the path that
      * raises a caught panic, which must stay `fmt`-free (`rake no_unwind`). */
-    of(unsafe { Value::from_raw(v) }).ok_or_else(|| crate::rb::error::internal_error(what))
+    of(Value::from_sys(v)).ok_or_else(|| crate::rb::error::internal_error(what))
 }
 
 /// A length for the C API's `long` (whichever width the call's parameter

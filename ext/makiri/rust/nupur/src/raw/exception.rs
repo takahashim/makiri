@@ -7,14 +7,13 @@ use super::*;
 /// which allocates and runs the class's `initialize`, and so raises.
 #[inline]
 pub fn exception_new(ruby: &Ruby, class: ExceptionClass, msg: &[u8]) -> Result<Value, Error> {
-    let s = utf8_str_new(ruby, msg)?.as_raw();
-    let class = class.as_raw();
-    let exc = call(|| unsafe {
-        injected_raise();
-        nupur_sys::rb_exc_new_str(class, s)
+    let s = utf8_str_new(ruby, msg)?.as_sys();
+    let class = class.as_sys();
+    let exc = call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_exc_new_str(inside, class, s)
     })?;
-    // SAFETY: the object just made.
-    Ok(unsafe { Value::from_raw(exc) })
+    Ok(Value::from_sys(exc))
 }
 
 /// Does [`call`] still tell a raise from a `throw` or a `break`? It does by
@@ -24,14 +23,16 @@ pub fn exception_new(ruby: &Ruby, class: ExceptionClass, msg: &[u8]) -> Result<V
 /// whose numbering this was not written for - the exit it left pending is
 /// forgotten here, and the caller refuses to load.
 pub fn raise_is_recognised(ruby: &Ruby) -> Result<bool, Error> {
-    let exc = exception_new(ruby, ruby.exception_runtime_error(), b"raise self-check")?.as_raw();
-    let outcome = call::<(), _>(|| unsafe { nupur_sys::rb_exc_raise(exc) });
+    let exc = exception_new(ruby, ruby.exception_runtime_error(), b"raise self-check")?.as_sys();
+    let outcome = call::<(), _>(|inside| unsafe { nupur_sys::raising::rb_exc_raise(inside, exc) });
     let recognised = matches!(
         &outcome,
         Err(e) if e.is_kind_of(ruby, crate::rb::Builtin::RuntimeError)
     );
     if !recognised {
-        reset_pending_exit();
+        // SAFETY: the exit is this check's own raise, which nobody resumes:
+        // the caller refuses to load.
+        unsafe { reset_pending_exit() };
         forget_errinfo(ruby);
     }
     Ok(recognised)
@@ -45,10 +46,10 @@ const CLASSNAME_MAX: usize = 128;
 /// made on each call, referenced by nothing once the call returns - so `f`
 /// is handed a copy, up to [`CLASSNAME_MAX`] bytes, and may do anything.
 pub fn with_classname<R>(v: Value, f: impl FnOnce(&[u8]) -> R) -> Result<R, Error> {
-    let v = v.as_raw();
-    let p = call(|| unsafe {
-        injected_raise();
-        nupur_sys::rb_obj_classname(v)
+    let v = v.as_sys();
+    let p = call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_obj_classname(inside, v)
     })?;
     if p.is_null() {
         return Ok(f(b"Object"));

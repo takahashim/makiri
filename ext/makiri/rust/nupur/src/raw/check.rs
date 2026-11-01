@@ -6,10 +6,10 @@ use super::*;
 /// made for the first time. Runs no Ruby code.
 #[inline]
 pub fn sym2str(sym: Symbol) -> Result<RString, Error> {
-    let v = sym.as_raw();
-    let s = call(|| unsafe {
-        injected_raise();
-        nupur_sys::rb_sym2str(v)
+    let v = sym.as_sys();
+    let s = call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_sym2str(inside, v)
     })?;
     typed(s, RString::from_value, "a C call made no String")
 }
@@ -24,8 +24,8 @@ pub fn check_frozen(v: Value) -> Result<(), Error> {
     if !crate::rb::ReprValue::is_frozen(v) {
         return Ok(());
     }
-    let v = v.as_raw();
-    call(|| unsafe { nupur_sys::rb_check_frozen(v) })
+    let v = v.as_sys();
+    call(|inside| unsafe { nupur_sys::raising::rb_check_frozen(inside, v) })
 }
 
 /// `rb_range_beg_len` with `err = 0` over a collection of `count` elements:
@@ -51,9 +51,10 @@ pub fn range_beg_len(r: Range, count: usize) -> Result<Option<(usize, usize)>, E
         .map_err(|_| crate::rb::error::arg_error("a collection too large for a long"))?;
     let (mut beg, mut len) = (0, 0);
     let (b, l) = (core::ptr::addr_of_mut!(beg), core::ptr::addr_of_mut!(len));
-    let r = r.as_raw();
-    let answer = call(|| unsafe { nupur_sys::rb_range_beg_len(r, b, l, count, 0) })?;
-    if answer != nupur_sys::Qtrue as VALUE {
+    let r = r.as_sys();
+    let answer =
+        call(|inside| unsafe { nupur_sys::raising::rb_range_beg_len(inside, r, b, l, count, 0) })?;
+    if !answer.is_true() {
         return Ok(None);
     }
     /* Within `0..=count` both, when the C answers true. */
@@ -69,5 +70,5 @@ pub fn range_beg_len(r: Range, count: usize) -> Result<Option<(usize, usize)>, E
 /// `Thread#raise`'s exception, a `Timeout`), or ends the thread.
 #[inline]
 pub fn thread_check_ints(_: &Ruby) -> Result<(), Error> {
-    call(|| unsafe { nupur_sys::rb_thread_check_ints() })
+    call(|inside| unsafe { nupur_sys::raising::rb_thread_check_ints(inside) })
 }

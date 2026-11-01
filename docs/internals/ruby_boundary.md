@@ -72,9 +72,13 @@ Two kinds of `extern "C"` function have no latch, on purpose:
   unwind-free as it is; free and memsize run what the compiler cannot see
   through under `caught::quietly`, so a panic there leaks the payload or
   answers 0 rather than unwinding (below). Keep their bodies trivial.
-- The `rb_protect` thunk of `nupur::raw::call` holds one C call and the
-  `Copy` values it reads (`F: Copy`, `T: Copy`), so there is no Rust there to
-  panic and no `catch_unwind` for a raise to cross. Keep it that way.
+- The `rb_protect` thunk (`nupur_sys::protect::call`, which `nupur::raw::call`
+  runs) holds one C call and the `Copy` values it reads (`F: Copy`,
+  `T: Copy`), so there is no Rust there to panic and no `catch_unwind` for a
+  raise to cross. Keep it that way. The closure it runs is lent a
+  `&Protected`, a token only the thunk makes, so a function that takes one
+  can run only inside the protection. The closure takes it for any lifetime
+  and returns a `T` chosen outside, so the token cannot leave the call.
 
 The one C call that calls back into Rust is `rb_hash_foreach`, and its
 callback is latched (above) and raises nothing.
@@ -82,7 +86,7 @@ callback is latched (above) and raises nothing.
 ### Proving unwind-freedom
 
 **Nothing that must not unwind can, and the compiler proves it**
-(`nupur/src/no_unwind.rs` for Nupur's sites, `engine/src/no_unwind.rs` for
+(`nupur/sys/src/no_unwind.rs` for Nupur's sites, `engine/src/no_unwind.rs` for
 the engine's, `rake no_unwind`). An unwind out of an
 `extern "C"` function aborts, and so does a panic in a `Drop` that the GC
 runs or that runs while another panic unwinds. Each such body is a `Site`
@@ -216,12 +220,12 @@ The handle is the only way to a payload: there is no `&Value -> &T`
 
 The handle holds the object because a `&T` keeps its object alive to the
 type checker only: a non-embedded payload is its own malloc'd block, which
-the stack scan does not take for the object. So the handle holds the VALUE
+the stack scan does not take for the object. So the handle holds the value
 in an `rb::kept::Kept`, whose `Drop`, after the last borrow, hands it to
-`keep_alive`. That is an empty `asm!` with the VALUE as an input operand, or,
-on the targets without a stable `asm!`, a `read_volatile` of it, a weaker
-contract and unchecked there. The premises that make either enough are
-stated there. `black_box` (the old `gc_guard`) is best-effort and is not
+`nupur_sys::value::keep_alive`. That is an empty `asm!` with the value as
+an input operand, or, on the targets without a stable `asm!`, a
+`read_volatile` of it, a weaker contract and unchecked there. The premises
+that make either enough are stated there. `black_box` (the old `gc_guard`) is best-effort and is not
 used.
 
 The Document's guards take a handle too. `html_read` / `xml_read` and the
@@ -236,8 +240,11 @@ The other half of the slot rule is that no Ruby value is kept where the
 GC's stack scan cannot see it: a `Vec`, a `Box`, a static or
 `thread_local!`, or a `Payload` type's own field. `rake dylint`'s
 `ruby_value_on_heap` checks this by reading the types. A lint sees a `VALUE`
-only as an integer, which is why raw `VALUE`s stay in `nupur/src/raw/` and
-`nupur/src/typed/`.
+only as an integer, which is why Nupur holds none: a value is a
+`nupur_sys::value::Value`, and the one form a value takes off the stack, a
+TypedData object's slot, is a `nupur_sys::value::Root`, which the object's
+mark callback marks and which is read back as a value only under a
+contract.
 
 The lint reads every expression's type too, so it reports a temporary
 handed straight to a call (`f(vec![v])`) or a closure boxed with a value it
@@ -284,6 +291,17 @@ undefined behaviour. So each wrapper hands its one C call to `raw::call`,
 whose `extern "C"` thunk is the only frame a raise crosses, and the raise
 comes back as `Err`. A caller may then own copies, hold document guards and
 build Ruby objects in any order.
+
+The C call itself is a function of `nupur_sys::raising`, one per raising C
+function, with the C signature (a `Value` where C has a Ruby value) and a
+`&Protected` first. Only the thunk
+lends a `&Protected`, to the closure `raw::call` runs, so these functions
+cannot be called outside the protection: the type keeps the rule that
+`raising_call_outside_protect` checks. `nupur_sys` re-exports rb-sys's
+types and constants and none of its functions, so Nupur reaches no C
+function except through a wrapper; the lint still holds `nupur_sys` itself,
+where rb-sys is in reach. `unraising_call_in_raw` also refuses a wrapper in
+`nupur_sys::raising` of a function that cannot raise.
 
 ### Classifying which functions raise
 
@@ -336,14 +354,21 @@ flag's value, which the `2` variant fixes).
 
 ### Raises ruled out at one call site
 
-A function that can raise, but not where the extension calls it, is an
-`allow` at that call with its reason, never a crate-wide entry:
+A function that can raise, but raises nothing under a precondition, is
+never a crate-wide entry in the tables: the reason one call site has must
+not pass to a later one. It is a wrapper in `nupur_sys::non_raising` named for the
+precondition, with the `allow` and its reason at the one call of the C
+function, and the precondition as its `unsafe` contract, which each caller
+upholds in its own SAFETY:
 
-- `rb_gc_mark` in the mark callback: it raises only when memory runs out,
-  and that longjmp loses nothing there.
-- `rb_attr_get` in `ivar_get`: it raises only for an `@` name of a class, a
-  module or a shareable object read from another Ractor, and `ivar_get`
-  takes a `HiddenId`, which is never an `@` name.
+- `gc_mark_in_dmark` (`rb_gc_mark`): it raises only when memory runs out,
+  and a longjmp loses nothing in a mark callback.
+- `attr_get_hidden` (`rb_attr_get`): it raises only for an `@` name of a
+  class, a module or a shareable object read from another Ractor, and
+  `ivar_get` passes a `HiddenId`, which is never an `@` name.
+- the rest: `enc_get_of_string`, `enc_get_index_of_string`,
+  `obj_is_kind_of_module`, `class_inherited_p_of_modules`,
+  `absint_size_of_integer`, `str_empty_unfrozen`.
 
 ### The lints that hold `raw` to the table
 
@@ -352,16 +377,19 @@ handed to `raw::call`. A function that raises only for what its caller rules
 out, such as `rb_obj_is_kind_of` with a non-class, is an `allow` at its site
 saying so.
 
-`unraising_call_in_raw` holds `raw` to what it is. A call of Ruby's C in
-`raw` outside `call`, or a `call` that protects nothing, means the table and
-the code disagree. A read that raises nothing belongs to `rb::value`, to
+`unraising_call_in_raw` holds `raw` and its modules to what they are. A
+call of `nupur_sys::non_raising` in `raw` outside `call`, or a `call` that protects
+nothing, means the table and the code disagree. A read that raises nothing belongs to `rb::value`, to
 `rb::object` for an object's ivars and class, or to `rb::method` for the
 current frame.
 
-`call` is `raw::protect`'s, together with the rest of the protection (`$!`
-taken and kept, a `break` / `throw` pending until the trampoline resumes it)
-and the calls that raise on purpose; this is the one part of `raw` outside
-the rule. A new raising call is a new wrapper with its raise stated.
+The protection itself is `nupur_sys::protect`'s: the thunk, `$!` taken and
+kept, a `break` / `throw` pending until the trampoline resumes it, and the
+calls that raise on purpose. Each is an `unsafe fn` whose contract is the
+GVL, and a raise comes back as the raw exception. `raw::protect` is its
+safe face in Nupur's types: `call`, which makes the exception an `Error`,
+and the raise sweep's hook. These two modules are the part outside the
+rule. A new raising call is a new wrapper with its raise stated.
 
 ### Building values, and the cost
 
@@ -384,6 +412,26 @@ The value-level wrappers are safe and typed. They take and return
 key's kind, a substring's bounds, `to_encoding`'s argument. One with no
 Ruby value takes `&Ruby` as the GVL's proof.
 
+Below them, the calls of Ruby's C that raise nothing (the C functions, the
+stable API, the C globals that hold a class) are `nupur_sys::non_raising`'s, and
+each takes a proof of the GVL that is a type of `nupur_sys`'s: the value it
+reads (`nupur_sys::value::Value`, which Nupur's `Value` holds: a value exists
+only where the GVL is held, and is `!Send`), or, for a read of no value, the
+token (`nupur_sys::value::Ruby`, which Nupur's `Ruby` holds). So a read of a
+value needs nothing beside it, and a read that only needs the value to be
+live is safe: `nil_p(v)`, `rb_type(v)`. A value or the protection lends the
+token (`Value::ruby`, `Protected::ruby`) for its borrow. Nupur makes its
+own token in one function, `rb::method`'s private `entry_token`, which only
+the two entries (`finish`, `run_init`) call; that is the compiler's
+privacy, and `gvl_token_outside_entry` holds the rest - `finish` and
+`run_init` to where Ruby calls in, and `nupur_sys`'s maker to `entry_token`.
+The GC's callbacks make no token: their calls of Ruby's C
+(`gc_mark_in_dmark`, `gc_give_back_in_dfree`, `xfree_in_dfree`) are
+`unsafe fn`s whose contract is the callback. A
+function that can raise only outside a precondition (`rb_enc_get` of a
+non-String) has a wrapper named for it, whose contract each caller upholds
+(see "Raises ruled out at one call site").
+
 Only those over raw memory stay `unsafe`, and they are `nupur`'s alone:
 `typed_object_zalloc`, `check_typeddata` and `utf8_str_unwritten` (the raw
 half under `utf8_str_filled`), all `pub(crate)`. So are the three that
@@ -395,12 +443,16 @@ which only a trampoline's raise may call. A String made in place is
 ### Where a raw `VALUE` may appear
 
 A raw `VALUE` is an integer to Rust, which no lint can tell from a `u64` in
-a `Vec`. It is spelled, or read from a C global of Ruby's (`rb_cObject`),
-only in `raw/`, `int.rs`, `typed/` and the `bridge::rb` files that are the
-typed values. `rake dylint`'s `raw_ruby_outside_bridge` enforces this, and
-also fails on any `rb_sys::` outside `nupur`, which it counts as part of
-the bridge. The extension has no rb-sys dependency, so its `bridge/` names
-none.
+a `Vec`. So only `nupur_sys` spells one: it is the one crate that depends on
+rb-sys, and it re-exports no `VALUE`. Its wrappers take and return
+`nupur_sys::value::Value`, and a C call's answer, a C global's class, a
+constant (`Ruby::qnil`, `Ruby::fixnum`), a method's trampoline, a Hash
+walk's callback, a slot's `Root` and the `rb_data_type_t`
+(`nupur_sys::data_type`) are each typed from the start. Nupur's `Value`
+holds a `nupur_sys::value::Value` and has no `from_raw`. These are the
+crates' types and dependencies, so no lint holds them (the
+`raw_ruby_outside_bridge` lint that once did is gone); `ruby_value_on_heap`
+counts `nupur_sys`'s `Value` and `Root` as Ruby values, as it does Nupur's.
 
 Everything else therefore holds typed values, and `TypedType::wrap` is safe
 for that reason: it takes `&Ruby`, and a payload keeps no Ruby value, since
@@ -468,7 +520,8 @@ Outside a registered method a panic does not become `InternalError`:
 
 ## C integers
 
-**A C integer is converted in one place, `nupur::int`.** A C `long` is 32
+**A C integer is converted in one place, `nupur_sys::int`**, which Nupur
+reaches as `crate::int`. A C `long` is 32
 bits on Windows and `i64` itself everywhere the code is built and linted, so
 `n as c_long` truncates where no compiler warning can show it. Ruby's ranges
 follow the `long` too: a Fixnum is 2^30 - 1 at most on Windows. Each Windows

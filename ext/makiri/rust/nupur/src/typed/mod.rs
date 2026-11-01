@@ -33,27 +33,14 @@ pub use external::External;
 
 use callbacks::{free_cb, free_embedded_cb, mark_cb, memsize_cb};
 use data_type::{data_pointer, typed_data, typed_data_known, wrap_built, DataType};
+use nupur_sys::data_type::DataFlags;
 
-use core::ffi::{c_char, CStr};
+use core::ffi::CStr;
 use core::marker::PhantomData;
 
-use crate::rb::value::AsRawValue;
+use crate::rb::value::AsSys;
 use crate::rb::{Error, Value};
-use nupur_sys::{rb_data_type_t, VALUE};
-
-/// A `Value` from a raw handle this module holds - a slot, or what a wrap
-/// returned. With `raw/` and the `rb` files that are the typed values, the
-/// only places a raw `VALUE` becomes a `Value` (`rake dylint`'s
-/// `raw_ruby_outside_bridge`).
-///
-/// # Safety
-/// `raw` is a live Ruby value of the current process, kept rooted by the
-/// caller.
-#[inline]
-unsafe fn value(raw: VALUE) -> Value {
-    // SAFETY: the caller's contract.
-    unsafe { Value::from_raw(raw) }
-}
+use nupur_sys::value::Root as Slot;
 
 /// What an object's slot can be given ([`TypedType::wrap`]'s `roots`): any
 /// Ruby value, or a value only a slot may keep - a hidden
@@ -124,7 +111,7 @@ pub const fn envelope_size<T, const N: usize>() -> usize {
 struct Envelope<T, const N: usize> {
     /// The values the object keeps alive, marked pinned by [`mark_cb`].
     /// Written once, by [`wrap_built`], and never again.
-    roots: [VALUE; N],
+    roots: [Slot; N],
     data: T,
 }
 
@@ -158,8 +145,8 @@ pub struct TypedType<T: Payload, const N: usize = 0> {
 
 impl<T: Payload, const N: usize> TypedType<T, N> {
     const fn with_parent(
-        name: *const c_char,
-        parent: *const rb_data_type_t,
+        name: &'static CStr,
+        parent: Option<&'static DataType>,
         embedded: bool,
     ) -> TypedType<T, N> {
         TypedType {
@@ -177,7 +164,11 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
                 } else {
                     memsize_cb::<T, N, false>
                 }),
-                embedded,
+                if embedded {
+                    DataFlags::EMBEDDABLE
+                } else {
+                    DataFlags::SEPARATE
+                },
             ),
             _t: PhantomData,
         }
@@ -187,7 +178,7 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
     /// `ObjectSpace`, read as a C string for the life of the process - so a
     /// `'static` one, NUL-terminated by type.
     pub const fn base(name: &'static CStr) -> TypedType<T, N> {
-        Self::with_parent(name.as_ptr(), core::ptr::null(), false)
+        Self::with_parent(name, None, false)
     }
 
     /// A type deriving from `parent`, which holds the same payload and
@@ -196,15 +187,14 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
     /// `parent` is `'static`: its `rb_data_type_t`'s address is kept, and
     /// Ruby follows it for the life of the process.
     pub const fn derived(name: &'static CStr, parent: &'static TypedType<T, N>) -> TypedType<T, N> {
-        Self::with_parent(name.as_ptr(), parent.raw.as_ptr(), false)
+        Self::with_parent(name, Some(&parent.raw), false)
     }
 
     /// Whether `v` is an object of this type or one deriving from it. Never
     /// raises.
     #[inline]
     pub fn is(&self, v: Value) -> bool {
-        // SAFETY: `v` is a live VALUE; the type check does not raise.
-        unsafe { nupur_sys::rb_typeddata_is_kind_of(v.as_raw(), self.raw.as_ptr()) != 0 }
+        nupur_sys::non_raising::rb_typeddata_is_kind_of(v.as_sys(), &self.raw)
     }
 
     /// `Ok` for an object of this type (or one deriving from it), else Ruby's
@@ -275,14 +265,13 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
         // SAFETY: under the GVL (`&Ruby`), and `ty` is this payload's own type.
         let obj = unsafe {
             wrap_built::<T, N>(
-                klass.as_raw(),
-                self.raw.as_ptr(),
+                klass.as_sys(),
+                &self.raw,
                 data,
-                roots.map(|v| sealed::Root::root_value(v).as_raw()),
+                roots.map(|v| Slot::of(sealed::Root::root_value(v).as_sys())),
             )
         }?;
-        // SAFETY: the object just wrapped, live on this frame.
-        Ok(unsafe { value(obj) })
+        Ok(Value::from_sys(obj))
     }
 }
 
@@ -331,7 +320,7 @@ impl<T: Payload + 'static, const N: usize> Typed<T, N> {
         // is `T`'s with `N` slots (a derived type holds the same); the data
         // is the envelope `wrap_built` wrote, and the handle holds the object
         // until after the borrow.
-        unsafe { &*(data_pointer(self.value().as_raw()) as *const Envelope<T, N>) }
+        unsafe { &*(data_pointer(self.value().as_sys()) as *const Envelope<T, N>) }
     }
 
     /// The payload, borrowed for as long as the handle is.
@@ -345,7 +334,7 @@ impl<T: Payload + 'static, const N: usize> Typed<T, N> {
     pub fn root<const I: usize>(&self) -> Value {
         const { assert!(I < N, "no such slot") };
         // SAFETY: the slots hold live values the object marks.
-        unsafe { value(self.envelope().roots[I]) }
+        Value::from_sys(unsafe { self.envelope().roots[I].value() })
     }
 }
 
@@ -451,15 +440,18 @@ pub struct EmbeddedType<T: Payload + Copy, const N: usize = 0>(TypedType<T, N>);
 impl<T: Payload + Copy, const N: usize> EmbeddedType<T, N> {
     /// An embedded type deriving from `parent` (null for a base type), its
     /// envelope held to what an object's slot takes.
-    const fn with_parent(name: &'static CStr, parent: *const rb_data_type_t) -> EmbeddedType<T, N> {
+    const fn with_parent(
+        name: &'static CStr,
+        parent: Option<&'static DataType>,
+    ) -> EmbeddedType<T, N> {
         const { assert!(core::mem::size_of::<Envelope<T, N>>() <= EMBED_MAX) };
         const { assert!(core::mem::align_of::<Envelope<T, N>>() <= EMBED_ALIGN) };
-        EmbeddedType(TypedType::with_parent(name.as_ptr(), parent, true))
+        EmbeddedType(TypedType::with_parent(name, parent, true))
     }
 
     /// A base type.
     pub const fn base(name: &'static CStr) -> EmbeddedType<T, N> {
-        Self::with_parent(name, core::ptr::null())
+        Self::with_parent(name, None)
     }
 
     /// A type deriving from `parent`, which holds the same payload and slots.
@@ -469,7 +461,7 @@ impl<T: Payload + Copy, const N: usize> EmbeddedType<T, N> {
         name: &'static CStr,
         parent: &'static EmbeddedType<T, N>,
     ) -> EmbeddedType<T, N> {
-        Self::with_parent(name, parent.0.raw.as_ptr())
+        Self::with_parent(name, Some(&parent.0.raw))
     }
 
     /// Whether `v` is an object of this type or one deriving from it. Never
@@ -490,7 +482,7 @@ impl<T: Payload + Copy, const N: usize> EmbeddedType<T, N> {
         // the caller's `v` keeps marked.
         let (data, roots) = unsafe { ((*p).data, (*p).roots) };
         // SAFETY: as above.
-        Ok((data, roots.map(|r| unsafe { value(r) })))
+        Ok((data, roots.map(|r| Value::from_sys(unsafe { r.value() }))))
     }
 
     /// [`TypedType::wrap`], as a bare `Value`: an embedded payload is never

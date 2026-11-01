@@ -6,7 +6,7 @@
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicI32, Ordering};
 
-use crate::rb::value::AsRawValue;
+use crate::rb::value::AsSys;
 use crate::rb::{Error, RString};
 
 /// A Ruby encoding - of a String, or resolved from a name or an `Encoding`.
@@ -38,13 +38,14 @@ fn is_builtin(builtin: &AtomicI32, index: c_int) -> bool {
 
 /// Ask Ruby the builtin encodings' indices, once: the first thing
 /// `rb::method::run_init` does, before the extension's own `Init_` code.
-pub(crate) fn init(_: &crate::rb::Ruby) {
-    // SAFETY: under the GVL (`&Ruby`), at `Init_`; each returns a constant.
+pub(crate) fn init(ruby: &crate::rb::Ruby) {
+    let gvl = ruby.sys();
+    // SAFETY: at `Init_`; each returns a constant.
     let (utf8, usascii, ascii8bit) = unsafe {
         (
-            nupur_sys::rb_utf8_encindex(),
-            nupur_sys::rb_usascii_encindex(),
-            nupur_sys::rb_ascii8bit_encindex(),
+            nupur_sys::non_raising::rb_utf8_encindex(gvl),
+            nupur_sys::non_raising::rb_usascii_encindex(gvl),
+            nupur_sys::non_raising::rb_ascii8bit_encindex(gvl),
         )
     };
     UTF8.store(utf8, Ordering::Relaxed);
@@ -107,23 +108,16 @@ impl Encoding {
     }
 
     /// The encoding `str` is tagged with.
-    #[cfg_attr(
-        dylint_lib = "makiri_lints",
-        allow(
-            raising_call_outside_protect,
-            reason = "rb_enc_get raises for a File (a method call) or a Symbol (a String made); `str` is a String, whose tag it reads"
-        )
-    )]
     pub fn of(str: RString) -> Encoding {
         // SAFETY: a live String, by type; reading its tag runs no Ruby.
-        Encoding(unsafe { nupur_sys::rb_enc_get(str.as_raw()) })
+        Encoding(unsafe { nupur_sys::non_raising::enc_get_of_string(str.as_sys()) })
     }
 
     /// UTF-8. Takes the token, as every C call of the layer that has no Ruby
     /// value to show for the GVL does.
-    pub fn utf8(_: &crate::rb::Ruby) -> Encoding {
+    pub fn utf8(ruby: &crate::rb::Ruby) -> Encoding {
         // SAFETY: Ruby's immutable global encoding.
-        Encoding(unsafe { nupur_sys::rb_utf8_encoding() })
+        Encoding(unsafe { nupur_sys::non_raising::rb_utf8_encoding(ruby.sys()) })
     }
 
     /// The encoding Ruby knows by `name`, or None for a name it does not
@@ -182,7 +176,7 @@ impl Encoding {
     fn index(self) -> c_int {
         // SAFETY: one of Ruby's encodings, which live for the process; the
         // read of its index field raises nothing.
-        unsafe { nupur_sys::rb_enc_to_index(self.0) }
+        unsafe { nupur_sys::non_raising::rb_enc_to_index(self.0) }
     }
 
     /// UTF-8 or US-ASCII: text in it is already UTF-8, character for

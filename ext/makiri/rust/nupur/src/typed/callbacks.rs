@@ -5,8 +5,6 @@
 
 use core::ffi::c_void;
 
-use nupur_sys::VALUE;
-
 use super::{Envelope, Payload};
 
 /* The GC callbacks below are the crate's only `extern "C"` functions with no
@@ -24,13 +22,6 @@ use super::{Envelope, Payload};
  * callback for it today, but that is its implementation, not its documented
  * contract, and one branch here means nothing rests on it. */
 
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        raising_call_outside_protect,
-        reason = "rb_gc_mark raises NoMemoryError only when the mark stack cannot grow, a longjmp this frame loses nothing to (the no_unwind guard's Drop does nothing unless unwinding) and every C extension's dmark is exposed to alike"
-    )
-)]
 pub(super) unsafe extern "C" fn mark_cb<T: Payload, const N: usize>(ptr: *mut c_void) {
     crate::no_unwind::must_not_unwind::<crate::no_unwind::GcMark, _>(|| {
         if ptr.is_null() {
@@ -42,28 +33,25 @@ pub(super) unsafe extern "C" fn mark_cb<T: Payload, const N: usize>(ptr: *mut c_
         // reading when the collector runs.
         let roots = unsafe { core::ptr::addr_of!((*(ptr as *const Envelope<T, N>)).roots).read() };
         for r in roots {
-            // SAFETY: from Ruby's mark phase, with the GVL held; a slot holds
-            // a live value (or `Qfalse`, which a mark ignores).
-            unsafe { nupur_sys::rb_gc_mark(r) };
+            // SAFETY: this is a dmark callback, in Ruby's mark phase, with the
+            // GVL held; a slot holds a live value (or `Qfalse`); and this
+            // frame loses nothing to a longjmp (the no_unwind guard's Drop
+            // does nothing unless unwinding).
+            unsafe { nupur_sys::non_raising::gc_mark_in_dmark(r) };
         }
     })
 }
 
 /// Give back what the payload reported, once it is dropped.
+///
+/// # Safety
+/// From a free callback (`gc_give_back_in_dfree`'s contract).
 #[inline]
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        ffi_without_gvl_proof,
-        reason = "private: called only from the free callbacks, which Ruby runs with the GVL"
-    )
-)]
-fn give_back(reported: usize) {
+unsafe fn give_back(reported: usize) {
     if reported != 0 {
         let n = nupur_sys::ssize_t::try_from(reported).unwrap_or(nupur_sys::ssize_t::MAX);
-        // SAFETY: a plain counter adjustment, from the free hook, where it
-        // only subtracts - as Ruby's own `xfree` does from here.
-        unsafe { nupur_sys::rb_gc_adjust_memory_usage(n.saturating_neg()) };
+        // SAFETY: from a free callback, the caller's contract.
+        unsafe { nupur_sys::non_raising::gc_give_back_in_dfree(n) };
     }
 }
 
@@ -85,7 +73,7 @@ pub(super) unsafe extern "C" fn free_cb<T: Payload, const N: usize>(ptr: *mut c_
             let reported = crate::caught::quietly(0, || data.reported_external());
             crate::caught::quietly((), || drop(data));
             give_back(reported);
-            nupur_sys::ruby_xfree(ptr);
+            nupur_sys::non_raising::xfree_in_dfree(ptr);
         }
     })
 }
@@ -101,7 +89,8 @@ pub(super) unsafe extern "C" fn free_embedded_cb<T: Payload, const N: usize>(ptr
         let data = unsafe { core::ptr::addr_of!((*(ptr as *const Envelope<T, N>)).data).read() };
         let reported = crate::caught::quietly(0, || data.reported_external());
         crate::caught::quietly((), || drop(data));
-        give_back(reported);
+        // SAFETY: a free callback.
+        unsafe { give_back(reported) };
     })
 }
 
@@ -123,7 +112,7 @@ pub(super) unsafe extern "C" fn memsize_cb<T: Payload, const N: usize, const EMB
          * still referenced, so it must be unwind-free itself.) */
         // SAFETY: as `mark_cb`.
         let data = unsafe { &(*(ptr as *const Envelope<T, N>)).data };
-        let slots = core::mem::size_of::<[VALUE; N]>();
+        let slots = core::mem::size_of::<[nupur_sys::value::Root; N]>();
         let bytes = crate::caught::quietly(0, || {
             if EMBEDDABLE {
                 data.memsize().saturating_sub(core::mem::size_of::<T>())

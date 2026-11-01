@@ -5,7 +5,7 @@
 
 #![allow(unsafe_code)]
 
-use crate::rb::value::AsRawValue;
+use crate::rb::value::AsSys;
 use crate::rb::{Error, RString, Ruby};
 
 /// A UTF-8 String holding a copy of `bytes`; a failed allocation is `Err`
@@ -46,10 +46,8 @@ pub fn utf8_str_filled(
     // is its buffer, the room `rb_str_new` allocated), referenced only from
     // this frame. Seen as `MaybeUninit`, so nothing reads it unwritten.
     let buf: &mut [core::mem::MaybeUninit<u8>] = unsafe {
-        let dst = nupur_sys::StableApiDefinition::rstring_ptr(
-            nupur_sys::stable_api::get_default(),
-            str.as_raw(),
-        ) as *mut core::mem::MaybeUninit<u8>;
+        let dst =
+            nupur_sys::non_raising::rstring_ptr(str.as_sys()) as *mut core::mem::MaybeUninit<u8>;
         if len == 0 || dst.is_null() {
             &mut []
         } else {
@@ -100,21 +98,12 @@ impl Drop for EmptyUnlessFilled {
             reason = "it guards the String `utf8_str_filled` made, with its token, and lives only in that frame"
         )
     )]
-    #[cfg_attr(
-        dylint_lib = "makiri_lints",
-        allow(
-            raising_call_outside_protect,
-            reason = "rb_str_set_len raises for a frozen String or a length past its room; this one is unfrozen, and 0 is within any"
-        )
-    )]
     fn drop(&mut self) {
         /* Run while a panic unwinds, too, where a second panic aborts. */
         crate::no_unwind::must_not_unwind::<crate::no_unwind::DropUnfilled, _>(|| {
-            let s = self.0.as_raw();
             // SAFETY: the String just made, unfrozen and referenced only
-            // from `utf8_str_filled`'s frame; shortening it to nothing
-            // raises nothing.
-            unsafe { nupur_sys::rb_str_set_len(s, 0) };
+            // from `utf8_str_filled`'s frame.
+            unsafe { nupur_sys::non_raising::str_empty_unfrozen(self.0.as_sys()) };
         })
     }
 }

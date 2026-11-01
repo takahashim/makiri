@@ -1,5 +1,5 @@
 //! `c_integer_outside_int`: a C integer handled outside the one module that
-//! converts them, `nupur::int`.
+//! converts them, `nupur_sys::int`.
 //!
 //! A C `long` is 64 bits where Makiri is built and 32 bits on Windows (LLP64),
 //! and `c_long` is a type alias: on the machines the code is written and
@@ -16,7 +16,7 @@
 //! - write an integer-to-integer `as` cast (the source's type may be an
 //!   alias the lint cannot see either - `rb_sys`'s answers are `c_long`), nor
 //! - name `c_long` / `c_ulong`, so no signature carries one: a length is a
-//!   `usize`, an index an `i64`, and `nupur::int` says how each becomes C's.
+//!   `usize`, an index an `i64`, and `nupur_sys::int` says how each becomes C's.
 //!
 //! A conversion with `From` / `TryFrom` needs no exemption: it compiles to
 //! what each target allows, and fails where a value does not fit.
@@ -28,18 +28,28 @@ use rustc_lint::LateContext;
 use rustc_middle::ty;
 
 use crate::C_INTEGER_OUTSIDE_INT;
-use crate::paths::{NUPUR, module_of, ours, path_of, within};
+use crate::paths::{NUPUR, NUPUR_SYS, module_of, ours, path_of, within};
 
 /// Whether code in `module` is held to the rule: the binding layer and the
 /// extension's Ruby boundary, bar the module that converts. The self-tests'
 /// probes are in both crates.
 fn held(module: &str) -> bool {
-    if !ours(module) || within(module, "nupur::int") {
+    if !ours(module) || within(module, "nupur_sys::int") {
         return false;
     }
-    [NUPUR, "bridge", "glue", "init", "lint_probe"]
+    [NUPUR, NUPUR_SYS, "bridge", "glue", "init", "lint_probe"]
         .iter()
         .any(|m| within(module, m))
+}
+
+/// Whether code in `module` may not name `c_long` / `c_ulong`: [`held`],
+/// bar `nupur_sys::raising` and `non_raising`, which restate the C signatures,
+/// `long`s and all. They still may not cast: the conversions are
+/// `nupur_sys::int`'s.
+fn held_to_naming(module: &str) -> bool {
+    held(module)
+        && !within(module, "nupur_sys::raising")
+        && !within(module, "nupur_sys::non_raising")
 }
 
 pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
@@ -63,7 +73,7 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         expr.span.source_callsite(),
         format!("an `as` cast from `{src}` to `{dst}` at the Ruby boundary"),
         None,
-        "convert with `From` / `TryFrom`, or through `nupur::int`: a C `long` is 32 bits on \
+        "convert with `From` / `TryFrom`, or through `nupur_sys::int`: a C `long` is 32 bits on \
          Windows, and an `as` there truncates where this machine cannot show it",
     );
 }
@@ -78,7 +88,9 @@ pub fn check_path(cx: &LateContext<'_>, path: &Path<'_>, hir_id: HirId) {
     if !matches!(krate, "core" | "std") || !matches!(name.as_str(), "c_long" | "c_ulong") {
         return;
     }
-    if path.span.in_external_macro(cx.tcx.sess.source_map()) || !held(&module_of(cx, hir_id)) {
+    if path.span.in_external_macro(cx.tcx.sess.source_map())
+        || !held_to_naming(&module_of(cx, hir_id))
+    {
         return;
     }
     span_lint_and_help(
@@ -87,7 +99,7 @@ pub fn check_path(cx: &LateContext<'_>, path: &Path<'_>, hir_id: HirId) {
         path.span.source_callsite(),
         format!("`{name}` named at the Ruby boundary"),
         None,
-        "take and return Rust's widths (`usize`, `i64`) and let `nupur::int` make the C `long`: \
+        "take and return Rust's widths (`usize`, `i64`) and let `nupur_sys::int` make the C `long`: \
          it is 32 bits on Windows",
     );
 }

@@ -30,7 +30,7 @@ use rustc_hir::{Expr, ExprKind, HirId, Node};
 use rustc_lint::LateContext;
 use std::ops::ControlFlow;
 
-use crate::paths::{callee, is_extension, module_of, path_of};
+use crate::paths::{callee, is_extension, module_of, path_of, within};
 use crate::{RAISING_CALL_OUTSIDE_PROTECT, UNRAISING_CALL_IN_RAW};
 
 /// Ruby's C functions that raise nothing, whatever a caller of the layer
@@ -95,15 +95,35 @@ const REVIEWED: &[(&str, &str)] = &[(
      not follow a flag's value",
 )];
 
-/// Where the protection, `$!` and the raises on purpose live.
-const PROTECT: &str = "nupur::raw::protect";
+/// Where the protection, `$!` and the raises on purpose live: the
+/// `rb_protect` thunk and its state (`nupur_sys::protect`), the wrappers
+/// that take its token (`nupur_sys::raising`), and their safe face in
+/// Nupur's types.
+const PROTECT: &[&str] = &[
+    "nupur::raw::protect",
+    "nupur_sys::protect",
+    "nupur_sys::raising",
+    "nupur_sys::lint_probe::raising",
+];
+
+/// The wrappers of the raising C calls, each taking the protection's token:
+/// a call of one is a raising call, which a `call` exists to protect.
+const RAISING_WRAPPERS: &str = "nupur_sys::raising::";
+
+/// The module of those wrappers, and the self-test's stand-in: each one there
+/// must wrap a call that can raise.
+const WRAPPER_HOMES: &[&str] = &["nupur_sys::raising", "nupur_sys::lint_probe::raising"];
 
 /// The modules held to `unraising_call_in_raw`: `raw` itself, and the
 /// self-test's stand-in.
 const RAW: &[&str] = &["nupur::raw", "nupur::lint_probe::raw"];
 
 /// The protected call, and the self-test's stand-in.
-const CALL: &[&str] = &["nupur::raw::protect::call", "nupur::lint_probe::raw::call"];
+const CALL: &[&str] = &[
+    "nupur::raw::protect::call",
+    "nupur::lint_probe::raw::call",
+    "nupur::lint_probe::raw::call_protected",
+];
 
 /// A function of rb-sys, by name, when `path` names one.
 fn rb_sys_function(path: &str) -> Option<&str> {
@@ -119,6 +139,12 @@ fn may_raise(name: &str) -> bool {
     !name.is_empty() && !NON_RAISING.contains(&name) && !REVIEWED.iter().any(|(n, _)| *n == name)
 }
 
+/// Whether `module` is held to `unraising_call_in_raw`: `raw` or one of its
+/// modules, bar the protection's.
+fn in_raw(module: &str) -> bool {
+    RAW.iter().any(|m| within(module, m)) && !PROTECT.iter().any(|p| within(module, p))
+}
+
 pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
     if !is_extension(cx) {
         return;
@@ -128,11 +154,29 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         return;
     };
     let path = path_of(cx, did);
+    /* A call of `nupur_sys::non_raising` - Ruby's C that raises nothing, which Nupur
+     * reaches only this way - in `raw` outside `call`. */
+    if path.starts_with("nupur_sys::non_raising::")
+        && in_raw(&module_of(cx, expr.hir_id))
+        && !inside_call(cx, expr.hir_id)
+    {
+        span_lint_and_help(
+            cx,
+            UNRAISING_CALL_IN_RAW,
+            expr.span.source_callsite(),
+            format!("`{path}`, a call that raises nothing, is made in `raw` outside `call`"),
+            None,
+            "`raw` holds the C calls made inside call(|| ...); a read that raises nothing \
+             belongs with the values (rb::value, or rb::object for an object's ivars and class)",
+        );
+    }
     let Some(name) = rb_sys_function(&path) else {
         return;
     };
     let module = module_of(cx, expr.hir_id);
-    let in_protect = module == PROTECT || module.starts_with(&format!("{PROTECT}::"));
+    let in_protect = PROTECT
+        .iter()
+        .any(|p| module == *p || module.starts_with(&format!("{p}::")));
     let inside = inside_call(cx, expr.hir_id);
     if may_raise(name) && !inside && !in_protect {
         span_lint_and_help(
@@ -146,7 +190,7 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
              cannot raise, add it to makiri_lints' NON_RAISING (the survey finds no path) or REVIEWED (with the reason)",
         );
     }
-    if RAW.contains(&module.as_str()) && !inside {
+    if in_raw(&module) && !inside {
         let what = if name.is_empty() {
             "the stable API"
         } else {
@@ -160,6 +204,18 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
             None,
             "`raw` holds the C calls made inside call(|| ...); a read that raises nothing \
              belongs with the values (rb::value, or rb::object for an object's ivars and class), and the protection itself in raw::protect",
+        );
+    }
+    if WRAPPER_HOMES.contains(&module.as_str()) && !may_raise(name) {
+        span_lint_and_help(
+            cx,
+            UNRAISING_CALL_IN_RAW,
+            expr.span.source_callsite(),
+            format!("`{name}` cannot raise, and is wrapped to take the protection's token"),
+            None,
+            "nupur_sys::raising holds the C calls that can raise; one that cannot needs no \
+             rb_protect - or it is missing from makiri_lints' tables the other way (NON_RAISING \
+             or REVIEWED lists it)",
         );
     }
 }
@@ -178,7 +234,12 @@ fn check_protected_closure<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>)
     let body = cx.tcx.hir_body(closure.body);
     let raises = clippy_utils::visitors::for_each_expr(cx.tcx, body.value, |e| {
         match callee(cx, e).map(|did| path_of(cx, did)) {
-            Some(path) if rb_sys_function(&path).is_some_and(may_raise) => ControlFlow::Break(()),
+            Some(path)
+                if rb_sys_function(&path).is_some_and(may_raise)
+                    || path.starts_with(RAISING_WRAPPERS) =>
+            {
+                ControlFlow::Break(())
+            }
             _ => ControlFlow::Continue(()),
         }
     })

@@ -14,10 +14,8 @@
 
 #![allow(unsafe_code)]
 
-use core::marker::PhantomData;
-
-use nupur_sys::stable_api::{get_default, StableApiDefinition};
-use nupur_sys::{ruby_value_type, VALUE};
+use nupur_sys::non_raising;
+use nupur_sys::ruby_value_type;
 
 use super::error::{Builtin, Error};
 use super::object::{class_inherits, obj_is_kind_of};
@@ -30,18 +28,26 @@ pub(crate) use header::Coderange;
 /// Any Ruby value.
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub struct Value(VALUE, PhantomData<*mut ()>);
+///
+/// `nupur_sys`'s [`nupur_sys::value::Value`] underneath, which is the proof
+/// of the GVL its calls take: a value exists only where Ruby runs.
+pub struct Value(pub(crate) nupur_sys::value::Value);
 
 impl Value {
-    /// The value a C call returned, or one Ruby passed in.
-    ///
-    /// # Safety
-    /// `v` is a live Ruby value, kept where the GC finds it for as long as the
-    /// `Value` is used.
-    #[inline]
-    pub(crate) const unsafe fn from_raw(v: VALUE) -> Value {
-        Value(v, PhantomData)
+    /// The value a `nupur_sys` call returned, which is one already.
+    #[inline(always)]
+    pub(crate) const fn from_sys(v: nupur_sys::value::Value) -> Value {
+        Value(v)
     }
+}
+
+/// `Object`, the default superclass (`rb_cObject`, a C global Ruby sets once
+/// at boot), for a definition that names none; `of` is the proof of the GVL.
+#[inline]
+pub(crate) fn object_class<V: ReprValue>(of: &V) -> RClass {
+    RClass::from_known(Value::from_sys(non_raising::rb_cObject(
+        of.as_value().0.ruby(),
+    )))
 }
 
 /// What every Ruby value type is: a `Value` underneath.
@@ -55,22 +61,21 @@ pub trait ReprValue: Copy {
     /// `nil`?
     #[inline]
     fn is_nil(self) -> bool {
-        get_default().nil_p(self.as_value().0)
+        non_raising::nil_p(self.as_value().0)
     }
 
     /// Ruby's truthiness: anything but `nil` and `false`.
     #[inline]
     fn to_bool(self) -> bool {
-        get_default().rb_test(self.as_value().0)
+        non_raising::rb_test(self.as_value().0)
     }
 
     /// Frozen? An immediate (a Fixnum, a Symbol, `nil`) is always frozen.
     #[inline]
     fn is_frozen(self) -> bool {
         let v = self.as_value().0;
-        let api = get_default();
         // SAFETY: `v` is a live value; a non-immediate has a header to read.
-        api.special_const_p(v) || unsafe { api.frozen_p(v) }
+        non_raising::special_const_p(v) || unsafe { non_raising::frozen_p(v) }
     }
 
     /// `Ok` unfrozen, and Ruby's own `FrozenError` frozen - the message
@@ -109,15 +114,17 @@ impl ReprValue for Value {
     }
 }
 
-/// The raw `VALUE`, for the layer's C calls and nothing else.
-pub(crate) trait AsRawValue {
+/// `nupur_sys`'s value underneath a typed one, for its calls and nothing
+/// else.
+pub(crate) trait AsSys {
+    /// `nupur_sys`'s value, for its calls: the proof of the GVL they take.
     #[allow(clippy::wrong_self_convention, reason = "a Copy value, read by value")]
-    fn as_raw(self) -> VALUE;
+    fn as_sys(self) -> nupur_sys::value::Value;
 }
 
-impl<T: ReprValue> AsRawValue for T {
+impl<T: ReprValue> AsSys for T {
     #[inline]
-    fn as_raw(self) -> VALUE {
+    fn as_sys(self) -> nupur_sys::value::Value {
         self.as_value().0
     }
 }
@@ -125,8 +132,7 @@ impl<T: ReprValue> AsRawValue for T {
 /// The value of a type `rb_type` names.
 #[inline]
 fn of_type(v: Value, t: ruby_value_type) -> bool {
-    // SAFETY: `rb_type` reads an immediate's bits or a live object's header.
-    unsafe { get_default().rb_type(v.0) == t }
+    non_raising::rb_type(v.0) == t
 }
 
 macro_rules! handle {
@@ -184,27 +190,22 @@ handle!(
 handle!(
     /// A Symbol, static or dynamic.
     Symbol,
-    // SAFETY: as `of_type`.
-    |v| unsafe { get_default().symbol_p(v.0) }
+    |v| non_raising::symbol_p(v.0)
 );
 handle!(
     /// An Integer: a Fixnum or a Bignum.
     Integer,
-    // SAFETY: as `of_type`.
-    |v| unsafe { get_default().integer_type_p(v.0) }
+    |v| non_raising::integer_type_p(v.0)
 );
 handle!(
     /// A Float.
     Float,
-    // SAFETY: as `of_type`.
-    |v| unsafe { get_default().float_type_p(v.0) }
+    |v| non_raising::float_type_p(v.0)
 );
 handle!(
     /// A Range (or an instance of a subclass).
     Range,
-    // SAFETY: `rb_cRange`, a C global Ruby sets once at boot; a value
-    // existing means this is a Ruby thread, and the test reads its ancestry.
-    |v| v.is_kind_of(RClass::from_known(unsafe { Value::from_raw(nupur_sys::rb_cRange) }))
+    |v| v.is_kind_of(RClass::from_known(Value::from_sys(non_raising::rb_cRange(v.0.ruby()))))
 );
 handle!(
     /// A Class.
@@ -223,8 +224,7 @@ handle!(
      * that is an `ExceptionClass::from_known`, whose debug assertion is this
      * test, so a debug build would recurse without end. */
     |v| of_type(v, ruby_value_type::RUBY_T_CLASS)
-        // SAFETY: a C global Ruby sets once at boot, read under the GVL.
-        && class_inherits(v, unsafe { Value::from_raw(nupur_sys::rb_eException) })
+        && class_inherits(v, Value::from_sys(non_raising::rb_eException(v.0.ruby())))
 );
 
 impl RString {
@@ -232,7 +232,7 @@ impl RString {
     #[inline]
     pub fn len(self) -> usize {
         // SAFETY: `self` is a live String.
-        crate::int::len(unsafe { get_default().rstring_len(self.0 .0) })
+        unsafe { non_raising::rstring_len(self.0 .0) }
     }
 
     /// Empty?
@@ -249,11 +249,12 @@ impl RString {
     /// is held.
     #[inline]
     pub(crate) unsafe fn as_slice(&self) -> &[u8] {
-        let api = get_default();
         // SAFETY: `self` is a live String; the caller's contract.
         unsafe {
-            let (p, n) = (api.rstring_ptr(self.0 .0), api.rstring_len(self.0 .0));
-            let n = crate::int::len(n);
+            let (p, n) = (
+                non_raising::rstring_ptr(self.0 .0),
+                non_raising::rstring_len(self.0 .0),
+            );
             if n == 0 || p.is_null() {
                 return &[];
             }
@@ -267,7 +268,7 @@ impl RArray {
     #[inline]
     pub fn len(self) -> usize {
         // SAFETY: `self` is a live Array.
-        crate::int::len(unsafe { get_default().rarray_len(self.0 .0) })
+        unsafe { non_raising::rarray_len(self.0 .0) }
     }
 
     /// Empty?
@@ -295,7 +296,7 @@ impl RHash {
     #[inline]
     pub fn len(self) -> usize {
         // SAFETY: `self` is a live Hash.
-        unsafe { get_default().rhash_size(self.0 .0) }
+        unsafe { non_raising::rhash_size(self.0 .0) }
     }
 
     /// Empty?
@@ -360,10 +361,9 @@ impl Integer {
                 "can't convert negative integer to unsigned",
             ));
         }
-        let api = get_default();
-        if api.fixnum_p(self.0 .0) {
+        if non_raising::fixnum_p(self.0 .0) {
             /* Not negative, checked above. */
-            return u64::try_from(i64::from(api.fix2long(self.0 .0)))
+            return u64::try_from(non_raising::fix2long(self.0 .0))
                 .map_err(|_| crate::rb::error::internal_error("a negative Fixnum"));
         }
         crate::raw::big2ull(self)
@@ -372,9 +372,8 @@ impl Integer {
     /// As an `i64`; a value out of its range is Ruby's `RangeError`.
     #[inline]
     pub fn to_i64(self) -> Result<i64, Error> {
-        let api = get_default();
-        if api.fixnum_p(self.0 .0) {
-            return Ok(i64::from(api.fix2long(self.0 .0)));
+        if non_raising::fixnum_p(self.0 .0) {
+            return Ok(non_raising::fix2long(self.0 .0));
         }
         crate::raw::big2ll(self)
     }
@@ -400,7 +399,7 @@ impl Integer {
         if self.is_negative() {
             return Ok(None);
         }
-        if !get_default().fixnum_p(self.0 .0) && !self.magnitude_fits_u64() {
+        if !non_raising::fixnum_p(self.0 .0) && !self.magnitude_fits_u64() {
             return Ok(None);
         }
         Ok(usize::try_from(self.to_u64()?).ok())
@@ -410,28 +409,20 @@ impl Integer {
     /// reads its digits and raises nothing - so "too large" is answered
     /// without making the `RangeError` `rb_big2ull` would raise.
     #[inline]
-    #[cfg_attr(
-        dylint_lib = "makiri_lints",
-        allow(
-            raising_call_outside_protect,
-            reason = "its raise is for a non-Integer, converted by `#to_int`; `self` is an Integer"
-        )
-    )]
     fn magnitude_fits_u64(self) -> bool {
-        // SAFETY: `self` is a live Integer; the C reads its digits.
-        let bytes = unsafe { nupur_sys::rb_absint_size(self.0 .0, core::ptr::null_mut()) };
+        // SAFETY: `self` is a live Integer, by type.
+        let bytes = unsafe { non_raising::absint_size_of_integer(self.0 .0) };
         u64::try_from(bytes).is_ok_and(|b| b <= 8)
     }
 
     /// Below zero? Reads the sign, converts nothing.
     #[inline]
     pub fn is_negative(self) -> bool {
-        let api = get_default();
-        if api.fixnum_p(self.0 .0) {
-            return api.fix2long(self.0 .0) < 0;
+        if non_raising::fixnum_p(self.0 .0) {
+            return non_raising::fix2long(self.0 .0) < 0;
         }
         // SAFETY: a non-Fixnum Integer is a live Bignum.
-        unsafe { api.bignum_negative_p(self.0 .0) }
+        unsafe { non_raising::bignum_negative_p(self.0 .0) }
     }
 }
 
@@ -440,7 +431,7 @@ impl Float {
     #[inline]
     pub fn to_f64(self) -> f64 {
         // SAFETY: `self` is a live Float.
-        unsafe { get_default().num2dbl(self.0 .0) }
+        unsafe { non_raising::num2dbl(self.0 .0) }
     }
 }
 
@@ -465,15 +456,7 @@ pub fn boolean(ruby: &Ruby, b: bool) -> Value {
 /// VALUE identity, for the several sites that compare two references.
 #[inline]
 pub fn same_value(a: impl ReprValue, b: impl ReprValue) -> bool {
-    a.as_raw() == b.as_raw()
-}
-
-/// VALUE identity as a word: the same for every reference to one object, and
-/// different for two live objects - a key to compare by, never a value to
-/// turn back into one.
-#[inline]
-pub fn identity_word(v: impl ReprValue) -> usize {
-    crate::int::word(v.as_raw())
+    a.as_sys().is(b.as_sys())
 }
 
 /// An interned name - a method's, an ivar's, a constant's - as `rb_intern`
@@ -541,9 +524,8 @@ pub(crate) fn ary_entry(a: RArray, i: usize) -> Value {
     /* Converted, not cut: a `long` is 32 bits on Windows, where an index
      * past one would wrap to an element that is there. No Array has one. */
     let Ok(i) = i.try_into() else {
-        // SAFETY: `nil`, an immediate.
-        return unsafe { Value::from_raw(nupur_sys::Qnil as VALUE) };
+        return Value::from_sys(a.as_sys().ruby().qnil());
     };
     // SAFETY: `a` is a live Array; the read is bounds-checked by Ruby.
-    unsafe { Value::from_raw(nupur_sys::rb_ary_entry(a.as_raw(), i)) }
+    Value::from_sys(unsafe { non_raising::rb_ary_entry(a.as_sys(), i) })
 }

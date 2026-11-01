@@ -35,7 +35,7 @@ impl External {
     /// value, a [`Typed`](super::Typed) handle) and which compaction does not move - never
     /// a String's bytes. The new figure is recorded first, for a collection
     /// that reads it.
-    pub fn report(&self, _: &crate::rb::Ruby, bytes: usize) {
+    pub fn report(&self, ruby: &crate::rb::Ruby, bytes: usize) {
         let then = self.0.get();
         let delta = if bytes >= then {
             nupur_sys::ssize_t::try_from(bytes - then)
@@ -48,7 +48,7 @@ impl External {
         }
         self.0.set(bytes);
         // SAFETY: a plain counter adjustment, with the GVL held (`&Ruby`).
-        unsafe { nupur_sys::rb_gc_adjust_memory_usage(delta) };
+        unsafe { nupur_sys::non_raising::rb_gc_adjust_memory_usage(ruby.sys(), delta) };
     }
 
     /// [`report`](Self::report) `more` bytes than were.

@@ -1,6 +1,8 @@
 //! Every conversion between Rust's integer widths and C's: the one module
 //! that names a C `long` or casts with `as` at the Ruby boundary
 //! (`rake dylint`'s `c_integer_outside_int` holds every other one to that).
+//! It is `nupur_sys`'s, beside the C types it converts, and Nupur reaches it
+//! as `crate::int`.
 //!
 //! A C `long` is 64 bits on Linux and macOS and 32 bits on Windows (LLP64),
 //! and Ruby's integers follow it: a Fixnum is `LONG_MIN / 2 ..= LONG_MAX /
@@ -81,19 +83,19 @@ pub(crate) fn posfixable(n: u64) -> Option<c_long> {
 /// hold it to rb-sys's `long2fix`, so a caller needs no proof of the GVL for
 /// what is arithmetic.
 #[inline]
-pub(crate) fn fixnum(n: i64) -> Option<nupur_sys::VALUE> {
+pub(crate) fn fixnum(n: i64) -> Option<rb_sys::VALUE> {
     fixable(n).map(fixnum_bits)
 }
 
 /// [`fixnum`] for an unsigned value.
 #[inline]
-pub(crate) fn posfixnum(n: u64) -> Option<nupur_sys::VALUE> {
+pub(crate) fn posfixnum(n: u64) -> Option<rb_sys::VALUE> {
     posfixable(n).map(fixnum_bits)
 }
 
 #[inline]
-fn fixnum_bits(l: c_long) -> nupur_sys::VALUE {
-    ((l as nupur_sys::VALUE) << 1) | nupur_sys::FIXNUM_FLAG as nupur_sys::VALUE
+fn fixnum_bits(l: c_long) -> rb_sys::VALUE {
+    ((l as rb_sys::VALUE) << 1) | rb_sys::FIXNUM_FLAG as rb_sys::VALUE
 }
 
 /// A non-negative `long` the C API answered as a length (`RSTRING_LEN`,
@@ -106,11 +108,11 @@ pub(crate) fn len(n: c_long) -> usize {
 /// A capacity for the C API: `n`, or the largest `long` for one past it - a
 /// hint, which the allocation then refuses.
 #[inline]
-pub(crate) fn capacity(n: usize) -> c_long {
+pub fn capacity(n: usize) -> c_long {
     c_long::try_from(n).unwrap_or(c_long::MAX)
 }
 
-/// `nupur_sys::posfixable`'s argument, for the test that holds [`posfixable`]
+/// `rb_sys::posfixable`'s argument, for the test that holds [`posfixable`]
 /// to it.
 #[cfg(test)]
 fn as_ulong(n: u64) -> Option<core::ffi::c_ulong> {
@@ -120,14 +122,14 @@ fn as_ulong(n: u64) -> Option<core::ffi::c_ulong> {
 /// A word Ruby hands out (a `VALUE`) as a `usize`: the two are the same
 /// width on every target, a `VALUE` being C's `uintptr_t`.
 #[inline]
-pub(crate) fn word(v: nupur_sys::VALUE) -> usize {
-    const _: () = assert!(size_of::<nupur_sys::VALUE>() == size_of::<usize>());
+pub(crate) fn word(v: rb_sys::VALUE) -> usize {
+    const _: () = assert!(size_of::<rb_sys::VALUE>() == size_of::<usize>());
     v as usize
 }
 
 /// A `usize` as a `u64`, which holds every one on every target Rust has.
 #[inline]
-pub(crate) fn wide(n: usize) -> u64 {
+pub fn wide(n: usize) -> u64 {
     const _: () = assert!(usize::BITS <= u64::BITS);
     n as u64
 }
@@ -135,7 +137,7 @@ pub(crate) fn wide(n: usize) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nupur_sys::stable_api::{get_default, StableApiDefinition};
+    use rb_sys::stable_api::{get_default, StableApiDefinition};
 
     /// A Windows `long`: 2^30 - 1 is the largest Fixnum, and a 64-bit key
     /// with anything in its high half is far past it.
@@ -163,7 +165,7 @@ mod tests {
     /// `FIXNUM_MIN` / `FIXNUM_MAX`, and the same answer as its `fixable`.
     #[test]
     fn this_targets_long_agrees_with_rb_sys() {
-        use nupur_sys::special_consts::{FIXNUM_MAX, FIXNUM_MIN};
+        use rb_sys::special_consts::{FIXNUM_MAX, FIXNUM_MIN};
         let api = get_default();
         let (min, max) = (i64::from(FIXNUM_MIN), i64::from(FIXNUM_MAX));
         for n in [0, 1, -1, max, max + 1, min, min - 1, i64::MAX, i64::MIN] {
@@ -183,8 +185,8 @@ mod tests {
     #[test]
     fn a_fixnum_is_long2fix() {
         let api = get_default();
-        let max = i64::from(nupur_sys::special_consts::FIXNUM_MAX);
-        let min = i64::from(nupur_sys::special_consts::FIXNUM_MIN);
+        let max = i64::from(rb_sys::special_consts::FIXNUM_MAX);
+        let min = i64::from(rb_sys::special_consts::FIXNUM_MIN);
         for n in [0, 1, -1, 42, -42, max, min] {
             let l = fixable(n).unwrap();
             let v = fixnum(n).unwrap();

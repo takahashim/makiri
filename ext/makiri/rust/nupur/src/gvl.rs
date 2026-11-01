@@ -91,7 +91,8 @@ pub fn without_gvl<F: FnOnce() -> R + Send, R>(
         // function is Ruby's default (`None`), as in the C call this replaces.
         // This variant raises nothing (see above), so no Rust frame is jumped.
         unsafe {
-            nupur_sys::rb_thread_call_without_gvl2(
+            nupur_sys::non_raising::rb_thread_call_without_gvl2(
+                ruby.sys(),
                 Some(run::<F, R>),
                 &mut slot as *mut Slot<F, R> as *mut c_void,
                 None,

@@ -2,8 +2,6 @@
 
 #![allow(unsafe_code)]
 
-use core::marker::PhantomData;
-
 use super::error::Error;
 use super::value::{ExceptionClass, RClass, RModule, Value};
 
@@ -17,7 +15,12 @@ use super::value::{ExceptionClass, RClass, RModule, Value};
 /// since its class is read only when it is raised.
 ///
 /// [`Error`]: super::error::Error
-pub struct Ruby(PhantomData<*mut ()>);
+///
+/// `nupur_sys`'s token underneath, which its calls that take no value take.
+///
+/// The field is `rb`'s, so the one maker, `rb::method`'s private
+/// `entry_token`, can build one: no other module of the layer can.
+pub struct Ruby(pub(super) nupur_sys::value::Ruby);
 
 macro_rules! globals {
     ($kind:ident: $($method:ident => $global:ident),* $(,)?) => {
@@ -25,8 +28,7 @@ macro_rules! globals {
             #[doc = concat!("`", stringify!($global), "`.")]
             #[inline]
             pub fn $method(&self) -> $kind {
-                // SAFETY: a C global Ruby sets once at boot, read under the GVL.
-                let v = unsafe { Value::from_raw(nupur_sys::$global) };
+                let v = Value::from_sys(nupur_sys::non_raising::$global(self.sys()));
                 $kind::from_known(v)
             }
         )*
@@ -34,36 +36,28 @@ macro_rules! globals {
 }
 
 impl Ruby {
-    /// The token, unchecked: the layer's own, called by the two entries Ruby
-    /// calls with the GVL held (`rb::method`'s `finish` and `run_init`) and
-    /// nowhere else (`rake dylint`'s `gvl_token_outside_entry`).
-    ///
-    /// # Safety
-    /// On a Ruby thread holding the GVL.
-    #[inline]
-    pub(crate) unsafe fn get_unchecked() -> Ruby {
-        Ruby(PhantomData)
+    /// `nupur_sys`'s token, for its calls.
+    #[inline(always)]
+    pub(crate) fn sys(&self) -> &nupur_sys::value::Ruby {
+        &self.0
     }
 
     /// `nil`.
     #[inline]
     pub fn qnil(&self) -> Value {
-        // SAFETY: an immediate.
-        unsafe { Value::from_raw(nupur_sys::Qnil as nupur_sys::VALUE) }
+        Value::from_sys(self.0.qnil())
     }
 
     /// `true`.
     #[inline]
     pub fn qtrue(&self) -> Value {
-        // SAFETY: an immediate.
-        unsafe { Value::from_raw(nupur_sys::Qtrue as nupur_sys::VALUE) }
+        Value::from_sys(self.0.qtrue())
     }
 
     /// `false`.
     #[inline]
     pub fn qfalse(&self) -> Value {
-        // SAFETY: an immediate.
-        unsafe { Value::from_raw(nupur_sys::Qfalse as nupur_sys::VALUE) }
+        Value::from_sys(self.0.qfalse())
     }
 
     globals! { ExceptionClass:

@@ -79,6 +79,13 @@ DYLINT_ENGINE = %w[cargo dylint --path lints/makiri_lints --no-deps -- -p makiri
 # only a build without it compiles.
 DYLINT_NUPUR = %w[cargo dylint --path lints/makiri_lints --no-deps -- -p nupur
                   --features alloc-inject].freeze
+# The crate under it that alone depends on rb-sys (`nupur/sys/`): the
+# protect thunk, `$!` and the `no_unwind` guards, held to the layer's rules.
+# With `alloc-inject` on, as nupur's run: the raise hook's armed path
+# (`protect::injected_raise`, `set_raise_injector`) lives here now, and
+# nupur's run, being `--no-deps`, does not lint it.
+DYLINT_NUPUR_SYS = %w[cargo dylint --path lints/makiri_lints --no-deps -- -p nupur_sys
+                      --features alloc-inject].freeze
 
 desc "Run the crate's own lint (makiri_lints; needs cargo-dylint and its nightly)"
 task :dylint do
@@ -88,12 +95,16 @@ task :dylint do
     # cargo keeps the crate's last check when only the lint library changed,
     # and dylint then answers from it - the old lints' verdict. A touch makes
     # every run check afresh.
-    FileUtils.touch("src/lib.rs")
-    FileUtils.touch("engine/src/lib.rs")
-    FileUtils.touch("nupur/src/lib.rs")
-    sh(*DYLINT)
-    sh(*DYLINT_ENGINE)
-    sh(*DYLINT_NUPUR)
+    #
+    # Each crate is touched just before its own run: a run checks the crates
+    # it depends on without the lints (`--no-deps`), and cargo then counts
+    # that check as fresh, so the engine's and `nupur_sys`'s own runs, after
+    # the extension's, linted nothing.
+    [["src/lib.rs", DYLINT], ["engine/src/lib.rs", DYLINT_ENGINE],
+     ["nupur/src/lib.rs", DYLINT_NUPUR], ["nupur/sys/src/lib.rs", DYLINT_NUPUR_SYS]].each do |root, cmd|
+      FileUtils.touch(root)
+      sh(*cmd)
+    end
     # The self-test, once per crate: the extension's probe, and the binding
     # layer's, which holds the cases only code naming rb-sys can write. Each
     # `//~` names the lints that must report its line, and the reports must
@@ -101,7 +112,8 @@ task :dylint do
     # report kept passing with one of them dead (`ruby_in_gvl_released_body`
     # did, once `without_gvl` took the token).
     probes = [[DYLINT, "src/lint_probe.rs", "makiri_lint_probe"],
-              [DYLINT_NUPUR, "nupur/src/lint_probe.rs", "nupur_lint_probe"]]
+              [DYLINT_NUPUR, "nupur/src/lint_probe.rs", "nupur_lint_probe"],
+              [DYLINT_NUPUR_SYS, "nupur/sys/src/lint_probe.rs", "nupur_sys_lint_probe"]]
     total = probes.sum do |cmd, probe, cfg|
       expected = File.readlines(probe).each_with_index.flat_map do |line, i|
         names = line[%r{//~((?: [a-z_]+)*)\s*\z}, 1] or next []

@@ -39,6 +39,7 @@ bundle exec rake oom               # OOM-injection sweep, then the raise sweep
 bundle exec rake miri              # the Ruby-free unsafe code's tests under Miri
 bundle exec rake verus             # Verus proofs (ext/makiri/rust/verus/)
 bundle exec rake rust:exhaustive   # the tests that run every input, in release
+bundle exec rake rust:compile_fail # the compile-fail doctests' error codes (nightly)
 bundle exec rake coverage          # llvm-cov report of our sources over the suite (macOS);
                                    # leaves the instrumented build: `rake clean compile`
 bundle exec rake bench             # perf vs Nokogiri (bench-only gems; runs outside bundle)
@@ -78,7 +79,10 @@ extension, the fuzz crate), plus fmt and Nupur's rustdoc with `-D warnings`.
 ### `rake dylint`
 
 `rake dylint` runs the crate's own lints (`lints/makiri_lints`) on the
-compiled code, by resolved path. A sanctioned site is an allow with its
+compiled code, by resolved path: on the extension, the engine, Nupur and
+`nupur_sys`, one run each. Each crate's root is touched just before its run:
+a run checks the crates it depends on without the lints, and cargo would
+count that as fresh, so the later runs would lint nothing. A sanctioned site is an allow with its
 reason. The lints:
 
 - `ruby_value_on_heap`: a Ruby value in a heap container, a static or a
@@ -89,28 +93,32 @@ reason. The lints:
   `REVIEWED`, outside `raw::call`. The tables are held to the C API raise
   survey, vendored, and to Ruby's headers as rb-sys's bindings carry them
   (`script/check_non_raising.rb`).
-- `unraising_call_in_raw`, `raw_ruby_outside_bridge`, `runs_callers_ruby`,
+- `unraising_call_in_raw`, `runs_callers_ruby`,
   `raw_node_crossing`, `ruby_surface_in_bridge`.
-- `discarded_ruby_error`: an `Err` of `bridge::rb::Error` thrown away by
+- `discarded_ruby_error`: an `Err` of `bridge::rb::Error`, or of
+  `nupur_sys::protect::Caught` before Nupur makes it one, thrown away by
   `.ok()` / `.unwrap_or*` / `.is_ok()` / `let _ =` / `let _name =` / an
   Ok-only or `Err(_)` pattern / a `map_err(|_| ..)` / `drop`. It is FORBIDDEN
   in the extension, so no allow: handle the error with `Error::rescue`, which
   hands every throw/break/kill back. Nupur denies it; its drops are
   `describe::for_message` and the `yield_dropping_error_for_test` hook.
-- `ffi_without_gvl_proof` (in Nupur): a safe fn calling `rb_sys::` whose
-  signature holds no `&Ruby`, Ruby value or handle made from one. `extern "C"`
-  entries and unsafe fns are exempt.
+- `ffi_without_gvl_proof` (in Nupur and `nupur_sys`): a safe fn calling
+  `rb_sys::`, or an unsafe fn of `nupur_sys` (whose contract is the GVL),
+  whose signature holds no `&Ruby`, Ruby value or handle made from one.
+  `extern "C"` entries and unsafe fns are exempt.
 - `c_integer_outside_int`: an integer `as` or a named `c_long` at the Ruby
-  boundary outside `nupur::int`.
+  boundary outside `nupur_sys::int`.
 - `gvl_token_outside_entry`: the GVL's token, `Ruby`, made anywhere but where
-  Ruby calls in - `get_unchecked` (crate-private) in `rb::method`, `finish` in
-  a `method!` / `function!` expansion, `run_init` in an
-  `extern "C" fn Init_*`.
+  Ruby calls in - `finish` in a `method!` / `function!` expansion, `run_init`
+  in an `extern "C" fn Init_*`, and `nupur_sys`'s maker in
+  `rb::method::entry_token` alone. That the token is made by `entry_token`
+  and nowhere else in Nupur is the compiler's (it is private to
+  `rb::method`); the lint holds what no type can - that Ruby called in.
 - `forgotten_handle`: a `Typed` / `Kept` given to `mem::forget` or
   `ManuallyDrop`. A handle is the only way to a payload.
 
 The task then runs their self-test (`src/lint_probe.rs`,
-`nupur/src/lint_probe.rs`): each `//~` line must be reported by exactly the
+`nupur/src/lint_probe.rs`, `nupur/sys/src/lint_probe.rs`): each `//~` line must be reported by exactly the
 lints it names. It needs the nightly that `rust-toolchain.toml` pins, plus
 cargo-dylint and dylint-link.
 
@@ -125,7 +133,7 @@ advisory that does not apply is ignored in `deny.toml` with its reason.
 
 `rake symbols` is THE export gate. `rake no_unwind` is a release build
 proving that no `extern "C"` fn or GC-run `Drop` can unwind
-(`nupur/src/no_unwind.rs` for Nupur's sites, `engine/src/no_unwind.rs` for
+(`nupur/sys/src/no_unwind.rs` for Nupur's sites, `engine/src/no_unwind.rs` for
 the engine's). `ruby_boundary.md` explains both.
 
 ## `rake diff` and the C baseline
@@ -236,6 +244,16 @@ Vacuity is checked by what must FAIL: an `assert(false)` at each
 `// [canary]` mark, one variant each, and the callers in `verus/canaries/`.
 What each proof trusts (`external_body`, `assume_specification`, `assume`)
 is pinned (`VERUS_TRUSTED`).
+
+### `rake rust:compile_fail`
+
+Each compile-fail doctest names the error it must fail with
+(`compile_fail,E0451`), so that a snippet failing for another reason - a
+typo, a private name - does not pass. Only nightly's rustdoc checks that
+code; stable's passes any failure. `rake rust:compile_fail` runs the
+workspace's doctests on nightly (CI: the sanitizer job, which has nightly
+already). The Lexbor reference's one (`reference/src/gvl.rs`) is not run
+there.
 
 ### `rake rust:exhaustive`
 

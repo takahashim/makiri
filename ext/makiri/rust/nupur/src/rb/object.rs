@@ -5,25 +5,16 @@
 
 #![allow(unsafe_code)]
 
-use nupur_sys::VALUE;
-
 use super::error::Error;
-use super::value::{AsRawValue, HiddenId, RClass, RModule, ReprValue, Value};
+use super::value::{AsSys, HiddenId, RClass, RModule, ReprValue, Value};
 
 /// `rb_attr_get`: a hidden ivar's value, or nil. Runs no Ruby code (an
 /// attribute read, not a method call), and raises nothing in any Ractor (a
 /// [`HiddenId`] is a name the Ractor checks do not apply to).
 #[inline]
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        raising_call_outside_protect,
-        reason = "rb_attr_get raises only RactorIsolationError, and only for an @ name (rb_is_instance_id) of a class, a module or a shareable object read from another Ractor; a HiddenId is never an @ name"
-    )
-)]
 pub fn ivar_get(obj: Value, id: HiddenId) -> Value {
-    // SAFETY: a live object; the read raises nothing.
-    unsafe { Value::from_raw(nupur_sys::rb_attr_get(obj.as_raw(), id.as_raw())) }
+    // SAFETY: a live object, and a `HiddenId` is never an `@` name.
+    Value::from_sys(unsafe { nupur_sys::non_raising::attr_get_hidden(obj.as_sys(), id.as_raw()) })
 }
 
 /// Set the hidden ivar `id` (a name without `@`, so Ruby code cannot see it)
@@ -41,7 +32,7 @@ pub fn ivar_set(obj: Value, id: HiddenId, v: impl ReprValue) -> Result<(), Error
 #[inline]
 pub(crate) unsafe fn obj_hide(v: Value) {
     // SAFETY: a live object; hiding writes only its class field.
-    unsafe { nupur_sys::rb_obj_hide(v.as_raw()) };
+    unsafe { nupur_sys::non_raising::rb_obj_hide(v.as_sys()) };
 }
 
 /// Whether `v` is a class or a module - what `rb_obj_is_kind_of` and
@@ -55,37 +46,21 @@ fn is_module(v: Value) -> bool {
 /// `false` when `class` is not a class or module, rather than the
 /// `TypeError` the C function raises. Runs no Ruby code.
 #[inline]
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        raising_call_outside_protect,
-        reason = "its one raise, a non-class, is ruled out above"
-    )
-)]
 pub(crate) fn obj_is_kind_of(v: Value, class: Value) -> bool {
     if !is_module(class) {
         return false;
     }
-    // SAFETY: both live; `class` is a class or module, so this raises nothing.
-    unsafe { nupur_sys::rb_obj_is_kind_of(v.as_raw(), class.as_raw()) == nupur_sys::Qtrue as VALUE }
+    // SAFETY: both live; `class` is a class or module, checked above.
+    unsafe { nupur_sys::non_raising::obj_is_kind_of_module(v.as_sys(), class.as_sys()) }
 }
 
 /// `rb_class_inherited_p`: is `sub` `sup` or a descendant of it? `false`
 /// when either is not a class or module. Runs no Ruby code.
 #[inline]
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        raising_call_outside_protect,
-        reason = "its one raise, a non-class, is ruled out above"
-    )
-)]
 pub(crate) fn class_inherits(sub: Value, sup: Value) -> bool {
     if !is_module(sub) || !is_module(sup) {
         return false;
     }
-    // SAFETY: both live modules, so this raises nothing.
-    unsafe {
-        nupur_sys::rb_class_inherited_p(sub.as_raw(), sup.as_raw()) == nupur_sys::Qtrue as VALUE
-    }
+    // SAFETY: both live classes or modules, checked above.
+    unsafe { nupur_sys::non_raising::class_inherited_p_of_modules(sub.as_sys(), sup.as_sys()) }
 }

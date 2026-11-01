@@ -7,9 +7,14 @@ use super::*;
 #[inline]
 pub fn intern(_: &Ruby, name: &str) -> Result<Id, Error> {
     let (p, n) = (name.as_ptr() as *const c_char, c_len(name.len())?);
-    call(|| unsafe {
-        injected_raise();
-        nupur_sys::rb_intern3(p, n, nupur_sys::rb_utf8_encoding())
+    call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_intern3(
+            inside,
+            p,
+            n,
+            nupur_sys::non_raising::rb_utf8_encoding(inside.ruby()),
+        )
     })
     .map(Id::from_raw)
 }
@@ -18,9 +23,9 @@ pub fn intern(_: &Ruby, name: &str) -> Result<Id, Error> {
 #[inline]
 pub fn intern_cstr(_: &Ruby, name: &core::ffi::CStr) -> Result<Id, Error> {
     let p = name.as_ptr();
-    call(|| unsafe {
-        injected_raise();
-        nupur_sys::rb_intern(p)
+    call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_intern(inside, p)
     })
     .map(Id::from_raw)
 }
@@ -30,9 +35,9 @@ pub fn intern_cstr(_: &Ruby, name: &core::ffi::CStr) -> Result<Id, Error> {
 #[inline]
 pub(crate) fn sym(ruby: &Ruby, name: &str) -> Result<Symbol, Error> {
     let id = intern(ruby, name)?.as_raw();
-    let v = call(|| unsafe {
-        injected_raise();
-        nupur_sys::rb_id2sym(id)
+    let v = call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_id2sym(inside, id)
     })?;
     typed(v, Symbol::from_value, "a C call made no Symbol")
 }

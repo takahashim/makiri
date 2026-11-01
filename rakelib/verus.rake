@@ -49,7 +49,7 @@ VERUS_COPIES = [
   ["ext/makiri/rust/nupur/src/string/make.rs", "ext/makiri/rust/verus/ceiling_buf.rs", "copy_small"],
   # Nupur's C-integer conversions, one copy per width of a C `long`.
   *%w[fixable_in posfixable_in fixnum_bits len capacity].map do |name|
-    ["ext/makiri/rust/nupur/src/int.rs", "ext/makiri/rust/verus/int.rs", name]
+    ["ext/makiri/rust/nupur/sys/src/int.rs", "ext/makiri/rust/verus/int.rs", name]
   end,
   *%w[as_slice append append_growing raise_limit reserve steal content_limit
       content_limit_for grow_to].map do |name|

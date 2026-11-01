@@ -288,18 +288,19 @@ pub fn node_identity(ruby: &Ruby, rb_node: Value) -> Result<usize, Error> {
     Ok(node_raw(ruby, rb_node)?.identity())
 }
 
-/// Node identity for `==`/`eql?`: the Document AND the word. The word alone
-/// does not tell two documents apart - it is a node id packed with its
-/// document's 32-bit stamp, and the stamps wrap (every parse, fragment parses
-/// included, takes one), so a long-lived document and one made 2^32 documents
-/// later can share a stamp; and an XML word can equal an HTML one. The
-/// Document is the same object for every node of one document, so comparing
-/// it settles both.
-pub fn node_key(ruby: &Ruby, rb_node: Value) -> Result<(usize, usize), Error> {
-    Ok((
-        crate::bridge::ruby::identity_word(keepalive_document(ruby, rb_node)?),
-        node_identity(ruby, rb_node)?,
-    ))
+/// Whether `a` and `b` are the same node, for `==`/`eql?`: the same
+/// Document AND the same node identity. The identity alone does not tell two
+/// documents apart - it is a node id packed with its document's 32-bit
+/// stamp, and the stamps wrap (every parse, fragment parses included, takes
+/// one), so a long-lived document and one made 2^32 documents later can
+/// share a stamp; and an XML identity can equal an HTML one. The Document is
+/// the same object for every node of one document, so comparing it - as
+/// objects, here and now (`same_value`) - settles both. Each node is read
+/// whole before the two are compared.
+pub fn same_node(ruby: &Ruby, a: Value, b: Value) -> Result<bool, Error> {
+    let (doc_a, id_a) = (keepalive_document(ruby, a)?, node_identity(ruby, a)?);
+    let (doc_b, id_b) = (keepalive_document(ruby, b)?, node_identity(ruby, b)?);
+    Ok(crate::bridge::ruby::same_value(doc_a, doc_b) && id_a == id_b)
 }
 
 /// The keepalive Document of any node, or the Document itself.

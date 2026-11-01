@@ -16,12 +16,12 @@ use crate::init::CLASS_NODE;
 /// one no `remove()`, and it is in no tree to leave (`dom_rules::removable`).
 pub const DOCUMENT_NOT_REMOVABLE: &str = "cannot remove the document node";
 
-use crate::bridge::wrapper::{node_identity, node_key, ChildListHost};
+use crate::bridge::wrapper::{node_identity, same_node, ChildListHost};
 use crate::child_index::ChildList;
 
 /// Node identity: equal iff both wrappers name the same node of the same
 /// Document, so an HTML node is never equal to an XML one, nor a node to one
-/// of another document that happens to share its word (see [`node_key`]).
+/// of another document that happens to share its word (see [`same_node`]).
 pub fn node_equals(
     ruby: &Ruby,
     rb_self: Value,
@@ -30,7 +30,7 @@ pub fn node_equals(
     if !crate::bridge::ruby::is_kind_of(ruby, other, &CLASS_NODE) {
         return Ok(false);
     }
-    Ok(node_key(ruby, rb_self)? == node_key(ruby, other)?)
+    same_node(ruby, rb_self, other)
 }
 
 /// Nokogiri-compatible identity: the underlying node pointer as an Integer.
