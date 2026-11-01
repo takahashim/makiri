@@ -48,6 +48,20 @@ impl Value {
         self.0
     }
 
+    /// The same object (or immediate) as `other`?
+    #[inline(always)]
+    pub fn is(self, other: Value) -> bool {
+        self.0 == other.0
+    }
+
+    /// The value's word, as an identity: the same for every reference to one
+    /// object, different for two live objects - a key to compare by, never a
+    /// value to turn back into one.
+    #[inline(always)]
+    pub fn identity(self) -> usize {
+        crate::int::word(self.0)
+    }
+
     /// `Qundef`?
     #[inline(always)]
     pub fn is_undef(self) -> bool {
@@ -141,5 +155,116 @@ impl Ruby {
     #[inline(always)]
     pub(crate) fn lent() -> &'static Ruby {
         &TOKEN
+    }
+}
+
+/// A Ruby value kept in a TypedData object's slot: on the heap, where the
+/// stack scan does not see it and the object's mark callback marks it
+/// ([`crate::read::gc_mark_in_dmark`]). The one form in which a value may
+/// live outside a Rust local.
+///
+/// `repr(transparent)`, and `!Send`, as a value is. Made from a value, which
+/// is safe - it is a value's bits, kept - and read back as one only under a
+/// contract, since a slot read where its object is gone is a stale word.
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub struct Root(VALUE, PhantomData<*mut ()>);
+
+impl Root {
+    /// `v`, to be kept in a slot.
+    #[inline(always)]
+    pub fn of(v: Value) -> Root {
+        Root(v.0, PhantomData)
+    }
+
+    /// The value this slot keeps.
+    ///
+    /// # Safety
+    ///
+    /// The slot is one of a live object's, which its mark callback marks, read
+    /// on a Ruby thread holding the GVL.
+    #[inline(always)]
+    pub unsafe fn value(self) -> Value {
+        Value(self.0, PhantomData)
+    }
+
+    /// The word, for the mark.
+    #[inline(always)]
+    pub(crate) fn as_raw(self) -> VALUE {
+        self.0
+    }
+}
+
+/// Keep `v` alive to this point (CRuby's `RB_GC_GUARD`): hand it to an empty
+/// inline assembly block as an input operand, so it is in a register here.
+///
+/// The contract relied on is the Rust Reference's for `asm!`, and only this
+/// much of it: an input operand is in its register when the block runs, and
+/// a block without `pure` is taken to have side effects and is not removed.
+/// Without `nomem` or `readonly` the block may read and write memory, as may
+/// the libruby calls that can collect, so the two stay in program order.
+/// (`core::hint::black_box`, which this replaced, is documented as
+/// best-effort, not to be relied on.)
+///
+/// That `v` is ALSO where the scan finds it at each collection before this
+/// point follows from premises, not from the block: a collection runs only
+/// inside a call into libruby, with the GVL held; those calls are opaque to
+/// the optimizer (libruby is linked dynamically, with no LTO across it), so
+/// a value used after one is kept across it in a callee-saved register or a
+/// stack slot; and CRuby's mark saves the registers with `setjmp` and scans
+/// the machine stack, which finds either.
+#[cfg(any(
+    target_arch = "x86",
+    target_arch = "x86_64",
+    target_arch = "arm",
+    target_arch = "aarch64",
+    target_arch = "arm64ec",
+    target_arch = "riscv32",
+    target_arch = "riscv64",
+    target_arch = "loongarch64",
+    target_arch = "s390x"
+))]
+#[inline(always)]
+pub fn keep_alive(v: Value) {
+    let raw: VALUE = v.0;
+    // SAFETY: the template is a comment: no instruction, no register or
+    // memory written, the stack untouched (`nostack`) and the flags kept.
+    unsafe {
+        core::arch::asm!("/* keep {0} */", in(reg) raw, options(nostack, preserves_flags));
+    }
+}
+
+/// [`keep_alive`] where `asm!` is not stable (PowerPC, MIPS, SPARC, ...):
+/// `v` put in a local and read back with `read_volatile` - the means rb-sys's
+/// `rb_gc_guard!` uses, written here so its `unsafe` is this file's, counted
+/// by `rake unsafe:boundaries`.
+///
+/// What it relies on is weaker than the `asm!` contract: `core::ptr`'s
+/// documentation says a volatile access is not elided or reordered with
+/// other volatile accesses, and also that Rust's volatile has no rigorously
+/// defined semantics yet ("pretty similar to C11's"). The read needs the
+/// value in the local at that point, which is what the `asm!` block gives,
+/// and the same premises carry it back to each collection before. Unlike the
+/// `asm!` targets, the generated code has not been checked on any of these.
+/// (`rb_gc_guarded_ptr_val`, CRuby's out-of-line `RB_GC_GUARD`, is no
+/// fallback: libruby has it only when built by neither GCC, clang nor MSVC.)
+#[cfg(not(any(
+    target_arch = "x86",
+    target_arch = "x86_64",
+    target_arch = "arm",
+    target_arch = "aarch64",
+    target_arch = "arm64ec",
+    target_arch = "riscv32",
+    target_arch = "riscv64",
+    target_arch = "loongarch64",
+    target_arch = "s390x"
+)))]
+#[inline(always)]
+pub fn keep_alive(v: Value) {
+    let raw: VALUE = v.0;
+    // SAFETY: `raw` is a local of this frame, aligned and initialised, and
+    // read once; reading a `VALUE` (an integer) has no other effect.
+    unsafe {
+        core::ptr::read_volatile(&raw);
     }
 }

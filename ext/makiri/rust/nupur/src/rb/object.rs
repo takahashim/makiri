@@ -6,7 +6,7 @@
 #![allow(unsafe_code)]
 
 use super::error::Error;
-use super::value::{AsRawValue, HiddenId, RClass, RModule, ReprValue, Value};
+use super::value::{AsSys, HiddenId, RClass, RModule, ReprValue, Value};
 
 /// `rb_attr_get`: a hidden ivar's value, or nil. Runs no Ruby code (an
 /// attribute read, not a method call), and raises nothing in any Ractor (a

@@ -220,12 +220,12 @@ The handle is the only way to a payload: there is no `&Value -> &T`
 
 The handle holds the object because a `&T` keeps its object alive to the
 type checker only: a non-embedded payload is its own malloc'd block, which
-the stack scan does not take for the object. So the handle holds the VALUE
+the stack scan does not take for the object. So the handle holds the value
 in an `rb::kept::Kept`, whose `Drop`, after the last borrow, hands it to
-`keep_alive`. That is an empty `asm!` with the VALUE as an input operand, or,
-on the targets without a stable `asm!`, a `read_volatile` of it, a weaker
-contract and unchecked there. The premises that make either enough are
-stated there. `black_box` (the old `gc_guard`) is best-effort and is not
+`nupur_sys::value::keep_alive`. That is an empty `asm!` with the value as
+an input operand, or, on the targets without a stable `asm!`, a
+`read_volatile` of it, a weaker contract and unchecked there. The premises
+that make either enough are stated there. `black_box` (the old `gc_guard`) is best-effort and is not
 used.
 
 The Document's guards take a handle too. `html_read` / `xml_read` and the
@@ -240,8 +240,11 @@ The other half of the slot rule is that no Ruby value is kept where the
 GC's stack scan cannot see it: a `Vec`, a `Box`, a static or
 `thread_local!`, or a `Payload` type's own field. `rake dylint`'s
 `ruby_value_on_heap` checks this by reading the types. A lint sees a `VALUE`
-only as an integer, which is why raw `VALUE`s stay in `nupur/src/raw/` and
-`nupur/src/typed/`.
+only as an integer, which is why Nupur holds none: a value is a
+`nupur_sys::value::Value`, and the one form a value takes off the stack, a
+TypedData object's slot, is a `nupur_sys::value::Root`, which the object's
+mark callback marks and which is read back as a value only under a
+contract.
 
 The lint reads every expression's type too, so it reports a temporary
 handed straight to a call (`f(vec![v])`) or a closure boxed with a value it
@@ -435,11 +438,12 @@ which only a trampoline's raise may call. A String made in place is
 ### Where a raw `VALUE` may appear
 
 A raw `VALUE` is an integer to Rust, which no lint can tell from a `u64` in
-a `Vec`. It is spelled only in `nupur_sys` and in Nupur's `raw/`, `typed/`
-and the `bridge::rb` files that are the typed values. `nupur_sys`'s
-wrappers take and return `nupur_sys::value::Value`, not a raw `VALUE`: a C
-call's answer, a C global's class and a constant (`Ruby::qnil`,
-`Ruby::fixnum`) are each a value from the start.
+a `Vec`. Nupur no longer spells one, outside the `rb_data_type_t` it
+builds: `nupur_sys`'s wrappers take and return `nupur_sys::value::Value`,
+and a C call's answer, a C global's class, a constant (`Ruby::qnil`,
+`Ruby::fixnum`), a method's trampoline, a Hash walk's callback and a
+slot's `Root` are each typed from the start. Nupur's `Value` holds a
+`nupur_sys::value::Value` and has no `from_raw`.
 `rake dylint`'s `raw_ruby_outside_bridge` enforces this, and also fails on
 any `rb_sys::` outside the layer, which it counts as part of the bridge. The extension has no rb-sys dependency, so its `bridge/` names
 none.

@@ -9,7 +9,7 @@ use core::ffi::c_void;
 use nupur_sys::{rb_data_type_t, VALUE};
 
 use super::Envelope;
-use crate::rb::value::AsRawValue;
+use crate::rb::value::AsSys;
 use crate::rb::{Error, Value};
 
 /// A `rb_data_type_t` that can live in a `static`.
@@ -103,7 +103,7 @@ impl DataType {
 /// it is collected; every reader of a payload comes through here or
 /// [`typed_data_known`].
 pub(super) fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void, Error> {
-    let (sv, v, ty) = (v.as_sys(), v.as_raw(), ty.as_ptr());
+    let (sv, ty) = (v.as_sys(), ty.as_ptr());
     // SAFETY: `v` is a live value and `ty` a registered data type; the data
     // pointer is read only once the type is known to match.
     unsafe {
@@ -116,7 +116,7 @@ pub(super) fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void,
             }
             return Ok(p);
         }
-        match crate::raw::check_typeddata(v, ty) {
+        match crate::raw::check_typeddata(sv, ty) {
             Err(e) => Err(e),
             /* rb_typeddata_is_kind_of said no, so the check should have raised. */
             Ok(_) => Err(crate::rb::error::type_error("wrong argument type")),
@@ -186,15 +186,15 @@ pub(super) fn typed_data_known(v: Value, ty: &'static DataType) -> *mut c_void {
 /// Under the GVL; `ty` must be the type of `T` with `N` slots; each root is
 /// a live value.
 pub(super) unsafe fn wrap_built<T, const N: usize>(
-    klass: VALUE,
+    klass: nupur_sys::value::Value,
     ty: *const rb_data_type_t,
     data: T,
-    roots: [VALUE; N],
-) -> Result<VALUE, Error> {
+    roots: [nupur_sys::value::Root; N],
+) -> Result<nupur_sys::value::Value, Error> {
     const { assert!(core::mem::size_of::<Envelope<T, N>>() != 0) };
     const { assert!(core::mem::align_of::<Envelope<T, N>>() <= 16) }; /* malloc's alignment */
     let obj = crate::raw::typed_object_zalloc(klass, core::mem::size_of::<Envelope<T, N>>(), ty)?;
-    let p = data_pointer(nupur_sys::value::Value::from_raw(obj)) as *mut Envelope<T, N>;
+    let p = data_pointer(obj) as *mut Envelope<T, N>;
     if p.is_null() {
         return Err(crate::rb::error::internal_error(
             "a TypedData object was made without its data",

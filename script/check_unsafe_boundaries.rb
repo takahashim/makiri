@@ -57,32 +57,31 @@ UNSAFE_ISLANDS = {
   "nupur/encoding.rs" => 6,
   "nupur/gvl.rs" => 3,
   "nupur/raw/check.rs" => 4,
-  "nupur/raw/data.rs" => 6,
+  "nupur/raw/data.rs" => 4,
   "nupur/raw/define.rs" => 16,
   "nupur/raw/exception.rs" => 4,
-  "nupur/raw/iterate.rs" => 5,
+  "nupur/raw/iterate.rs" => 4,
   "nupur/raw/protect.rs" => 6,
   "nupur/raw/string.rs" => 11,
   "nupur/raw/symbol.rs" => 3,
   "nupur/raw/values.rs" => 16,
   "nupur/rb/global.rs" => 2,
-  "nupur/rb/kept.rs" => 2,
   "nupur/rb/method.rs" => 17,
   "nupur/rb/object.rs" => 5,
   "nupur/rb/ruby.rs" => 2,
-  "nupur/rb/value.rs" => 12,
+  "nupur/rb/value.rs" => 10,
   "nupur/rb/value/header.rs" => 3,
   "nupur/string/make.rs" => 5,
   "nupur/string/read.rs" => 2,
   "nupur/sys/no_unwind.rs" => 2,
   "nupur/sys/protect.rs" => 26,
-  "nupur/sys/raising.rs" => 13,
-  "nupur/sys/read.rs" => 49,
-  "nupur/sys/value.rs" => 8,
+  "nupur/sys/raising.rs" => 23,
+  "nupur/sys/read.rs" => 53,
+  "nupur/sys/value.rs" => 11,
   "nupur/typed/callbacks.rs" => 10,
   "nupur/typed/data_type.rs" => 12,
   "nupur/typed/external.rs" => 1,
-  "nupur/typed/mod.rs" => 12,
+  "nupur/typed/mod.rs" => 9,
   "nupur/utf8_copy.rs" => 1,
   "reference/lexbor/abi.rs" => 4,
   "reference/lexbor/adapter/arena_bytes.rs" => 14,
@@ -169,8 +168,8 @@ FORBID_FILES = %w[
   nupur/args.rs nupur/build.rs nupur/cname.rs
   nupur/describe.rs nupur/hash.rs nupur/msg.rs
   nupur/rb/class.rs nupur/rb/convert.rs nupur/rb/error.rs
-  nupur/stack.rs nupur/sys/int.rs nupur/table.rs
-  reference/gvl.rs reference/lexbor/contains_guard.rs
+  nupur/rb/kept.rs nupur/stack.rs nupur/sys/int.rs
+  nupur/table.rs reference/gvl.rs reference/lexbor/contains_guard.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/

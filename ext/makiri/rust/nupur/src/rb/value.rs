@@ -15,7 +15,7 @@
 #![allow(unsafe_code)]
 
 use nupur_sys::read;
-use nupur_sys::{ruby_value_type, VALUE};
+use nupur_sys::ruby_value_type;
 
 use super::error::{Builtin, Error};
 use super::object::{class_inherits, obj_is_kind_of};
@@ -34,17 +34,6 @@ pub(crate) use header::Coderange;
 pub struct Value(pub(crate) nupur_sys::value::Value);
 
 impl Value {
-    /// The value a C call returned, or one Ruby passed in.
-    ///
-    /// # Safety
-    /// `v` is a live Ruby value, on a Ruby thread holding the GVL, kept where
-    /// the GC finds it for as long as the `Value` is used.
-    #[inline]
-    pub(crate) const unsafe fn from_raw(v: VALUE) -> Value {
-        // SAFETY: the caller's.
-        Value(unsafe { nupur_sys::value::Value::from_raw(v) })
-    }
-
     /// The value a `nupur_sys` call returned, which is one already.
     #[inline(always)]
     pub(crate) const fn from_sys(v: nupur_sys::value::Value) -> Value {
@@ -124,22 +113,15 @@ impl ReprValue for Value {
     }
 }
 
-/// The raw `VALUE`, for the layer's C calls and nothing else.
-pub(crate) trait AsRawValue {
-    #[allow(clippy::wrong_self_convention, reason = "a Copy value, read by value")]
-    fn as_raw(self) -> VALUE;
-
+/// `nupur_sys`'s value underneath a typed one, for its calls and nothing
+/// else.
+pub(crate) trait AsSys {
     /// `nupur_sys`'s value, for its reads: the proof of the GVL they take.
     #[allow(clippy::wrong_self_convention, reason = "a Copy value, read by value")]
     fn as_sys(self) -> nupur_sys::value::Value;
 }
 
-impl<T: ReprValue> AsRawValue for T {
-    #[inline]
-    fn as_raw(self) -> VALUE {
-        self.as_value().0.as_raw()
-    }
-
+impl<T: ReprValue> AsSys for T {
     #[inline]
     fn as_sys(self) -> nupur_sys::value::Value {
         self.as_value().0
@@ -473,7 +455,7 @@ pub fn boolean(ruby: &Ruby, b: bool) -> Value {
 /// VALUE identity, for the several sites that compare two references.
 #[inline]
 pub fn same_value(a: impl ReprValue, b: impl ReprValue) -> bool {
-    a.as_raw() == b.as_raw()
+    a.as_sys().is(b.as_sys())
 }
 
 /// VALUE identity as a word: the same for every reference to one object, and
@@ -481,7 +463,7 @@ pub fn same_value(a: impl ReprValue, b: impl ReprValue) -> bool {
 /// turn back into one.
 #[inline]
 pub fn identity_word(v: impl ReprValue) -> usize {
-    crate::int::word(v.as_raw())
+    v.as_sys().identity()
 }
 
 /// An interned name - a method's, an ivar's, a constant's - as `rb_intern`

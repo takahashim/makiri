@@ -27,7 +27,7 @@ use core::ffi::{c_int, c_void};
 
 use rb_sys::stable_api::{get_default, StableApiDefinition};
 
-use crate::value::{Ruby, Value};
+use crate::value::{Root, Ruby, Value};
 use crate::{rb_data_type_t, rb_encoding, ruby_value_type, size_t, ssize_t, ID, VALUE};
 use rb_sys::rb_unblock_function_t;
 
@@ -132,6 +132,29 @@ pub unsafe fn rb_obj_hide(obj: Value) {
 pub unsafe fn rb_typeddata_is_kind_of(obj: Value, data_type: *const rb_data_type_t) -> bool {
     // SAFETY: the contract; `obj` is live.
     unsafe { rb_sys::rb_typeddata_is_kind_of(obj.as_raw(), data_type) != 0 }
+}
+
+/// A heap object's header flags word (`RBasic::flags`), as bits.
+///
+/// # Safety
+///
+/// `v` is a heap object (not an immediate), whose header is `RBasic`.
+#[inline(always)]
+pub unsafe fn rbasic_flags(v: Value) -> usize {
+    // SAFETY: the contract.
+    crate::int::word(unsafe { (*(v.as_raw() as *const rb_sys::RBasic)).flags })
+}
+
+/// A heap object's class as its header holds it (`RBasic::klass`): no
+/// method call, no singleton class made.
+///
+/// # Safety
+///
+/// As [`rbasic_flags`].
+#[inline(always)]
+pub unsafe fn rbasic_klass(v: Value) -> Value {
+    // SAFETY: the contract; the class lives as long as its instance.
+    unsafe { Value::from_raw((*(v.as_raw() as *const rb_sys::RBasic)).klass) }
 }
 
 /* ---- the stable API's inline reads ---- */
@@ -426,9 +449,9 @@ pub unsafe fn str_empty_unfrozen(str: Value) {
 ///
 /// # Safety
 ///
-/// Called from a `dmark` callback in Ruby's mark phase (a value made there
-/// from a slot, which holds a live value or `Qfalse`, which a mark ignores),
-/// with nothing on the frames above it that a `longjmp` would leak.
+/// Called from a `dmark` callback in Ruby's mark phase, on one of the
+/// object's slots (a live value, or `Qfalse`, which a mark ignores), with
+/// nothing on the frames above it that a `longjmp` would leak.
 #[inline(always)]
 #[cfg_attr(
     dylint_lib = "makiri_lints",
@@ -437,9 +460,9 @@ pub unsafe fn str_empty_unfrozen(str: Value) {
         reason = "rb_gc_mark raises NoMemoryError only when the mark stack cannot grow, a longjmp the contract's frame loses nothing to and every C extension's dmark is exposed to alike"
     )
 )]
-pub unsafe fn gc_mark_in_dmark(v: Value) {
+pub unsafe fn gc_mark_in_dmark(root: Root) {
     // SAFETY: the contract.
-    unsafe { rb_sys::rb_gc_mark(v.as_raw()) }
+    unsafe { rb_sys::rb_gc_mark(root.as_raw()) }
 }
 
 /// The running Ruby's API `MAJOR.MINOR`, read from the `ruby_api_version`

@@ -15,7 +15,7 @@
 
 use core::ffi::c_int;
 
-use crate::rb::value::AsRawValue;
+use crate::rb::value::AsSys;
 use crate::rb::{Error, Ruby, Value};
 use nupur_sys::protect::{Caught, Protected};
 

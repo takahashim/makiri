@@ -30,7 +30,7 @@
     )
 )]
 
-use core::ffi::c_void;
+use core::ffi::{c_int, c_void};
 
 use crate::protect::Protected;
 use crate::value::Value;
@@ -68,6 +68,18 @@ impl IntoC<*mut VALUE> for *mut Value {
     #[inline(always)]
     fn into_c(self) -> *mut VALUE {
         self.cast()
+    }
+}
+
+/// A method's trampoline, as `rb_define_method` takes it: `Value` is
+/// `repr(transparent)`, so the pointer is the one C calls.
+impl IntoC<Option<unsafe extern "C" fn() -> VALUE>> for Option<unsafe extern "C" fn() -> Value> {
+    #[inline(always)]
+    fn into_c(self) -> Option<unsafe extern "C" fn() -> VALUE> {
+        // SAFETY: the same function pointer; its return is a `VALUE` to C.
+        self.map(|f| unsafe {
+            core::mem::transmute::<unsafe extern "C" fn() -> Value, unsafe extern "C" fn() -> VALUE>(f)
+        })
     }
 }
 
@@ -119,12 +131,12 @@ raising! {
     fn rb_const_set(space: Value, name: ID, val: Value);
     fn rb_data_typed_object_zalloc(klass: Value, size: size_t, type_: *const rb_data_type_t) -> Value;
     fn rb_define_class_under(outer: Value, name: *const core::ffi::c_char, super_: Value) -> Value;
-    fn rb_define_method(klass: Value, mid: *const core::ffi::c_char, func: Option<unsafe extern "C" fn() -> VALUE>, arity: core::ffi::c_int);
+    fn rb_define_method(klass: Value, mid: *const core::ffi::c_char, func: Option<unsafe extern "C" fn() -> Value>, arity: core::ffi::c_int);
     fn rb_define_module(name: *const core::ffi::c_char) -> Value;
-    fn rb_define_module_function(klass: Value, mid: *const core::ffi::c_char, func: Option<unsafe extern "C" fn() -> VALUE>, arity: core::ffi::c_int);
+    fn rb_define_module_function(klass: Value, mid: *const core::ffi::c_char, func: Option<unsafe extern "C" fn() -> Value>, arity: core::ffi::c_int);
     fn rb_define_module_under(outer: Value, name: *const core::ffi::c_char) -> Value;
-    fn rb_define_private_method(klass: Value, mid: *const core::ffi::c_char, func: Option<unsafe extern "C" fn() -> VALUE>, arity: core::ffi::c_int);
-    fn rb_define_singleton_method(obj: Value, mid: *const core::ffi::c_char, func: Option<unsafe extern "C" fn() -> VALUE>, arity: core::ffi::c_int);
+    fn rb_define_private_method(klass: Value, mid: *const core::ffi::c_char, func: Option<unsafe extern "C" fn() -> Value>, arity: core::ffi::c_int);
+    fn rb_define_singleton_method(obj: Value, mid: *const core::ffi::c_char, func: Option<unsafe extern "C" fn() -> Value>, arity: core::ffi::c_int);
     fn rb_enc_associate(obj: Value, enc: *const rb_encoding) -> Value;
     fn rb_enc_find_index(name: *const core::ffi::c_char) -> core::ffi::c_int;
     fn rb_enc_from_encoding(enc: *const rb_encoding) -> Value;
@@ -135,7 +147,6 @@ raising! {
     fn rb_funcallv(recv: Value, mid: ID, argc: core::ffi::c_int, argv: *const Value) -> Value;
     fn rb_gc_register_mark_object(object: Value);
     fn rb_hash_aset(hash: Value, key: Value, val: Value) -> Value;
-    fn rb_hash_foreach(hash: Value, func: Option<unsafe extern "C" fn(key: VALUE, val: VALUE, arg: VALUE) -> core::ffi::c_int>, arg: VALUE);
     fn rb_hash_lookup2(hash: Value, key: Value, def: Value) -> Value;
     fn rb_hash_new() -> Value;
     fn rb_id2sym(id: ID) -> Value;
@@ -170,4 +181,26 @@ raising! {
 pub unsafe fn rb_exc_raise(_: &Protected, exc: Value) -> ! {
     // SAFETY: the contract; the token is the protection.
     unsafe { rb_sys::rb_exc_raise(exc.as_raw()) }
+}
+
+/// `rb_hash_foreach`'s callback: a pair of the Hash's, and the walk's own
+/// data. `Value` is `repr(transparent)`, and a pointer is a `VALUE`'s width
+/// (`uintptr_t`), so this is the function C calls.
+pub type HashEach = unsafe extern "C" fn(key: Value, val: Value, arg: *mut c_void) -> c_int;
+
+/// `rb_hash_foreach`, inside the protection: `each` for every pair, with
+/// `arg`.
+///
+/// # Safety
+///
+/// `hash` is a Hash; `each` treats `arg` as what it is.
+#[inline(always)]
+pub unsafe fn rb_hash_foreach(_: &Protected, hash: Value, each: HashEach, arg: *mut c_void) {
+    // SAFETY: the same function pointer, as C declares it (see `HashEach`).
+    let each = unsafe {
+        core::mem::transmute::<HashEach, unsafe extern "C" fn(VALUE, VALUE, VALUE) -> c_int>(each)
+    };
+    // SAFETY: the contract; the token is the protection. The data travels as
+    // C's `VALUE`-wide argument.
+    unsafe { rb_sys::rb_hash_foreach(hash.as_raw(), Some(each), arg as VALUE) }
 }

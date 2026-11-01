@@ -41,12 +41,12 @@
 
 use core::ffi::{c_char, c_int, c_void};
 
-use crate::rb::value::AsRawValue;
+use crate::rb::value::AsSys;
 use crate::rb::{
     Error, ExceptionClass, Float, Id, Integer, RArray, RClass, RHash, RModule, RString, Range,
     Ruby, Symbol, Value,
 };
-use nupur_sys::{rb_data_type_t, VALUE};
+use nupur_sys::rb_data_type_t;
 
 use crate::encoding::Encoding;
 

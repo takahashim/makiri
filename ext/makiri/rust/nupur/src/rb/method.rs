@@ -31,7 +31,7 @@ use super::value::Value;
 /// A trampoline and its arity, for `define_method` and its kin.
 #[derive(Clone, Copy)]
 pub struct Func {
-    pub(crate) ptr: unsafe extern "C" fn() -> nupur_sys::VALUE,
+    pub(crate) ptr: unsafe extern "C" fn() -> nupur_sys::value::Value,
     pub(crate) arity: c_int,
 }
 

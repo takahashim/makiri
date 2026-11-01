@@ -5,7 +5,7 @@
 
 #![allow(unsafe_code)]
 
-use crate::rb::value::AsRawValue;
+use crate::rb::value::AsSys;
 use crate::rb::{Error, RString, Ruby};
 
 /// A UTF-8 String holding a copy of `bytes`; a failed allocation is `Err`

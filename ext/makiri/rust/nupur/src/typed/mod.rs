@@ -37,23 +37,10 @@ use data_type::{data_pointer, typed_data, typed_data_known, wrap_built, DataType
 use core::ffi::{c_char, CStr};
 use core::marker::PhantomData;
 
-use crate::rb::value::AsRawValue;
+use crate::rb::value::AsSys;
 use crate::rb::{Error, Value};
-use nupur_sys::{rb_data_type_t, VALUE};
-
-/// A `Value` from a raw handle this module holds - a slot, or what a wrap
-/// returned. With `raw/` and the `rb` files that are the typed values, the
-/// only places a raw `VALUE` becomes a `Value` (`rake dylint`'s
-/// `raw_ruby_outside_bridge`).
-///
-/// # Safety
-/// `raw` is a live Ruby value of the current process, kept rooted by the
-/// caller.
-#[inline]
-unsafe fn value(raw: VALUE) -> Value {
-    // SAFETY: the caller's contract.
-    unsafe { Value::from_raw(raw) }
-}
+use nupur_sys::rb_data_type_t;
+use nupur_sys::value::Root as Slot;
 
 /// What an object's slot can be given ([`TypedType::wrap`]'s `roots`): any
 /// Ruby value, or a value only a slot may keep - a hidden
@@ -124,7 +111,7 @@ pub const fn envelope_size<T, const N: usize>() -> usize {
 struct Envelope<T, const N: usize> {
     /// The values the object keeps alive, marked pinned by [`mark_cb`].
     /// Written once, by [`wrap_built`], and never again.
-    roots: [VALUE; N],
+    roots: [Slot; N],
     data: T,
 }
 
@@ -275,14 +262,13 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
         // SAFETY: under the GVL (`&Ruby`), and `ty` is this payload's own type.
         let obj = unsafe {
             wrap_built::<T, N>(
-                klass.as_raw(),
+                klass.as_sys(),
                 self.raw.as_ptr(),
                 data,
-                roots.map(|v| sealed::Root::root_value(v).as_raw()),
+                roots.map(|v| Slot::of(sealed::Root::root_value(v).as_sys())),
             )
         }?;
-        // SAFETY: the object just wrapped, live on this frame.
-        Ok(unsafe { value(obj) })
+        Ok(Value::from_sys(obj))
     }
 }
 
@@ -345,7 +331,7 @@ impl<T: Payload + 'static, const N: usize> Typed<T, N> {
     pub fn root<const I: usize>(&self) -> Value {
         const { assert!(I < N, "no such slot") };
         // SAFETY: the slots hold live values the object marks.
-        unsafe { value(self.envelope().roots[I]) }
+        Value::from_sys(unsafe { self.envelope().roots[I].value() })
     }
 }
 
@@ -490,7 +476,7 @@ impl<T: Payload + Copy, const N: usize> EmbeddedType<T, N> {
         // the caller's `v` keeps marked.
         let (data, roots) = unsafe { ((*p).data, (*p).roots) };
         // SAFETY: as above.
-        Ok((data, roots.map(|r| unsafe { value(r) })))
+        Ok((data, roots.map(|r| Value::from_sys(unsafe { r.value() }))))
     }
 
     /// [`TypedType::wrap`], as a bare `Value`: an embedded payload is never

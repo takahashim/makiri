@@ -5,8 +5,6 @@
 
 use core::ffi::c_void;
 
-use nupur_sys::VALUE;
-
 use super::{Envelope, Payload};
 
 /* The GC callbacks below are the crate's only `extern "C"` functions with no
@@ -39,7 +37,7 @@ pub(super) unsafe extern "C" fn mark_cb<T: Payload, const N: usize>(ptr: *mut c_
             // GVL held; a slot holds a live value (or `Qfalse`); and this
             // frame loses nothing to a longjmp (the no_unwind guard's Drop
             // does nothing unless unwinding).
-            unsafe { nupur_sys::read::gc_mark_in_dmark(nupur_sys::value::Value::from_raw(r)) };
+            unsafe { nupur_sys::read::gc_mark_in_dmark(r) };
         }
     })
 }
@@ -124,7 +122,7 @@ pub(super) unsafe extern "C" fn memsize_cb<T: Payload, const N: usize, const EMB
          * still referenced, so it must be unwind-free itself.) */
         // SAFETY: as `mark_cb`.
         let data = unsafe { &(*(ptr as *const Envelope<T, N>)).data };
-        let slots = core::mem::size_of::<[VALUE; N]>();
+        let slots = core::mem::size_of::<[nupur_sys::value::Root; N]>();
         let bytes = crate::caught::quietly(0, || {
             if EMBEDDABLE {
                 data.memsize().saturating_sub(core::mem::size_of::<T>())

@@ -6,7 +6,7 @@
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicI32, Ordering};
 
-use crate::rb::value::AsRawValue;
+use crate::rb::value::AsSys;
 use crate::rb::{Error, RString};
 
 /// A Ruby encoding - of a String, or resolved from a name or an `Encoding`.

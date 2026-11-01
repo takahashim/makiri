@@ -296,8 +296,9 @@ These gates hold the boundary:
   rb-sys defines it, so the re-export does not hide it. `rake dylint` also
   holds the C calls that can raise to `nupur`'s `raw/` and to
   `nupur_sys::protect`.
-- `Value::from_raw` is Nupur's, `pub(crate)` and `unsafe`, so the extension
-  cannot make a `Value` from a raw `VALUE`.
+- A `Value` is made from a raw `VALUE` only in `nupur_sys`
+  (`nupur_sys::value::Value::from_raw`, `unsafe`); Nupur and the extension
+  have no way to.
 - Making a borrowed HTML handle into a lifetime-free `RawNode` in `bridge/` is
   a `raw_node_crossing`, and each crossing is an allow with its reason.
   `with_html_node` / `HtmlParsed::mint_key` / `resolve` are the checked

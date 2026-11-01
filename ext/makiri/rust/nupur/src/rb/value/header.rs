@@ -8,9 +8,7 @@
 
 use core::ffi::c_int;
 
-use nupur_sys::VALUE;
-
-use super::{AsRawValue, RString};
+use super::{AsSys, RString};
 
 /// A String's coderange, as Ruby caches it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -24,20 +22,20 @@ pub(crate) enum Coderange {
 impl RString {
     /// The header's flags word.
     #[inline]
-    fn flags(self) -> VALUE {
+    fn flags(self) -> usize {
         // SAFETY: a String is a heap object, whose header starts with
         // `RBasic`; reading its flags runs no Ruby.
-        unsafe { (*(self.as_raw() as *const nupur_sys::RBasic)).flags }
+        unsafe { nupur_sys::read::rbasic_flags(self.as_sys()) }
     }
 
     /// The String's cached coderange - a read of its header flags, which
     /// never scans and never allocates.
     #[inline]
     pub(crate) fn enc_coderange(self) -> Coderange {
-        const MASK: VALUE = nupur_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_MASK as VALUE;
-        const SEVEN: VALUE = nupur_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_7BIT as VALUE;
-        const VALID: VALUE = nupur_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_VALID as VALUE;
-        const BROKEN: VALUE = nupur_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_BROKEN as VALUE;
+        const MASK: usize = nupur_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_MASK as usize;
+        const SEVEN: usize = nupur_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_7BIT as usize;
+        const VALID: usize = nupur_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_VALID as usize;
+        const BROKEN: usize = nupur_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_BROKEN as usize;
         match self.flags() & MASK {
             SEVEN => Coderange::SevenBit,
             VALID => Coderange::Valid,
@@ -55,8 +53,7 @@ impl RString {
             RUBY_ENCODING_INLINE_MAX, RUBY_ENCODING_MASK, RUBY_ENCODING_SHIFT,
         };
         /* Seven bits, which a `c_int` holds. */
-        let bits = (crate::int::word(self.flags()) & RUBY_ENCODING_MASK as usize)
-            >> RUBY_ENCODING_SHIFT as u32;
+        let bits = (self.flags() & RUBY_ENCODING_MASK as usize) >> RUBY_ENCODING_SHIFT as u32;
         let inline = c_int::try_from(bits).unwrap_or(c_int::MAX);
         if inline == RUBY_ENCODING_INLINE_MAX as c_int {
             // SAFETY: a live String, by type.
@@ -70,9 +67,8 @@ impl RString {
     /// header's `klass`, compared with `rb_cString`.
     #[inline]
     pub(crate) fn has_string_class(self) -> bool {
-        // SAFETY: as `flags`; `rb_cString` is a C global Ruby sets once at
-        // boot.
         let string = nupur_sys::read::rb_cString(self.as_sys().ruby());
-        unsafe { (*(self.as_raw() as *const nupur_sys::RBasic)).klass == string.as_raw() }
+        // SAFETY: as `flags`.
+        unsafe { nupur_sys::read::rbasic_klass(self.as_sys()) }.is(string)
     }
 }
