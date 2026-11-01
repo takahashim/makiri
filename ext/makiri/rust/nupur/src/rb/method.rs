@@ -37,7 +37,7 @@ use super::value::Value;
 #[inline(always)]
 unsafe fn entry_token() -> Ruby {
     // SAFETY: the caller's.
-    Ruby(unsafe { nupur_sys::value::Ruby::get_unchecked() })
+    Ruby(unsafe { nupur_sys::value::Ruby::assume_gvl() })
 }
 
 /// A trampoline and its arity, for `define_method` and its kin.

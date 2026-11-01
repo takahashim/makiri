@@ -39,7 +39,7 @@ mod entry {
     }
 
     fn sys_token() -> nupur_sys::value::Ruby {
-        unsafe { nupur_sys::value::Ruby::get_unchecked() } //~ ffi_without_gvl_proof gvl_token_outside_entry
+        unsafe { nupur_sys::value::Ruby::assume_gvl() } //~ ffi_without_gvl_proof gvl_token_outside_entry
     }
 }
 

@@ -79,7 +79,7 @@ impl Value {
 /// The GVL, held: a Ruby thread, between Ruby's call in and its return.
 ///
 /// A zero-sized token, neither `Send` nor `Sync`, made only by
-/// [`Ruby::get_unchecked`] outside this crate:
+/// [`Ruby::assume_gvl`] outside this crate:
 ///
 /// ```compile_fail,E0603
 /// let made = nupur_sys::value::Ruby(core::marker::PhantomData);
@@ -90,13 +90,14 @@ pub struct Ruby(PhantomData<*mut ()>);
 const TOKEN: Ruby = Ruby(PhantomData);
 
 impl Ruby {
-    /// The token, unchecked.
+    /// The token, on the caller's word that the GVL is held - the one maker
+    /// of a token from nothing, for where Ruby has called in.
     ///
     /// # Safety
     ///
     /// On a Ruby thread holding the GVL, for as long as the token is used.
     #[inline(always)]
-    pub unsafe fn get_unchecked() -> Ruby {
+    pub unsafe fn assume_gvl() -> Ruby {
         Ruby(PhantomData)
     }
 

@@ -17,7 +17,7 @@
 //!   `finish` in `finish_cary`, beside it);
 //! - `run_init`: in an `extern "C"` function named `Init_*`, which Ruby
 //!   calls as the extension loads;
-//! - `nupur_sys`'s own maker, `nupur_sys::value::Ruby::get_unchecked`, which
+//! - `nupur_sys`'s own maker, `nupur_sys::value::Ruby::assume_gvl`, which
 //!   is `pub` for Nupur: in `entry_token` alone (`GVL_ASSUMERS`).
 
 use clippy_utils::diagnostics::span_lint_and_help;
@@ -28,18 +28,17 @@ use rustc_span::Span;
 use crate::GVL_TOKEN_OUTSIDE_ENTRY;
 use crate::paths::{callee, is_extension, module_of, path_of};
 
-/// `Ruby::get_unchecked`, as `path_of` spells it: an inherent `impl` block
-/// is an unnamed part of the path.
 const TRAMPOLINES: &[&str] = &[
     "nupur::rb::method::finish",
     "nupur::rb::method::finish_cary",
 ];
 const RUN_INIT: &str = "nupur::rb::method::run_init";
-/// `nupur_sys`'s GVL token, made on the caller's word, and the one function
-/// that may make it: Nupur's own maker, private to `rb::method`. (The GC's
-/// callbacks make none: their calls of Ruby's C are `unsafe fn`s whose
-/// contract is the callback.)
-const GVL_ASSUME: &str = "nupur_sys::value::get_unchecked";
+/// `nupur_sys`'s maker of a GVL token on the caller's word, `Ruby::assume_gvl`
+/// (as `path_of` spells it: an inherent `impl` block is an unnamed part of
+/// the path), and the one function that may call it: Nupur's own maker,
+/// private to `rb::method`. The GC's callbacks make no token: their calls of
+/// Ruby's C are `unsafe fn`s whose contract is the callback.
+const GVL_ASSUME: &str = "nupur_sys::value::assume_gvl";
 const GVL_ASSUMERS: &[&str] = &["nupur::rb::method::entry_token"];
 /// The macros of nupur's whose expansion is a trampoline, by name: a
 /// `#[macro_export]` macro is named at the crate's root but defined where it

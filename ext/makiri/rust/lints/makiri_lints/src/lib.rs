@@ -265,10 +265,10 @@ declare_lint! {
 
 declare_lint! {
     /// ### What it does
-    /// Reports a call of `Ruby::get_unchecked` outside `nupur::rb::method`, of
-    /// `rb::method::finish` / `finish_cary` outside a `method!` / `function!`
-    /// expansion, and of `rb::method::run_init` outside an `extern "C" fn
-    /// Init_*`.
+    /// Reports a call of `rb::method::finish` / `finish_cary` outside a
+    /// `method!` / `function!` expansion, of `rb::method::run_init` outside an
+    /// `extern "C" fn Init_*`, and of `nupur_sys`'s `Ruby::assume_gvl`
+    /// outside `rb::method::entry_token`.
     ///
     /// ### Why is this bad?
     /// Each makes the GVL's token, `Ruby`, which every call into Ruby takes
