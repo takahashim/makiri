@@ -94,11 +94,22 @@ mod raw {
         f()
     }
 
+    /* The protected form, whose closure is lent the token: never run here,
+     * only checked. */
+    fn call_protected<T>(_: impl FnOnce(&nupur_sys::protect::Protected) -> T) -> Option<T> {
+        None
+    }
+
     fn a_read_in_raw(ruby: &crate::rb::Ruby) -> bool {
         unsafe { nupur_sys::read::rb_block_given_p(ruby.sys()) != 0 } //~ unraising_call_in_raw
     }
 
     fn protecting_nothing(ruby: &crate::rb::Ruby) -> bool {
         call(|| unsafe { nupur_sys::read::rb_block_given_p(ruby.sys()) != 0 }) //~ unraising_call_in_raw
+    }
+
+    /* A call of a raising wrapper is what a protected call is for: passes. */
+    fn protecting_a_raise(_: &crate::rb::Ruby) {
+        let _ = call_protected(|inside| unsafe { nupur_sys::raising::rb_hash_new(inside) });
     }
 }

@@ -175,11 +175,8 @@ impl Encoding {
     /// it.
     fn index(self) -> c_int {
         // SAFETY: one of Ruby's encodings, which live for the process; the
-        // read of its index field raises nothing. An `Encoding` is made only
-        // where a token or a Ruby value was, and is `!Send`: the GVL is held.
-        unsafe {
-            nupur_sys::read::rb_enc_to_index(&nupur_sys::value::Ruby::get_unchecked(), self.0)
-        }
+        // read of its index field raises nothing.
+        unsafe { nupur_sys::read::rb_enc_to_index(self.0) }
     }
 
     /// UTF-8 or US-ASCII: text in it is already UTF-8, character for

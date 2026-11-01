@@ -119,7 +119,11 @@ const WRAPPER_HOMES: &[&str] = &["nupur_sys::raising", "nupur_sys::lint_probe::r
 const RAW: &[&str] = &["nupur::raw", "nupur::lint_probe::raw"];
 
 /// The protected call, and the self-test's stand-in.
-const CALL: &[&str] = &["nupur::raw::protect::call", "nupur::lint_probe::raw::call"];
+const CALL: &[&str] = &[
+    "nupur::raw::protect::call",
+    "nupur::lint_probe::raw::call",
+    "nupur::lint_probe::raw::call_protected",
+];
 
 /// A function of rb-sys, by name, when `path` names one.
 fn rb_sys_function(path: &str) -> Option<&str> {

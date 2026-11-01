@@ -53,6 +53,10 @@ mod gvl_proof {
         unsafe { rb_sys::rb_block_given_p() != 0 }
     }
 
+    fn with_a_value(_: crate::value::Value) -> bool {
+        unsafe { rb_sys::rb_block_given_p() != 0 }
+    }
+
     fn in_a_closure() -> bool {
         (|| unsafe { rb_sys::rb_block_given_p() != 0 })() //~ ffi_without_gvl_proof
     }

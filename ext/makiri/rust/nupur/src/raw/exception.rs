@@ -30,7 +30,9 @@ pub fn raise_is_recognised(ruby: &Ruby) -> Result<bool, Error> {
         Err(e) if e.is_kind_of(ruby, crate::rb::Builtin::RuntimeError)
     );
     if !recognised {
-        reset_pending_exit();
+        // SAFETY: the exit is this check's own raise, which nobody resumes:
+        // the caller refuses to load.
+        unsafe { reset_pending_exit() };
         forget_errinfo(ruby);
     }
     Ok(recognised)

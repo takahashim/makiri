@@ -48,7 +48,6 @@ reads! {
     fn rb_ascii8bit_encindex() -> c_int;
     fn rb_block_given_p() -> c_int;
     fn rb_enc_from_index(idx: c_int) -> *mut rb_encoding;
-    fn rb_enc_to_index(enc: *const rb_encoding) -> c_int;
     fn rb_ext_ractor_safe(flag: bool);
     fn rb_gc_adjust_memory_usage(diff: ssize_t);
     fn rb_keyword_given_p() -> c_int;
@@ -62,6 +61,25 @@ reads! {
     fn rb_utf8_encindex() -> c_int;
     fn rb_utf8_encoding() -> *mut rb_encoding;
     fn ruby_xfree(ptr: *mut c_void);
+}
+
+/// `rb_enc_to_index`: an encoding's index - a read of the encoding's own
+/// struct, which needs no GVL.
+///
+/// # Safety
+///
+/// `enc` is one of Ruby's encodings, which live for the process.
+#[inline(always)]
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        ffi_without_gvl_proof,
+        reason = "reads a field of an encoding, which lives for the process and is never written"
+    )
+)]
+pub unsafe fn rb_enc_to_index(enc: *const rb_encoding) -> c_int {
+    // SAFETY: the contract.
+    unsafe { rb_sys::rb_enc_to_index(enc) }
 }
 
 /// `ruby_native_thread_p`: whether this thread is one Ruby made. The one

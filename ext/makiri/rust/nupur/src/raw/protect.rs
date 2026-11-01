@@ -19,7 +19,16 @@ use crate::rb::value::AsSys;
 use crate::rb::{Error, Ruby, Value};
 use nupur_sys::protect::{Caught, Protected};
 
-pub(crate) use nupur_sys::protect::reset_pending_exit;
+/// Forget a pending exit (`nupur_sys::protect::reset_pending_exit`).
+///
+/// # Safety
+///
+/// As there: nothing pending may be lost.
+#[inline]
+pub(crate) unsafe fn reset_pending_exit() {
+    // SAFETY: the caller's.
+    unsafe { nupur_sys::protect::reset_pending_exit() }
+}
 
 pub(super) use nupur_sys::protect::injected_raise;
 #[cfg(feature = "alloc-inject")]

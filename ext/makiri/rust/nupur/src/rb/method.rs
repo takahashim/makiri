@@ -62,7 +62,8 @@ pub unsafe fn finish(f: impl FnOnce(&Ruby) -> Result<Value, Error>) -> Value {
         /* A method starts with no exit pending: every trampoline resumes its
          * own before it returns (below, and `Error::raise`), so this only
          * makes sure. */
-        crate::raw::reset_pending_exit();
+        // SAFETY: a method starts here, so no exit of its is pending.
+        unsafe { crate::raw::reset_pending_exit() };
         let e = match std::panic::catch_unwind(AssertUnwindSafe(|| f(&ruby))) {
             /* An exit the method caught and dropped is resumed, not lost:
              * a `throw`'s catcher is waiting, a killed thread must end. */

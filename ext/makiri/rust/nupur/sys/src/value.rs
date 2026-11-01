@@ -20,8 +20,9 @@ use rb_sys::VALUE;
 /// kept where the GC finds it (a Rust local, which the stack scan sees) for
 /// as long as it is used.
 ///
-/// `repr(transparent)`, so it is a `VALUE` to C. Made only by
-/// [`Value::from_raw`] outside this crate:
+/// `repr(transparent)`, so it is a `VALUE` to C. Made from a raw `VALUE`
+/// only inside this crate (`Value::from_raw` is crate-private), and never
+/// turned back into one outside it:
 ///
 /// ```compile_fail,E0423
 /// let made = nupur_sys::value::Value(0, core::marker::PhantomData);
@@ -38,13 +39,14 @@ impl Value {
     /// `v` is a live Ruby value, on a Ruby thread holding the GVL, kept where
     /// the GC finds it for as long as the `Value` is used.
     #[inline(always)]
-    pub const unsafe fn from_raw(v: VALUE) -> Value {
+    pub(crate) const unsafe fn from_raw(v: VALUE) -> Value {
         Value(v, PhantomData)
     }
 
-    /// The raw `VALUE`, for a C call.
+    /// The raw `VALUE`, for a C call - this crate's alone, so no other
+    /// holds a Ruby value as an integer.
     #[inline(always)]
-    pub const fn as_raw(self) -> VALUE {
+    pub(crate) const fn as_raw(self) -> VALUE {
         self.0
     }
 

@@ -14,7 +14,6 @@ pub fn define_class_under(
     let v = call(|inside| unsafe {
         nupur_sys::raising::rb_define_class_under(inside, outer, name, sup)
     })?;
-    // SAFETY: the class just defined, live (it is a constant now).
     Ok(Value::from_sys(v))
 }
 
@@ -24,7 +23,6 @@ pub fn define_module_under(outer: Value, name: &core::ffi::CStr) -> Result<Value
     let (outer, name) = (outer.as_sys(), name.as_ptr());
     let v =
         call(|inside| unsafe { nupur_sys::raising::rb_define_module_under(inside, outer, name) })?;
-    // SAFETY: as `define_class_under`.
     Ok(Value::from_sys(v))
 }
 
@@ -32,7 +30,6 @@ pub fn define_module_under(outer: Value, name: &core::ffi::CStr) -> Result<Value
 pub fn define_module(_: &Ruby, name: &core::ffi::CStr) -> Result<Value, Error> {
     let name = name.as_ptr();
     let v = call(|inside| unsafe { nupur_sys::raising::rb_define_module(inside, name) })?;
-    // SAFETY: as `define_class_under`.
     Ok(Value::from_sys(v))
 }
 
@@ -125,7 +122,6 @@ pub fn const_get(ruby: &Ruby, outer: Value, name: &core::ffi::CStr) -> Result<Va
     let id = intern_cstr(ruby, name)?.as_raw();
     let outer = outer.as_sys();
     let v = call(|inside| unsafe { nupur_sys::raising::rb_const_get(inside, outer, id) })?;
-    // SAFETY: the constant's value, live while it is bound.
     Ok(Value::from_sys(v))
 }
 
@@ -153,7 +149,6 @@ pub fn call_method(
     let argv = args.as_ptr().cast::<nupur_sys::value::Value>();
     let v =
         call(|inside| unsafe { nupur_sys::raising::rb_funcallv(inside, recv, id, argc, argv) })?;
-    // SAFETY: what the method returned, live on this frame.
     Ok(Value::from_sys(v))
 }
 

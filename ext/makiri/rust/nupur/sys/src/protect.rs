@@ -130,8 +130,16 @@ thread_local! {
 /// Forget a pending exit: a new method starts. The trampoline resumes every
 /// exit before its method returns, so none is pending here; this is the
 /// belt to that brace.
+///
+/// # Safety
+///
+/// Nothing pending may be lost: called where a method starts, or where the
+/// exit just caught is one the caller made itself and has no one to resume
+/// for (the load-time self-check's). A `throw`, `break` or thread kill
+/// forgotten anywhere else never reaches its `catch`, its block or its
+/// thread.
 #[inline]
-pub fn reset_pending_exit() {
+pub unsafe fn reset_pending_exit() {
     PENDING_JUMP.set(0);
 }
 
@@ -153,7 +161,8 @@ pub fn pending_exit() -> Option<c_int> {
 /// frames it leaves: `rb_jump_tag` `longjmp`s.
 #[inline]
 pub unsafe fn resume(state: c_int) -> ! {
-    reset_pending_exit();
+    // SAFETY: the exit is resumed right here, so nothing is lost.
+    unsafe { reset_pending_exit() };
     // SAFETY: `state` is one `rb_protect` reported; resuming it is the point,
     // and the caller owns nothing it skips.
     unsafe { rb_sys::rb_jump_tag(state) }

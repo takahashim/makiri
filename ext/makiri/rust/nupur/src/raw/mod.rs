@@ -69,8 +69,6 @@ fn typed<T>(
     of: fn(Value) -> Option<T>,
     what: &'static str,
 ) -> Result<T, Error> {
-    // SAFETY: `v` is what a Ruby C call just returned: a live value, on this
-    // frame's stack until it is converted.
     /* `what` is the whole message, a literal: this runs on the path that
      * raises a caught panic, which must stay `fmt`-free (`rake no_unwind`). */
     of(Value::from_sys(v)).ok_or_else(|| crate::rb::error::internal_error(what))

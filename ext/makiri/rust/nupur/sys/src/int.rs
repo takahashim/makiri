@@ -33,7 +33,7 @@ use core::ffi::c_long;
 
 /// A C `long` of some width: this target's (`c_long`), or the other one, for
 /// the tests.
-pub trait Long: Copy + Into<i64> + TryFrom<i64> + TryFrom<u64> {
+pub(crate) trait Long: Copy + Into<i64> + TryFrom<i64> + TryFrom<u64> {
     const MIN: Self;
     const MAX: Self;
 }
@@ -51,7 +51,7 @@ impl Long for i64 {
 /// `n` as a `long` within a Fixnum's range (`RB_FIXABLE`), or `None`: a
 /// Fixnum is a `long` less its flag bit, `MIN / 2 ..= MAX / 2`.
 #[inline]
-pub fn fixable_in<L: Long>(n: i64) -> Option<L> {
+pub(crate) fn fixable_in<L: Long>(n: i64) -> Option<L> {
     let (min, max) = (Into::<i64>::into(L::MIN) / 2, Into::<i64>::into(L::MAX) / 2);
     if n < min || n > max {
         return None;
@@ -61,19 +61,19 @@ pub fn fixable_in<L: Long>(n: i64) -> Option<L> {
 
 /// [`fixable_in`] for an unsigned value (`RB_POSFIXABLE`).
 #[inline]
-pub fn posfixable_in<L: Long>(n: u64) -> Option<L> {
+pub(crate) fn posfixable_in<L: Long>(n: u64) -> Option<L> {
     i64::try_from(n).ok().and_then(fixable_in::<L>)
 }
 
 /// `n` as this target's `long`, when it is a Fixnum's.
 #[inline]
-pub fn fixable(n: i64) -> Option<c_long> {
+pub(crate) fn fixable(n: i64) -> Option<c_long> {
     fixable_in::<c_long>(n)
 }
 
 /// `n` as this target's `long`, when it is a Fixnum's.
 #[inline]
-pub fn posfixable(n: u64) -> Option<c_long> {
+pub(crate) fn posfixable(n: u64) -> Option<c_long> {
     posfixable_in::<c_long>(n)
 }
 
@@ -83,13 +83,13 @@ pub fn posfixable(n: u64) -> Option<c_long> {
 /// hold it to rb-sys's `long2fix`, so a caller needs no proof of the GVL for
 /// what is arithmetic.
 #[inline]
-pub fn fixnum(n: i64) -> Option<rb_sys::VALUE> {
+pub(crate) fn fixnum(n: i64) -> Option<rb_sys::VALUE> {
     fixable(n).map(fixnum_bits)
 }
 
 /// [`fixnum`] for an unsigned value.
 #[inline]
-pub fn posfixnum(n: u64) -> Option<rb_sys::VALUE> {
+pub(crate) fn posfixnum(n: u64) -> Option<rb_sys::VALUE> {
     posfixable(n).map(fixnum_bits)
 }
 
@@ -101,7 +101,7 @@ fn fixnum_bits(l: c_long) -> rb_sys::VALUE {
 /// A non-negative `long` the C API answered as a length (`RSTRING_LEN`,
 /// `RARRAY_LEN`): a `usize`, and 0 for a negative one, which no length is.
 #[inline]
-pub fn len(n: c_long) -> usize {
+pub(crate) fn len(n: c_long) -> usize {
     usize::try_from(n).unwrap_or(0)
 }
 
@@ -122,7 +122,7 @@ fn as_ulong(n: u64) -> Option<core::ffi::c_ulong> {
 /// A word Ruby hands out (a `VALUE`) as a `usize`: the two are the same
 /// width on every target, a `VALUE` being C's `uintptr_t`.
 #[inline]
-pub fn word(v: rb_sys::VALUE) -> usize {
+pub(crate) fn word(v: rb_sys::VALUE) -> usize {
     const _: () = assert!(size_of::<rb_sys::VALUE>() == size_of::<usize>());
     v as usize
 }

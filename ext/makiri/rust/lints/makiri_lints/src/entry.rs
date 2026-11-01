@@ -19,8 +19,8 @@
 //!   calls as the extension loads.
 //!
 //! `nupur_sys`'s own token, which its reads that read no value take, is held
-//! the same way: `nupur_sys::value::Ruby::get_unchecked` only in Nupur's
-//! `Ruby`, the GC's callbacks and an `Encoding` (`GVL_ASSUMERS`).
+//! the same way, to the functions named in `GVL_ASSUMERS`: Nupur's
+//! `Ruby::get_unchecked`, and the GC's free callbacks.
 
 use clippy_utils::diagnostics::span_lint_and_help;
 use rustc_hir::Expr;
@@ -38,15 +38,15 @@ const TRAMPOLINES: &[&str] = &[
     "nupur::rb::method::finish_cary",
 ];
 const RUN_INIT: &str = "nupur::rb::method::run_init";
-/// `nupur_sys`'s GVL token, made on the caller's word, and the modules that
-/// may make it: Nupur's `Ruby` (whose own maker is held to `rb::method`
-/// above), the GC's callbacks, and an `Encoding` (made only where a token or
-/// a value was).
+/// `nupur_sys`'s GVL token, made on the caller's word, and the functions
+/// that may make it - the maker of Nupur's own token, `Ruby::get_unchecked`
+/// (itself held to `rb::method` above), and the GC's free callbacks, entries
+/// Ruby calls with the GVL held, which make it once and hand it down.
 const GVL_ASSUME: &str = "nupur_sys::value::get_unchecked";
 const GVL_ASSUMERS: &[&str] = &[
-    "nupur::rb::ruby",
-    "nupur::typed::callbacks",
-    "nupur::encoding",
+    "nupur::rb::ruby::get_unchecked",
+    "nupur::typed::callbacks::free_cb",
+    "nupur::typed::callbacks::free_embedded_cb",
 ];
 /// The macros of nupur's whose expansion is a trampoline, by name: a
 /// `#[macro_export]` macro is named at the crate's root but defined where it
@@ -69,7 +69,7 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
     } else if target == RUN_INIT {
         in_init_function(cx, expr)
     } else if target == GVL_ASSUME {
-        GVL_ASSUMERS.contains(&module_of(cx, expr.hir_id).as_str())
+        GVL_ASSUMERS.contains(&enclosing_fn(cx, expr).as_str())
     } else {
         return;
     };
@@ -113,4 +113,11 @@ fn in_init_function(cx: &LateContext<'_>, expr: &Expr<'_>) -> bool {
             .skip_binder()
             .abi()
             .is_rustic_abi()
+}
+
+/// The path of the function `expr` is in - the one a closure is written in,
+/// not the closure.
+fn enclosing_fn(cx: &LateContext<'_>, expr: &Expr<'_>) -> String {
+    let owner = cx.tcx.hir_enclosing_body_owner(expr.hir_id).to_def_id();
+    path_of(cx, cx.tcx.typeck_root_def_id(owner))
 }

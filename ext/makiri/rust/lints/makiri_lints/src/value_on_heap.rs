@@ -23,9 +23,13 @@
 //! registered as a mark root. Nor what the types do not show: a value behind
 //! `dyn Trait` once coerced (its expression before the coercion is checked),
 //! a generic function's body for the `T` it is called with, or a raw `VALUE`
-//! (an integer to the lint, which is why those stay in `nupur`). The values a wrapped object keeps alive are its
-//! slots, which `nupur::typed` owns and marks - outside the payload, so a
-//! payload holds none at all.
+//! (an integer to the lint). That last is why no crate but `nupur_sys` can
+//! hold one: it re-exports no `VALUE`, and keeps `Value::as_raw`,
+//! `Value::from_raw` and its integer conversions of a value crate-private,
+//! so Nupur holds a value only as `nupur_sys::value::Value`, which this lint
+//! counts (`SYS_VALUES`). The values a wrapped object keeps alive are its
+//! slots - `nupur_sys::value::Root`s, which `nupur::typed` owns and marks,
+//! outside the payload, so a payload holds none at all.
 
 use crate::{RUBY_VALUE_ON_HEAP, traits};
 use clippy_utils::diagnostics::span_lint_and_help;

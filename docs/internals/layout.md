@@ -53,10 +53,11 @@ ext/makiri/rust/           the extension (package makiri_rs, lib `makiri`)
                            protection (`protect`: the `rb_protect` thunk,
                            `$!`, a pending exit), the raising C calls, each
                            taking the protection's token (`raising`), the
-                           other reads, each taking the GVL's (`read`,
-                           `gvl`), `int` and `no_unwind`. Of rb-sys it
-                           re-exports only the types and constants nupur
-                           names, no function
+                           other reads, each taking a value or the GVL's
+                           token (`read`, `value`), the `rb_data_type_t`
+                           (`data_type`), `int` and `no_unwind`. Of rb-sys
+                           it re-exports a few types and constants nupur
+                           names, and no function and no `VALUE`
   falloc/                  fallible allocation (crate `falloc`): every engine
                            allocation goes through here, so `rake oom` can
                            fail it and OOM raises rather than aborting the
@@ -289,9 +290,11 @@ These gates hold the boundary:
   `#![forbid(unsafe_code)]`, as the engine's root does for the whole engine.
   The gate pins the roots in `FORBID_ROOTS` (`bridge`, `glue` and the
   engine's `css_match`, `selectors`, `xml` and `xpath`).
-- rb-sys is `nupur_sys`'s alone: no other crate depends on it, so no other
-  can name Ruby's C API, and `nupur_sys` re-exports no C function and no
-  `VALUE`. That is the dependencies' rule, not a lint's. `rake dylint`
+- rb-sys is `nupur_sys`'s alone among the shipped crates: the extension,
+  the engine and Nupur do not depend on it, so none can name Ruby's C API,
+  and `nupur_sys` re-exports no C function and no `VALUE`. (Nupur's test
+  extension, `nupur/test/ext`, depends on rb-sys for its build, and names
+  none of it.) That is the dependencies' rule, not a lint's. `rake dylint`
   holds the C calls that can raise, inside `nupur_sys`, to its protection.
 - A `Value` is made from a raw `VALUE` only in `nupur_sys`
   (`nupur_sys::value::Value::from_raw`, `unsafe`); Nupur and the extension

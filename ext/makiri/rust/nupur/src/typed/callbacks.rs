@@ -44,25 +44,13 @@ pub(super) unsafe extern "C" fn mark_cb<T: Payload, const N: usize>(ptr: *mut c_
 
 /// Give back what the payload reported, once it is dropped.
 #[inline]
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        ffi_without_gvl_proof,
-        reason = "private: called only from the free callbacks, which Ruby runs with the GVL"
-    )
-)]
-fn give_back(reported: usize) {
+fn give_back(ruby: &nupur_sys::value::Ruby, reported: usize) {
     if reported != 0 {
         let n = nupur_sys::ssize_t::try_from(reported).unwrap_or(nupur_sys::ssize_t::MAX);
         // SAFETY: a plain counter adjustment, from the free hook, where it
         // only subtracts - as Ruby's own `xfree` does from here; the GC runs
         // its callbacks with the GVL held.
-        unsafe {
-            nupur_sys::read::rb_gc_adjust_memory_usage(
-                &nupur_sys::value::Ruby::get_unchecked(),
-                n.saturating_neg(),
-            )
-        };
+        unsafe { nupur_sys::read::rb_gc_adjust_memory_usage(ruby, n.saturating_neg()) };
     }
 }
 
@@ -79,12 +67,15 @@ pub(super) unsafe extern "C" fn free_cb<T: Payload, const N: usize>(ptr: *mut c_
         /* The drop is a read and `quietly`: a type whose drop the compiler
          * cannot show unwind-free (a tree's recursive glue) is caught rather
          * than unwound into the collector. */
+        // SAFETY: the GC runs its callbacks on a Ruby thread holding the
+        // GVL: the token, made once here and handed down.
+        let ruby = unsafe { nupur_sys::value::Ruby::get_unchecked() };
         unsafe {
             let data = core::ptr::addr_of!((*(ptr as *const Envelope<T, N>)).data).read();
             let reported = crate::caught::quietly(0, || data.reported_external());
             crate::caught::quietly((), || drop(data));
-            give_back(reported);
-            nupur_sys::read::ruby_xfree(&nupur_sys::value::Ruby::get_unchecked(), ptr);
+            give_back(&ruby, reported);
+            nupur_sys::read::ruby_xfree(&ruby, ptr);
         }
     })
 }
@@ -98,9 +89,11 @@ pub(super) unsafe extern "C" fn free_embedded_cb<T: Payload, const N: usize>(ptr
         // and the memory is left to Ruby - the object's own slot when it was
         // embedded, and data Ruby frees after this callback when it was not.
         let data = unsafe { core::ptr::addr_of!((*(ptr as *const Envelope<T, N>)).data).read() };
+        // SAFETY: as `free_cb`: the GVL is held, and the token is made once.
+        let ruby = unsafe { nupur_sys::value::Ruby::get_unchecked() };
         let reported = crate::caught::quietly(0, || data.reported_external());
         crate::caught::quietly((), || drop(data));
-        give_back(reported);
+        give_back(&ruby, reported);
     })
 }
 

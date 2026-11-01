@@ -24,8 +24,8 @@ namespace :rust do
       # `caught`'s panic latch and payload reading).
       sh "cargo test -p nupur"
       # The crate under it: the integer conversions at both widths of a
-      # `long`, and the compile-fail doctests that keep its tokens (`Gvl`,
-      # `Protected`) where they are made.
+      # `long`, and the compile-fail doctests that keep its tokens (`Value`,
+      # `Ruby`, `Protected`) where they are made.
       sh "cargo test -p nupur_sys"
       sh "cargo test --manifest-path reference/Cargo.toml"
       # The fuzz crate is a separate one, so `cargo test` above never sees it;

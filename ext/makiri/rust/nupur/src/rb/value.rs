@@ -42,10 +42,9 @@ impl Value {
 }
 
 /// `Object`, the default superclass (`rb_cObject`, a C global Ruby sets once
-/// at boot), read where a raw `VALUE` may be spelled; `of` is the proof.
+/// at boot), for a definition that names none; `of` is the proof of the GVL.
 #[inline]
 pub(crate) fn object_class<V: ReprValue>(of: &V) -> RClass {
-    // SAFETY: a C global Ruby set at boot: a live class.
     RClass::from_known(Value::from_sys(read::rb_cObject(of.as_value().0.ruby())))
 }
 
@@ -204,8 +203,6 @@ handle!(
 handle!(
     /// A Range (or an instance of a subclass).
     Range,
-    // SAFETY: `rb_cRange`, a C global Ruby sets once at boot; a value
-    // existing means this is a Ruby thread, and the test reads its ancestry.
     |v| v.is_kind_of(RClass::from_known(Value::from_sys(read::rb_cRange(v.0.ruby()))))
 );
 handle!(
@@ -225,7 +222,6 @@ handle!(
      * that is an `ExceptionClass::from_known`, whose debug assertion is this
      * test, so a debug build would recurse without end. */
     |v| of_type(v, ruby_value_type::RUBY_T_CLASS)
-        // SAFETY: a C global Ruby sets once at boot, read under the GVL.
         && class_inherits(v, Value::from_sys(read::rb_eException(v.0.ruby())))
 );
 

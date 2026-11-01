@@ -25,7 +25,6 @@ macro_rules! globals {
             #[doc = concat!("`", stringify!($global), "`.")]
             #[inline]
             pub fn $method(&self) -> $kind {
-                // SAFETY: a C global Ruby sets once at boot: a live value.
                 let v = Value::from_sys(nupur_sys::read::$global(self.sys()));
                 $kind::from_known(v)
             }
