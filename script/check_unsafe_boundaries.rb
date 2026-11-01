@@ -137,7 +137,7 @@ FORBID_FILES = %w[
   engine/html_dom.rs engine/limits.rs engine/node_type.rs
   engine/ptr_table.rs engine/rust_tests.rs engine/selectors/mod.rs
   engine/selectors/stylesheet.rs engine/selectors/text.rs engine/source_lines.rs
-  engine/stack.rs engine/text.rs engine/token.rs
+  engine/stack.rs engine/swar.rs engine/text.rs engine/token.rs
   engine/utf8_decode.rs engine/utf8_input.rs
   engine/xml/arena.rs engine/xml/attr_key.rs engine/xml/chars/expand.rs
   engine/xml/chars/mod.rs engine/xml/css.rs engine/xml/css_tests.rs

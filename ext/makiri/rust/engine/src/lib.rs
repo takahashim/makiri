@@ -85,6 +85,9 @@ pub mod utf8_input;
 /// The source line table (byte offset -> line).
 pub mod source_lines;
 
+/// Word-at-a-time byte tests, for the tokenizer and the line table.
+pub mod swar;
+
 /// `VerifiedText`: a borrowed engine input, valid UTF-8 with no NUL.
 pub mod text;
 

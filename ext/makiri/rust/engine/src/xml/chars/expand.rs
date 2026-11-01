@@ -27,7 +27,8 @@ pub enum ExpandErr {
     /// Undefined entity, malformed reference, or a non-XML-Char.
     Syntax,
     /// The output would exceed the caller's buffer ("output <= input" broke -
-    /// an internal invariant violation, never reachable from input).
+    /// never reachable from input: `verus/xml_expand.rs` proves
+    /// `expand_into` does not answer it when `out` is `src`'s length).
     Overflow,
 }
 
@@ -111,7 +112,8 @@ fn predefined_entity(name: &[u8]) -> Option<u8> {
 }
 
 /// A numeric character reference (§4.1) after its `&#`: the code point and how
-/// many bytes it occupied, INCLUDING the closing ';'.
+/// many bytes it occupied, INCLUDING the closing ';'. `verus/xml_expand.rs`
+/// proves it answers exactly the digits' value, never a wrapped one.
 fn scan_char_ref(src: &[u8]) -> Result<(u32, usize), ExpandErr> {
     let mut i = 0usize;
     /* §4.1: the hex marker is a lowercase 'x' only. */
@@ -168,14 +170,19 @@ pub enum Reference<'a> {
 /// reading of the grammar: the builder's expansion, the DTD's literals and the
 /// classification of a failed expansion all go through it.
 pub fn scan_reference(src: &[u8]) -> Result<(Reference<'_>, usize), ExpandErr> {
-    if let Some(rest) = src.strip_prefix(b"#") {
-        let (cp, used) = scan_char_ref(rest)?;
+    if src.first() == Some(&b'#') {
+        let (cp, used) = scan_char_ref(&src[1..])?;
         return Ok((Reference::Char(cp), used + 1));
     }
-    let nlen = src
-        .iter()
-        .position(|&b| b == b';')
-        .ok_or(ExpandErr::Syntax)?;
+    /* The name runs to the first ';'. (A loop rather than `position`, which
+     * Verus has no contract for: `verus/xml_expand.rs`.) */
+    let mut nlen = 0;
+    while nlen < src.len() && src[nlen] != b';' {
+        nlen += 1;
+    }
+    if nlen == src.len() {
+        return Err(ExpandErr::Syntax);
+    }
     let name = &src[..nlen];
     /* The five predefined names are Names already, and they are nearly every
      * reference a document holds: the full Name check is for the rest. */
@@ -240,7 +247,8 @@ fn walk<S: Sink>(
 pub fn expand_into(src: &[u8], mode: ExpandMode, out: &mut [u8]) -> Result<usize, ExpandErr> {
     let mut w = Writer { out, pos: 0 };
     walk(src, mode, &mut w, |name| {
-        predefined_entity(name).map(Named::Byte)
+        let b = predefined_entity(name)?;
+        Some(Named::Byte(b))
     })?;
     Ok(w.pos)
 }
