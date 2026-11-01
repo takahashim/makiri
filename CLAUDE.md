@@ -35,7 +35,8 @@ When a rule here changes, change its reasoning there in the same commit.
 - **One language: Rust, and no C ships.** The cargo workspace at
   `ext/makiri/rust` is the extension (`makiri_rs`, the Ruby surface), the
   engine (`engine/`, `makiri_engine`: no Ruby, no Lexbor), `falloc/` and
-  `nupur/` (the Ruby binding layer, depending on neither). The Lexbor
+  `nupur/` (the Ruby binding layer, depending on neither; it reaches rb-sys
+  only through `nupur/sys/`, `nupur_sys`). The Lexbor
   reference (`reference/`, `makiri_lexbor`) is a workspace of its own, built
   only for the tests. No symbol of ours carries a C-style prefix; the one
   prefix left is `falloc_` on `falloc`'s methods, because a trait method named
@@ -235,6 +236,7 @@ ext/makiri/rust/         the extension crate (makiri_rs, lib `makiri`) and its w
   src/bridge/            the Ruby boundary over nupur; forbid(unsafe_code)
   src/glue/              every Ruby method, one module per feature; unsafe-free
   nupur/                 the Ruby binding layer (read its src/lib.rs first)
+    sys/                 nupur_sys: the one crate that depends on rb-sys
   falloc/                fallible allocation; the one `unsafe` outside nupur
   engine/                makiri_engine: no Ruby, no Lexbor, forbid(unsafe_code)
     src/html/            the ported parser (tokenizer/, tree/) and the arena DOM (dom/)

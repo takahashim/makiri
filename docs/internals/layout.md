@@ -9,10 +9,11 @@ lib/makiri/                Ruby API (Document, Node, Element, NodeSet,
                            XPathContext, ...)
 ext/makiri/rust/           the extension (package makiri_rs, lib `makiri`)
                            and the root of a workspace with `engine/`,
-                           `falloc/` and `nupur/`. `reference/`, `fuzz/`,
-                           `lints/` and `nupur/test/ext` (`nupur_test`) are
-                           crates of their own, each its own `[workspace]`
-                           (see "Workspaces")
+                           `falloc/`, `nupur/` and `nupur/sys/`.
+                           `reference/`, `fuzz/`, `lints/` and
+                           `nupur/test/ext` (`nupur_test`) are crates of
+                           their own, each its own `[workspace]` (see
+                           "Workspaces")
   extconf.rb               hands the crate to cargo via create_rust_makefile;
                            owns the link arguments and the export trim. It
                            builds no Lexbor (`rake lexbor` does, for the
@@ -40,12 +41,17 @@ ext/makiri/rust/           the extension (package makiri_rs, lib `makiri`)
                            each node module owns its read/mutate/css/
                            serialize). All `unsafe`-free
   nupur/                   the Ruby binding layer, a crate of its own over
-                           rb-sys. `nupur/src/lib.rs` is the one statement of
-                           what it guarantees, what an extension must uphold
-                           and what checks each, and holds its module list;
-                           read it before touching the boundary. `test/` is
-                           its own extension and specs (`rake nupur:spec`).
-                           See "nupur and the extension"
+                           rb-sys (through `sys/`). `nupur/src/lib.rs` is
+                           the one statement of what it guarantees, what an
+                           extension must uphold and what checks each, and
+                           holds its module list; read it before touching
+                           the boundary. `test/` is its own extension and
+                           specs (`rake nupur:spec`). See "nupur and the
+                           extension"
+    sys/                   Ruby's C API for nupur (crate `nupur_sys`), the
+                           one crate that depends on rb-sys. For now it
+                           re-exports rb-sys whole, and nupur reaches every
+                           rb-sys item through it
   falloc/                  fallible allocation (crate `falloc`): every engine
                            allocation goes through here, so `rake oom` can
                            fail it and OOM raises rather than aborting the
@@ -278,9 +284,11 @@ These gates hold the boundary:
   `#![forbid(unsafe_code)]`, as the engine's root does for the whole engine.
   The gate pins the roots in `FORBID_ROOTS` (`bridge`, `glue` and the
   engine's `css_match`, `selectors`, `xml` and `xpath`).
-- rb-sys is Nupur's: the extension does not depend on it, so no file of it
-  names `rb_sys::`, and `rake dylint`'s `raw_ruby_outside_bridge` refuses one
-  outside Nupur (and `bridge/`, which cannot reach it). `rake dylint` also
+- rb-sys is Nupur's, reached through `nupur_sys`: the extension depends on
+  neither, so no file of it names Ruby's C API, and `rake dylint`'s
+  `raw_ruby_outside_bridge` refuses an rb-sys item outside Nupur (and
+  `bridge/`, which cannot reach one). The lint resolves the item to where
+  rb-sys defines it, so the re-export does not hide it. `rake dylint` also
   holds the C calls that can raise to `nupur`'s `raw/`.
 - `Value::from_raw` is Nupur's, `pub(crate)` and `unsafe`, so the extension
   cannot make a `Value` from a raw `VALUE`.

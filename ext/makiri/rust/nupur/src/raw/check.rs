@@ -9,7 +9,7 @@ pub fn sym2str(sym: Symbol) -> Result<RString, Error> {
     let v = sym.as_raw();
     let s = call(|| unsafe {
         injected_raise();
-        rb_sys::rb_sym2str(v)
+        nupur_sys::rb_sym2str(v)
     })?;
     typed(s, RString::from_value, "a C call made no String")
 }
@@ -25,7 +25,7 @@ pub fn check_frozen(v: Value) -> Result<(), Error> {
         return Ok(());
     }
     let v = v.as_raw();
-    call(|| unsafe { rb_sys::rb_check_frozen(v) })
+    call(|| unsafe { nupur_sys::rb_check_frozen(v) })
 }
 
 /// `rb_range_beg_len` with `err = 0` over a collection of `count` elements:
@@ -52,8 +52,8 @@ pub fn range_beg_len(r: Range, count: usize) -> Result<Option<(usize, usize)>, E
     let (mut beg, mut len) = (0, 0);
     let (b, l) = (core::ptr::addr_of_mut!(beg), core::ptr::addr_of_mut!(len));
     let r = r.as_raw();
-    let answer = call(|| unsafe { rb_sys::rb_range_beg_len(r, b, l, count, 0) })?;
-    if answer != rb_sys::Qtrue as VALUE {
+    let answer = call(|| unsafe { nupur_sys::rb_range_beg_len(r, b, l, count, 0) })?;
+    if answer != nupur_sys::Qtrue as VALUE {
         return Ok(None);
     }
     /* Within `0..=count` both, when the C answers true. */
@@ -69,5 +69,5 @@ pub fn range_beg_len(r: Range, count: usize) -> Result<Option<(usize, usize)>, E
 /// `Thread#raise`'s exception, a `Timeout`), or ends the thread.
 #[inline]
 pub fn thread_check_ints(_: &Ruby) -> Result<(), Error> {
-    call(|| unsafe { rb_sys::rb_thread_check_ints() })
+    call(|| unsafe { nupur_sys::rb_thread_check_ints() })
 }

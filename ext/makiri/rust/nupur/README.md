@@ -1,7 +1,8 @@
 # Nupur
 
 Nupur is the Ruby binding layer under Makiri's extension, built on rb-sys
-alone. It holds every `unsafe` the extension needs to talk to Ruby, and gives
+alone, which it reaches through `nupur_sys` (`sys/`), the one crate that
+depends on it. It holds every `unsafe` the extension needs to talk to Ruby, and gives
 the extension a safe API over it: Ruby values and their class-checked
 handles, exceptions, method trampolines, TypedData, the GVL, and a wrapper
 for every C call that can raise.

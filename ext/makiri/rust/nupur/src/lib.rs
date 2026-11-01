@@ -1,6 +1,7 @@
 //! `nupur`: a Ruby binding layer for an extension - values, exceptions,
 //! method trampolines, TypedData, the GVL, and every C call that can raise,
-//! over rb-sys alone.
+//! over rb-sys alone, which it reaches through `nupur_sys` (`sys/`), the one
+//! crate that depends on it.
 //!
 //! It knows nothing of the extension it serves - a crate of its own, which
 //! does not depend on the extension - and what it needs of the extension

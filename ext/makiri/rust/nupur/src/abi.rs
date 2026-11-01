@@ -13,16 +13,16 @@
 pub fn ruby_api_version() -> crate::msg::Msg {
     crate::msg::Msg::format(format_args!(
         "{}.{}",
-        rb_sys::RUBY_API_VERSION_MAJOR,
-        rb_sys::RUBY_API_VERSION_MINOR
+        nupur_sys::RUBY_API_VERSION_MAJOR,
+        nupur_sys::RUBY_API_VERSION_MINOR
     ))
 }
 
 /// The Ruby API `MAJOR.MINOR` this extension was compiled against.
 pub fn built_ruby_api() -> (i64, i64) {
     (
-        i64::from(rb_sys::RUBY_API_VERSION_MAJOR),
-        i64::from(rb_sys::RUBY_API_VERSION_MINOR),
+        i64::from(nupur_sys::RUBY_API_VERSION_MAJOR),
+        i64::from(nupur_sys::RUBY_API_VERSION_MINOR),
     )
 }
 
@@ -30,7 +30,12 @@ pub fn built_ruby_api() -> (i64, i64) {
 /// it exports (three ints, whose layout no Ruby changes).
 pub fn running_ruby_api() -> (i64, i64) {
     // SAFETY: an immutable `const int[3]` libruby exports, read by value.
-    let (major, minor) = unsafe { (rb_sys::ruby_api_version[0], rb_sys::ruby_api_version[1]) };
+    let (major, minor) = unsafe {
+        (
+            nupur_sys::ruby_api_version[0],
+            nupur_sys::ruby_api_version[1],
+        )
+    };
     (i64::from(major), i64::from(minor))
 }
 

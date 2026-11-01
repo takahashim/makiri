@@ -10,12 +10,12 @@
 /// (`raising_call_outside_protect`).
 #[allow(unsafe_code)]
 fn raising() {
-    let _ = unsafe { rb_sys::rb_ary_new_capa(0) }; //~ ffi_without_gvl_proof raising_call_outside_protect
+    let _ = unsafe { nupur_sys::rb_ary_new_capa(0) }; //~ ffi_without_gvl_proof raising_call_outside_protect
 }
 
 /// A raw `VALUE` outside the files that are the typed values
 /// (`raw_ruby_outside_bridge`).
-fn raw_type(_: rb_sys::VALUE) {} //~ raw_ruby_outside_bridge
+fn raw_type(_: nupur_sys::VALUE) {} //~ raw_ruby_outside_bridge
 
 /// The GVL's token made outside the entries Ruby calls
 /// (`gvl_token_outside_entry`): the maker outside `rb::method`, a
@@ -60,7 +60,7 @@ mod handles {
 /// too.
 #[allow(unsafe_code)]
 fn raw_global() -> bool {
-    unsafe { rb_sys::rb_cObject != 0 } //~ raw_ruby_outside_bridge
+    unsafe { nupur_sys::rb_cObject != 0 } //~ raw_ruby_outside_bridge
 }
 
 /// Ruby's C API from a function holding no proof of the GVL
@@ -69,19 +69,19 @@ fn raw_global() -> bool {
 #[rustfmt::skip] // keeps each marker on the line reported
 mod gvl_proof {
     fn without_proof() -> bool {
-        unsafe { rb_sys::ruby_stack_check() != 0 } //~ ffi_without_gvl_proof
+        unsafe { nupur_sys::ruby_stack_check() != 0 } //~ ffi_without_gvl_proof
     }
 
     fn with_a_token(_: &crate::rb::Ruby) -> bool {
-        unsafe { rb_sys::ruby_stack_check() != 0 }
+        unsafe { nupur_sys::ruby_stack_check() != 0 }
     }
 
     fn with_a_value(_: crate::rb::Value) -> bool {
-        unsafe { rb_sys::ruby_stack_check() != 0 }
+        unsafe { nupur_sys::ruby_stack_check() != 0 }
     }
 
     fn in_a_closure() -> bool {
-        (|| unsafe { rb_sys::ruby_stack_check() != 0 })() //~ ffi_without_gvl_proof
+        (|| unsafe { nupur_sys::ruby_stack_check() != 0 })() //~ ffi_without_gvl_proof
     }
 }
 
@@ -111,11 +111,11 @@ mod c_integer {
 #[rustfmt::skip] // keeps each marker on the line reported
 mod raising {
     fn unclassified(_: &crate::rb::Ruby) {
-        unsafe { rb_sys::rb_undef_alloc_func(rb_sys::rb_cObject) } //~ raising_call_outside_protect raw_ruby_outside_bridge
+        unsafe { nupur_sys::rb_undef_alloc_func(nupur_sys::rb_cObject) } //~ raising_call_outside_protect raw_ruby_outside_bridge
     }
 
     fn classified(_: &crate::rb::Ruby) -> bool {
-        unsafe { rb_sys::rb_block_given_p() != 0 }
+        unsafe { nupur_sys::rb_block_given_p() != 0 }
     }
 }
 
@@ -130,14 +130,14 @@ mod raw {
     }
 
     fn a_read_in_raw(_: &crate::rb::Ruby) -> bool {
-        unsafe { rb_sys::rb_block_given_p() != 0 } //~ unraising_call_in_raw
+        unsafe { nupur_sys::rb_block_given_p() != 0 } //~ unraising_call_in_raw
     }
 
     fn protecting_nothing(_: &crate::rb::Ruby) -> bool {
-        call(|| unsafe { rb_sys::rb_block_given_p() != 0 }) //~ unraising_call_in_raw
+        call(|| unsafe { nupur_sys::rb_block_given_p() != 0 }) //~ unraising_call_in_raw
     }
 
     fn protecting_a_raise(_: &crate::rb::Ruby) {
-        let _ = call(|| unsafe { rb_sys::rb_ary_new_capa(0) });
+        let _ = call(|| unsafe { nupur_sys::rb_ary_new_capa(0) });
     }
 }

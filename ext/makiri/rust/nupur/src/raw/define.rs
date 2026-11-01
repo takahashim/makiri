@@ -14,10 +14,10 @@ pub fn define_class_under(
         Some(c) => c.as_raw(),
         // SAFETY: `rb_cObject`, a C global Ruby sets once at boot - read
         // here, in `raw`, where a raw `VALUE` may be spelled.
-        None => unsafe { rb_sys::rb_cObject },
+        None => unsafe { nupur_sys::rb_cObject },
     };
     let (outer, name) = (outer.as_raw(), name.as_ptr());
-    let v = call(|| unsafe { rb_sys::rb_define_class_under(outer, name, sup) })?;
+    let v = call(|| unsafe { nupur_sys::rb_define_class_under(outer, name, sup) })?;
     // SAFETY: the class just defined, live (it is a constant now).
     Ok(unsafe { Value::from_raw(v) })
 }
@@ -26,7 +26,7 @@ pub fn define_class_under(
 /// something that is not a module.
 pub fn define_module_under(outer: Value, name: &core::ffi::CStr) -> Result<Value, Error> {
     let (outer, name) = (outer.as_raw(), name.as_ptr());
-    let v = call(|| unsafe { rb_sys::rb_define_module_under(outer, name) })?;
+    let v = call(|| unsafe { nupur_sys::rb_define_module_under(outer, name) })?;
     // SAFETY: as `define_class_under`.
     Ok(unsafe { Value::from_raw(v) })
 }
@@ -34,7 +34,7 @@ pub fn define_module_under(outer: Value, name: &core::ffi::CStr) -> Result<Value
 /// `rb_define_module`: a top-level module; raises as `define_module_under`.
 pub fn define_module(_: &Ruby, name: &core::ffi::CStr) -> Result<Value, Error> {
     let name = name.as_ptr();
-    let v = call(|| unsafe { rb_sys::rb_define_module(name) })?;
+    let v = call(|| unsafe { nupur_sys::rb_define_module(name) })?;
     // SAFETY: as `define_class_under`.
     Ok(unsafe { Value::from_raw(v) })
 }
@@ -43,21 +43,21 @@ pub fn define_module(_: &Ruby, name: &core::ffi::CStr) -> Result<Value, Error> {
 pub fn const_set(ruby: &Ruby, outer: Value, name: &core::ffi::CStr, v: Value) -> Result<(), Error> {
     let id = intern_cstr(ruby, name)?.as_raw();
     let (outer, v) = (outer.as_raw(), v.as_raw());
-    call(|| unsafe { rb_sys::rb_const_set(outer, id, v) })
+    call(|| unsafe { nupur_sys::rb_const_set(outer, id, v) })
 }
 
 /// `rb_include_module`: raises `ArgumentError` for a cyclic include,
 /// `FrozenError` on a frozen class.
 pub fn include_module(klass: Value, module: Value) -> Result<(), Error> {
     let (klass, module) = (klass.as_raw(), module.as_raw());
-    call(|| unsafe { rb_sys::rb_include_module(klass, module) })
+    call(|| unsafe { nupur_sys::rb_include_module(klass, module) })
 }
 
 /// `rb_undef_alloc_func`: raises `TypeError` for a singleton class, which
 /// may not have an allocator of its own taken.
 pub fn undef_alloc_func(klass: RClass) -> Result<(), Error> {
     let k = klass.as_raw();
-    call(|| unsafe { rb_sys::rb_undef_alloc_func(k) })
+    call(|| unsafe { nupur_sys::rb_undef_alloc_func(k) })
 }
 
 /// `rb_obj_freeze`: raises `NoMemoryError` - freezing moves an object with
@@ -66,7 +66,7 @@ pub fn obj_freeze(v: Value) -> Result<(), Error> {
     let v = v.as_raw();
     call(|| unsafe {
         injected_raise();
-        rb_sys::rb_obj_freeze(v)
+        nupur_sys::rb_obj_freeze(v)
     })
     .map(|_| ())
 }
@@ -80,7 +80,7 @@ pub fn obj_reveal(obj: Value, klass: Value) -> Result<(), Error> {
     let (o, k) = (obj.as_raw(), klass.as_raw());
     call(|| unsafe {
         injected_raise();
-        rb_sys::rb_obj_reveal(o, k)
+        nupur_sys::rb_obj_reveal(o, k)
     })
     .map(|_| ())
 }
@@ -97,16 +97,16 @@ pub(crate) fn define_method(
     let (target, name, ptr, arity) = (target.as_raw(), name.as_ptr(), Some(func.ptr), func.arity);
     match visibility {
         Visibility::Public => {
-            call(|| unsafe { rb_sys::rb_define_method(target, name, ptr, arity) })
+            call(|| unsafe { nupur_sys::rb_define_method(target, name, ptr, arity) })
         }
         Visibility::Private => {
-            call(|| unsafe { rb_sys::rb_define_private_method(target, name, ptr, arity) })
+            call(|| unsafe { nupur_sys::rb_define_private_method(target, name, ptr, arity) })
         }
         Visibility::Singleton => {
-            call(|| unsafe { rb_sys::rb_define_singleton_method(target, name, ptr, arity) })
+            call(|| unsafe { nupur_sys::rb_define_singleton_method(target, name, ptr, arity) })
         }
         Visibility::ModuleFunction => {
-            call(|| unsafe { rb_sys::rb_define_module_function(target, name, ptr, arity) })
+            call(|| unsafe { nupur_sys::rb_define_module_function(target, name, ptr, arity) })
         }
     }
 }
@@ -117,7 +117,7 @@ pub fn gc_register_mark_object(v: Value) -> Result<(), Error> {
     let v = v.as_raw();
     call(|| unsafe {
         injected_raise();
-        rb_sys::rb_gc_register_mark_object(v)
+        nupur_sys::rb_gc_register_mark_object(v)
     })
 }
 
@@ -127,7 +127,7 @@ pub fn gc_register_mark_object(v: Value) -> Result<(), Error> {
 pub fn const_get(ruby: &Ruby, outer: Value, name: &core::ffi::CStr) -> Result<Value, Error> {
     let id = intern_cstr(ruby, name)?.as_raw();
     let outer = outer.as_raw();
-    let v = call(|| unsafe { rb_sys::rb_const_get(outer, id) })?;
+    let v = call(|| unsafe { nupur_sys::rb_const_get(outer, id) })?;
     // SAFETY: the constant's value, live while it is bound.
     Ok(unsafe { Value::from_raw(v) })
 }
@@ -154,7 +154,7 @@ pub fn call_method(
     let recv = recv.as_raw();
     /* `Value` is transparent over `VALUE`, so the slice is the C array. */
     let argv = args.as_ptr() as *const VALUE;
-    let v = call(|| unsafe { rb_sys::rb_funcallv(recv, id, argc, argv) })?;
+    let v = call(|| unsafe { nupur_sys::rb_funcallv(recv, id, argc, argv) })?;
     // SAFETY: what the method returned, live on this frame.
     Ok(unsafe { Value::from_raw(v) })
 }
@@ -163,7 +163,7 @@ pub fn call_method(
 pub fn module_new(_: &Ruby) -> Result<RModule, Error> {
     let v = call(|| unsafe {
         injected_raise();
-        rb_sys::rb_module_new()
+        nupur_sys::rb_module_new()
     })?;
     typed(v, RModule::from_value, "a C call made no Module")
 }

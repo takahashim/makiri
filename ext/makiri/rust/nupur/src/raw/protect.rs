@@ -17,7 +17,7 @@ use core::ffi::c_int;
 
 use crate::rb::value::AsRawValue;
 use crate::rb::{Error, Ruby, Value};
-use rb_sys::VALUE;
+use nupur_sys::VALUE;
 
 /// The raise sweep's hook (`script/check_raise_injection.rb`): in an
 /// `alloc-inject` build the armed allocating call below raises `NoMemoryError`
@@ -30,7 +30,7 @@ pub(super) unsafe fn injected_raise() {
     #[cfg(feature = "alloc-inject")]
     if RAISE_INJECTOR.get().is_some_and(|armed| armed()) {
         /* Raises without allocating: Ruby keeps the exception preallocated. */
-        unsafe { rb_sys::rb_memerror() }
+        unsafe { nupur_sys::rb_memerror() }
     }
 }
 
@@ -126,7 +126,7 @@ pub(super) fn call<T: Copy, F: FnOnce() -> T + Copy>(f: F) -> Result<T, Error> {
             // SAFETY: `arg` is the `Slot` `call` passed, live for the call.
             let slot = unsafe { &mut *(arg as *mut Slot<F, T>) };
             slot.out = Some((slot.f)());
-            rb_sys::Qnil as VALUE
+            nupur_sys::Qnil as VALUE
         })
     }
     if let Some(exit) = pending_exit() {
@@ -136,7 +136,7 @@ pub(super) fn call<T: Copy, F: FnOnce() -> T + Copy>(f: F) -> Result<T, Error> {
     let mut state: c_int = 0;
     // SAFETY: the thunk reads only `slot`, which outlives the call.
     unsafe {
-        rb_sys::rb_protect(
+        nupur_sys::rb_protect(
             Some(thunk::<T, F>),
             &mut slot as *mut Slot<F, T> as VALUE,
             &mut state,
@@ -171,7 +171,7 @@ pub(super) fn call<T: Copy, F: FnOnce() -> T + Copy>(f: F) -> Result<T, Error> {
 )]
 pub(crate) fn keeping_errinfo<T>(f: impl FnOnce() -> T) -> T {
     // SAFETY: under the GVL, as every caller's proof says; a read.
-    let before = unsafe { rb_sys::rb_errinfo() };
+    let before = unsafe { nupur_sys::rb_errinfo() };
     let out = f();
     if pending_exit().is_none() {
         restore_errinfo(before);
@@ -190,19 +190,20 @@ pub(crate) fn keeping_errinfo<T>(f: impl FnOnce() -> T) -> T {
     )
 )]
 fn restore_errinfo(before: VALUE) {
-    if before == rb_sys::Qnil as VALUE {
+    if before == nupur_sys::Qnil as VALUE {
         // SAFETY: nil, which it always takes.
-        unsafe { rb_sys::rb_set_errinfo(before) };
+        unsafe { nupur_sys::rb_set_errinfo(before) };
         return;
     }
     // SAFETY: `before` was the thread's error info a moment ago, kept on
     // this frame's stack since: a live value; `rb_eException` a C global Ruby
     // set at boot. `rb_obj_is_kind_of` raises only for a non-class second
     // argument.
-    if unsafe { rb_sys::rb_obj_is_kind_of(before, rb_sys::rb_eException) } == rb_sys::Qtrue as VALUE
+    if unsafe { nupur_sys::rb_obj_is_kind_of(before, nupur_sys::rb_eException) }
+        == nupur_sys::Qtrue as VALUE
     {
         // SAFETY: an exception, which `rb_set_errinfo` takes without raising.
-        unsafe { rb_sys::rb_set_errinfo(before) };
+        unsafe { nupur_sys::rb_set_errinfo(before) };
     }
 }
 
@@ -226,8 +227,8 @@ fn take_errinfo() -> Value {
     // SAFETY: under the GVL (a protected call just returned); both read or
     // write the current thread's error info.
     unsafe {
-        let exc = rb_sys::rb_errinfo();
-        rb_sys::rb_set_errinfo(rb_sys::Qnil as VALUE);
+        let exc = nupur_sys::rb_errinfo();
+        nupur_sys::rb_set_errinfo(nupur_sys::Qnil as VALUE);
         Value::from_raw(exc)
     }
 }
@@ -253,7 +254,7 @@ pub(crate) fn forget_errinfo(_: &Ruby) {
 )]
 fn jump_tag(state: c_int) -> ! {
     // SAFETY: `state` is one `rb_protect` reported; resuming it is the point.
-    unsafe { rb_sys::rb_jump_tag(state) }
+    unsafe { nupur_sys::rb_jump_tag(state) }
 }
 
 /// `rb_exc_raise`: raise `exc`. Raises, by design - only `Error::raise` calls
@@ -261,7 +262,7 @@ fn jump_tag(state: c_int) -> ! {
 #[inline]
 pub(crate) fn exc_raise(exc: Value) -> ! {
     // SAFETY: `exc` is a live exception object.
-    unsafe { rb_sys::rb_exc_raise(exc.as_raw()) }
+    unsafe { nupur_sys::rb_exc_raise(exc.as_raw()) }
 }
 
 /// `rb_exc_fatal`: raise `exc` as Ruby's `fatal` - for a panic in
@@ -270,7 +271,7 @@ pub(crate) fn exc_raise(exc: Value) -> ! {
 #[inline]
 pub(crate) fn exc_fatal(exc: Value) -> ! {
     // SAFETY: `exc` is a live exception object.
-    unsafe { rb_sys::rb_exc_fatal(exc.as_raw()) }
+    unsafe { nupur_sys::rb_exc_fatal(exc.as_raw()) }
 }
 
 /// The error a non-zero `rb_protect` state stands for: the exception Ruby

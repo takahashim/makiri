@@ -8,7 +8,7 @@
 
 use core::ffi::c_int;
 
-use rb_sys::VALUE;
+use nupur_sys::VALUE;
 
 use super::{AsRawValue, RString};
 
@@ -27,17 +27,17 @@ impl RString {
     fn flags(self) -> VALUE {
         // SAFETY: a String is a heap object, whose header starts with
         // `RBasic`; reading its flags runs no Ruby.
-        unsafe { (*(self.as_raw() as *const rb_sys::RBasic)).flags }
+        unsafe { (*(self.as_raw() as *const nupur_sys::RBasic)).flags }
     }
 
     /// The String's cached coderange - a read of its header flags, which
     /// never scans and never allocates.
     #[inline]
     pub fn enc_coderange(self) -> Coderange {
-        const MASK: VALUE = rb_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_MASK as VALUE;
-        const SEVEN: VALUE = rb_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_7BIT as VALUE;
-        const VALID: VALUE = rb_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_VALID as VALUE;
-        const BROKEN: VALUE = rb_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_BROKEN as VALUE;
+        const MASK: VALUE = nupur_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_MASK as VALUE;
+        const SEVEN: VALUE = nupur_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_7BIT as VALUE;
+        const VALID: VALUE = nupur_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_VALID as VALUE;
+        const BROKEN: VALUE = nupur_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_BROKEN as VALUE;
         match self.flags() & MASK {
             SEVEN => Coderange::SevenBit,
             VALID => Coderange::Valid,
@@ -58,7 +58,7 @@ impl RString {
         )
     )]
     pub(crate) fn encoding_index(self) -> c_int {
-        use rb_sys::ruby_encoding_consts::{
+        use nupur_sys::ruby_encoding_consts::{
             RUBY_ENCODING_INLINE_MAX, RUBY_ENCODING_MASK, RUBY_ENCODING_SHIFT,
         };
         /* Seven bits, which a `c_int` holds. */
@@ -68,7 +68,7 @@ impl RString {
         if inline == RUBY_ENCODING_INLINE_MAX as c_int {
             // SAFETY: a live String; the lookup reads an instance variable
             // and raises nothing.
-            unsafe { rb_sys::rb_enc_get_index(self.as_raw()) }
+            unsafe { nupur_sys::rb_enc_get_index(self.as_raw()) }
         } else {
             inline
         }
@@ -80,6 +80,6 @@ impl RString {
     pub(crate) fn has_string_class(self) -> bool {
         // SAFETY: as `flags`; `rb_cString` is a C global Ruby sets once at
         // boot.
-        unsafe { (*(self.as_raw() as *const rb_sys::RBasic)).klass == rb_sys::rb_cString }
+        unsafe { (*(self.as_raw() as *const nupur_sys::RBasic)).klass == nupur_sys::rb_cString }
     }
 }

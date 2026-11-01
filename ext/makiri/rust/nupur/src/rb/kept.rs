@@ -5,7 +5,7 @@
 
 #![allow(unsafe_code)]
 
-use rb_sys::VALUE;
+use nupur_sys::VALUE;
 
 use super::value::{AsRawValue, ReprValue, Value};
 

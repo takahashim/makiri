@@ -33,7 +33,8 @@
 //! target's bounds rb-sys's `FIXNUM_MIN` / `FIXNUM_MAX` - Ruby's C has no
 //! contract. The tests `a_fixnum_is_long2fix` and
 //! `this_targets_long_agrees_with_rb_sys` keep checking those, and
-//! `FIXNUM_FLAG` is taken as 1 (`rb_sys`, modelled below).
+//! `FIXNUM_FLAG` is taken as 1 (rb-sys's, which `int.rs` reads through
+//! `nupur_sys`, modelled below).
 //!
 //! `fixnum_bits`' cast is written `#[verifier::truncate] (l as VALUE)` in
 //! the copy: the attribute tells Verus the cast wraps, as `as` does, and
@@ -58,9 +59,9 @@ pub assume_specification<T, E>[ Result::<T, E>::unwrap_or ](result: Result<T, E>
         },
 ;
 
-/// The two items of rb-sys `int.rs` reads, as rb-sys defines them: a
-/// `VALUE` is a 64-bit word, and the Fixnum flag is bit 0.
-pub mod rb_sys {
+/// The two items of rb-sys `int.rs` reads through `nupur_sys`, as rb-sys
+/// defines them: a `VALUE` is a 64-bit word, and the Fixnum flag is bit 0.
+pub mod nupur_sys {
     pub type VALUE = u64;
 
     pub const FIXNUM_FLAG: u64 = 1;
@@ -69,7 +70,7 @@ pub mod rb_sys {
 /// A `long` of 32 bits: Windows.
 pub mod long32 {
     use vstd::prelude::*;
-    use crate::rb_sys;
+    use crate::nupur_sys;
 
     #[allow(non_camel_case_types)]
     pub type c_long = i32;
@@ -99,14 +100,14 @@ pub mod long32 {
         i64::try_from(n).ok().and_then(fixable_in::<L>)
     }
 
-    pub fn fixnum_bits(l: c_long) -> (v: rb_sys::VALUE)
+    pub fn fixnum_bits(l: c_long) -> (v: nupur_sys::VALUE)
         ensures // [verus]
             v & 1 == 1, // [verus]
             (#[verifier::truncate] (v as i64)) >> 1u64 == l as i64, // [verus]
     {
         // [canary]
         let r = // [verus]
-        ((#[verifier::truncate] (l as rb_sys::VALUE)) << 1) | rb_sys::FIXNUM_FLAG as rb_sys::VALUE
+        ((#[verifier::truncate] (l as nupur_sys::VALUE)) << 1) | nupur_sys::FIXNUM_FLAG as nupur_sys::VALUE
         ; // [verus]
         proof { crate::bits32(l, r); } // [verus]
         r // [verus]
@@ -132,7 +133,7 @@ pub mod long32 {
 /// A `long` of 64 bits: Linux and macOS.
 pub mod long64 {
     use vstd::prelude::*;
-    use crate::rb_sys;
+    use crate::nupur_sys;
 
     #[allow(non_camel_case_types)]
     pub type c_long = i64;
@@ -162,7 +163,7 @@ pub mod long64 {
         i64::try_from(n).ok().and_then(fixable_in::<L>)
     }
 
-    pub fn fixnum_bits(l: c_long) -> (v: rb_sys::VALUE)
+    pub fn fixnum_bits(l: c_long) -> (v: nupur_sys::VALUE)
         ensures // [verus]
             v & 1 == 1, // [verus]
             i64::MIN / 2 <= l <= i64::MAX / 2 // [verus]
@@ -170,7 +171,7 @@ pub mod long64 {
     {
         // [canary]
         let r = // [verus]
-        ((#[verifier::truncate] (l as rb_sys::VALUE)) << 1) | rb_sys::FIXNUM_FLAG as rb_sys::VALUE
+        ((#[verifier::truncate] (l as nupur_sys::VALUE)) << 1) | nupur_sys::FIXNUM_FLAG as nupur_sys::VALUE
         ; // [verus]
         proof { crate::bits64(l, r); } // [verus]
         r // [verus]
