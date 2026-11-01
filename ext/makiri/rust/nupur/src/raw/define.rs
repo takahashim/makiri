@@ -2,21 +2,15 @@
 
 use super::*;
 
-/// `rb_define_class_under`, its superclass `sup` or `Object` for `None`:
-/// raises `TypeError` when `name` is bound to something else, or to a class
-/// with another superclass.
+/// `rb_define_class_under`, its superclass `sup`: raises `TypeError` when
+/// `name` is bound to something else, or to a class with another
+/// superclass.
 pub fn define_class_under(
     outer: Value,
     name: &core::ffi::CStr,
-    sup: Option<RClass>,
+    sup: RClass,
 ) -> Result<Value, Error> {
-    let sup = match sup {
-        Some(c) => c.as_raw(),
-        /* `rb_cObject`, read here, in `raw`, where a raw `VALUE` may be
-         * spelled. */
-        None => nupur_sys::read::rb_cObject(crate::rb::value::gvl_of(outer)),
-    };
-    let (outer, name) = (outer.as_raw(), name.as_ptr());
+    let (outer, name, sup) = (outer.as_raw(), name.as_ptr(), sup.as_raw());
     let v = call(|inside| unsafe {
         nupur_sys::raising::rb_define_class_under(inside, outer, name, sup)
     })?;

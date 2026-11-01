@@ -81,14 +81,24 @@ mod c_integer {
     }
 }
 
-/// What `raw` holds (`unraising_call_in_raw`), in a stand-in for it: a
-/// `call` whose closure calls nothing that can raise is reported - a read
-/// there needs no protection.
+/// A C global's class, a raw `VALUE`, read outside the files that are the
+/// typed values (`raw_ruby_outside_bridge`).
+fn raw_global(ruby: &crate::rb::Ruby) -> bool {
+    nupur_sys::read::rb_cObject(ruby.gvl()) != 0 //~ raw_ruby_outside_bridge
+}
+
+/// What `raw` holds (`unraising_call_in_raw`), in a stand-in for it: a read
+/// that raises nothing, outside `call` or as all a `call` protects, is
+/// reported.
 #[allow(unsafe_code)]
 #[rustfmt::skip] // keeps each marker on the line reported
 mod raw {
     fn call<T>(f: impl FnOnce() -> T) -> T {
         f()
+    }
+
+    fn a_read_in_raw(ruby: &crate::rb::Ruby) -> bool {
+        unsafe { nupur_sys::read::rb_block_given_p(ruby.gvl()) != 0 } //~ unraising_call_in_raw
     }
 
     fn protecting_nothing(ruby: &crate::rb::Ruby) -> bool {

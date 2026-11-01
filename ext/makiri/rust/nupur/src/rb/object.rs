@@ -16,7 +16,7 @@ pub fn ivar_get(obj: Value, id: HiddenId) -> Value {
     // SAFETY: a live object, and a `HiddenId` is never an `@` name.
     unsafe {
         Value::from_raw(nupur_sys::read::attr_get_hidden(
-            super::value::gvl_of(obj),
+            super::value::gvl_of(&obj),
             obj.as_raw(),
             id.as_raw(),
         ))
@@ -38,7 +38,7 @@ pub fn ivar_set(obj: Value, id: HiddenId, v: impl ReprValue) -> Result<(), Error
 #[inline]
 pub(crate) unsafe fn obj_hide(v: Value) {
     // SAFETY: a live object; hiding writes only its class field.
-    unsafe { nupur_sys::read::rb_obj_hide(super::value::gvl_of(v), v.as_raw()) };
+    unsafe { nupur_sys::read::rb_obj_hide(super::value::gvl_of(&v), v.as_raw()) };
 }
 
 /// Whether `v` is a class or a module - what `rb_obj_is_kind_of` and
@@ -58,7 +58,7 @@ pub(crate) fn obj_is_kind_of(v: Value, class: Value) -> bool {
     }
     // SAFETY: both live; `class` is a class or module, checked above.
     unsafe {
-        nupur_sys::read::obj_is_kind_of_module(super::value::gvl_of(v), v.as_raw(), class.as_raw())
+        nupur_sys::read::obj_is_kind_of_module(super::value::gvl_of(&v), v.as_raw(), class.as_raw())
     }
 }
 
@@ -72,7 +72,7 @@ pub(crate) fn class_inherits(sub: Value, sup: Value) -> bool {
     // SAFETY: both live classes or modules, checked above.
     unsafe {
         nupur_sys::read::class_inherited_p_of_modules(
-            super::value::gvl_of(sub),
+            super::value::gvl_of(&sub),
             sub.as_raw(),
             sup.as_raw(),
         )

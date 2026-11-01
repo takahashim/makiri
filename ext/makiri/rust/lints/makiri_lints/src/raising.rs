@@ -30,7 +30,7 @@ use rustc_hir::{Expr, ExprKind, HirId, Node};
 use rustc_lint::LateContext;
 use std::ops::ControlFlow;
 
-use crate::paths::{callee, is_extension, module_of, path_of};
+use crate::paths::{callee, is_extension, module_of, path_of, within};
 use crate::{RAISING_CALL_OUTSIDE_PROTECT, UNRAISING_CALL_IN_RAW};
 
 /// Ruby's C functions that raise nothing, whatever a caller of the layer
@@ -135,6 +135,12 @@ fn may_raise(name: &str) -> bool {
     !name.is_empty() && !NON_RAISING.contains(&name) && !REVIEWED.iter().any(|(n, _)| *n == name)
 }
 
+/// Whether `module` is held to `unraising_call_in_raw`: `raw` or one of its
+/// modules, bar the protection's.
+fn in_raw(module: &str) -> bool {
+    RAW.iter().any(|m| within(module, m)) && !PROTECT.iter().any(|p| within(module, p))
+}
+
 pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
     if !is_extension(cx) {
         return;
@@ -144,6 +150,22 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         return;
     };
     let path = path_of(cx, did);
+    /* A read of `nupur_sys`'s - Ruby's C that raises nothing, which Nupur
+     * reaches only this way - in `raw` outside `call`. */
+    if path.starts_with("nupur_sys::read::")
+        && in_raw(&module_of(cx, expr.hir_id))
+        && !inside_call(cx, expr.hir_id)
+    {
+        span_lint_and_help(
+            cx,
+            UNRAISING_CALL_IN_RAW,
+            expr.span.source_callsite(),
+            format!("`{path}`, a read that raises nothing, is called in `raw` outside `call`"),
+            None,
+            "`raw` holds the C calls made inside call(|| ...); a read that raises nothing \
+             belongs with the values (rb::value, or rb::object for an object's ivars and class)",
+        );
+    }
     let Some(name) = rb_sys_function(&path) else {
         return;
     };
@@ -164,7 +186,7 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
              cannot raise, add it to makiri_lints' NON_RAISING (the survey finds no path) or REVIEWED (with the reason)",
         );
     }
-    if RAW.contains(&module.as_str()) && !inside {
+    if in_raw(&module) && !inside {
         let what = if name.is_empty() {
             "the stable API"
         } else {

@@ -103,7 +103,7 @@ impl DataType {
 /// it is collected; every reader of a payload comes through here or
 /// [`typed_data_known`].
 pub(super) fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void, Error> {
-    let (gvl, v, ty) = (crate::rb::value::gvl_of(v), v.as_raw(), ty.as_ptr());
+    let (gvl, v, ty) = (crate::rb::value::gvl_of(&v), v.as_raw(), ty.as_ptr());
     // SAFETY: `v` is a live value and `ty` a registered data type; the data
     // pointer is read only once the type is known to match.
     unsafe {
@@ -144,7 +144,7 @@ pub(super) unsafe fn data_pointer(v: VALUE) -> *mut c_void {
 /// the method's trampoline makes it the internal error (`rb::error::INTERNAL_ERROR`), where a raise
 /// would longjmp past them.
 pub(super) fn typed_data_known(v: Value, ty: &'static DataType) -> *mut c_void {
-    let (gvl, v, ty) = (crate::rb::value::gvl_of(v), v.as_raw(), ty.as_ptr());
+    let (gvl, v, ty) = (crate::rb::value::gvl_of(&v), v.as_raw(), ty.as_ptr());
     // SAFETY: as in `typed_data`; the assert is the type check.
     unsafe {
         assert!(

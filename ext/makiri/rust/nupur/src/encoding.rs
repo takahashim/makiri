@@ -111,7 +111,7 @@ impl Encoding {
     pub fn of(str: RString) -> Encoding {
         // SAFETY: a live String, by type; reading its tag runs no Ruby.
         Encoding(unsafe {
-            nupur_sys::read::enc_get_of_string(crate::rb::value::gvl_of(str), str.as_raw())
+            nupur_sys::read::enc_get_of_string(crate::rb::value::gvl_of(&str), str.as_raw())
         })
     }
 

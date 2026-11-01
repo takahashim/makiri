@@ -104,7 +104,7 @@ impl Drop for EmptyUnlessFilled {
             let s = self.0.as_raw();
             // SAFETY: the String just made, unfrozen and referenced only
             // from `utf8_str_filled`'s frame.
-            unsafe { nupur_sys::read::str_empty_unfrozen(crate::rb::value::gvl_of(self.0), s) };
+            unsafe { nupur_sys::read::str_empty_unfrozen(crate::rb::value::gvl_of(&self.0), s) };
         })
     }
 }

@@ -206,7 +206,7 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
         // SAFETY: `v` is a live VALUE; the type check does not raise.
         unsafe {
             nupur_sys::read::rb_typeddata_is_kind_of(
-                crate::rb::value::gvl_of(v),
+                crate::rb::value::gvl_of(&v),
                 v.as_raw(),
                 self.raw.as_ptr(),
             ) != 0

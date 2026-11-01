@@ -373,9 +373,9 @@ handed to `raw::call`. A function that raises only for what its caller rules
 out, such as `rb_obj_is_kind_of` with a non-class, is an `allow` at its site
 saying so.
 
-`unraising_call_in_raw` holds `raw` to what it is. A call of Ruby's C in
-`raw` outside `call`, or a `call` that protects nothing, means the table and
-the code disagree. A read that raises nothing belongs to `rb::value`, to
+`unraising_call_in_raw` holds `raw` and its modules to what they are. A
+read of `nupur_sys::read` in `raw` outside `call`, or a `call` that protects
+nothing, means the table and the code disagree. A read that raises nothing belongs to `rb::value`, to
 `rb::object` for an object's ivars and class, or to `rb::method` for the
 current frame.
 
@@ -413,7 +413,8 @@ stable API, the C globals that hold a class) are `nupur_sys::read`'s, and
 each takes `nupur_sys`'s own proof, a `&Gvl`. Nupur lends one from a `Ruby`
 (`Ruby::gvl`), from a Ruby value (`rb::value::gvl_of`: a value exists only
 where the GVL is held, and is `!Send`), and inside the protection
-(`Protected::gvl`). `Gvl::assume`, the `unsafe fn` that makes one, is held
+(`Protected::gvl`), each for the borrow of what it came from, so a proof
+cannot be kept past its source. `Gvl::assume`, the `unsafe fn` that makes one, is held
 by `gvl_token_outside_entry` to those places and to the GC's callbacks. A
 function that can raise only outside a precondition (`rb_enc_get` of a
 non-String) has a wrapper named for it, whose contract each caller upholds
@@ -430,11 +431,11 @@ which only a trampoline's raise may call. A String made in place is
 ### Where a raw `VALUE` may appear
 
 A raw `VALUE` is an integer to Rust, which no lint can tell from a `u64` in
-a `Vec`. It is spelled, or read from a C global of Ruby's (`rb_cObject`),
-only in `nupur_sys` and in Nupur's `raw/`, `typed/` and the `bridge::rb`
-files that are the typed values. `rake dylint`'s `raw_ruby_outside_bridge` enforces this, and
-also fails on any `rb_sys::` outside `nupur`, which it counts as part of
-the bridge. The extension has no rb-sys dependency, so its `bridge/` names
+a `Vec`. It is spelled, or read from a C global of Ruby's
+(`nupur_sys::read::rb_cObject`), only in `nupur_sys` and in Nupur's
+`raw/`, `typed/` and the `bridge::rb` files that are the typed values.
+`rake dylint`'s `raw_ruby_outside_bridge` enforces this, and also fails on
+any `rb_sys::` outside the layer, which it counts as part of the bridge. The extension has no rb-sys dependency, so its `bridge/` names
 none.
 
 Everything else therefore holds typed values, and `TypedType::wrap` is safe
