@@ -2,25 +2,23 @@
 //! the entries Ruby calls.
 //!
 //! A `Ruby` is the proof that the thread holds the GVL, and every function
-//! that calls Ruby takes one (`ffi_without_gvl_proof`). It is made by
-//! `Ruby::get_unchecked`, whose contract is that very fact, and handed down
-//! from the two entries Ruby itself calls with the GVL held: a method's
+//! that calls Ruby takes one (`ffi_without_gvl_proof`). It is made only by
+//! `rb::method`'s private `entry_token` - the compiler holds that, not this
+//! lint - for the two entries Ruby itself calls with the GVL held: a method's
 //! trampoline (`rb::method::finish`, `finish_cary`) and the extension's
-//! `Init_` (`rb::method::run_init`). The four are `unsafe fn`, so a call
-//! needs an `unsafe` block - but a file that may hold one could still make a
-//! token where no GVL is held, and only a count of its `unsafe` blocks would
-//! change. So each is held to its one place:
+//! `Init_` (`rb::method::run_init`). Those are `pub`, for the macros'
+//! expansion in the extension, and `unsafe fn`, so a call needs an `unsafe`
+//! block - but a file that may hold one could still make a token where no
+//! GVL is held. Whether Ruby called the code in is a fact about the caller,
+//! which no type states, so each is held to its one place here:
 //!
-//! - `get_unchecked`: in `nupur::rb::method`, where the entries are;
 //! - `finish` / `finish_cary`: in the expansion of nupur's `method!` /
 //!   `function!` (`__trampoline!`), the trampolines Ruby is handed (and
 //!   `finish` in `finish_cary`, beside it);
 //! - `run_init`: in an `extern "C"` function named `Init_*`, which Ruby
-//!   calls as the extension loads.
-//!
-//! `nupur_sys`'s own token, which its calls that take no value take, is held
-//! the same way, to the functions named in `GVL_ASSUMERS`: Nupur's
-//! `Ruby::get_unchecked`, and the GC's free callbacks.
+//!   calls as the extension loads;
+//! - `nupur_sys`'s own maker, `nupur_sys::value::Ruby::get_unchecked`, which
+//!   is `pub` for Nupur: in `entry_token` alone (`GVL_ASSUMERS`).
 
 use clippy_utils::diagnostics::span_lint_and_help;
 use rustc_hir::Expr;
@@ -32,22 +30,17 @@ use crate::paths::{callee, is_extension, module_of, path_of};
 
 /// `Ruby::get_unchecked`, as `path_of` spells it: an inherent `impl` block
 /// is an unnamed part of the path.
-const GET_UNCHECKED: &str = "nupur::rb::ruby::get_unchecked";
 const TRAMPOLINES: &[&str] = &[
     "nupur::rb::method::finish",
     "nupur::rb::method::finish_cary",
 ];
 const RUN_INIT: &str = "nupur::rb::method::run_init";
-/// `nupur_sys`'s GVL token, made on the caller's word, and the functions
-/// that may make it - the maker of Nupur's own token, `Ruby::get_unchecked`
-/// (itself held to `rb::method` above), and the GC's free callbacks, entries
-/// Ruby calls with the GVL held, which make it once and hand it down.
+/// `nupur_sys`'s GVL token, made on the caller's word, and the one function
+/// that may make it: Nupur's own maker, private to `rb::method`. (The GC's
+/// callbacks make none: their calls of Ruby's C are `unsafe fn`s whose
+/// contract is the callback.)
 const GVL_ASSUME: &str = "nupur_sys::value::get_unchecked";
-const GVL_ASSUMERS: &[&str] = &[
-    "nupur::rb::ruby::get_unchecked",
-    "nupur::typed::callbacks::free_cb",
-    "nupur::typed::callbacks::free_embedded_cb",
-];
+const GVL_ASSUMERS: &[&str] = &["nupur::rb::method::entry_token"];
 /// The macros of nupur's whose expansion is a trampoline, by name: a
 /// `#[macro_export]` macro is named at the crate's root but defined where it
 /// is written, so it is matched by its crate and its name.
@@ -61,9 +54,7 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         return;
     };
     let target = path_of(cx, did);
-    let allowed = if target == GET_UNCHECKED {
-        module_of(cx, expr.hir_id) == "nupur::rb::method"
-    } else if TRAMPOLINES.contains(&target.as_str()) {
+    let allowed = if TRAMPOLINES.contains(&target.as_str()) {
         /* `finish_cary` is `finish` for an arity -1 method, beside it. */
         from_trampoline_macro(cx, expr.span) || module_of(cx, expr.hir_id) == "nupur::rb::method"
     } else if target == RUN_INIT {
@@ -83,9 +74,9 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         format!("`{target}` outside the entry Ruby calls it from"),
         None,
         "a `Ruby` token is made only where Ruby calls in with the GVL held: \
-         `get_unchecked` in `rb::method`, `finish` in a `method!` / `function!` \
-         trampoline, `run_init` in the extension's `extern \"C\" fn Init_*`; and \
-         `nupur_sys`'s token only where Nupur has one to show (GVL_ASSUMERS)",
+         `finish` in a `method!` / `function!` trampoline, `run_init` in the \
+         extension's `extern \"C\" fn Init_*`, and `nupur_sys`'s maker in \
+         `rb::method::entry_token` alone (GVL_ASSUMERS)",
     );
 }
 

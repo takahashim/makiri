@@ -109,9 +109,11 @@ reason. The lints:
 - `c_integer_outside_int`: an integer `as` or a named `c_long` at the Ruby
   boundary outside `nupur_sys::int`.
 - `gvl_token_outside_entry`: the GVL's token, `Ruby`, made anywhere but where
-  Ruby calls in - `get_unchecked` (crate-private) in `rb::method`, `finish` in
-  a `method!` / `function!` expansion, `run_init` in an
-  `extern "C" fn Init_*`.
+  Ruby calls in - `finish` in a `method!` / `function!` expansion, `run_init`
+  in an `extern "C" fn Init_*`, and `nupur_sys`'s maker in
+  `rb::method::entry_token` alone. That the token is made by `entry_token`
+  and nowhere else in Nupur is the compiler's (it is private to
+  `rb::method`); the lint holds what no type can - that Ruby called in.
 - `forgotten_handle`: a `Typed` / `Kept` given to `mem::forget` or
   `ManuallyDrop`. A handle is the only way to a payload.
 

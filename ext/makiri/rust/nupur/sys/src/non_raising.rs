@@ -64,7 +64,6 @@ reads! {
     fn rb_usascii_encindex() -> c_int;
     fn rb_utf8_encindex() -> c_int;
     fn rb_utf8_encoding() -> *mut rb_encoding;
-    fn ruby_xfree(ptr: *mut c_void);
 }
 
 /// `rb_enc_to_index`: an encoding's index - a read of the encoding's own
@@ -482,6 +481,42 @@ pub unsafe fn str_empty_unfrozen(str: Value) {
 pub unsafe fn gc_mark_in_dmark(root: Root) {
     // SAFETY: the contract.
     unsafe { rb_sys::rb_gc_mark(root.as_raw()) }
+}
+
+/// `rb_gc_adjust_memory_usage(-n)`, from a TypedData type's free callback:
+/// give back the `n` bytes the object had reported, as Ruby's own `xfree`
+/// does from there. Takes no token: the callback is an entry Ruby calls,
+/// and its contract is what proves the GVL.
+///
+/// # Safety
+///
+/// Called from a `dfree` callback, which the GC runs on a Ruby thread
+/// holding the GVL.
+#[inline(always)]
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(ffi_without_gvl_proof, reason = "the dfree contract is the proof")
+)]
+pub unsafe fn gc_give_back_in_dfree(n: ssize_t) {
+    // SAFETY: the contract; a counter adjustment that only subtracts.
+    unsafe { rb_sys::rb_gc_adjust_memory_usage(n.saturating_neg()) }
+}
+
+/// `ruby_xfree`, from a TypedData type's free callback: free the data
+/// `rb_data_typed_object_zalloc`'s `xcalloc` made.
+///
+/// # Safety
+///
+/// Called from a `dfree` callback (as [`gc_give_back_in_dfree`]), on that
+/// object's data, once.
+#[inline(always)]
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(ffi_without_gvl_proof, reason = "the dfree contract is the proof")
+)]
+pub unsafe fn xfree_in_dfree(ptr: *mut c_void) {
+    // SAFETY: the contract.
+    unsafe { rb_sys::ruby_xfree(ptr) }
 }
 
 /// The running Ruby's API `MAJOR.MINOR`, read from the `ruby_api_version`

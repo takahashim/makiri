@@ -28,6 +28,18 @@ use super::error::Error;
 use super::ruby::Ruby;
 use super::value::Value;
 
+/// The token, made where Ruby has called in with the GVL held: private to
+/// this module, so only its two entries, [`finish`] and [`run_init`], can make
+/// one - the compiler's rule, not a lint's.
+///
+/// # Safety
+/// On a Ruby thread holding the GVL.
+#[inline(always)]
+unsafe fn entry_token() -> Ruby {
+    // SAFETY: the caller's.
+    Ruby(unsafe { nupur_sys::value::Ruby::get_unchecked() })
+}
+
 /// A trampoline and its arity, for `define_method` and its kin.
 #[derive(Clone, Copy)]
 pub struct Func {
@@ -58,7 +70,7 @@ pub unsafe fn finish(f: impl FnOnce(&Ruby) -> Result<Value, Error>) -> Value {
     crate::no_unwind::must_not_unwind::<crate::no_unwind::Method, _>(|| {
         // SAFETY: only a trampoline Ruby calls runs this: its thread, the GVL
         // held. The one token a method's body sees is this one.
-        let ruby = unsafe { Ruby::get_unchecked() };
+        let ruby = unsafe { entry_token() };
         /* A method starts with no exit pending: every trampoline resumes its
          * own before it returns (below, and `Error::raise`), so this only
          * makes sure. */
@@ -433,7 +445,7 @@ pub unsafe fn run_init(
 ) {
     crate::no_unwind::must_not_unwind::<crate::no_unwind::Init, _>(|| {
         // SAFETY: Ruby calls an extension's `Init_` on its thread, with the GVL.
-        let ruby = unsafe { Ruby::get_unchecked() };
+        let ruby = unsafe { entry_token() };
         let msg = match std::panic::catch_unwind(AssertUnwindSafe(|| check(&ruby))) {
             Ok(Ok(())) => match std::panic::catch_unwind(AssertUnwindSafe(|| {
                 /* What the layer asks Ruby once, before any of the extension

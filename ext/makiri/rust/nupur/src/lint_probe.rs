@@ -29,9 +29,6 @@ struct SysKept {
 #[allow(unsafe_code)]
 #[rustfmt::skip] // keeps each marker on the line reported
 mod entry {
-    fn token() {
-        let _ = unsafe { crate::rb::Ruby::get_unchecked() }; //~ gvl_token_outside_entry
-    }
 
     fn trampoline() -> crate::rb::Value {
         unsafe { crate::rb::method::finish(|ruby| Ok(ruby.qnil())) } //~ gvl_token_outside_entry

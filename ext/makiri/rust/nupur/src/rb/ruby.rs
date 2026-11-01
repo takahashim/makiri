@@ -17,7 +17,10 @@ use super::value::{ExceptionClass, RClass, RModule, Value};
 /// [`Error`]: super::error::Error
 ///
 /// `nupur_sys`'s token underneath, which its calls that take no value take.
-pub struct Ruby(nupur_sys::value::Ruby);
+///
+/// The field is `rb`'s, so the one maker, `rb::method`'s private
+/// `entry_token`, can build one: no other module of the layer can.
+pub struct Ruby(pub(super) nupur_sys::value::Ruby);
 
 macro_rules! globals {
     ($kind:ident: $($method:ident => $global:ident),* $(,)?) => {
@@ -33,18 +36,6 @@ macro_rules! globals {
 }
 
 impl Ruby {
-    /// The token, unchecked: the layer's own, called by the two entries Ruby
-    /// calls with the GVL held (`rb::method`'s `finish` and `run_init`) and
-    /// nowhere else (`rake dylint`'s `gvl_token_outside_entry`).
-    ///
-    /// # Safety
-    /// On a Ruby thread holding the GVL.
-    #[inline]
-    pub(crate) unsafe fn get_unchecked() -> Ruby {
-        // SAFETY: the caller's.
-        Ruby(unsafe { nupur_sys::value::Ruby::get_unchecked() })
-    }
-
     /// `nupur_sys`'s token, for its calls.
     #[inline(always)]
     pub(crate) fn sys(&self) -> &nupur_sys::value::Ruby {

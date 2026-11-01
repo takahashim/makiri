@@ -420,9 +420,14 @@ only where the GVL is held, and is `!Send`), or, for a read of no value, the
 token (`nupur_sys::value::Ruby`, which Nupur's `Ruby` holds). So a read of a
 value needs nothing beside it, and a read that only needs the value to be
 live is safe: `nil_p(v)`, `rb_type(v)`. A value or the protection lends the
-token (`Value::ruby`, `Protected::ruby`) for its borrow. The token's maker
-is held by `gvl_token_outside_entry` to Nupur's `Ruby`, the GC's callbacks
-and an `Encoding`. A
+token (`Value::ruby`, `Protected::ruby`) for its borrow. Nupur makes its
+own token in one function, `rb::method`'s private `entry_token`, which only
+the two entries (`finish`, `run_init`) call; that is the compiler's
+privacy, and `gvl_token_outside_entry` holds the rest - `finish` and
+`run_init` to where Ruby calls in, and `nupur_sys`'s maker to `entry_token`.
+The GC's callbacks make no token: their calls of Ruby's C
+(`gc_mark_in_dmark`, `gc_give_back_in_dfree`, `xfree_in_dfree`) are
+`unsafe fn`s whose contract is the callback. A
 function that can raise only outside a precondition (`rb_enc_get` of a
 non-String) has a wrapper named for it, whose contract each caller upholds
 (see "Raises ruled out at one call site").
