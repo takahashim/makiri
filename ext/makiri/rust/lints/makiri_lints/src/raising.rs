@@ -187,7 +187,9 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
             expr.span.source_callsite(),
             format!("`{name}` cannot raise, and is wrapped to take the protection's token"),
             None,
-            "nupur_sys::raising holds the C calls that can raise; one that cannot needs no              rb_protect - or it is missing from makiri_lints' tables the other way (NON_RAISING              or REVIEWED lists it)",
+            "nupur_sys::raising holds the C calls that can raise; one that cannot needs no \
+             rb_protect - or it is missing from makiri_lints' tables the other way (NON_RAISING \
+             or REVIEWED lists it)",
         );
     }
 }

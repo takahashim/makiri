@@ -34,19 +34,20 @@ use crate::paths::{NUPUR, NUPUR_SYS, module_of, ours, path_of, within};
 /// extension's Ruby boundary, bar the module that converts. The self-tests'
 /// probes are in both crates.
 fn held(module: &str) -> bool {
-    /* `nupur_sys::raising` and `read` restate the C signatures, `long`s and
-     * all, and convert nothing: the conversions are still
-     * `nupur_sys::int`'s. */
-    if !ours(module)
-        || within(module, "nupur_sys::int")
-        || within(module, "nupur_sys::raising")
-        || within(module, "nupur_sys::read")
-    {
+    if !ours(module) || within(module, "nupur_sys::int") {
         return false;
     }
     [NUPUR, NUPUR_SYS, "bridge", "glue", "init", "lint_probe"]
         .iter()
         .any(|m| within(module, m))
+}
+
+/// Whether code in `module` may not name `c_long` / `c_ulong`: [`held`],
+/// bar `nupur_sys::raising` and `read`, which restate the C signatures,
+/// `long`s and all. They still may not cast: the conversions are
+/// `nupur_sys::int`'s.
+fn held_to_naming(module: &str) -> bool {
+    held(module) && !within(module, "nupur_sys::raising") && !within(module, "nupur_sys::read")
 }
 
 pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
@@ -85,7 +86,9 @@ pub fn check_path(cx: &LateContext<'_>, path: &Path<'_>, hir_id: HirId) {
     if !matches!(krate, "core" | "std") || !matches!(name.as_str(), "c_long" | "c_ulong") {
         return;
     }
-    if path.span.in_external_macro(cx.tcx.sess.source_map()) || !held(&module_of(cx, hir_id)) {
+    if path.span.in_external_macro(cx.tcx.sess.source_map())
+        || !held_to_naming(&module_of(cx, hir_id))
+    {
         return;
     }
     span_lint_and_help(

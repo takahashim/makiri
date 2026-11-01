@@ -62,7 +62,7 @@ mod handles {
     }
 }
 
-/// A C integer at the Ruby boundary outside `nupur::int`
+/// A C integer at the Ruby boundary outside `nupur_sys::int`
 /// (`c_integer_outside_int`): an integer `as` cast - which the lint sees
 /// even where `c_long` is `i64` itself - and `c_long` named; a `TryFrom`
 /// passes.

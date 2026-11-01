@@ -28,7 +28,7 @@
 //! - `ruby_value_on_heap` ([`value_on_heap`]): a Ruby value kept where Ruby's
 //!   GC cannot see it.
 //! - `c_integer_outside_int` ([`c_integer`]): an integer `as` cast, or a C
-//!   `long` named, at the Ruby boundary outside `nupur::int`.
+//!   `long` named, at the Ruby boundary outside `nupur_sys::int`.
 //! - From [`boundaries`]: `raw_ruby_outside_bridge`'s half that holds a raw
 //!   `VALUE` to the layer's files, `runs_callers_ruby` and
 //!   `ruby_in_gvl_released_body`.
@@ -256,16 +256,16 @@ declare_lint! {
 declare_lint! {
     /// ### What it does
     /// Reports, in the binding layer and the extension's Ruby boundary
-    /// (`bridge`, `glue`, `init`) outside `nupur::int`, an `as` cast between
+    /// (`bridge`, `glue`, `init`) outside `nupur_sys::int`, an `as` cast between
     /// integer types and any naming of `c_long` / `c_ulong`.
     ///
     /// ### Why is this bad?
     /// A C `long` is 32 bits on Windows and 64 where the code is linted, where
     /// `c_long` is `i64` itself - so a truncation there is invisible to rustc
-    /// and clippy alike. The conversions are written once, in `nupur::int`.
+    /// and clippy alike. The conversions are written once, in `nupur_sys::int`.
     pub C_INTEGER_OUTSIDE_INT,
     Deny,
-    "an integer cast or a C long at the Ruby boundary outside nupur::int"
+    "an integer cast or a C long at the Ruby boundary outside nupur_sys::int"
 }
 
 declare_lint! {

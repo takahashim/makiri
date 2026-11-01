@@ -12,7 +12,6 @@
 //! [`call`]; `rake dylint` holds it to that (`unraising_call_in_raw`).
 
 #![allow(unsafe_code)]
-#![allow(clippy::missing_safety_doc)]
 
 use core::ffi::c_int;
 

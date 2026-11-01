@@ -81,7 +81,11 @@ DYLINT_NUPUR = %w[cargo dylint --path lints/makiri_lints --no-deps -- -p nupur
                   --features alloc-inject].freeze
 # The crate under it that alone depends on rb-sys (`nupur/sys/`): the
 # protect thunk, `$!` and the `no_unwind` guards, held to the layer's rules.
-DYLINT_NUPUR_SYS = %w[cargo dylint --path lints/makiri_lints --no-deps -- -p nupur_sys].freeze
+# With `alloc-inject` on, as nupur's run: the raise hook's armed path
+# (`protect::injected_raise`, `set_raise_injector`) lives here now, and
+# nupur's run, being `--no-deps`, does not lint it.
+DYLINT_NUPUR_SYS = %w[cargo dylint --path lints/makiri_lints --no-deps -- -p nupur_sys
+                      --features alloc-inject].freeze
 
 desc "Run the crate's own lint (makiri_lints; needs cargo-dylint and its nightly)"
 task :dylint do
