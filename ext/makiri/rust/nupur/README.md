@@ -48,11 +48,15 @@ that breaks one does not compile. `src/lib.rs` states each in full.
   private `entry_token`, which only the entries Ruby calls use.
 - **No Ruby value is held as an integer.** `nupur_sys` re-exports no
   `VALUE`, and keeps the conversions between a value and its word to itself.
-- **A wrapped object's Ruby values are its slots.** A payload holds no Ruby
-  value. The slots (`nupur_sys::value::Root`) are written once, when the
-  object is made, and Nupur's mark callback marks them. A payload is reached
-  only through a `typed::Typed` handle, which keeps the object alive while
-  its data is borrowed.
+- **The GC sees every Ruby value a wrapped object keeps.** The GC cannot
+  see into a wrapped object's Rust data, so a value the object keeps alive
+  (a Makiri node keeps its Document) must be reported by its mark callback.
+  Nupur keeps such values in slots (`nupur_sys::value::Root`), never in the
+  Rust data, and marks them itself: an extension writes no mark function,
+  so it cannot forget one.
+- **A wrapped object outlives the borrow of its data.** The data is reached
+  only through a `typed::Typed` handle, which keeps the object alive until
+  the last borrow ends.
 - **A String is read by copying.** No slice of one is handed out. Text is a
   copy checked to be UTF-8 by std's validator, never trusted from the
   String's cached coderange.
