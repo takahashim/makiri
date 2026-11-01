@@ -17,6 +17,7 @@ harnesses, which could check only short inputs or ran out of memory.
 | `swar.rs` | `engine/src/swar.rs` (`word`, `has_zero`), the tokenizer's `seek4` | The word-at-a-time skip passes no byte it looks for and never runs past `end`, whatever the word |
 | `source_lines.rs` | `engine/src/source_lines.rs` (`lines_build`) | The line table is exactly 0 and the offset past each newline, in order |
 | `xml_expand.rs` | `engine/src/xml/chars/expand.rs` | A character reference answers its digits' exact value or is refused, never wrapped; `expand_into` writes no more than it reads, so never `Overflow` |
+| `int.rs` | `nupur/src/int.rs` | At both widths of a C `long` (32 bits on Windows, 64 elsewhere): `fixable_in` / `posfixable_in` answer exactly a Fixnum's range, with the value; a Fixnum's bits carry the flag and shift back to the `long`; `len` and `capacity` never truncate |
 
 Each file's module comment states its claims in full.
 
@@ -29,6 +30,13 @@ each copied body matches the source token for token. A change to a covered
 function therefore fails `rake verus` until the copy, and the proof, are
 redone. The copies are listed in `rakelib/verus.rake` (`VERUS_COPIES`).
 
+A proof may hold a function more than once: `int.rs` copies each conversion
+into one module per width of a C `long`, each naming the width with a type
+alias, and every copy must match. One more thing is dropped before the
+comparison: a `#[verifier::truncate]` and the parentheses around its cast.
+The attribute tells Verus that the cast wraps, which is what `as` does, so
+it changes nothing that runs.
+
 ## Vacuity checks
 
 A proof whose assumptions are too strong proves anything, and still reports
@@ -37,7 +45,8 @@ success. `rake verus` checks for that in two ways:
 - **What each proof trusts is pinned.** `VERUS_TRUSTED` records how many
   `#[verifier::external_body]`, `assume_specification`, `assume(` and
   `admit()` each file holds (`ptr_table.rs` and `ceiling_buf.rs` 4 each,
-  `xml_expand.rs` 3, `source_lines.rs` 1, the others 0). A change to a count fails the task until the record is updated.
+  `xml_expand.rs` 3, `source_lines.rs` and `int.rs` 1 each, the others
+  0). A change to a count fails the task until the record is updated.
 - **Canaries must fail.** Each `// [canary]` line marks a point the proved
   code reaches. The task makes a variant of the file with `assert(false)` at
   one mark at a time, and `canaries/<proof>` adds functions that call the

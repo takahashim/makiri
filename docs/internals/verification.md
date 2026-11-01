@@ -222,7 +222,8 @@ it, against vstd's own statement of UTF-8 (`vstd::utf8`); the XML character
 classes' inclusions (NameStartChar in NameChar in Char); the XPath
 Number gate `xpath::number::extent`; and the word-at-a-time scans, the
 tokenizer's `seek4` and the line table's `lines_build`, whose bit tricks no
-test can cover word by word; and the XML reference expander, whose character
+test can cover word by word; Nupur's C-integer conversions, at both widths
+of a C `long`; and the XML reference expander, whose character
 references never wrap and whose output is never longer than its input. Each
 is copied and checked against the
 source (`verus:sync`).

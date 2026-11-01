@@ -475,7 +475,9 @@ follow the `long` too: a Fixnum is 2^30 - 1 at most on Windows. Each Windows
 bug used to be found by review.
 
 `int` writes the rules once over a `Long` of either width, tested at both on
-any machine and held to rb-sys's `FIXNUM_MAX` / `fixable`. Outside it,
+any machine and held to rb-sys's `FIXNUM_MAX` / `fixable`. Verus proves
+them at both widths for every input (`verus/int.rs`): the Fixnum range,
+the Fixnum's bits, a length and a capacity. Outside it,
 `rake dylint`'s `c_integer_outside_int` refuses an integer `as` cast and any
 naming of `c_long` / `c_ulong` in Nupur and in `bridge` / `glue` / `init`.
 Convert with `From` / `TryFrom`; a length is a `usize`, an index an `i64`.

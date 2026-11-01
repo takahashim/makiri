@@ -5,7 +5,7 @@
 # buffer, the work budgets' one rule, the strict UTF-8 decoder with the XML
 # Char scan, the XML character classes, the XPath Number gate, the
 # word-at-a-time scans (the tokenizer's seek4, the line table), and the XML
-# reference expander. The copies are checked
+# reference expander, and Nupur's C-integer conversions. The copies are checked
 # against the source first - every line only Verus needs ends in `// [verus]`,
 # and the rest of the body must be the source's, token for token - so a
 # change to `grow_capacity` fails here until the proof is redone. VERUS names
@@ -47,6 +47,10 @@ VERUS_COPIES = [
   ["ext/makiri/rust/engine/src/ceiling_buf.rs", "ext/makiri/rust/verus/ceiling_buf.rs", "copy_small"],
   # nupur's copy of it, which writes a String in place (`utf8_str_filled`).
   ["ext/makiri/rust/nupur/src/string/make.rs", "ext/makiri/rust/verus/ceiling_buf.rs", "copy_small"],
+  # Nupur's C-integer conversions, one copy per width of a C `long`.
+  *%w[fixable_in posfixable_in fixnum_bits len capacity].map do |name|
+    ["ext/makiri/rust/nupur/src/int.rs", "ext/makiri/rust/verus/int.rs", name]
+  end,
   *%w[as_slice append append_growing raise_limit reserve steal content_limit
       content_limit_for grow_to].map do |name|
     ["ext/makiri/rust/engine/src/ceiling_buf.rs", "ext/makiri/rust/verus/ceiling_buf.rs", "Buf::#{name}"]
@@ -54,19 +58,36 @@ VERUS_COPIES = [
 ].freeze
 # The files `rake verus` verifies.
 VERUS_PROOFS = %w[ptr_table.rs ceiling_buf.rs limits.rs utf8.rs xpath_number.rs xml_chars.rs swar.rs
-                     source_lines.rs xml_expand.rs].freeze
+                     source_lines.rs xml_expand.rs int.rs].freeze
 
-# The body of `fn name` in `src` - `Type::name` for the one in `impl ... Type`
-# - as tokens: lines marked `// [verus]` and
-# comments (line and block) dropped, from the brace that opens the body to the one closing it,
+# The bodies of every `fn name` in `src` - `Type::name` for the ones in
+# `impl ... Type` - as tokens: lines marked `// [verus]` and comments (line
+# and block) dropped, from the brace that opens a body to the one closing it,
 # and a trailing comma before a closing bracket dropped too - `cargo fmt`
-# adds one when it breaks a call across lines, and it changes nothing.
-def verus_body_tokens(src, name)
+# adds one when it breaks a call across lines, and it changes nothing. A
+# proof may hold several copies of one function (`int.rs` holds one per width
+# of a C `long`); each must be the source's.
+#
+# A `#[verifier::truncate]` and the parentheses it needs around its cast are
+# dropped as well: the attribute tells Verus that the cast wraps, which is
+# what `as` does in Rust, and changes nothing that runs.
+def verus_bodies(src, name, all: false)
   text = src.lines.reject { |l| l.rstrip.end_with?("// [verus]") }
             .map { |l| l.sub(%r{//.*$}, "") }.join.gsub(%r{/\*.*?\*/}m, " ")
   type, name = name.include?("::") ? name.split("::", 2) : [nil, name]
-  from = type ? (text.index(/^impl\b[^{]*\b#{Regexp.escape(type)}\b\s*[<{]/) or return nil) : 0
-  at = text.index(/\bfn\s+#{Regexp.escape(name)}\b/, from) or return nil
+  fn = /\bfn\s+#{Regexp.escape(name)}\b/
+  ats = if type
+          from = text.index(/^\s*impl\b[^{]*\b#{Regexp.escape(type)}\b\s*[<{]/) or return []
+          [text.index(fn, from)].compact
+        elsif all
+          text.enum_for(:scan, fn).map { Regexp.last_match.begin(0) }
+        else
+          [text.index(fn)].compact
+        end
+  ats.filter_map { |at| verus_body_at(text, at) }
+end
+
+def verus_body_at(text, at)
   open = text.index("{", at) or return nil
   depth = 0
   close = (open...text.length).find do |i|
@@ -76,17 +97,50 @@ def verus_body_tokens(src, name)
   end
   return nil unless close
 
-  toks = text[open..close].scan(/\w+|[^\s\w]/)
+  toks = verus_drop_truncate(text[open..close].scan(/\w+|[^\s\w]/))
   toks.each_index.reject { |i| toks[i] == "," && ")]}".include?(toks[i + 1].to_s) }.map { |i| toks[i] }
+end
+
+VERUS_TRUNCATE = %w[# \[ verifier : : truncate \] (].freeze
+
+def verus_drop_truncate(toks)
+  out = []
+  closes = [] # depths at which a dropped `(` closes
+  depth = 0
+  i = 0
+  while i < toks.length
+    if toks[i, VERUS_TRUNCATE.length] == VERUS_TRUNCATE
+      depth += 1
+      closes << depth
+      i += VERUS_TRUNCATE.length
+      next
+    end
+    t = toks[i]
+    if t == "("
+      depth += 1
+    elsif t == ")"
+      if closes.last == depth
+        closes.pop
+        depth -= 1
+        i += 1
+        next
+      end
+      depth -= 1
+    end
+    out << t
+    i += 1
+  end
+  out
 end
 
 namespace :verus do
   desc "Check that the Verus copies match the source they were copied from"
   task :sync do
     VERUS_COPIES.each do |source, copy, name|
-      want = verus_body_tokens(File.read(source), name) or abort "verus: no fn #{name} in #{source}"
-      got = verus_body_tokens(File.read(copy), name) or abort "verus: no fn #{name} in #{copy}"
-      next if want == got
+      want = verus_bodies(File.read(source), name).first or abort "verus: no fn #{name} in #{source}"
+      got = verus_bodies(File.read(copy), name, all: true)
+      abort "verus: no fn #{name} in #{copy}" if got.empty?
+      next if got.all?(want)
 
       abort "verus: #{copy}'s #{name} is not #{source}'s - redo the copy and its proof"
     end
@@ -101,7 +155,8 @@ end
 # purpose. The canaries may hold none.
 VERUS_TRUSTED = { "ptr_table.rs" => 4, "ceiling_buf.rs" => 4, "limits.rs" => 0, "utf8.rs" => 0,
                   "xpath_number.rs" => 0, "xml_chars.rs" => 0,
-                  "swar.rs" => 0, "source_lines.rs" => 1, "xml_expand.rs" => 3 }.freeze
+                  "swar.rs" => 0, "source_lines.rs" => 1, "xml_expand.rs" => 3,
+                  "int.rs" => 1 }.freeze
 # Verus's `admit()` takes no argument, which tells it from a function named
 # `admit` (`limits.rs`).
 VERUS_TRUST = /#\[verifier::external(?:_body)?\]|\bassume_specification\b|\bassume\(|\badmit\(\s*\)/
