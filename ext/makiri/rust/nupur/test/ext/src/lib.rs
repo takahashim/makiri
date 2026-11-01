@@ -7,7 +7,8 @@ use core::cell::Cell;
 use nupur::args::{integer_arg, string_arg, Kwargs, Shape};
 use nupur::encoding::Unconvertible;
 use nupur::rb::{
-    prelude::*, Builtin, DataClass, Error, ExceptionClass, RArray, RHash, RbConst, Ruby, Value,
+    prelude::*, Builtin, DataClass, Error, ExceptionClass, Float, RArray, RHash, RbConst, Ruby,
+    Value,
 };
 use nupur::string::{ReadError, Transcode};
 use nupur::typed::{Birth, Payload, TypedType};
@@ -197,6 +198,29 @@ fn frozen_check(_: &Ruby, v: Value) -> Result<(), Error> {
     v.check_frozen()
 }
 
+/* ---- immediates and numbers ---- */
+
+/// `[true, false]`, from `Ruby::qtrue` and `Ruby::qfalse`.
+fn booleans(ruby: &Ruby) -> Result<Value, Error> {
+    let out: RArray = nupur::build::ary(ruby, 2)?;
+    nupur::build::push(out, ruby.qtrue())?;
+    nupur::build::push(out, ruby.qfalse())?;
+    Ok(out.as_value())
+}
+
+/// `n` through `Integer::to_usize`: a negative `n`, or one past a `usize`,
+/// is `RangeError`.
+fn usize_of(_: &Ruby, n: Value) -> Result<usize, Error> {
+    integer_arg(n)?.to_usize()
+}
+
+/// The bits of `x` through `Float::to_f64`, so the spec compares them
+/// exactly (a NaN, a -0.0).
+fn f64_bits_of(_: &Ruby, x: Value) -> Result<u64, Error> {
+    let x = Float::from_value(x).ok_or_else(|| nupur::rb::error::type_error("a Float"))?;
+    Ok(x.to_f64().to_bits())
+}
+
 /* ---- Init ---- */
 
 static INTERNAL: RbConst<ExceptionClass> = RbConst::new();
@@ -236,6 +260,9 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     m.define_module_function("pairs", function!(pairs, 1))?;
     m.define_module_function("sum_without_gvl", function!(sum_without_gvl, 1))?;
     m.define_module_function("frozen_check", function!(frozen_check, 1))?;
+    m.define_module_function("booleans", function!(booleans, 0))?;
+    m.define_module_function("usize_of", function!(usize_of, 1))?;
+    m.define_module_function("f64_bits_of", function!(f64_bits_of, 1))?;
     Ok(())
 }
 

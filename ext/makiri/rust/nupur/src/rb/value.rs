@@ -25,7 +25,7 @@ use super::ruby::Ruby;
 
 // What a String's header says of it: its coderange, encoding index, class.
 mod header;
-pub use header::Coderange;
+pub(crate) use header::Coderange;
 
 /// Any Ruby value.
 #[derive(Clone, Copy)]

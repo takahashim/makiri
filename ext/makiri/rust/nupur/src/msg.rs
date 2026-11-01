@@ -34,7 +34,7 @@ impl Msg {
 
     /// `args`, written out.
     #[inline]
-    pub fn format(args: fmt::Arguments<'_>) -> Msg {
+    pub(crate) fn format(args: fmt::Arguments<'_>) -> Msg {
         let mut m = Msg::EMPTY;
         /* A `Display` that fails leaves what it wrote; the message is still
          * worth raising. */
