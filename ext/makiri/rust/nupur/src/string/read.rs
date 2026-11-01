@@ -78,7 +78,9 @@ impl RString {
             crate::rb::value::Coderange::SevenBit => true,
             /* Valid for its own encoding, which has to be UTF-8 for that to
              * mean valid UTF-8 - asked by index, from the flags. */
-            crate::rb::value::Coderange::Valid => crate::encoding::is_utf8_index(self.encoding_index()),
+            crate::rb::value::Coderange::Valid => {
+                crate::encoding::is_utf8_index(self.encoding_index())
+            }
             _ => false,
         }
     }
