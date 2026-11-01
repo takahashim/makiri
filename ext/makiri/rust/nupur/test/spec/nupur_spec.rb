@@ -209,4 +209,25 @@ RSpec.describe "nupur" do
       expect { NupurTest.frozen_check("x".freeze) }.to raise_error(FrozenError)
     end
   end
+
+  describe "immediates and numbers" do
+    it "makes true and false" do
+      expect(NupurTest.booleans).to eq([true, false])
+    end
+
+    it "reads an Integer as a usize, refusing a negative one and one past it" do
+      expect(NupurTest.usize_of(0)).to eq(0)
+      expect(NupurTest.usize_of(2**62)).to eq(2**62)
+      expect(NupurTest.usize_of(2**64 - 1)).to eq(2**64 - 1)
+      expect { NupurTest.usize_of(-1) }.to raise_error(RangeError)
+      expect { NupurTest.usize_of(2**64) }.to raise_error(RangeError)
+    end
+
+    it "reads a Float as an f64, bit for bit" do
+      bits = ->(x) { [x].pack("D").unpack1("Q") }
+      [0.0, -0.0, 1.5, 1e300, -2.5e-310, Float::INFINITY, Float::NAN].each do |x|
+        expect(NupurTest.f64_bits_of(x)).to eq(bits.(x))
+      end
+    end
+  end
 end
