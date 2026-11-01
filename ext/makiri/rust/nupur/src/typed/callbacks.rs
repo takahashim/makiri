@@ -24,13 +24,6 @@ use super::{Envelope, Payload};
  * callback for it today, but that is its implementation, not its documented
  * contract, and one branch here means nothing rests on it. */
 
-#[cfg_attr(
-    dylint_lib = "makiri_lints",
-    allow(
-        raising_call_outside_protect,
-        reason = "rb_gc_mark raises NoMemoryError only when the mark stack cannot grow, a longjmp this frame loses nothing to (the no_unwind guard's Drop does nothing unless unwinding) and every C extension's dmark is exposed to alike"
-    )
-)]
 pub(super) unsafe extern "C" fn mark_cb<T: Payload, const N: usize>(ptr: *mut c_void) {
     crate::no_unwind::must_not_unwind::<crate::no_unwind::GcMark, _>(|| {
         if ptr.is_null() {
@@ -42,9 +35,11 @@ pub(super) unsafe extern "C" fn mark_cb<T: Payload, const N: usize>(ptr: *mut c_
         // reading when the collector runs.
         let roots = unsafe { core::ptr::addr_of!((*(ptr as *const Envelope<T, N>)).roots).read() };
         for r in roots {
-            // SAFETY: from Ruby's mark phase, with the GVL held; a slot holds
-            // a live value (or `Qfalse`, which a mark ignores).
-            unsafe { nupur_sys::rb_gc_mark(r) };
+            // SAFETY: this is a dmark callback, in Ruby's mark phase, with the
+            // GVL held; a slot holds a live value (or `Qfalse`); and this
+            // frame loses nothing to a longjmp (the no_unwind guard's Drop
+            // does nothing unless unwinding).
+            unsafe { nupur_sys::read::gc_mark_in_dmark(nupur_sys::gvl::Gvl::assume(), r) };
         }
     })
 }

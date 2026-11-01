@@ -90,8 +90,10 @@ When a rule here changes, change its reasoning there in the same commit.
   `longjmp` over a Rust frame. Which calls raise is classified in
   `lints/makiri_lints/src/raising.rs` (`NON_RAISING`, `REVIEWED`), held to
   the vendored C API raise survey and Ruby's headers; an unclassified
-  function is refused. A call that can raise but not where we call it is an
-  `allow` at that call with its reason, never a crate-wide entry.
+  function is refused. A call that can raise but not under a precondition
+  is never a crate-wide entry: it is a `nupur_sys::read` wrapper named for
+  the precondition (`enc_get_of_string`), its `allow` at the one C call and
+  the precondition its `unsafe` contract, upheld at each call.
 - **A raw `VALUE` and `rb_sys::` stay in `nupur_sys` and in `nupur`'s
   `raw/`, `typed/` and the `bridge::rb` value files** (`raw_ruby_outside_bridge`).
   `bridge/` is `#![forbid(unsafe_code)]`; every `unsafe` that touches Ruby

@@ -1,7 +1,7 @@
 //! The native-stack check an engine's recursion counters ask
 //! (`ruby_stack_check`), handed out for a token.
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
 use crate::rb::Ruby;
 

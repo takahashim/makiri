@@ -108,16 +108,11 @@ impl Encoding {
     }
 
     /// The encoding `str` is tagged with.
-    #[cfg_attr(
-        dylint_lib = "makiri_lints",
-        allow(
-            raising_call_outside_protect,
-            reason = "rb_enc_get raises for a File (a method call) or a Symbol (a String made); `str` is a String, whose tag it reads"
-        )
-    )]
     pub fn of(str: RString) -> Encoding {
         // SAFETY: a live String, by type; reading its tag runs no Ruby.
-        Encoding(unsafe { nupur_sys::rb_enc_get(str.as_raw()) })
+        Encoding(unsafe {
+            nupur_sys::read::enc_get_of_string(crate::rb::value::gvl_of(str), str.as_raw())
+        })
     }
 
     /// UTF-8. Takes the token, as every C call of the layer that has no Ruby

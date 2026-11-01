@@ -91,14 +91,16 @@ task :dylint do
     # cargo keeps the crate's last check when only the lint library changed,
     # and dylint then answers from it - the old lints' verdict. A touch makes
     # every run check afresh.
-    FileUtils.touch("src/lib.rs")
-    FileUtils.touch("engine/src/lib.rs")
-    FileUtils.touch("nupur/src/lib.rs")
-    FileUtils.touch("nupur/sys/src/lib.rs")
-    sh(*DYLINT)
-    sh(*DYLINT_ENGINE)
-    sh(*DYLINT_NUPUR)
-    sh(*DYLINT_NUPUR_SYS)
+    #
+    # Each crate is touched just before its own run: a run checks the crates
+    # it depends on without the lints (`--no-deps`), and cargo then counts
+    # that check as fresh, so the engine's and `nupur_sys`'s own runs, after
+    # the extension's, linted nothing.
+    [["src/lib.rs", DYLINT], ["engine/src/lib.rs", DYLINT_ENGINE],
+     ["nupur/src/lib.rs", DYLINT_NUPUR], ["nupur/sys/src/lib.rs", DYLINT_NUPUR_SYS]].each do |root, cmd|
+      FileUtils.touch(root)
+      sh(*cmd)
+    end
     # The self-test, once per crate: the extension's probe, and the binding
     # layer's, which holds the cases only code naming rb-sys can write. Each
     # `//~` names the lints that must report its line, and the reports must

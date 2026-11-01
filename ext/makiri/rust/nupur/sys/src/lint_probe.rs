@@ -9,7 +9,7 @@
 /// A raising C call outside the protection, from a function with no proof
 /// of the GVL (`raising_call_outside_protect`, `ffi_without_gvl_proof`).
 fn raising() {
-    let _ = unsafe { crate::rb_ary_new_capa(0) }; //~ ffi_without_gvl_proof raising_call_outside_protect
+    let _ = unsafe { rb_sys::rb_ary_new_capa(0) }; //~ ffi_without_gvl_proof raising_call_outside_protect
 }
 
 /// An `unsafe fn` of the crate's, whose contract is the GVL, from a safe
@@ -32,11 +32,42 @@ fn cast(n: i64) -> i32 {
 /// the protection.
 #[rustfmt::skip] // keeps each marker on the line reported
 mod raising {
-    unsafe fn rb_utf8_encoding(_: &crate::protect::Protected) -> *mut crate::rb_encoding {
+    unsafe fn rb_utf8_encoding(_: &crate::protect::Protected) -> *mut rb_sys::rb_encoding {
         unsafe { rb_sys::rb_utf8_encoding() } //~ unraising_call_in_raw
     }
 
     unsafe fn rb_ary_new(_: &crate::protect::Protected) -> crate::VALUE {
         unsafe { rb_sys::rb_ary_new() }
+    }
+}
+
+/// Ruby's C API from a function holding no proof of the GVL
+/// (`ffi_without_gvl_proof`) - and the same with one, which passes.
+#[rustfmt::skip] // keeps each marker on the line reported
+mod gvl_proof {
+    fn without_proof() -> bool {
+        unsafe { rb_sys::rb_block_given_p() != 0 } //~ ffi_without_gvl_proof
+    }
+
+    fn with_the_proof(_: &crate::gvl::Gvl) -> bool {
+        unsafe { rb_sys::rb_block_given_p() != 0 }
+    }
+
+    fn in_a_closure() -> bool {
+        (|| unsafe { rb_sys::rb_block_given_p() != 0 })() //~ ffi_without_gvl_proof
+    }
+}
+
+/// Which C functions raise (`raising_call_outside_protect`): one nobody has
+/// classified is taken to raise - `rb_undef_alloc_func`, which a list of the
+/// raising ones did not name - and one the table says raises nothing passes.
+#[rustfmt::skip] // keeps each marker on the line reported
+mod classified {
+    fn unclassified(_: &crate::gvl::Gvl) {
+        unsafe { rb_sys::rb_undef_alloc_func(rb_sys::rb_cObject) } //~ raising_call_outside_protect
+    }
+
+    fn classified(_: &crate::gvl::Gvl) -> bool {
+        unsafe { rb_sys::rb_block_given_p() != 0 }
     }
 }

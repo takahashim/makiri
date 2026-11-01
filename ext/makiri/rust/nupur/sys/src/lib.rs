@@ -7,11 +7,11 @@
 //! mechanism that proves what must not unwind cannot ([`no_unwind`]), whose
 //! guard the protect thunk runs under.
 //!
-//! Beside them it re-exports rb-sys whole, for now, and Nupur calls the rest
-//! of Ruby's C through it as it called rb-sys. The re-export changes no path
-//! the lints resolve (an item is still `rb_sys::...` where it is defined).
-//! The later steps move Nupur's wrappers here, each taking a proof of
-//! `rb_protect` or of the GVL, so those rules become types rather than lints.
+//! Ruby's C is reached only through wrappers here, each taking its proof: a
+//! raising call the protection's token ([`raising`], [`protect::Protected`]),
+//! any other the GVL's ([`read`], [`gvl::Gvl`]). Of rb-sys itself only the
+//! types and constants Nupur names are re-exported, and no C function, so
+//! those rules are types rather than lints.
 //!
 //! The crate denies `unsafe_code`, and the files that need it carry an
 //! `allow` each, as Nupur does.
@@ -37,7 +37,15 @@
  * not the lints, so their `allow`s name lints it does not know. */
 #![cfg_attr(dylint_lib = "makiri_lints", allow(unknown_lints))]
 
-pub use rb_sys::*;
+/* The types and constants Nupur names, and nothing else of rb-sys's: no C
+ * function is re-exported, so Nupur calls Ruby's C only through the
+ * wrappers here, each taking its proof (`raising`, `read`, `protect`). */
+pub use rb_sys::{
+    rb_data_type_struct__bindgen_ty_1, rb_data_type_t, rb_encoding, rb_enumerator_size_func,
+    rbimpl_typeddata_flags, ruby_coderange_type, ruby_econv_flag_type, ruby_encoding_consts,
+    ruby_value_type, size_t, ssize_t, st_retval, Qfalse, Qnil, Qtrue, Qundef, RBasic, ID,
+    RUBY_API_VERSION_MAJOR, RUBY_API_VERSION_MINOR, RUBY_DATA_FUNC, VALUE,
+};
 
 pub mod gvl;
 pub mod int;

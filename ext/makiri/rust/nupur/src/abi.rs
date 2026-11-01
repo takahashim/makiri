@@ -5,7 +5,7 @@
 //! document and the layer tells an exception from a `throw` by
 //! ([`check_raise_state`]).
 
-#![allow(unsafe_code)]
+#![forbid(unsafe_code)]
 
 /// The `MAJOR.MINOR` of the Ruby whose headers this extension was compiled
 /// against - its ABI, since a teeny release keeps it. Published as a
@@ -29,14 +29,7 @@ pub(crate) fn built_ruby_api() -> (i64, i64) {
 /// The running Ruby's API `MAJOR.MINOR`, read from the `ruby_api_version`
 /// it exports (three ints, whose layout no Ruby changes).
 pub(crate) fn running_ruby_api() -> (i64, i64) {
-    // SAFETY: an immutable `const int[3]` libruby exports, read by value.
-    let (major, minor) = unsafe {
-        (
-            nupur_sys::ruby_api_version[0],
-            nupur_sys::ruby_api_version[1],
-        )
-    };
-    (i64::from(major), i64::from(minor))
+    nupur_sys::read::running_api_version()
 }
 
 /// `Err(LoadError)` unless the running Ruby's API `MAJOR.MINOR` is the one

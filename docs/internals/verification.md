@@ -79,7 +79,9 @@ extension, the fuzz crate), plus fmt and Nupur's rustdoc with `-D warnings`.
 
 `rake dylint` runs the crate's own lints (`lints/makiri_lints`) on the
 compiled code, by resolved path: on the extension, the engine, Nupur and
-`nupur_sys`. A sanctioned site is an allow with its
+`nupur_sys`, one run each. Each crate's root is touched just before its run:
+a run checks the crates it depends on without the lints, and cargo would
+count that as fresh, so the later runs would lint nothing. A sanctioned site is an allow with its
 reason. The lints:
 
 - `ruby_value_on_heap`: a Ruby value in a heap container, a static or a

@@ -50,13 +50,6 @@ impl RString {
     /// inline (every encoding below `RUBY_ENCODING_INLINE_MAX`, the builtin
     /// three among them), and looked up only past that.
     #[inline]
-    #[cfg_attr(
-        dylint_lib = "makiri_lints",
-        allow(
-            raising_call_outside_protect,
-            reason = "rb_enc_get_index raises for a File or a Symbol, as rb_enc_get; `s` is a String, and a String's index is an ivar read when it is not inline"
-        )
-    )]
     pub(crate) fn encoding_index(self) -> c_int {
         use nupur_sys::ruby_encoding_consts::{
             RUBY_ENCODING_INLINE_MAX, RUBY_ENCODING_MASK, RUBY_ENCODING_SHIFT,
@@ -66,9 +59,8 @@ impl RString {
             >> RUBY_ENCODING_SHIFT as u32;
         let inline = c_int::try_from(bits).unwrap_or(c_int::MAX);
         if inline == RUBY_ENCODING_INLINE_MAX as c_int {
-            // SAFETY: a live String; the lookup reads an instance variable
-            // and raises nothing.
-            unsafe { nupur_sys::rb_enc_get_index(self.as_raw()) }
+            // SAFETY: a live String, by type.
+            unsafe { nupur_sys::read::enc_get_index_of_string(super::gvl_of(self), self.as_raw()) }
         } else {
             inline
         }

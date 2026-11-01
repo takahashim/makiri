@@ -159,7 +159,7 @@ pub unsafe fn resume(state: c_int) -> ! {
     reset_pending_exit();
     // SAFETY: `state` is one `rb_protect` reported; resuming it is the point,
     // and the caller owns nothing it skips.
-    unsafe { crate::rb_jump_tag(state) }
+    unsafe { rb_sys::rb_jump_tag(state) }
 }
 
 /// Run `f` - one C call, and the `Copy` values it reads - under a bare
@@ -195,7 +195,7 @@ pub unsafe fn call<T: Copy, F: FnOnce(&Protected) -> T + Copy>(f: F) -> Result<T
                 _not_send: PhantomData,
             };
             slot.out = Some((slot.f)(&inside));
-            crate::Qnil as VALUE
+            rb_sys::Qnil as VALUE
         })
     }
     if let Some(state) = pending_exit() {
@@ -206,7 +206,7 @@ pub unsafe fn call<T: Copy, F: FnOnce(&Protected) -> T + Copy>(f: F) -> Result<T
     // SAFETY: the thunk reads only `slot`, which outlives the call; the GVL
     // is the caller's.
     unsafe {
-        crate::rb_protect(
+        rb_sys::rb_protect(
             Some(thunk::<T, F>),
             &mut slot as *mut Slot<F, T> as VALUE,
             &mut state,
@@ -237,7 +237,7 @@ pub unsafe fn call<T: Copy, F: FnOnce(&Protected) -> T + Copy>(f: F) -> Result<T
 #[inline]
 pub unsafe fn keeping_errinfo<T>(f: impl FnOnce() -> T) -> T {
     // SAFETY: under the GVL, as the contract says; a read.
-    let before = unsafe { crate::rb_errinfo() };
+    let before = unsafe { rb_sys::rb_errinfo() };
     let out = f();
     if pending_exit().is_none() {
         // SAFETY: as above; `before` was `$!` a moment ago, kept on this
@@ -255,17 +255,18 @@ pub unsafe fn keeping_errinfo<T>(f: impl FnOnce() -> T) -> T {
 /// Under the GVL; `before` a live value.
 #[inline]
 unsafe fn restore_errinfo(before: VALUE) {
-    if before == crate::Qnil as VALUE {
+    if before == rb_sys::Qnil as VALUE {
         // SAFETY: nil, which it always takes.
-        unsafe { crate::rb_set_errinfo(before) };
+        unsafe { rb_sys::rb_set_errinfo(before) };
         return;
     }
     // SAFETY: `before` is live (the contract); `rb_eException` a C global
     // Ruby set at boot. `rb_obj_is_kind_of` raises only for a non-class
     // second argument.
-    if unsafe { crate::rb_obj_is_kind_of(before, crate::rb_eException) } == crate::Qtrue as VALUE {
+    if unsafe { rb_sys::rb_obj_is_kind_of(before, rb_sys::rb_eException) } == rb_sys::Qtrue as VALUE
+    {
         // SAFETY: an exception, which `rb_set_errinfo` takes without raising.
-        unsafe { crate::rb_set_errinfo(before) };
+        unsafe { rb_sys::rb_set_errinfo(before) };
     }
 }
 
@@ -286,8 +287,8 @@ unsafe fn take_errinfo() -> VALUE {
     // SAFETY: under the GVL (the contract); both read or write the current
     // thread's error info.
     unsafe {
-        let exc = crate::rb_errinfo();
-        crate::rb_set_errinfo(crate::Qnil as VALUE);
+        let exc = rb_sys::rb_errinfo();
+        rb_sys::rb_set_errinfo(rb_sys::Qnil as VALUE);
         exc
     }
 }
@@ -315,7 +316,7 @@ pub unsafe fn forget_errinfo() {
 #[inline]
 pub unsafe fn exc_raise(exc: VALUE) -> ! {
     // SAFETY: the contract.
-    unsafe { crate::rb_exc_raise(exc) }
+    unsafe { rb_sys::rb_exc_raise(exc) }
 }
 
 /// `rb_exc_fatal`: raise `exc` as Ruby's `fatal`. Raises, by design.
@@ -326,7 +327,7 @@ pub unsafe fn exc_raise(exc: VALUE) -> ! {
 #[inline]
 pub unsafe fn exc_fatal(exc: VALUE) -> ! {
     // SAFETY: the contract.
-    unsafe { crate::rb_exc_fatal(exc) }
+    unsafe { rb_sys::rb_exc_fatal(exc) }
 }
 
 /// What a non-zero `rb_protect` state stands for: the exception Ruby left in
@@ -341,7 +342,7 @@ unsafe fn caught(state: c_int) -> Caught {
     if state == TAG_RAISE {
         // SAFETY: the contract.
         let exc = unsafe { take_errinfo() };
-        if exc != crate::Qnil as VALUE {
+        if exc != rb_sys::Qnil as VALUE {
             return Caught::Exception(exc);
         }
     }

@@ -293,10 +293,11 @@ The C call itself is a function of `nupur_sys::raising`, one per raising C
 function, with the C signature and a `&Protected` first. Only the thunk
 lends a `&Protected`, to the closure `raw::call` runs, so these functions
 cannot be called outside the protection: the type keeps the rule that
-`raising_call_outside_protect` checks. The lint stays while `nupur_sys`
-still re-exports rb-sys whole, since a raising function that has no
-wrapper can still be reached directly. `unraising_call_in_raw` also
-refuses a wrapper in `nupur_sys::raising` of a function that cannot raise.
+`raising_call_outside_protect` checks. `nupur_sys` re-exports rb-sys's
+types and constants and none of its functions, so Nupur reaches no C
+function except through a wrapper; the lint still holds `nupur_sys` itself,
+where rb-sys is in reach. `unraising_call_in_raw` also refuses a wrapper in
+`nupur_sys::raising` of a function that cannot raise.
 
 ### Classifying which functions raise
 
@@ -349,14 +350,21 @@ flag's value, which the `2` variant fixes).
 
 ### Raises ruled out at one call site
 
-A function that can raise, but not where the extension calls it, is an
-`allow` at that call with its reason, never a crate-wide entry:
+A function that can raise, but raises nothing under a precondition, is
+never a crate-wide entry in the tables: the reason one call site has must
+not pass to a later one. It is a wrapper in `nupur_sys::read` named for the
+precondition, with the `allow` and its reason at the one call of the C
+function, and the precondition as its `unsafe` contract, which each caller
+upholds in its own SAFETY:
 
-- `rb_gc_mark` in the mark callback: it raises only when memory runs out,
-  and that longjmp loses nothing there.
-- `rb_attr_get` in `ivar_get`: it raises only for an `@` name of a class, a
-  module or a shareable object read from another Ractor, and `ivar_get`
-  takes a `HiddenId`, which is never an `@` name.
+- `gc_mark_in_dmark` (`rb_gc_mark`): it raises only when memory runs out,
+  and a longjmp loses nothing in a mark callback.
+- `attr_get_hidden` (`rb_attr_get`): it raises only for an `@` name of a
+  class, a module or a shareable object read from another Ractor, and
+  `ivar_get` passes a `HiddenId`, which is never an `@` name.
+- the rest: `enc_get_of_string`, `enc_get_index_of_string`,
+  `obj_is_kind_of_module`, `class_inherited_p_of_modules`,
+  `absint_size_of_integer`, `str_empty_unfrozen`.
 
 ### The lints that hold `raw` to the table
 
@@ -407,9 +415,9 @@ each takes `nupur_sys`'s own proof, a `&Gvl`. Nupur lends one from a `Ruby`
 where the GVL is held, and is `!Send`), and inside the protection
 (`Protected::gvl`). `Gvl::assume`, the `unsafe fn` that makes one, is held
 by `gvl_token_outside_entry` to those places and to the GC's callbacks. A
-function that can raise, but not where Nupur calls it (`rb_enc_get` of a
-String), has no wrapper there: its `allow` stays at the call, so a later
-caller does not inherit the reason.
+function that can raise only outside a precondition (`rb_enc_get` of a
+non-String) has a wrapper named for it, whose contract each caller upholds
+(see "Raises ruled out at one call site").
 
 Only those over raw memory stay `unsafe`, and they are `nupur`'s alone:
 `typed_object_zalloc`, `check_typeddata` and `utf8_str_unwritten` (the raw
