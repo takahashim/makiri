@@ -38,9 +38,9 @@ impl External {
     pub fn report(&self, _: &crate::rb::Ruby, bytes: usize) {
         let then = self.0.get();
         let delta = if bytes >= then {
-            rb_sys::ssize_t::try_from(bytes - then)
+            nupur_sys::ssize_t::try_from(bytes - then)
         } else {
-            rb_sys::ssize_t::try_from(then - bytes).map(|d| -d)
+            nupur_sys::ssize_t::try_from(then - bytes).map(|d| -d)
         };
         let Ok(delta) = delta else { return };
         if delta == 0 {
@@ -48,7 +48,7 @@ impl External {
         }
         self.0.set(bytes);
         // SAFETY: a plain counter adjustment, with the GVL held (`&Ruby`).
-        unsafe { rb_sys::rb_gc_adjust_memory_usage(delta) };
+        unsafe { nupur_sys::rb_gc_adjust_memory_usage(delta) };
     }
 
     /// [`report`](Self::report) `more` bytes than were.

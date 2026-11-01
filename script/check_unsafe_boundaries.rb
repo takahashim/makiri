@@ -18,9 +18,10 @@ ROOT = File.expand_path("..", __dir__)
 RUST = File.join(ROOT, "ext/makiri/rust/src")
 # The other crates, each read as if it were a directory under `src/`: their
 # files are keyed `<crate dir>/<path under its src/>` below - the binding
-# layer's `nupur/...`, the engine's `engine/...`, the fallible allocation's
-# `falloc/...` and the Lexbor reference's `reference/...`.
-CRATES = %w[nupur engine falloc reference].to_h do |dir|
+# layer's `nupur/...` (and its rb-sys crate's `nupur/sys/...`), the engine's
+# `engine/...`, the fallible allocation's `falloc/...` and the Lexbor
+# reference's `reference/...`.
+CRATES = %w[nupur nupur/sys engine falloc reference].to_h do |dir|
   [dir, File.join(ROOT, "ext/makiri/rust/#{dir}/src")]
 end.freeze
 # Every source file the gates read. `lint_probe.rs` is left out: it is
@@ -137,8 +138,8 @@ FORBID_FILES = %w[
   engine/html_dom.rs engine/limits.rs engine/node_type.rs
   engine/ptr_table.rs engine/rust_tests.rs engine/selectors/mod.rs
   engine/selectors/stylesheet.rs engine/selectors/text.rs engine/source_lines.rs
-  engine/stack.rs engine/swar.rs engine/text.rs engine/token.rs
-  engine/utf8_decode.rs engine/utf8_input.rs
+  engine/stack.rs engine/swar.rs engine/text.rs
+  engine/token.rs engine/utf8_decode.rs engine/utf8_input.rs
   engine/xml/arena.rs engine/xml/attr_key.rs engine/xml/chars/expand.rs
   engine/xml/chars/mod.rs engine/xml/css.rs engine/xml/css_tests.rs
   engine/xml/dom_name.rs engine/xml/encoding_names.rs engine/xml/encoding_sniff.rs
@@ -149,26 +150,26 @@ FORBID_FILES = %w[
   engine/xml/selftest.rs engine/xml/serialize/bindings.rs engine/xml/serialize/c14n.rs
   engine/xml/serialize/mod.rs engine/xml/serialize/out.rs engine/xml/serialize/xml.rs
   engine/xml/tree/cursor.rs engine/xml/tree/decl.rs engine/xml/tree/dtd.rs
-  engine/xml/tree/mod.rs engine/xml/tree/scope.rs
-  engine/xml/xpath.rs engine/xpath/abi.rs engine/xpath/ast.rs
-  engine/xpath/ast_ops.rs engine/xpath/attr_pred.rs engine/xpath/axis.rs
-  engine/xpath/ctx.rs engine/xpath/dom.rs engine/xpath/eval.rs
-  engine/xpath/funcs/ext.rs engine/xpath/funcs/mod.rs engine/xpath/lex.rs
-  engine/xpath/limits.rs engine/xpath/mod.rs engine/xpath/nodetest.rs
-  engine/xpath/number.rs engine/xpath/order.rs engine/xpath/parse.rs
-  engine/xpath/step_index.rs engine/xpath/str_cache.rs engine/xpath/tests.rs
-  engine/xpath/value.rs glue/css.rs
-  glue/dom_names.rs glue/html_doc.rs glue/html_node/css.rs
-  glue/html_node/mutate.rs glue/html_node/read.rs glue/html_node/serialize.rs
-  glue/mod.rs glue/namespaces.rs glue/node.rs
-  glue/node_set.rs glue/query.rs glue/xml_doc.rs
-  glue/xml_node/css.rs glue/xml_node/mod.rs glue/xml_node/mutate.rs
-  glue/xml_node/ns.rs glue/xml_node/read.rs glue/xml_node/serialize.rs
-  glue/xpath_context.rs nupur/args.rs nupur/build.rs
-  nupur/cname.rs nupur/describe.rs nupur/hash.rs
-  nupur/int.rs nupur/msg.rs nupur/rb/class.rs
-  nupur/rb/convert.rs nupur/rb/error.rs nupur/table.rs
-  reference/gvl.rs reference/lexbor/contains_guard.rs
+  engine/xml/tree/mod.rs engine/xml/tree/scope.rs engine/xml/xpath.rs
+  engine/xpath/abi.rs engine/xpath/ast.rs engine/xpath/ast_ops.rs
+  engine/xpath/attr_pred.rs engine/xpath/axis.rs engine/xpath/ctx.rs
+  engine/xpath/dom.rs engine/xpath/eval.rs engine/xpath/funcs/ext.rs
+  engine/xpath/funcs/mod.rs engine/xpath/lex.rs engine/xpath/limits.rs
+  engine/xpath/mod.rs engine/xpath/nodetest.rs engine/xpath/number.rs
+  engine/xpath/order.rs engine/xpath/parse.rs engine/xpath/step_index.rs
+  engine/xpath/str_cache.rs engine/xpath/tests.rs engine/xpath/value.rs
+  glue/css.rs glue/dom_names.rs glue/html_doc.rs
+  glue/html_node/css.rs glue/html_node/mutate.rs glue/html_node/read.rs
+  glue/html_node/serialize.rs glue/mod.rs glue/namespaces.rs
+  glue/node.rs glue/node_set.rs glue/query.rs
+  glue/xml_doc.rs glue/xml_node/css.rs glue/xml_node/mod.rs
+  glue/xml_node/mutate.rs glue/xml_node/ns.rs glue/xml_node/read.rs
+  glue/xml_node/serialize.rs glue/xpath_context.rs nupur/args.rs
+  nupur/build.rs nupur/cname.rs nupur/describe.rs
+  nupur/hash.rs nupur/int.rs nupur/msg.rs
+  nupur/rb/class.rs nupur/rb/convert.rs nupur/rb/error.rs
+  nupur/sys/lib.rs nupur/table.rs reference/gvl.rs
+  reference/lexbor/contains_guard.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/

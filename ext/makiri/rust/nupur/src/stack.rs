@@ -32,5 +32,5 @@ fn stack_low() -> bool {
     // SAFETY: `ruby_native_thread_p` reads only the calling thread's own
     // thread-local state, from any thread; `ruby_stack_check` takes no
     // argument, raises nothing, and reads that Ruby thread's stack bounds.
-    unsafe { rb_sys::ruby_native_thread_p() != 0 && rb_sys::ruby_stack_check() != 0 }
+    unsafe { nupur_sys::ruby_native_thread_p() != 0 && nupur_sys::ruby_stack_check() != 0 }
 }

@@ -39,7 +39,7 @@ use core::marker::PhantomData;
 
 use crate::rb::value::AsRawValue;
 use crate::rb::{Error, Value};
-use rb_sys::{rb_data_type_t, VALUE};
+use nupur_sys::{rb_data_type_t, VALUE};
 
 /// A `Value` from a raw handle this module holds - a slot, or what a wrap
 /// returned. With `raw/` and the `rb` files that are the typed values, the
@@ -204,7 +204,7 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
     #[inline]
     pub fn is(&self, v: Value) -> bool {
         // SAFETY: `v` is a live VALUE; the type check does not raise.
-        unsafe { rb_sys::rb_typeddata_is_kind_of(v.as_raw(), self.raw.as_ptr()) != 0 }
+        unsafe { nupur_sys::rb_typeddata_is_kind_of(v.as_raw(), self.raw.as_ptr()) != 0 }
     }
 
     /// `Ok` for an object of this type (or one deriving from it), else Ruby's

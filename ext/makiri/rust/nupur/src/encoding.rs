@@ -15,7 +15,7 @@ use crate::rb::{Error, RString};
 /// "which encodings are already UTF-8 bytes" rules live. Ruby's encodings are
 /// process-lifetime objects, so a value of this type stays valid.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Encoding(*mut rb_sys::rb_encoding);
+pub struct Encoding(*mut nupur_sys::rb_encoding);
 
 /* The indices of Ruby's three builtin encodings - the ones whose text is read
  * as UTF-8 bytes - asked once, at `Init_` ([`init`]), and only read after.
@@ -42,9 +42,9 @@ pub(crate) fn init(_: &crate::rb::Ruby) {
     // SAFETY: under the GVL (`&Ruby`), at `Init_`; each returns a constant.
     let (utf8, usascii, ascii8bit) = unsafe {
         (
-            rb_sys::rb_utf8_encindex(),
-            rb_sys::rb_usascii_encindex(),
-            rb_sys::rb_ascii8bit_encindex(),
+            nupur_sys::rb_utf8_encindex(),
+            nupur_sys::rb_usascii_encindex(),
+            nupur_sys::rb_ascii8bit_encindex(),
         )
     };
     UTF8.store(utf8, Ordering::Relaxed);
@@ -87,7 +87,7 @@ pub enum Unconvertible {
 impl Unconvertible {
     /// `rb_str_encode`'s flags for it.
     fn ecflags(self) -> c_int {
-        use rb_sys::ruby_econv_flag_type as f;
+        use nupur_sys::ruby_econv_flag_type as f;
         match self {
             Unconvertible::Raise => 0,
             Unconvertible::Replace => {
@@ -116,14 +116,14 @@ impl Encoding {
     )]
     pub fn of(str: RString) -> Encoding {
         // SAFETY: a live String, by type; reading its tag runs no Ruby.
-        Encoding(unsafe { rb_sys::rb_enc_get(str.as_raw()) })
+        Encoding(unsafe { nupur_sys::rb_enc_get(str.as_raw()) })
     }
 
     /// UTF-8. Takes the token, as every C call of the layer that has no Ruby
     /// value to show for the GVL does.
     pub fn utf8(_: &crate::rb::Ruby) -> Encoding {
         // SAFETY: Ruby's immutable global encoding.
-        Encoding(unsafe { rb_sys::rb_utf8_encoding() })
+        Encoding(unsafe { nupur_sys::rb_utf8_encoding() })
     }
 
     /// The encoding Ruby knows by `name`, or None for a name it does not
@@ -160,12 +160,12 @@ impl Encoding {
     ///
     /// # Safety
     /// `p` is one of Ruby's encodings (which live for the process).
-    pub(crate) unsafe fn from_raw(p: *mut rb_sys::rb_encoding) -> Encoding {
+    pub(crate) unsafe fn from_raw(p: *mut nupur_sys::rb_encoding) -> Encoding {
         Encoding(p)
     }
 
     /// The raw encoding, for a C call of the layer's that takes one.
-    pub(crate) fn as_raw(self) -> *mut rb_sys::rb_encoding {
+    pub(crate) fn as_raw(self) -> *mut nupur_sys::rb_encoding {
         self.0
     }
 
@@ -182,7 +182,7 @@ impl Encoding {
     fn index(self) -> c_int {
         // SAFETY: one of Ruby's encodings, which live for the process; the
         // read of its index field raises nothing.
-        unsafe { rb_sys::rb_enc_to_index(self.0) }
+        unsafe { nupur_sys::rb_enc_to_index(self.0) }
     }
 
     /// UTF-8 or US-ASCII: text in it is already UTF-8, character for

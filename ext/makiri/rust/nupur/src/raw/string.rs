@@ -10,7 +10,7 @@ pub(crate) fn utf8_str_new(_: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
     let (p, n) = (bytes.as_ptr() as *const c_char, c_len(bytes.len())?);
     let v = call(|| unsafe {
         injected_raise();
-        rb_sys::rb_utf8_str_new(p, n)
+        nupur_sys::rb_utf8_str_new(p, n)
     })?;
     typed(v, RString::from_value, "a C call made no String")
 }
@@ -28,7 +28,7 @@ pub(crate) unsafe fn utf8_str_unwritten(_: &Ruby, len: usize) -> Result<RString,
     let n = c_len(len)?;
     let v = call(|| unsafe {
         injected_raise();
-        rb_sys::rb_utf8_str_new(core::ptr::null(), n)
+        nupur_sys::rb_utf8_str_new(core::ptr::null(), n)
     })?;
     typed(v, RString::from_value, "a C call made no String")
 }
@@ -43,7 +43,7 @@ pub fn enc_interned_str(bytes: &[u8], enc: Encoding) -> Result<RString, Error> {
     );
     let v = call(|| unsafe {
         injected_raise();
-        rb_sys::rb_enc_interned_str(p, n, e)
+        nupur_sys::rb_enc_interned_str(p, n, e)
     })?;
     typed(v, RString::from_value, "a C call made no String")
 }
@@ -54,7 +54,7 @@ pub fn str_dup(s: RString) -> Result<RString, Error> {
     let v = s.as_raw();
     let d = call(|| unsafe {
         injected_raise();
-        rb_sys::rb_str_dup(v)
+        nupur_sys::rb_str_dup(v)
     })?;
     typed(d, RString::from_value, "a C call made no String")
 }
@@ -64,7 +64,7 @@ pub fn str_dup(s: RString) -> Result<RString, Error> {
 #[inline]
 pub fn enc_associate(s: RString, enc: Encoding) -> Result<RString, Error> {
     let (v, e) = (s.as_raw(), enc.as_raw());
-    let r = call(|| unsafe { rb_sys::rb_enc_associate(v, e) })?;
+    let r = call(|| unsafe { nupur_sys::rb_enc_associate(v, e) })?;
     typed(r, RString::from_value, "a C call made no String")
 }
 
@@ -77,11 +77,11 @@ pub fn str_encode(s: RString, enc: Encoding, flags: c_int) -> Result<RString, Er
     let (v, e) = (s.as_raw(), enc.as_raw());
     let r = call(|| unsafe {
         injected_raise();
-        rb_sys::rb_str_encode(
+        nupur_sys::rb_str_encode(
             v,
-            rb_sys::rb_enc_from_encoding(e),
+            nupur_sys::rb_enc_from_encoding(e),
             flags,
-            rb_sys::Qnil as VALUE,
+            nupur_sys::Qnil as VALUE,
         )
     })?;
     typed(r, RString::from_value, "a C call made no String")
@@ -99,7 +99,7 @@ pub fn to_encoding(ruby: &Ruby, v: Value) -> Result<Encoding, Error> {
         ));
     }
     let r = v.as_raw();
-    let e = call(|| unsafe { rb_sys::rb_to_encoding(r) })?;
+    let e = call(|| unsafe { nupur_sys::rb_to_encoding(r) })?;
     // SAFETY: Ruby's encodings live for the process.
     Ok(unsafe { Encoding::from_raw(e) })
 }
@@ -111,11 +111,11 @@ pub fn to_encoding(ruby: &Ruby, v: Value) -> Result<Encoding, Error> {
 pub fn enc_find(_: &Ruby, name: &core::ffi::CStr) -> Result<Option<Encoding>, Error> {
     let p = name.as_ptr();
     let e = call(|| unsafe {
-        let index = rb_sys::rb_enc_find_index(p);
+        let index = nupur_sys::rb_enc_find_index(p);
         if index < 0 {
             core::ptr::null_mut()
         } else {
-            rb_sys::rb_enc_from_index(index)
+            nupur_sys::rb_enc_from_index(index)
         }
     })?;
     // SAFETY: a non-null answer is one of Ruby's encodings, which live for

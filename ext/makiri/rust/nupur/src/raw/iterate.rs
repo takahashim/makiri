@@ -15,7 +15,7 @@ use super::*;
 )]
 pub fn yield_value(_: &Ruby, v: Value) -> Result<Value, Error> {
     let v = v.as_raw();
-    let out = call(|| unsafe { rb_sys::rb_yield(v) })?;
+    let out = call(|| unsafe { nupur_sys::rb_yield(v) })?;
     // SAFETY: what the block returned, live on this frame.
     Ok(unsafe { Value::from_raw(out) })
 }
@@ -55,8 +55,8 @@ pub fn hash_foreach(h: RHash, visit: &mut dyn FnMut(Value, Value) -> bool) -> Re
         latch: crate::caught::PanicLatch,
     }
     unsafe extern "C" fn each(k: VALUE, v: VALUE, arg: VALUE) -> c_int {
-        const CONTINUE: c_int = rb_sys::st_retval::ST_CONTINUE as c_int;
-        const STOP: c_int = rb_sys::st_retval::ST_STOP as c_int;
+        const CONTINUE: c_int = nupur_sys::st_retval::ST_CONTINUE as c_int;
+        const STOP: c_int = nupur_sys::st_retval::ST_STOP as c_int;
         crate::no_unwind::must_not_unwind::<crate::no_unwind::HashEach, _>(|| {
             // SAFETY: `arg` is the `Walk` `hash_foreach` passed, live for the
             // walk; `k` and `v` are the Hash's, live while it is walked.
@@ -76,8 +76,8 @@ pub fn hash_foreach(h: RHash, visit: &mut dyn FnMut(Value, Value) -> bool) -> Re
     };
     let (h, arg) = (h.as_raw(), &mut walk as *mut Walk<'_> as VALUE);
     let walked = call(|| unsafe {
-        rb_sys::rb_hash_foreach(h, Some(each), arg);
-        rb_sys::Qnil as VALUE
+        nupur_sys::rb_hash_foreach(h, Some(each), arg);
+        nupur_sys::Qnil as VALUE
     });
     /* Out of the C frames: safe to unwind from here. */
     walk.latch.resume();

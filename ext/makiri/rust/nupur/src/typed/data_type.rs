@@ -6,7 +6,7 @@
 
 use core::ffi::c_void;
 
-use rb_sys::{rb_data_type_t, VALUE};
+use nupur_sys::{rb_data_type_t, VALUE};
 
 use super::Envelope;
 use crate::rb::value::AsRawValue;
@@ -18,7 +18,7 @@ use crate::rb::{Error, Value};
 /// compile time and never written. `repr(transparent)` keeps the layout exactly
 /// `rb_data_type_t`, which is what `rb_data_typed_object_wrap` reads.
 #[repr(transparent)]
-pub(super) struct DataType(rb_sys::rb_data_type_t);
+pub(super) struct DataType(nupur_sys::rb_data_type_t);
 
 // SAFETY: the contents are set once at compile time and never mutated. Ruby
 // reads them from whichever thread holds the GVL.
@@ -31,7 +31,7 @@ unsafe impl Sync for DataType {}
  * has read the new header knows - so any other size stops the build here
  * instead of shipping a table nobody has checked. */
 const FUNCTION_TABLE_WORDS: usize =
-    size_of::<rb_sys::rb_data_type_struct__bindgen_ty_1>() / size_of::<usize>();
+    size_of::<nupur_sys::rb_data_type_struct__bindgen_ty_1>() / size_of::<usize>();
 const _: () = assert!(
     FUNCTION_TABLE_WORDS == 5 || FUNCTION_TABLE_WORDS == 12,
     "rb_data_type_t's callback table has a layout nupur has not read: check Ruby's \
@@ -42,15 +42,15 @@ impl DataType {
     /// `parent` is null for a base type.
     pub const fn new(
         name: *const core::ffi::c_char,
-        parent: *const rb_sys::rb_data_type_t,
-        dmark: rb_sys::RUBY_DATA_FUNC,
-        dfree: rb_sys::RUBY_DATA_FUNC,
-        dsize: Option<unsafe extern "C" fn(*const core::ffi::c_void) -> rb_sys::size_t>,
+        parent: *const nupur_sys::rb_data_type_t,
+        dmark: nupur_sys::RUBY_DATA_FUNC,
+        dfree: nupur_sys::RUBY_DATA_FUNC,
+        dsize: Option<unsafe extern "C" fn(*const core::ffi::c_void) -> nupur_sys::size_t>,
         embedded: bool,
     ) -> DataType {
         const FREE_IMMEDIATELY: VALUE =
-            rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_FREE_IMMEDIATELY as VALUE;
-        const EMBEDDABLE: VALUE = rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_EMBEDDABLE as VALUE;
+            nupur_sys::rbimpl_typeddata_flags::RUBY_TYPED_FREE_IMMEDIATELY as VALUE;
+        const EMBEDDABLE: VALUE = nupur_sys::rbimpl_typeddata_flags::RUBY_TYPED_EMBEDDABLE as VALUE;
         /* Zero first, then set only the fields used: Ruby's partial-initialiser
          * convention (`reserved` "must be filled with zeros"), and what keeps
          * this compiling when Ruby adds a callback to the table, as 4.1 did
@@ -60,7 +60,7 @@ impl DataType {
         // SAFETY: `rb_data_type_t` is plain C data - pointers, options of
         // function pointers and an integer - for which all-zero is valid, and
         // is Ruby's own initial state for the fields not set below.
-        let mut t: rb_sys::rb_data_type_t = unsafe { core::mem::zeroed() };
+        let mut t: nupur_sys::rb_data_type_t = unsafe { core::mem::zeroed() };
         t.wrap_struct_name = name;
         t.function.dmark = dmark;
         t.function.dfree = dfree;
@@ -83,8 +83,8 @@ impl DataType {
 
     /// The raw pointer the Ruby API wants.
     #[inline]
-    pub const fn as_ptr(&self) -> *const rb_sys::rb_data_type_t {
-        self as *const DataType as *const rb_sys::rb_data_type_t
+    pub const fn as_ptr(&self) -> *const nupur_sys::rb_data_type_t {
+        self as *const DataType as *const nupur_sys::rb_data_type_t
     }
 }
 
@@ -107,7 +107,7 @@ pub(super) fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void,
     // SAFETY: `v` is a live value and `ty` a registered data type; the data
     // pointer is read only once the type is known to match.
     unsafe {
-        if rb_sys::rb_typeddata_is_kind_of(v, ty) != 0 {
+        if nupur_sys::rb_typeddata_is_kind_of(v, ty) != 0 {
             let p = data_pointer(v);
             if p.is_null() {
                 return Err(crate::rb::error::type_error(
@@ -130,9 +130,9 @@ pub(super) fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void,
 /// `v` is a live TypedData object.
 #[inline]
 pub(super) unsafe fn data_pointer(v: VALUE) -> *mut c_void {
-    use rb_sys::stable_api::StableApiDefinition;
+    use nupur_sys::stable_api::StableApiDefinition;
     // SAFETY: the caller's contract.
-    unsafe { rb_sys::stable_api::get_default().rtypeddata_get_data(v) }
+    unsafe { nupur_sys::stable_api::get_default().rtypeddata_get_data(v) }
 }
 
 /// The data pointer of a TypedData object whose type the caller has already
@@ -148,7 +148,7 @@ pub(super) fn typed_data_known(v: Value, ty: &'static DataType) -> *mut c_void {
     // SAFETY: as in `typed_data`; the assert is the type check.
     unsafe {
         assert!(
-            rb_sys::rb_typeddata_is_kind_of(v, ty) != 0,
+            nupur_sys::rb_typeddata_is_kind_of(v, ty) != 0,
             "a VALUE of an established type had a different one"
         );
         let p = data_pointer(v);
@@ -214,7 +214,7 @@ mod tests {
 
     unsafe extern "C" fn mark(_: *mut c_void) {}
     unsafe extern "C" fn free(_: *mut c_void) {}
-    unsafe extern "C" fn size(_: *const c_void) -> rb_sys::size_t {
+    unsafe extern "C" fn size(_: *const c_void) -> nupur_sys::size_t {
         0
     }
 
@@ -248,7 +248,7 @@ mod tests {
     #[test]
     fn no_type_is_frozen_shareable() {
         const SHAREABLE: VALUE =
-            rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_FROZEN_SHAREABLE as VALUE;
+            nupur_sys::rbimpl_typeddata_flags::RUBY_TYPED_FROZEN_SHAREABLE as VALUE;
         for embedded in [false, true] {
             let ty = DataType::new(
                 c"nupur::test".as_ptr(),
@@ -263,5 +263,5 @@ mod tests {
     }
 
     const FREE_IMMEDIATELY_FLAG: u32 =
-        rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_FREE_IMMEDIATELY as u32;
+        nupur_sys::rbimpl_typeddata_flags::RUBY_TYPED_FREE_IMMEDIATELY as u32;
 }

@@ -16,8 +16,8 @@
 
 use core::marker::PhantomData;
 
-use rb_sys::stable_api::{get_default, StableApiDefinition};
-use rb_sys::{ruby_value_type, VALUE};
+use nupur_sys::stable_api::{get_default, StableApiDefinition};
+use nupur_sys::{ruby_value_type, VALUE};
 
 use super::error::{Builtin, Error};
 use super::object::{class_inherits, obj_is_kind_of};
@@ -204,7 +204,7 @@ handle!(
     Range,
     // SAFETY: `rb_cRange`, a C global Ruby sets once at boot; a value
     // existing means this is a Ruby thread, and the test reads its ancestry.
-    |v| v.is_kind_of(RClass::from_known(unsafe { Value::from_raw(rb_sys::rb_cRange) }))
+    |v| v.is_kind_of(RClass::from_known(unsafe { Value::from_raw(nupur_sys::rb_cRange) }))
 );
 handle!(
     /// A Class.
@@ -224,7 +224,7 @@ handle!(
      * test, so a debug build would recurse without end. */
     |v| of_type(v, ruby_value_type::RUBY_T_CLASS)
         // SAFETY: a C global Ruby sets once at boot, read under the GVL.
-        && class_inherits(v, unsafe { Value::from_raw(rb_sys::rb_eException) })
+        && class_inherits(v, unsafe { Value::from_raw(nupur_sys::rb_eException) })
 );
 
 impl RString {
@@ -419,7 +419,7 @@ impl Integer {
     )]
     fn magnitude_fits_u64(self) -> bool {
         // SAFETY: `self` is a live Integer; the C reads its digits.
-        let bytes = unsafe { rb_sys::rb_absint_size(self.0 .0, core::ptr::null_mut()) };
+        let bytes = unsafe { nupur_sys::rb_absint_size(self.0 .0, core::ptr::null_mut()) };
         u64::try_from(bytes).is_ok_and(|b| b <= 8)
     }
 
@@ -481,7 +481,7 @@ pub fn identity_word(v: impl ReprValue) -> usize {
 /// hands C, so a caller can keep and compare one but never forge one.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(transparent)]
-pub struct Id(rb_sys::ID);
+pub struct Id(nupur_sys::ID);
 
 impl Id {
     /// The interned name `name` (`rb_intern`); a new name grows the symbol
@@ -491,12 +491,12 @@ impl Id {
     }
 
     #[inline]
-    pub(crate) const fn from_raw(id: rb_sys::ID) -> Id {
+    pub(crate) const fn from_raw(id: nupur_sys::ID) -> Id {
         Id(id)
     }
 
     #[inline]
-    pub(crate) const fn as_raw(self) -> rb_sys::ID {
+    pub(crate) const fn as_raw(self) -> nupur_sys::ID {
         self.0
     }
 }
@@ -527,7 +527,7 @@ impl HiddenId {
     }
 
     #[inline]
-    pub(crate) const fn as_raw(self) -> rb_sys::ID {
+    pub(crate) const fn as_raw(self) -> nupur_sys::ID {
         self.0.as_raw()
     }
 }
@@ -542,8 +542,8 @@ pub(crate) fn ary_entry(a: RArray, i: usize) -> Value {
      * past one would wrap to an element that is there. No Array has one. */
     let Ok(i) = i.try_into() else {
         // SAFETY: `nil`, an immediate.
-        return unsafe { Value::from_raw(rb_sys::Qnil as VALUE) };
+        return unsafe { Value::from_raw(nupur_sys::Qnil as VALUE) };
     };
     // SAFETY: `a` is a live Array; the read is bounds-checked by Ruby.
-    unsafe { Value::from_raw(rb_sys::rb_ary_entry(a.as_raw(), i)) }
+    unsafe { Value::from_raw(nupur_sys::rb_ary_entry(a.as_raw(), i)) }
 }

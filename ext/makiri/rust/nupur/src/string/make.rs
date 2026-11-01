@@ -46,8 +46,8 @@ pub fn utf8_str_filled(
     // is its buffer, the room `rb_str_new` allocated), referenced only from
     // this frame. Seen as `MaybeUninit`, so nothing reads it unwritten.
     let buf: &mut [core::mem::MaybeUninit<u8>] = unsafe {
-        let dst = rb_sys::StableApiDefinition::rstring_ptr(
-            rb_sys::stable_api::get_default(),
+        let dst = nupur_sys::StableApiDefinition::rstring_ptr(
+            nupur_sys::stable_api::get_default(),
             str.as_raw(),
         ) as *mut core::mem::MaybeUninit<u8>;
         if len == 0 || dst.is_null() {
@@ -114,7 +114,7 @@ impl Drop for EmptyUnlessFilled {
             // SAFETY: the String just made, unfrozen and referenced only
             // from `utf8_str_filled`'s frame; shortening it to nothing
             // raises nothing.
-            unsafe { rb_sys::rb_str_set_len(s, 0) };
+            unsafe { nupur_sys::rb_str_set_len(s, 0) };
         })
     }
 }

@@ -5,7 +5,7 @@
 
 use core::ffi::c_void;
 
-use rb_sys::VALUE;
+use nupur_sys::VALUE;
 
 use super::{Envelope, Payload};
 
@@ -44,7 +44,7 @@ pub(super) unsafe extern "C" fn mark_cb<T: Payload, const N: usize>(ptr: *mut c_
         for r in roots {
             // SAFETY: from Ruby's mark phase, with the GVL held; a slot holds
             // a live value (or `Qfalse`, which a mark ignores).
-            unsafe { rb_sys::rb_gc_mark(r) };
+            unsafe { nupur_sys::rb_gc_mark(r) };
         }
     })
 }
@@ -60,10 +60,10 @@ pub(super) unsafe extern "C" fn mark_cb<T: Payload, const N: usize>(ptr: *mut c_
 )]
 fn give_back(reported: usize) {
     if reported != 0 {
-        let n = rb_sys::ssize_t::try_from(reported).unwrap_or(rb_sys::ssize_t::MAX);
+        let n = nupur_sys::ssize_t::try_from(reported).unwrap_or(nupur_sys::ssize_t::MAX);
         // SAFETY: a plain counter adjustment, from the free hook, where it
         // only subtracts - as Ruby's own `xfree` does from here.
-        unsafe { rb_sys::rb_gc_adjust_memory_usage(n.saturating_neg()) };
+        unsafe { nupur_sys::rb_gc_adjust_memory_usage(n.saturating_neg()) };
     }
 }
 
@@ -85,7 +85,7 @@ pub(super) unsafe extern "C" fn free_cb<T: Payload, const N: usize>(ptr: *mut c_
             let reported = crate::caught::quietly(0, || data.reported_external());
             crate::caught::quietly((), || drop(data));
             give_back(reported);
-            rb_sys::ruby_xfree(ptr);
+            nupur_sys::ruby_xfree(ptr);
         }
     })
 }
@@ -112,7 +112,7 @@ pub(super) unsafe extern "C" fn free_embedded_cb<T: Payload, const N: usize>(ptr
 /// not - so only what the payload owns beyond its struct is left.
 pub(super) unsafe extern "C" fn memsize_cb<T: Payload, const N: usize, const EMBEDDABLE: bool>(
     ptr: *const c_void,
-) -> rb_sys::size_t {
+) -> nupur_sys::size_t {
     crate::no_unwind::must_not_unwind::<crate::no_unwind::GcMemsize, _>(|| {
         if ptr.is_null() {
             return 0;
@@ -131,6 +131,6 @@ pub(super) unsafe extern "C" fn memsize_cb<T: Payload, const N: usize, const EMB
                 data.memsize().saturating_add(slots)
             }
         });
-        rb_sys::size_t::try_from(bytes).unwrap_or(rb_sys::size_t::MAX)
+        nupur_sys::size_t::try_from(bytes).unwrap_or(nupur_sys::size_t::MAX)
     })
 }

@@ -130,6 +130,13 @@ dependencies = [
 name = "nupur"
 version = "0.0.1"
 dependencies = [
+ "nupur_sys",
+]
+
+[[package]]
+name = "nupur_sys"
+version = "0.0.1"
+dependencies = [
  "rb-sys",
 ]
 

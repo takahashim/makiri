@@ -34,7 +34,7 @@ workspace = true
 # nightly) are workspaces of their own, run from their directories - so this
 # workspace's Cargo.lock, the one a source install builds from, holds nothing
 # of Lexbor's, and no build script here reads a Lexbor header.
-members = [".", "nupur", "engine", "falloc"]
+members = [".", "nupur", "nupur/sys", "engine", "falloc"]
 exclude = ["fuzz", "lints", "reference"]
 
 [workspace.lints.rust]

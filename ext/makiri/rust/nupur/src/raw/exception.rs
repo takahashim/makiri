@@ -11,7 +11,7 @@ pub fn exception_new(ruby: &Ruby, class: ExceptionClass, msg: &[u8]) -> Result<V
     let class = class.as_raw();
     let exc = call(|| unsafe {
         injected_raise();
-        rb_sys::rb_exc_new_str(class, s)
+        nupur_sys::rb_exc_new_str(class, s)
     })?;
     // SAFETY: the object just made.
     Ok(unsafe { Value::from_raw(exc) })
@@ -25,7 +25,7 @@ pub fn exception_new(ruby: &Ruby, class: ExceptionClass, msg: &[u8]) -> Result<V
 /// forgotten here, and the caller refuses to load.
 pub fn raise_is_recognised(ruby: &Ruby) -> Result<bool, Error> {
     let exc = exception_new(ruby, ruby.exception_runtime_error(), b"raise self-check")?.as_raw();
-    let outcome = call::<(), _>(|| unsafe { rb_sys::rb_exc_raise(exc) });
+    let outcome = call::<(), _>(|| unsafe { nupur_sys::rb_exc_raise(exc) });
     let recognised = matches!(
         &outcome,
         Err(e) if e.is_kind_of(ruby, crate::rb::Builtin::RuntimeError)
@@ -48,7 +48,7 @@ pub fn with_classname<R>(v: Value, f: impl FnOnce(&[u8]) -> R) -> Result<R, Erro
     let v = v.as_raw();
     let p = call(|| unsafe {
         injected_raise();
-        rb_sys::rb_obj_classname(v)
+        nupur_sys::rb_obj_classname(v)
     })?;
     if p.is_null() {
         return Ok(f(b"Object"));
