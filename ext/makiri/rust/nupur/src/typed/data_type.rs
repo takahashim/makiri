@@ -1,92 +1,17 @@
-//! The raw machinery behind [`TypedType`](super::TypedType): the
-//! `rb_data_type_t` it carries, reading an object's data pointer, and making
-//! an object with its data.
+//! The raw machinery behind [`TypedType`](super::TypedType): reading an
+//! object's data pointer, and making an object with its data. The
+//! `rb_data_type_t` it carries is `nupur_sys`'s ([`DataType`]).
 
 #![allow(unsafe_code)]
 
 use core::ffi::c_void;
 
-use nupur_sys::{rb_data_type_t, VALUE};
+pub(super) use nupur_sys::data_type::DataType;
+use nupur_sys::rb_data_type_t;
 
 use super::Envelope;
 use crate::rb::value::AsSys;
 use crate::rb::{Error, Value};
-
-/// A `rb_data_type_t` that can live in a `static`.
-///
-/// `rb_data_type_t` holds raw pointers, so it is not `Sync`; these are set at
-/// compile time and never written. `repr(transparent)` keeps the layout exactly
-/// `rb_data_type_t`, which is what `rb_data_typed_object_wrap` reads.
-#[repr(transparent)]
-pub(super) struct DataType(nupur_sys::rb_data_type_t);
-
-// SAFETY: the contents are set once at compile time and never mutated. Ruby
-// reads them from whichever thread holds the GVL.
-unsafe impl Sync for DataType {}
-
-/* The table of callbacks, in pointer-sized words: 5 up to Ruby 4.0 (dmark,
- * dfree, dsize, dcompact, reserved[1]) and 12 from 4.1 (+ handle_weak_references,
- * reserved[7]). Zero-initialising it is right for a layout whose extra words
- * are all optional callbacks or zero-filled reserve - which only someone who
- * has read the new header knows - so any other size stops the build here
- * instead of shipping a table nobody has checked. */
-const FUNCTION_TABLE_WORDS: usize =
-    size_of::<nupur_sys::rb_data_type_struct__bindgen_ty_1>() / size_of::<usize>();
-const _: () = assert!(
-    FUNCTION_TABLE_WORDS == 5 || FUNCTION_TABLE_WORDS == 12,
-    "rb_data_type_t's callback table has a layout nupur has not read: check Ruby's \
-     include/ruby/internal/core/rtypeddata.h, then list its size here"
-);
-
-impl DataType {
-    /// `parent` is null for a base type.
-    pub const fn new(
-        name: *const core::ffi::c_char,
-        parent: *const nupur_sys::rb_data_type_t,
-        dmark: nupur_sys::RUBY_DATA_FUNC,
-        dfree: nupur_sys::RUBY_DATA_FUNC,
-        dsize: Option<unsafe extern "C" fn(*const core::ffi::c_void) -> nupur_sys::size_t>,
-        embedded: bool,
-    ) -> DataType {
-        const FREE_IMMEDIATELY: VALUE =
-            nupur_sys::rbimpl_typeddata_flags::RUBY_TYPED_FREE_IMMEDIATELY as VALUE;
-        const EMBEDDABLE: VALUE = nupur_sys::rbimpl_typeddata_flags::RUBY_TYPED_EMBEDDABLE as VALUE;
-        /* Zero first, then set only the fields used: Ruby's partial-initialiser
-         * convention (`reserved` "must be filled with zeros"), and what keeps
-         * this compiling when Ruby adds a callback to the table, as 4.1 did
-         * (`handle_weak_references`, `reserved[1]` -> `reserved[7]`). The
-         * layout check above is what turns a layout nobody has read into a
-         * build failure, not a silent one. */
-        // SAFETY: `rb_data_type_t` is plain C data - pointers, options of
-        // function pointers and an integer - for which all-zero is valid, and
-        // is Ruby's own initial state for the fields not set below.
-        let mut t: nupur_sys::rb_data_type_t = unsafe { core::mem::zeroed() };
-        t.wrap_struct_name = name;
-        t.function.dmark = dmark;
-        t.function.dfree = dfree;
-        t.function.dsize = dsize;
-        /* No compaction callback (`dcompact` stays None): an object's only
-         * values are its slots, marked pinned. */
-        t.parent = parent;
-        t.data = core::ptr::null_mut();
-        /* Never `RUBY_TYPED_FROZEN_SHAREABLE`: an object made shareable could
-         * be read from two Ractors at once, and a payload's cells (a borrow
-         * count, a cache) are not atomic. Without it Ruby refuses to make one
-         * shareable. */
-        t.flags = if embedded {
-            FREE_IMMEDIATELY | EMBEDDABLE
-        } else {
-            FREE_IMMEDIATELY
-        };
-        DataType(t)
-    }
-
-    /// The raw pointer the Ruby API wants.
-    #[inline]
-    pub const fn as_ptr(&self) -> *const nupur_sys::rb_data_type_t {
-        self as *const DataType as *const nupur_sys::rb_data_type_t
-    }
-}
 
 /// The data pointer of a TypedData object of type `ty` (or a type deriving
 /// from it), or the `TypeError` Ruby's own check raises.
@@ -205,62 +130,4 @@ pub(super) unsafe fn wrap_built<T, const N: usize>(
      * here the mark sees them in the slots. */
     p.write(Envelope { roots, data });
     Ok(obj)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    unsafe extern "C" fn mark(_: *mut c_void) {}
-    unsafe extern "C" fn free(_: *mut c_void) {}
-    unsafe extern "C" fn size(_: *const c_void) -> nupur_sys::size_t {
-        0
-    }
-
-    /// The table's words past the three callbacks `DataType::new` sets are
-    /// all zero - `dcompact`, the reserve (`reserved[1]` up to Ruby 4.0), and on
-    /// 4.1 `handle_weak_references` and `reserved[7]` too - since a non-zero
-    /// reserve is a callback Ruby would call.
-    #[test]
-    fn the_callback_table_leaves_what_it_does_not_set_zero() {
-        let ty = DataType::new(
-            c"nupur::test".as_ptr(),
-            core::ptr::null(),
-            Some(mark),
-            Some(free),
-            Some(size),
-            false,
-        );
-        let table = &ty.0.function;
-        assert!(table.dmark.is_some() && table.dfree.is_some() && table.dsize.is_some());
-        assert!(table.dcompact.is_none());
-        // SAFETY: the table is `FUNCTION_TABLE_WORDS` pointer-sized words of
-        // plain data, read here as such.
-        let words = unsafe {
-            core::slice::from_raw_parts(table as *const _ as *const usize, FUNCTION_TABLE_WORDS)
-        };
-        assert!(words[3..].iter().all(|&w| w == 0), "{words:?}");
-        assert_eq!(ty.0.flags, VALUE::from(FREE_IMMEDIATELY_FLAG));
-    }
-
-    /// Neither kind of type is one Ruby may make shareable.
-    #[test]
-    fn no_type_is_frozen_shareable() {
-        const SHAREABLE: VALUE =
-            nupur_sys::rbimpl_typeddata_flags::RUBY_TYPED_FROZEN_SHAREABLE as VALUE;
-        for embedded in [false, true] {
-            let ty = DataType::new(
-                c"nupur::test".as_ptr(),
-                core::ptr::null(),
-                Some(mark),
-                Some(free),
-                Some(size),
-                embedded,
-            );
-            assert_eq!(ty.0.flags & SHAREABLE, 0);
-        }
-    }
-
-    const FREE_IMMEDIATELY_FLAG: u32 =
-        nupur_sys::rbimpl_typeddata_flags::RUBY_TYPED_FREE_IMMEDIATELY as u32;
 }

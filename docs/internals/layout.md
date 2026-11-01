@@ -289,13 +289,10 @@ These gates hold the boundary:
   `#![forbid(unsafe_code)]`, as the engine's root does for the whole engine.
   The gate pins the roots in `FORBID_ROOTS` (`bridge`, `glue` and the
   engine's `css_match`, `selectors`, `xml` and `xpath`).
-- rb-sys is Nupur's, reached through `nupur_sys`: the extension depends on
-  neither, so no file of it names Ruby's C API, and `rake dylint`'s
-  `raw_ruby_outside_bridge` refuses an rb-sys item outside Nupur (and
-  `bridge/`, which cannot reach one). The lint resolves the item to where
-  rb-sys defines it, so the re-export does not hide it. `rake dylint` also
-  holds the C calls that can raise to `nupur`'s `raw/` and to
-  `nupur_sys::protect`.
+- rb-sys is `nupur_sys`'s alone: no other crate depends on it, so no other
+  can name Ruby's C API, and `nupur_sys` re-exports no C function and no
+  `VALUE`. That is the dependencies' rule, not a lint's. `rake dylint`
+  holds the C calls that can raise, inside `nupur_sys`, to its protection.
 - A `Value` is made from a raw `VALUE` only in `nupur_sys`
   (`nupur_sys::value::Value::from_raw`, `unsafe`); Nupur and the extension
   have no way to.

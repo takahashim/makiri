@@ -34,7 +34,8 @@ use core::ffi::{c_int, c_void};
 
 use crate::protect::Protected;
 use crate::value::Value;
-use crate::{rb_data_type_t, rb_encoding, rb_enumerator_size_func, size_t, ID, VALUE};
+use crate::{rb_data_type_t, rb_encoding, rb_enumerator_size_func, size_t, ID};
+use rb_sys::VALUE;
 
 /// What a wrapper's argument is to C: a [`Value`] its `VALUE`, a pointer to
 /// values a pointer to `VALUE`s (`Value` is `repr(transparent)`), and

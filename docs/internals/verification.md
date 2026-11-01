@@ -92,7 +92,7 @@ reason. The lints:
   `REVIEWED`, outside `raw::call`. The tables are held to the C API raise
   survey, vendored, and to Ruby's headers as rb-sys's bindings carry them
   (`script/check_non_raising.rb`).
-- `unraising_call_in_raw`, `raw_ruby_outside_bridge`, `runs_callers_ruby`,
+- `unraising_call_in_raw`, `runs_callers_ruby`,
   `raw_node_crossing`, `ruby_surface_in_bridge`.
 - `discarded_ruby_error`: an `Err` of `bridge::rb::Error` thrown away by
   `.ok()` / `.unwrap_or*` / `.is_ok()` / `let _ =` / `let _name =` / an

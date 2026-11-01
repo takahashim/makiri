@@ -15,9 +15,12 @@ fn sys_contract() {
     unsafe { nupur_sys::protect::forget_errinfo() } //~ ffi_without_gvl_proof
 }
 
-/// A raw `VALUE` outside the files that are the typed values
-/// (`raw_ruby_outside_bridge`).
-fn raw_type(_: nupur_sys::VALUE) {} //~ raw_ruby_outside_bridge
+/// `nupur_sys`'s value types on the heap (`ruby_value_on_heap`): they hold
+/// a `VALUE` and implement no trait of the layer's, so the lint names them.
+struct SysKept {
+    values: Vec<nupur_sys::value::Value>, //~ ruby_value_on_heap
+    roots: Vec<nupur_sys::value::Root>,   //~ ruby_value_on_heap
+}
 
 /// The GVL's token made outside the entries Ruby calls
 /// (`gvl_token_outside_entry`): the maker outside `rb::method`, a

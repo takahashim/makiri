@@ -28,8 +28,9 @@ use core::ffi::{c_int, c_void};
 use rb_sys::stable_api::{get_default, StableApiDefinition};
 
 use crate::value::{Root, Ruby, Value};
-use crate::{rb_data_type_t, rb_encoding, ruby_value_type, size_t, ssize_t, ID, VALUE};
+use crate::{rb_data_type_t, rb_encoding, ruby_value_type, size_t, ssize_t, ID};
 use rb_sys::rb_unblock_function_t;
+use rb_sys::VALUE;
 
 macro_rules! reads {
     ($(fn $name:ident($($arg:ident: $ty:ty),*) $(-> $ret:ty)?;)*) => {$(

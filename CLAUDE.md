@@ -94,8 +94,9 @@ When a rule here changes, change its reasoning there in the same commit.
   is never a crate-wide entry: it is a `nupur_sys::read` wrapper named for
   the precondition (`enc_get_of_string`), its `allow` at the one C call and
   the precondition its `unsafe` contract, upheld at each call.
-- **A raw `VALUE` and `rb_sys::` stay in `nupur_sys` and in `nupur`'s
-  `raw/`, `typed/` and the `bridge::rb` value files** (`raw_ruby_outside_bridge`).
+- **A raw `VALUE` and `rb_sys::` stay in `nupur_sys`**, the one crate that
+  depends on rb-sys; it re-exports no `VALUE` and no C function, so Nupur
+  holds a value as `nupur_sys::value::Value` (a slot's as `Root`).
   `bridge/` is `#![forbid(unsafe_code)]`; every `unsafe` that touches Ruby
   is `nupur`'s.
 - **A Document's content is reached only through a guard** (`bridge::dom`

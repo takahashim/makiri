@@ -9,11 +9,13 @@ groups:
   `unguarded_no_unwind_site`, `ffi_without_gvl_proof`,
   `gvl_token_outside_entry`, `forgotten_handle`, `discarded_ruby_error`,
   `ruby_value_on_heap`, `c_integer_outside_int`, `runs_callers_ruby`,
-  `ruby_in_gvl_released_body`, and the layer's half of
-  `raw_ruby_outside_bridge`.
+  `ruby_in_gvl_released_body`.
 - **The extension's own layout**: `ruby_layer_in_engine`,
-  `infallible_allocation`, `raw_node_crossing`, `ruby_surface_in_bridge`,
-  and the extension's half of `raw_ruby_outside_bridge`.
+  `infallible_allocation`, `raw_node_crossing`, `ruby_surface_in_bridge`.
+
+Where rb-sys and a raw `VALUE` may be named is held by the crates'
+dependencies, not a lint: only `nupur_sys` depends on rb-sys, and it
+re-exports no `VALUE`.
 
 `src/lib.rs` states each lint and the module that holds it; that module says
 exactly what it reports and what it cannot see.

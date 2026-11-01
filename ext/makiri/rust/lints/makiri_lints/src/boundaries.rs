@@ -12,9 +12,6 @@
 //! - `raising_call_outside_protect`: a C function that can raise is called
 //!   only inside `nupur::raw::call`'s closure (which is private to
 //!   `nupur::raw`, so that is also where every raising call is).
-//! - `raw_ruby_outside_bridge`: Ruby's C API is named only in `bridge/`, and
-//!   a raw `VALUE` - the type, or a C global of Ruby's, which holds one - only
-//!   in the files that are the typed values.
 //! - `runs_callers_ruby`: a call that would run the caller's Ruby code, each
 //!   one allowed where it is made, with its reason.
 //! - `raw_node_crossing`: a borrowed HTML node handle made a lifetime-free
@@ -34,8 +31,8 @@ use crate::paths::{
     within,
 };
 use crate::{
-    INFALLIBLE_ALLOCATION, RAW_NODE_CROSSING, RAW_RUBY_OUTSIDE_BRIDGE, RUBY_IN_GVL_RELEASED_BODY,
-    RUBY_LAYER_IN_ENGINE, RUBY_SURFACE_IN_BRIDGE, RUNS_CALLERS_RUBY,
+    INFALLIBLE_ALLOCATION, RAW_NODE_CROSSING, RUBY_IN_GVL_RELEASED_BODY, RUBY_LAYER_IN_ENGINE,
+    RUBY_SURFACE_IN_BRIDGE, RUNS_CALLERS_RUBY,
 };
 
 /// Whether `module` is the engine's: Ruby-free, Lexbor-free code that an
@@ -60,19 +57,6 @@ fn in_bridge(module: &str) -> bool {
     within(module, "bridge") || in_layer(module) || within(module, "lint_probe::bridge")
 }
 
-/// The modules that may spell a raw `VALUE`: the C calls, TypedData and
-/// the GC callbacks, and the `bridge::rb` files that are the typed values.
-const VALUE_HOMES: &[&str] = &[
-    "nupur::raw",
-    "nupur::typed",
-    "nupur::rb::value",
-    "nupur::rb::kept",
-    "nupur::rb::object",
-    "nupur::rb::ruby",
-    "nupur::rb::method",
-    "nupur_sys",
-];
-
 /// What the engine may not name: the Ruby layer (`bridge`, `glue`, `init`)
 /// and Ruby's C API.
 fn ruby_layer(path: &str) -> bool {
@@ -90,64 +74,10 @@ pub fn check_path(cx: &LateContext<'_>, path: &Path<'_>, hir_id: HirId) {
     if !is_extension(cx) {
         return;
     }
-    let Res::Def(kind, did) = path.res else {
+    let Res::Def(_, did) = path.res else {
         return;
     };
     report_ruby_layer(cx, did, path.span.source_callsite(), hir_id);
-    report_raw_ruby(cx, kind, did, path.span.source_callsite(), hir_id);
-}
-
-/* ---- raw_ruby_outside_bridge ---- */
-
-fn report_raw_ruby(cx: &LateContext<'_>, kind: DefKind, did: DefId, span: Span, hir_id: HirId) {
-    let target = path_of(cx, did);
-    if !target.starts_with("rb_sys::") {
-        return;
-    }
-    let module = module_of(cx, hir_id);
-    if in_engine(&module) {
-        return; /* `ruby_layer_in_engine`'s */
-    }
-    if !in_bridge(&module) {
-        span_lint_and_help(
-            cx,
-            RAW_RUBY_OUTSIDE_BRIDGE,
-            span,
-            format!("`{target}`, Ruby's C API, outside bridge/"),
-            None,
-            "the bridge owns raw values, typed data and the C calls that raise, so a \
-             raise becomes an Err before it can longjmp past a destructor; add a typed \
-             wrapper there",
-        );
-    } else if (target.ends_with("::VALUE") || is_value_global(cx, kind, did))
-        && !VALUE_HOMES.iter().any(|m| within(&module, m))
-    {
-        span_lint_and_help(
-            cx,
-            RAW_RUBY_OUTSIDE_BRIDGE,
-            span,
-            "a raw `VALUE` outside the files that are the typed values",
-            None,
-            "a VALUE is an integer to Rust, which no lint can follow into a Vec or a \
-             field; hold a bridge::rb value (Value, RString, ...) instead",
-        );
-    }
-}
-
-/// A C global of Ruby's that holds a value (`rb_cObject`, `rb_eArgError`):
-/// a raw `VALUE` read without the type being spelled. `VALUE` is an alias of
-/// an unsigned integer, which the type shows; another global (the
-/// `ruby_api_version` array) is not one.
-fn is_value_global(cx: &LateContext<'_>, kind: DefKind, did: DefId) -> bool {
-    matches!(kind, DefKind::Static { .. })
-        && matches!(
-            cx.tcx
-                .type_of(did)
-                .instantiate_identity()
-                .skip_normalization()
-                .kind(),
-            rustc_middle::ty::Uint(_)
-        )
 }
 
 fn report_ruby_layer(cx: &LateContext<'_>, did: DefId, span: Span, hir_id: HirId) {

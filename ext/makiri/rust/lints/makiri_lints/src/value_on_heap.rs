@@ -72,7 +72,17 @@ fn heap_container<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>) -> bool {
     )
 }
 
+/// `nupur_sys`'s own value types, which hold a `VALUE` and implement no
+/// trait of the layer's: a value, and a slot's `Root` (marked only in the
+/// slot of the object that holds it, so no more to be kept elsewhere).
+const SYS_VALUES: &[&str] = &["nupur_sys::value::Value", "nupur_sys::value::Root"];
+
 fn is_ruby_value<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>, repr: DefId) -> bool {
+    if let ty::Adt(adt, _) = ty.kind()
+        && SYS_VALUES.contains(&crate::paths::path_of(cx, adt.did()).as_str())
+    {
+        return true;
+    }
     !ty.has_escaping_bound_vars() && clippy_utils::ty::implements_trait(cx, ty, repr, &[])
 }
 

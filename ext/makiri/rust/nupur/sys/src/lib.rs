@@ -39,14 +39,16 @@
 
 /* The types and constants Nupur names, and nothing else of rb-sys's: no C
  * function is re-exported, so Nupur calls Ruby's C only through the
- * wrappers here, each taking its proof (`raising`, `read`, `protect`). */
+ * wrappers here, each taking its proof (`raising`, `read`, `protect`); and
+ * no `VALUE`, so Nupur holds a Ruby value only as a `value::Value` (or a
+ * slot's `value::Root`), never as an integer. */
 pub use rb_sys::{
-    rb_data_type_struct__bindgen_ty_1, rb_data_type_t, rb_encoding, rb_enumerator_size_func,
-    rbimpl_typeddata_flags, ruby_coderange_type, ruby_econv_flag_type, ruby_encoding_consts,
-    ruby_value_type, size_t, ssize_t, st_retval, Qfalse, Qnil, Qtrue, Qundef, RBasic, ID,
-    RUBY_API_VERSION_MAJOR, RUBY_API_VERSION_MINOR, RUBY_DATA_FUNC, VALUE,
+    rb_data_type_t, rb_encoding, rb_enumerator_size_func, ruby_coderange_type,
+    ruby_econv_flag_type, ruby_encoding_consts, ruby_value_type, size_t, ssize_t, st_retval, ID,
+    RUBY_API_VERSION_MAJOR, RUBY_API_VERSION_MINOR, RUBY_DATA_FUNC,
 };
 
+pub mod data_type;
 pub mod int;
 pub mod no_unwind;
 pub mod protect;

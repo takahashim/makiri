@@ -14,7 +14,7 @@
 
 use core::marker::PhantomData;
 
-use crate::VALUE;
+use rb_sys::VALUE;
 
 /// A live Ruby value, of any kind: on a Ruby thread holding the GVL, and
 /// kept where the GC finds it (a Rust local, which the stack scan sees) for

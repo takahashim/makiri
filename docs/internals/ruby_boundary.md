@@ -438,15 +438,16 @@ which only a trampoline's raise may call. A String made in place is
 ### Where a raw `VALUE` may appear
 
 A raw `VALUE` is an integer to Rust, which no lint can tell from a `u64` in
-a `Vec`. Nupur no longer spells one, outside the `rb_data_type_t` it
-builds: `nupur_sys`'s wrappers take and return `nupur_sys::value::Value`,
-and a C call's answer, a C global's class, a constant (`Ruby::qnil`,
-`Ruby::fixnum`), a method's trampoline, a Hash walk's callback and a
-slot's `Root` are each typed from the start. Nupur's `Value` holds a
-`nupur_sys::value::Value` and has no `from_raw`.
-`rake dylint`'s `raw_ruby_outside_bridge` enforces this, and also fails on
-any `rb_sys::` outside the layer, which it counts as part of the bridge. The extension has no rb-sys dependency, so its `bridge/` names
-none.
+a `Vec`. So only `nupur_sys` spells one: it is the one crate that depends on
+rb-sys, and it re-exports no `VALUE`. Its wrappers take and return
+`nupur_sys::value::Value`, and a C call's answer, a C global's class, a
+constant (`Ruby::qnil`, `Ruby::fixnum`), a method's trampoline, a Hash
+walk's callback, a slot's `Root` and the `rb_data_type_t`
+(`nupur_sys::data_type`) are each typed from the start. Nupur's `Value`
+holds a `nupur_sys::value::Value` and has no `from_raw`. These are the
+crates' types and dependencies, so no lint holds them (the
+`raw_ruby_outside_bridge` lint that once did is gone); `ruby_value_on_heap`
+counts `nupur_sys`'s `Value` and `Root` as Ruby values, as it does Nupur's.
 
 Everything else therefore holds typed values, and `TypedType::wrap` is safe
 for that reason: it takes `&Ruby`, and a payload keeps no Ruby value, since

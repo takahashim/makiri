@@ -29,16 +29,18 @@
 //!   GC cannot see it.
 //! - `c_integer_outside_int` ([`c_integer`]): an integer `as` cast, or a C
 //!   `long` named, at the Ruby boundary outside `nupur_sys::int`.
-//! - From [`boundaries`]: `raw_ruby_outside_bridge`'s half that holds a raw
-//!   `VALUE` to the layer's files, `runs_callers_ruby` and
+//! - From [`boundaries`]: `runs_callers_ruby` and
 //!   `ruby_in_gvl_released_body`.
+//!
+//! Where a raw `VALUE` and rb-sys may be named is no lint's: only
+//! `nupur_sys` depends on rb-sys, and it re-exports no `VALUE`, so Nupur
+//! holds a Ruby value only as `nupur_sys`'s `Value` (or a slot's `Root`).
 //!
 //! # The extension's own layout (Makiri)
 //!
 //! Where Makiri draws its own lines - its engine, its glue and bridge, its
 //! allocation policy - in [`boundaries`]: `ruby_layer_in_engine`,
-//! `infallible_allocation`, `raw_ruby_outside_bridge`'s half that holds
-//! rb-sys to `bridge/`, `raw_node_crossing`, `ruby_surface_in_bridge`. The
+//! `infallible_allocation`, `raw_node_crossing`, `ruby_surface_in_bridge`. The
 //! engine is a crate of its own (`makiri_engine`, [`paths::ENGINE`]) that
 //! depends on no Ruby, so `ruby_layer_in_engine` has nothing to find there;
 //! it holds nupur's one Ruby-free module, `utf8_copy`, which shares a crate
@@ -91,7 +93,6 @@ pub fn register_lints(sess: &Session, lint_store: &mut LintStore) {
         RUBY_IN_GVL_RELEASED_BODY,
         INFALLIBLE_ALLOCATION,
         RAISING_CALL_OUTSIDE_PROTECT,
-        RAW_RUBY_OUTSIDE_BRIDGE,
         RUNS_CALLERS_RUBY,
         RAW_NODE_CROSSING,
         RUBY_SURFACE_IN_BRIDGE,
@@ -216,12 +217,6 @@ declare_lint! {
 }
 
 declare_lint! {
-    pub RAW_RUBY_OUTSIDE_BRIDGE,
-    Deny,
-    "Ruby's C API outside bridge/, or a raw VALUE outside the typed values"
-}
-
-declare_lint! {
     pub RUNS_CALLERS_RUBY,
     Deny,
     "a call that runs the caller's Ruby code"
@@ -311,7 +306,6 @@ declare_lint_pass!(MakiriLints => [
     RUBY_IN_GVL_RELEASED_BODY,
     INFALLIBLE_ALLOCATION,
     RAISING_CALL_OUTSIDE_PROTECT,
-    RAW_RUBY_OUTSIDE_BRIDGE,
     RUNS_CALLERS_RUBY,
     RAW_NODE_CROSSING,
     RUBY_SURFACE_IN_BRIDGE,

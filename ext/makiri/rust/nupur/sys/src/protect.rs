@@ -15,7 +15,7 @@
 use core::ffi::c_int;
 use core::marker::PhantomData;
 
-use crate::VALUE;
+use rb_sys::VALUE;
 
 /// The proof that code runs inside [`call`]'s `rb_protect`, where a raise
 /// comes back to the caller instead of `longjmp`ing over its frames.

@@ -36,7 +36,7 @@ mod raising {
         unsafe { rb_sys::rb_utf8_encoding() } //~ unraising_call_in_raw
     }
 
-    unsafe fn rb_ary_new(_: &crate::protect::Protected) -> crate::VALUE {
+    unsafe fn rb_ary_new(_: &crate::protect::Protected) -> rb_sys::VALUE {
         unsafe { rb_sys::rb_ary_new() }
     }
 }
