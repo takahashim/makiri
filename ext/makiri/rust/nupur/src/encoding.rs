@@ -203,14 +203,14 @@ impl Encoding {
     /// For an encoding that is not a String's - a declared one, a given one.
     /// A String's own is [`RString::reads_as_utf8_bytes`](crate::rb::RString::reads_as_utf8_bytes),
     /// which reads its flags rather than look its encoding up.
-    pub fn is_utf8_ascii_or_binary(self) -> bool {
+    pub(crate) fn is_utf8_ascii_or_binary(self) -> bool {
         reads_as_utf8_index(self.index())
     }
 
     /// A copy of `str` tagged with this encoding instead of its own: its
     /// bytes read as this encoding's. Allocating, so a raise
     /// (`NoMemoryError`, or `ArgumentError` from the tag) is returned.
-    pub fn relabel(self, str: RString) -> Result<RString, Error> {
+    pub(crate) fn relabel(self, str: RString) -> Result<RString, Error> {
         /* The copy is on this frame, where the conservative scan sees it. */
         let copy = crate::raw::str_dup(str)?;
         crate::raw::enc_associate(copy, self)

@@ -19,7 +19,7 @@ pub fn ruby_api_version() -> crate::msg::Msg {
 }
 
 /// The Ruby API `MAJOR.MINOR` this extension was compiled against.
-pub fn built_ruby_api() -> (i64, i64) {
+pub(crate) fn built_ruby_api() -> (i64, i64) {
     (
         i64::from(nupur_sys::RUBY_API_VERSION_MAJOR),
         i64::from(nupur_sys::RUBY_API_VERSION_MINOR),
@@ -28,7 +28,7 @@ pub fn built_ruby_api() -> (i64, i64) {
 
 /// The running Ruby's API `MAJOR.MINOR`, read from the `ruby_api_version`
 /// it exports (three ints, whose layout no Ruby changes).
-pub fn running_ruby_api() -> (i64, i64) {
+pub(crate) fn running_ruby_api() -> (i64, i64) {
     // SAFETY: an immutable `const int[3]` libruby exports, read by value.
     let (major, minor) = unsafe {
         (
