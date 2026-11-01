@@ -15,13 +15,13 @@
 //! # What the layer guarantees
 //!
 //! - **No raise crosses Rust.** Every C call that can raise is a wrapper in
-//!   `nupur_sys::raising`, which takes a `&Protected` - lent only by
-//!   `rb_protect`'s thunk, to the closure `raw::call` runs - so it runs under
-//!   `rb_protect` by its type, and its raise comes back as `Err`. Nupur has no
-//!   other way to call one: it does not depend on rb-sys, and `nupur_sys`
-//!   re-exports no C function. A method's `Err` is raised by its trampoline
-//!   ([`rb::method::finish`]) once every Rust frame of the method has
-//!   returned.
+//!   `nupur_sys::raising` that takes a `&Protected`. Only `rb_protect`'s
+//!   thunk makes one, and lends it to the closure that `raw::call` runs, so
+//!   the call runs under `rb_protect` by its type and its raise comes back as
+//!   `Err`. Nupur has no other way to call one: it does not depend on rb-sys,
+//!   and `nupur_sys` re-exports no C function. A method's `Err` is raised by
+//!   its trampoline ([`rb::method::finish`]) once every Rust frame of the
+//!   method has returned.
 //! - **No panic reaches C.** A trampoline catches a panic and raises the
 //!   internal error in its place; a callback C runs latches one
 //!   ([`caught::PanicLatch`]) for its caller to resume. What must not unwind
@@ -31,28 +31,33 @@
 //!   proof that it is held: the Ruby value it is about
 //!   (`nupur_sys::value::Value`, which an [`rb::Value`] holds), or, where it
 //!   has none, the token (`nupur_sys::value::Ruby`, which an [`rb::Ruby`]
-//!   holds). The few that take neither need no GVL (whether this is a Ruby
-//!   thread, an encoding's index), or run in a GC callback, whose contract
-//!   is the proof (`gc_mark_in_dmark`). Both are
-//!   `!Send` and `!Sync`. A value is made only inside `nupur_sys`, from what
-//!   a C call returned or Ruby passed in; a token only by `rb::method`'s
-//!   private `entry_token`, which only the two entries Ruby calls -
-//!   a method's trampoline and [`rb::method::run_init`] - call. A value lends
-//!   the token for its borrow (`Value::ruby`), so a function takes `&Ruby`
-//!   only when it holds no Ruby value (or handle made from one, `self`
-//!   included) to show. The exceptions say more than the GVL: the reads of
-//!   the running method's own frame (`rb::method::block_given`,
-//!   `keyword_given`, `yield_value`), whose token is the method's, and
-//!   `Opaque::get`, whose value lives in a static.
-//! - **No Ruby value is an integer.** `nupur_sys` re-exports no `VALUE` and
-//!   no type whose definition holds one, and keeps the conversions between a
-//!   value and its word to itself, so nothing here holds a Ruby value as a
-//!   `u64` the GC's scan, or a reader, could not tell from a number.
+//!   holds). Both are `!Send` and `!Sync`, so neither enters a body run with
+//!   the GVL released. A value is made only inside `nupur_sys`, from what a
+//!   C call returned or Ruby passed in. A token is made only by
+//!   `rb::method`'s private `entry_token`, which only the two entries Ruby
+//!   calls use: a method's trampoline and [`rb::method::run_init`].
+//!
+//!   A value lends the token for its borrow (`Value::ruby`), so a function
+//!   takes `&Ruby` only when it holds no Ruby value (or handle made from
+//!   one, `self` included) to show. Two kinds take `&Ruby` against that
+//!   rule: the reads of the running method's own frame
+//!   (`rb::method::block_given`, `keyword_given`, `yield_value`), whose token
+//!   stands for that frame as well as for the GVL, and `Opaque::get`, whose
+//!   value lives in a static and so proves nothing. The
+//!   few calls of Ruby's C that take no proof need no GVL (whether this is a
+//!   Ruby thread, an encoding's index) or run in a GC callback, whose
+//!   contract is the proof (`gc_mark_in_dmark`).
+//! - **No Ruby value is held as an integer.** `nupur_sys` re-exports no
+//!   `VALUE`, nor any type whose definition holds one, and keeps the
+//!   conversions between a value and its word to itself. So nothing here
+//!   holds a Ruby value as a `u64`, which a lint, or a reader, could not tell
+//!   from a number.
 //! - **A wrapped object's values are its slots** ([`typed`]): each a
 //!   `nupur_sys::value::Root`, marked by the layer's mark callback and read
-//!   back as a value only under a contract; a payload holds none. Memory reported to the GC is given back by
-//!   the free callback. One is made only of a [`rb::DataClass`], a class
-//!   defined without an allocator, so Ruby cannot make one with no payload.
+//!   back as a value only under a contract; a payload holds none. Memory the
+//!   object reported to the GC is given back by its free callback. A wrapped
+//!   object is made only of a [`rb::DataClass`], a class defined without an
+//!   allocator, so Ruby cannot make one with no payload.
 //! - **A String is read by copying** ([`string`]): no slice of one is handed
 //!   out. Read as text ([`string::read_utf8`]), it is a copy checked to be
 //!   UTF-8 by std's validator over the copy itself ([`utf8_copy`]), never by
@@ -67,12 +72,13 @@
 //!   call runs C, so the thread's error info Ruby resumes it from is left
 //!   alone.
 //! - **An object is held while its data is borrowed through a handle.**
-//!   A [`typed::Typed`] - from `TypedType::check` for a value Ruby gave,
-//!   `TypedType::known` for one whose type is established, `TypedType::wrap`
-//!   for an object just made; there is no other way to a payload - lends the data and
-//!   keeps the object where the GC sees it until the last borrow is over,
-//!   wherever the object came from; `wrap_hidden` lends it to its `fill` the
-//!   same way, and hands the object out only once it is complete and shown.
+//!   A payload is reached only through a [`typed::Typed`]: from
+//!   `TypedType::check` for a value Ruby gave, `TypedType::known` for one
+//!   whose type is established, `TypedType::wrap` for an object just made.
+//!   It lends the data and keeps the object where the GC sees it until the
+//!   last borrow is over, wherever the object came from. `wrap_hidden` lends
+//!   it to its `fill` the same way, and hands the object out only once it is
+//!   complete and shown.
 //! - **Two Ractors may run the layer at once.** Each runs its methods under
 //!   its own GVL, so nothing of the layer's is shared but what any Ractor
 //!   may read: a static keeps only a [`rb::Shareable`] value (a class or a
@@ -89,14 +95,14 @@
 //! and `rake unsafe:boundaries`. A copy of this layer elsewhere needs its
 //! own:
 //!
-//! - which C functions can raise, and so which wrapper module each is in -
-//!   a table held to a survey of Ruby's C API (`script/check_non_raising.rb`),
-//!   which `raising_call_outside_protect` and `unraising_call_in_raw` apply
-//!   inside `nupur_sys`, the one crate that can name rb-sys, and to `raw`'s
-//!   protected calls;
-//! - inside `nupur_sys`, a safe function that calls Ruby's C holds a proof
-//!   of the GVL, and here, a safe function that calls one of its `unsafe fn`s
-//!   does - `ffi_without_gvl_proof`;
+//! - which C functions can raise, and so which wrapper module each belongs
+//!   in: a table held to a survey of Ruby's C API
+//!   (`script/check_non_raising.rb`). `raising_call_outside_protect` and
+//!   `unraising_call_in_raw` apply it inside `nupur_sys`, the one crate that
+//!   can name rb-sys, and to `raw`'s protected calls;
+//! - a safe function that calls Ruby's C inside `nupur_sys`, or one of
+//!   `nupur_sys`'s `unsafe fn`s here, holds a proof of the GVL -
+//!   `ffi_without_gvl_proof`;
 //! - every `extern "C"` function and GC-run `Drop` is a [`no_unwind`] site -
 //!   `unguarded_no_unwind_site`, and `rake no_unwind`'s proof of each;
 //! - no Ruby error is dropped, nor a `nupur_sys::protect::Caught` -
