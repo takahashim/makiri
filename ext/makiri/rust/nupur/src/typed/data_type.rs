@@ -32,7 +32,7 @@ pub(super) fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void,
     // SAFETY: `v` is a live value and `ty` a registered data type; the data
     // pointer is read only once the type is known to match.
     unsafe {
-        if nupur_sys::read::rb_typeddata_is_kind_of(sv, ty) {
+        if nupur_sys::non_raising::rb_typeddata_is_kind_of(sv, ty) {
             let p = data_pointer(sv);
             if p.is_null() {
                 return Err(crate::rb::error::type_error(
@@ -56,7 +56,7 @@ pub(super) fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void,
 #[inline]
 pub(super) unsafe fn data_pointer(v: nupur_sys::value::Value) -> *mut c_void {
     // SAFETY: the caller's contract.
-    unsafe { nupur_sys::read::rtypeddata_get_data(v) }
+    unsafe { nupur_sys::non_raising::rtypeddata_get_data(v) }
 }
 
 /// The data pointer of a TypedData object whose type the caller has already
@@ -72,7 +72,7 @@ pub(super) fn typed_data_known(v: Value, ty: &'static DataType) -> *mut c_void {
     // SAFETY: as in `typed_data`; the assert is the type check.
     unsafe {
         assert!(
-            nupur_sys::read::rb_typeddata_is_kind_of(sv, ty),
+            nupur_sys::non_raising::rb_typeddata_is_kind_of(sv, ty),
             "a VALUE of an established type had a different one"
         );
         let p = data_pointer(sv);

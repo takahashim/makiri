@@ -29,7 +29,7 @@ pub(crate) fn built_ruby_api() -> (i64, i64) {
 /// The running Ruby's API `MAJOR.MINOR`, read from the `ruby_api_version`
 /// it exports (three ints, whose layout no Ruby changes).
 pub(crate) fn running_ruby_api() -> (i64, i64) {
-    nupur_sys::read::running_api_version()
+    nupur_sys::non_raising::running_api_version()
 }
 
 /// `Err(LoadError)` unless the running Ruby's API `MAJOR.MINOR` is the one

@@ -18,7 +18,7 @@
 //! - `run_init`: in an `extern "C"` function named `Init_*`, which Ruby
 //!   calls as the extension loads.
 //!
-//! `nupur_sys`'s own token, which its reads that read no value take, is held
+//! `nupur_sys`'s own token, which its calls that take no value take, is held
 //! the same way, to the functions named in `GVL_ASSUMERS`: Nupur's
 //! `Ruby::get_unchecked`, and the GC's free callbacks.
 

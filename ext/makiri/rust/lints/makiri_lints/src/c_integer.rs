@@ -43,11 +43,13 @@ fn held(module: &str) -> bool {
 }
 
 /// Whether code in `module` may not name `c_long` / `c_ulong`: [`held`],
-/// bar `nupur_sys::raising` and `read`, which restate the C signatures,
+/// bar `nupur_sys::raising` and `non_raising`, which restate the C signatures,
 /// `long`s and all. They still may not cast: the conversions are
 /// `nupur_sys::int`'s.
 fn held_to_naming(module: &str) -> bool {
-    held(module) && !within(module, "nupur_sys::raising") && !within(module, "nupur_sys::read")
+    held(module)
+        && !within(module, "nupur_sys::raising")
+        && !within(module, "nupur_sys::non_raising")
 }
 
 pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {

@@ -25,7 +25,7 @@ impl RString {
     fn flags(self) -> usize {
         // SAFETY: a String is a heap object, whose header starts with
         // `RBasic`; reading its flags runs no Ruby.
-        unsafe { nupur_sys::read::rbasic_flags(self.as_sys()) }
+        unsafe { nupur_sys::non_raising::rbasic_flags(self.as_sys()) }
     }
 
     /// The String's cached coderange - a read of its header flags, which
@@ -57,7 +57,7 @@ impl RString {
         let inline = c_int::try_from(bits).unwrap_or(c_int::MAX);
         if inline == RUBY_ENCODING_INLINE_MAX as c_int {
             // SAFETY: a live String, by type.
-            unsafe { nupur_sys::read::enc_get_index_of_string(self.as_sys()) }
+            unsafe { nupur_sys::non_raising::enc_get_index_of_string(self.as_sys()) }
         } else {
             inline
         }
@@ -67,8 +67,8 @@ impl RString {
     /// header's `klass`, compared with `rb_cString`.
     #[inline]
     pub(crate) fn has_string_class(self) -> bool {
-        let string = nupur_sys::read::rb_cString(self.as_sys().ruby());
+        let string = nupur_sys::non_raising::rb_cString(self.as_sys().ruby());
         // SAFETY: as `flags`.
-        unsafe { nupur_sys::read::rbasic_klass(self.as_sys()) }.is(string)
+        unsafe { nupur_sys::non_raising::rbasic_klass(self.as_sys()) }.is(string)
     }
 }

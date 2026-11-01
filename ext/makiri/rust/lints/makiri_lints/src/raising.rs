@@ -154,9 +154,9 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         return;
     };
     let path = path_of(cx, did);
-    /* A read of `nupur_sys`'s - Ruby's C that raises nothing, which Nupur
+    /* A call of `nupur_sys::non_raising` - Ruby's C that raises nothing, which Nupur
      * reaches only this way - in `raw` outside `call`. */
-    if path.starts_with("nupur_sys::read::")
+    if path.starts_with("nupur_sys::non_raising::")
         && in_raw(&module_of(cx, expr.hir_id))
         && !inside_call(cx, expr.hir_id)
     {
@@ -164,7 +164,7 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
             cx,
             UNRAISING_CALL_IN_RAW,
             expr.span.source_callsite(),
-            format!("`{path}`, a read that raises nothing, is called in `raw` outside `call`"),
+            format!("`{path}`, a call that raises nothing, is made in `raw` outside `call`"),
             None,
             "`raw` holds the C calls made inside call(|| ...); a read that raises nothing \
              belongs with the values (rb::value, or rb::object for an object's ivars and class)",

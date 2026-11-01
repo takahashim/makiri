@@ -53,8 +53,9 @@ ext/makiri/rust/           the extension (package makiri_rs, lib `makiri`)
                            protection (`protect`: the `rb_protect` thunk,
                            `$!`, a pending exit), the raising C calls, each
                            taking the protection's token (`raising`), the
-                           other reads, each taking a value or the GVL's
-                           token (`read`, `value`), the `rb_data_type_t`
+                           other calls, each taking a value or the GVL's
+                           token (`non_raising`, `value`), the
+                           `rb_data_type_t`
                            (`data_type`), `int` and `no_unwind`. Of rb-sys
                            it re-exports a few types and constants nupur
                            names, and no function and no `VALUE`

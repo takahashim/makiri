@@ -356,7 +356,7 @@ flag's value, which the `2` variant fixes).
 
 A function that can raise, but raises nothing under a precondition, is
 never a crate-wide entry in the tables: the reason one call site has must
-not pass to a later one. It is a wrapper in `nupur_sys::read` named for the
+not pass to a later one. It is a wrapper in `nupur_sys::non_raising` named for the
 precondition, with the `allow` and its reason at the one call of the C
 function, and the precondition as its `unsafe` contract, which each caller
 upholds in its own SAFETY:
@@ -378,7 +378,7 @@ out, such as `rb_obj_is_kind_of` with a non-class, is an `allow` at its site
 saying so.
 
 `unraising_call_in_raw` holds `raw` and its modules to what they are. A
-read of `nupur_sys::read` in `raw` outside `call`, or a `call` that protects
+call of `nupur_sys::non_raising` in `raw` outside `call`, or a `call` that protects
 nothing, means the table and the code disagree. A read that raises nothing belongs to `rb::value`, to
 `rb::object` for an object's ivars and class, or to `rb::method` for the
 current frame.
@@ -412,8 +412,8 @@ The value-level wrappers are safe and typed. They take and return
 key's kind, a substring's bounds, `to_encoding`'s argument. One with no
 Ruby value takes `&Ruby` as the GVL's proof.
 
-Below them, the reads of Ruby's C that raise nothing (the C functions, the
-stable API, the C globals that hold a class) are `nupur_sys::read`'s, and
+Below them, the calls of Ruby's C that raise nothing (the C functions, the
+stable API, the C globals that hold a class) are `nupur_sys::non_raising`'s, and
 each takes a proof of the GVL that is a type of `nupur_sys`'s: the value it
 reads (`nupur_sys::value::Value`, which Nupur's `Value` holds: a value exists
 only where the GVL is held, and is `!Send`), or, for a read of no value, the

@@ -9,9 +9,10 @@
 //!
 //! Ruby's C is reached only through wrappers here, each taking its proof: a
 //! raising call the protection's token ([`raising`], [`protect::Protected`]),
-//! any other a value's or the GVL's token's ([`read`], [`value::Value`], [`value::Ruby`]). Of rb-sys itself only the
-//! types and constants Nupur names are re-exported, and no C function, so
-//! those rules are types rather than lints.
+//! any other a value or the GVL's token ([`non_raising`], [`value::Value`],
+//! [`value::Ruby`]). Of rb-sys itself only a few types and constants Nupur
+//! names are re-exported, and no C function and no `VALUE`, so those rules
+//! are types rather than lints.
 //!
 //! The crate denies `unsafe_code`, and the files that need it carry an
 //! `allow` each, as Nupur does.
@@ -39,7 +40,7 @@
 
 /* The types and constants Nupur names, and nothing else of rb-sys's: no C
  * function is re-exported, so Nupur calls Ruby's C only through the
- * wrappers here, each taking its proof (`raising`, `read`, `protect`); and
+ * wrappers here, each taking its proof (`raising`, `non_raising`, `protect`); and
  * no `VALUE`, so Nupur holds a Ruby value only as a `value::Value` (or a
  * slot's `value::Root`), never as an integer. */
 pub use rb_sys::{
@@ -51,9 +52,9 @@ pub use rb_sys::{
 pub mod data_type;
 pub mod int;
 pub mod no_unwind;
+pub mod non_raising;
 pub mod protect;
 pub mod raising;
-pub mod read;
 pub mod value;
 
 /* `rake dylint`'s self-test: what the lints must report here. */

@@ -101,11 +101,11 @@ mod raw {
     }
 
     fn a_read_in_raw(ruby: &crate::rb::Ruby) -> bool {
-        unsafe { nupur_sys::read::rb_block_given_p(ruby.sys()) != 0 } //~ unraising_call_in_raw
+        unsafe { nupur_sys::non_raising::rb_block_given_p(ruby.sys()) != 0 } //~ unraising_call_in_raw
     }
 
     fn protecting_nothing(ruby: &crate::rb::Ruby) -> bool {
-        call(|| unsafe { nupur_sys::read::rb_block_given_p(ruby.sys()) != 0 }) //~ unraising_call_in_raw
+        call(|| unsafe { nupur_sys::non_raising::rb_block_given_p(ruby.sys()) != 0 }) //~ unraising_call_in_raw
     }
 
     /* A call of a raising wrapper is what a protected call is for: passes. */

@@ -1,6 +1,9 @@
-//! Ruby's C that raises nothing, each read taking a proof of the GVL - the
-//! value it reads ([`Value`]), or the token ([`Ruby`]) when it reads none:
-//! the C functions the lints' table finds no raise in
+//! Ruby's C that raises nothing, outside the protection, each call taking a
+//! proof of the GVL - the value it is about ([`Value`]), or the token
+//! ([`Ruby`]) when it takes none. Not all of it reads: some C here writes
+//! (`rb_obj_hide`, `rb_gc_adjust_memory_usage`, `ruby_xfree`) or releases the
+//! GVL (`rb_thread_call_without_gvl2`); what they share is that none can
+//! raise. Here are the C functions the lints' table finds no raise in
 //! (`makiri_lints`' `NON_RAISING`, and the one `REVIEWED` for any caller),
 //! the inline reads of rb-sys's stable API, and the C globals that hold a
 //! class.
@@ -34,7 +37,7 @@ use rb_sys::VALUE;
 
 macro_rules! reads {
     ($(fn $name:ident($($arg:ident: $ty:ty),*) $(-> $ret:ty)?;)*) => {$(
-        #[doc = concat!("`", stringify!($name), "`, with the GVL.")]
+        #[doc = concat!("`", stringify!($name), "`, with the GVL; raises nothing.")]
         #[inline(always)]
         pub unsafe fn $name(_: &Ruby, $($arg: $ty),*) $(-> $ret)? {
             // SAFETY: the caller's (the module's contract); the token is the

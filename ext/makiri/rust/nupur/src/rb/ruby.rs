@@ -16,7 +16,7 @@ use super::value::{ExceptionClass, RClass, RModule, Value};
 ///
 /// [`Error`]: super::error::Error
 ///
-/// `nupur_sys`'s token underneath, which its reads that read no value take.
+/// `nupur_sys`'s token underneath, which its calls that take no value take.
 pub struct Ruby(nupur_sys::value::Ruby);
 
 macro_rules! globals {
@@ -25,7 +25,7 @@ macro_rules! globals {
             #[doc = concat!("`", stringify!($global), "`.")]
             #[inline]
             pub fn $method(&self) -> $kind {
-                let v = Value::from_sys(nupur_sys::read::$global(self.sys()));
+                let v = Value::from_sys(nupur_sys::non_raising::$global(self.sys()));
                 $kind::from_known(v)
             }
         )*
@@ -45,7 +45,7 @@ impl Ruby {
         Ruby(unsafe { nupur_sys::value::Ruby::get_unchecked() })
     }
 
-    /// `nupur_sys`'s token, for its reads.
+    /// `nupur_sys`'s token, for its calls.
     #[inline(always)]
     pub(crate) fn sys(&self) -> &nupur_sys::value::Ruby {
         &self.0

@@ -1,5 +1,5 @@
 //! The two proofs that code runs on a Ruby thread holding the GVL, which
-//! every read of Ruby's C here takes ([`crate::read`]): a Ruby value
+//! every read of Ruby's C here takes ([`crate::non_raising`]): a Ruby value
 //! ([`Value`]), for what reads one, and the GVL's token ([`Ruby`]), for what
 //! reads none.
 //!
@@ -162,7 +162,7 @@ impl Ruby {
 
 /// A Ruby value kept in a TypedData object's slot: on the heap, where the
 /// stack scan does not see it and the object's mark callback marks it
-/// ([`crate::read::gc_mark_in_dmark`]). The one form in which a value may
+/// ([`crate::non_raising::gc_mark_in_dmark`]). The one form in which a value may
 /// live outside a Rust local.
 ///
 /// `repr(transparent)`, and `!Send`, as a value is. Made from a value, which

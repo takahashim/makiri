@@ -28,5 +28,5 @@ fn stack_low() -> bool {
     /* The pointer outlives the token it was handed out for, so a call can
      * come from a thread Ruby does not run: `ruby_stack_low` answers "room
      * left" there. */
-    nupur_sys::read::ruby_stack_low()
+    nupur_sys::non_raising::ruby_stack_low()
 }

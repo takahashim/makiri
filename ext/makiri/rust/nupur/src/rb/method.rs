@@ -354,7 +354,7 @@ macro_rules! __trampoline {
 #[inline]
 pub fn block_given(ruby: &Ruby) -> bool {
     // SAFETY: under the GVL (`&Ruby`); a read of the current control frame.
-    unsafe { nupur_sys::read::rb_block_given_p(ruby.sys()) != 0 }
+    unsafe { nupur_sys::non_raising::rb_block_given_p(ruby.sys()) != 0 }
 }
 
 /// Yield `v` to the method's block (`rb_yield`): the caller's Ruby, which
@@ -391,7 +391,7 @@ pub fn yield_dropping_error_for_test(ruby: &Ruby) {
 #[inline]
 pub fn keyword_given(ruby: &Ruby) -> bool {
     // SAFETY: under the GVL (`&Ruby`); a read of the current control frame.
-    unsafe { nupur_sys::read::rb_keyword_given_p(ruby.sys()) != 0 }
+    unsafe { nupur_sys::non_raising::rb_keyword_given_p(ruby.sys()) != 0 }
 }
 
 /// `rb_ext_ractor_safe(true)`: every method the running `Init_` defines from
@@ -409,7 +409,7 @@ pub fn keyword_given(ruby: &Ruby) -> bool {
 pub fn declare_ractor_safe(ruby: &Ruby) {
     // SAFETY: under the GVL (`&Ruby`); sets the running thread's extension
     // config.
-    unsafe { nupur_sys::read::rb_ext_ractor_safe(ruby.sys(), true) }
+    unsafe { nupur_sys::non_raising::rb_ext_ractor_safe(ruby.sys(), true) }
 }
 
 /// What the extension's `Init_` runs its two phases through.
