@@ -11,7 +11,8 @@ task :lexbor do
   sh FileUtils::RUBY, File.expand_path("script/build_lexbor.rb", ROOT)
 end
 
-# The lint gate, with CI's OWN arguments. It exists because a narrower spelling
+# The lint gate, with CI's OWN arguments (ci.yml's Clippy, Rust formatting and
+# Fuzz crate checks steps, and the lints crate's fmt in its makiri_lints job). It exists because a narrower spelling
 # looks like it passes and is not: a command run in the workspace root reaches
 # the root crate alone, so five `clippy.toml` violations in a crate it did not
 # reach went unseen locally and turned CI red. So every crate is named here,

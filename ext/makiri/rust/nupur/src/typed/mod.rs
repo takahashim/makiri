@@ -230,20 +230,6 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
         Typed::new(v)
     }
 
-    /// Slot `I` of `v`, an object of this type whose type the caller already
-    /// established (a mismatch panics). `I < N` is checked when it compiles.
-    ///
-    /// The value is live for as long as the caller can use it: the slot is
-    /// marked while `v` is, and once the caller holds it, it is on the
-    /// caller's stack too.
-    #[inline]
-    pub fn root_known<const I: usize>(&'static self, v: &Value) -> Value {
-        const { assert!(I < N, "no such slot") };
-        // SAFETY: `known_ptr` asserted the type, and `v` is rooted by the
-        // caller; the slots were written by `wrap_built` and hold live values.
-        unsafe { value((*self.known_ptr(*v)).roots[I]) }
-    }
-
     /// `v` checked once to be an object of this type (or one deriving from
     /// it), or Ruby's own `TypeError`: a [`Typed`], which holds the object and
     /// reads the data and the slots with no check of its own.

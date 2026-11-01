@@ -45,8 +45,10 @@
   method はすべて、その内側で起きた違反を rescue 可能な専用例外に変換
   する (入力が untrusted かどうかで選別しない)。method の外 (初期化など)
   では、後始末 (ensure / at_exit / 資源解放) を走らせてから当該スレッド
-  だけを終わらせる。GC から呼ばれる処理だけは例外を投げられる場所では
-  ないので中断 (abort) を選び、そのぶん処理を自明な範囲に保つ
+  だけを終わらせる。GC から呼ばれる処理は例外を投げられる場所ではない
+  ので、処理を自明な範囲に保つ。mark は unwind しないことをコンパイラで
+  証明し、free と memsize は panic を捕まえて、payload を漏らすか 0 を
+  答えて続ける
 * robustness fuzz と手で curate した差分 spec で検証する。パーサの移植は
   参照実装 (Lexbor) との差分 fuzz と、仕様の固定した版の conformance
   データ (WPT の tree construction、html5lib の tokenizer テスト)、
@@ -509,8 +511,9 @@ baseline として固定し、現在のビルドと突き合わせる。baseline
   する。bump 方式では、切り出した領域どうしの間の overflow を sanitizer に
   検出させるために poisoning が要る。添字で引く構造なら arena 内の範囲外
   アクセスは境界検査で捕まるので、poisoning に頼る必要がない。
-* vendored 依存の bump arena も、必要なら依存自身を instrumented で
-  ビルドして検査する。ここにもパッチは当てない (ビルド flag で行う)。
+* vendored の Lexbor は出荷するビルドに入らず、参照としてだけ素の
+  ビルドで使う。その bump arena は sanitizer の検査の対象にせず、パッチも
+  当てない。
 * leak 検査は sanitizer と別立てで持つ。例外で脱出した経路も含めて
   漏れがないことを見る。
 * OOM は injection で全確保点を順に失敗させ、どの点で失敗しても
@@ -582,8 +585,8 @@ HTML の名前テストと HTML の属性では ASCII case を畳み込み、SVG
   アクセスは境界検査で捕まる。bridge は node を「document への参照」
   (`RawNode`) として扱い、document を `&mut` で借りた閉包の中でだけ編集
   する形に先に直し、二つの backend を一つの facade で差し替えられるように
-  した。`bridge::dom` は、Document が `RefCell` で所有する本体と、その読み取りと
-  編集のガードを置く。本体へ届く道はガードだけで、編集は読み取りが残っている間は
+  した。Document が所有する本体はエンジンの `doc_cell::DocCell` (中は
+  `RefCell`) に入れ、`bridge::dom` がその読み取りと編集のガードを置く。本体へ届く道はガードだけで、編集は読み取りが残っている間は
   実行時に拒否される。
 * セレクタの構文解析も Lexbor のパーサを移植して自前にした。Lexbor の
   共有アリーナの寿命に縛られずに解析結果をキャッシュで所有できる。

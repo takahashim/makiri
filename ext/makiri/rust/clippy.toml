@@ -4,7 +4,7 @@
 # `Err` costs a copy on the error path only.
 large-error-threshold = 288
 
-# The allocation chokepoint, enforced (see src/falloc/mod.rs).
+# The allocation chokepoint, enforced (see falloc/src/lib.rs).
 #
 # Rust's own allocating APIs are either infallible - they abort the process on
 # OOM, which for a library inside someone's application server is not "failing
@@ -84,7 +84,7 @@ disallowed-methods = [
   { path = "alloc::collections::VecDeque::push_back", reason = "grows and aborts on OOM" },
   { path = "alloc::collections::VecDeque::push_front", reason = "grows and aborts on OOM" },
   { path = "std::collections::HashMap::insert", reason = "grows and aborts on OOM; use MapInsert::falloc_insert" },
-  { path = "std::collections::HashSet::insert", reason = "grows and aborts on OOM; use MapInsert::falloc_insert" },
+  { path = "std::collections::HashSet::insert", reason = "grows and aborts on OOM; use SetInsert::falloc_insert" },
   { path = "std::collections::HashMap::entry", reason = "an insert through it grows and aborts on OOM; falloc_reserve(1) first, under an allow" },
   { path = "core::iter::Iterator::collect", reason = "a collection built by it grows and aborts on OOM; push with falloc" },
 ]
