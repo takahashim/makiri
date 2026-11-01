@@ -38,8 +38,8 @@ mod entry {
         unsafe { crate::rb::method::run_init(check, check) } //~ gvl_token_outside_entry
     }
 
-    fn sys_proof() -> &'static nupur_sys::gvl::Gvl {
-        unsafe { nupur_sys::gvl::Gvl::assume() } //~ ffi_without_gvl_proof gvl_token_outside_entry
+    fn sys_token() -> nupur_sys::value::Ruby {
+        unsafe { nupur_sys::value::Ruby::get_unchecked() } //~ ffi_without_gvl_proof gvl_token_outside_entry
     }
 }
 
@@ -84,7 +84,7 @@ mod c_integer {
 /// A C global's class, a raw `VALUE`, read outside the files that are the
 /// typed values (`raw_ruby_outside_bridge`).
 fn raw_global(ruby: &crate::rb::Ruby) -> bool {
-    nupur_sys::read::rb_cObject(ruby.gvl()) != 0 //~ raw_ruby_outside_bridge
+    nupur_sys::read::rb_cObject(ruby.sys()) != 0 //~ raw_ruby_outside_bridge
 }
 
 /// What `raw` holds (`unraising_call_in_raw`), in a stand-in for it: a read
@@ -98,10 +98,10 @@ mod raw {
     }
 
     fn a_read_in_raw(ruby: &crate::rb::Ruby) -> bool {
-        unsafe { nupur_sys::read::rb_block_given_p(ruby.gvl()) != 0 } //~ unraising_call_in_raw
+        unsafe { nupur_sys::read::rb_block_given_p(ruby.sys()) != 0 } //~ unraising_call_in_raw
     }
 
     fn protecting_nothing(ruby: &crate::rb::Ruby) -> bool {
-        call(|| unsafe { nupur_sys::read::rb_block_given_p(ruby.gvl()) != 0 }) //~ unraising_call_in_raw
+        call(|| unsafe { nupur_sys::read::rb_block_given_p(ruby.sys()) != 0 }) //~ unraising_call_in_raw
     }
 }

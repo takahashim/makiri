@@ -2,8 +2,6 @@
 
 #![allow(unsafe_code)]
 
-use core::marker::PhantomData;
-
 use super::error::Error;
 use super::value::{ExceptionClass, RClass, RModule, Value};
 
@@ -17,7 +15,9 @@ use super::value::{ExceptionClass, RClass, RModule, Value};
 /// since its class is read only when it is raised.
 ///
 /// [`Error`]: super::error::Error
-pub struct Ruby(PhantomData<*mut ()>);
+///
+/// `nupur_sys`'s token underneath, which its reads that read no value take.
+pub struct Ruby(nupur_sys::value::Ruby);
 
 macro_rules! globals {
     ($kind:ident: $($method:ident => $global:ident),* $(,)?) => {
@@ -26,7 +26,7 @@ macro_rules! globals {
             #[inline]
             pub fn $method(&self) -> $kind {
                 // SAFETY: a C global Ruby sets once at boot: a live value.
-                let v = unsafe { Value::from_raw(nupur_sys::read::$global(self.gvl())) };
+                let v = unsafe { Value::from_raw(nupur_sys::read::$global(self.sys())) };
                 $kind::from_known(v)
             }
         )*
@@ -42,15 +42,14 @@ impl Ruby {
     /// On a Ruby thread holding the GVL.
     #[inline]
     pub(crate) unsafe fn get_unchecked() -> Ruby {
-        Ruby(PhantomData)
+        // SAFETY: the caller's.
+        Ruby(unsafe { nupur_sys::value::Ruby::get_unchecked() })
     }
 
-    /// The proof of the GVL the token is, for `nupur_sys`'s reads.
+    /// `nupur_sys`'s token, for its reads.
     #[inline(always)]
-    pub(crate) fn gvl(&self) -> &nupur_sys::gvl::Gvl {
-        // SAFETY: a `Ruby` exists only on a Ruby thread holding the GVL, and
-        // the proof is lent for the token's borrow.
-        unsafe { nupur_sys::gvl::Gvl::assume() }
+    pub(crate) fn sys(&self) -> &nupur_sys::value::Ruby {
+        &self.0
     }
 
     /// `nil`.

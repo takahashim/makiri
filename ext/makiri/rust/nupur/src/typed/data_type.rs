@@ -103,12 +103,12 @@ impl DataType {
 /// it is collected; every reader of a payload comes through here or
 /// [`typed_data_known`].
 pub(super) fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void, Error> {
-    let (gvl, v, ty) = (crate::rb::value::gvl_of(&v), v.as_raw(), ty.as_ptr());
+    let (sv, v, ty) = (v.as_sys(), v.as_raw(), ty.as_ptr());
     // SAFETY: `v` is a live value and `ty` a registered data type; the data
     // pointer is read only once the type is known to match.
     unsafe {
-        if nupur_sys::read::rb_typeddata_is_kind_of(gvl, v, ty) != 0 {
-            let p = data_pointer(v);
+        if nupur_sys::read::rb_typeddata_is_kind_of(sv, ty) {
+            let p = data_pointer(sv);
             if p.is_null() {
                 return Err(crate::rb::error::type_error(
                     "an object whose data was never allocated",
@@ -127,12 +127,11 @@ pub(super) fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void,
 /// The data pointer of a TypedData object, read without a check.
 ///
 /// # Safety
-/// `v` is a live TypedData object, read with the GVL held (a live value's
-/// thread, or the GC's callback).
+/// `v` is a TypedData object.
 #[inline]
-pub(super) unsafe fn data_pointer(v: VALUE) -> *mut c_void {
+pub(super) unsafe fn data_pointer(v: nupur_sys::value::Value) -> *mut c_void {
     // SAFETY: the caller's contract.
-    unsafe { nupur_sys::read::rtypeddata_get_data(nupur_sys::gvl::Gvl::assume(), v) }
+    unsafe { nupur_sys::read::rtypeddata_get_data(v) }
 }
 
 /// The data pointer of a TypedData object whose type the caller has already
@@ -144,14 +143,14 @@ pub(super) unsafe fn data_pointer(v: VALUE) -> *mut c_void {
 /// the method's trampoline makes it the internal error (`rb::error::INTERNAL_ERROR`), where a raise
 /// would longjmp past them.
 pub(super) fn typed_data_known(v: Value, ty: &'static DataType) -> *mut c_void {
-    let (gvl, v, ty) = (crate::rb::value::gvl_of(&v), v.as_raw(), ty.as_ptr());
+    let (sv, ty) = (v.as_sys(), ty.as_ptr());
     // SAFETY: as in `typed_data`; the assert is the type check.
     unsafe {
         assert!(
-            nupur_sys::read::rb_typeddata_is_kind_of(gvl, v, ty) != 0,
+            nupur_sys::read::rb_typeddata_is_kind_of(sv, ty),
             "a VALUE of an established type had a different one"
         );
-        let p = data_pointer(v);
+        let p = data_pointer(sv);
         /* An established object was checked (`typed_data`) or made whole
          * (`wrap_built`), so its data is there. */
         assert!(!p.is_null(), "an established object without its data");
@@ -195,7 +194,7 @@ pub(super) unsafe fn wrap_built<T, const N: usize>(
     const { assert!(core::mem::size_of::<Envelope<T, N>>() != 0) };
     const { assert!(core::mem::align_of::<Envelope<T, N>>() <= 16) }; /* malloc's alignment */
     let obj = crate::raw::typed_object_zalloc(klass, core::mem::size_of::<Envelope<T, N>>(), ty)?;
-    let p = data_pointer(obj) as *mut Envelope<T, N>;
+    let p = data_pointer(nupur_sys::value::Value::from_raw(obj)) as *mut Envelope<T, N>;
     if p.is_null() {
         return Err(crate::rb::error::internal_error(
             "a TypedData object was made without its data",

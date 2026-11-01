@@ -39,7 +39,7 @@ fn is_builtin(builtin: &AtomicI32, index: c_int) -> bool {
 /// Ask Ruby the builtin encodings' indices, once: the first thing
 /// `rb::method::run_init` does, before the extension's own `Init_` code.
 pub(crate) fn init(ruby: &crate::rb::Ruby) {
-    let gvl = ruby.gvl();
+    let gvl = ruby.sys();
     // SAFETY: at `Init_`; each returns a constant.
     let (utf8, usascii, ascii8bit) = unsafe {
         (
@@ -110,16 +110,14 @@ impl Encoding {
     /// The encoding `str` is tagged with.
     pub fn of(str: RString) -> Encoding {
         // SAFETY: a live String, by type; reading its tag runs no Ruby.
-        Encoding(unsafe {
-            nupur_sys::read::enc_get_of_string(crate::rb::value::gvl_of(&str), str.as_raw())
-        })
+        Encoding(unsafe { nupur_sys::read::enc_get_of_string(str.as_sys()) })
     }
 
     /// UTF-8. Takes the token, as every C call of the layer that has no Ruby
     /// value to show for the GVL does.
     pub fn utf8(ruby: &crate::rb::Ruby) -> Encoding {
         // SAFETY: Ruby's immutable global encoding.
-        Encoding(unsafe { nupur_sys::read::rb_utf8_encoding(ruby.gvl()) })
+        Encoding(unsafe { nupur_sys::read::rb_utf8_encoding(ruby.sys()) })
     }
 
     /// The encoding Ruby knows by `name`, or None for a name it does not
@@ -179,7 +177,9 @@ impl Encoding {
         // SAFETY: one of Ruby's encodings, which live for the process; the
         // read of its index field raises nothing. An `Encoding` is made only
         // where a token or a Ruby value was, and is `!Send`: the GVL is held.
-        unsafe { nupur_sys::read::rb_enc_to_index(nupur_sys::gvl::Gvl::assume(), self.0) }
+        unsafe {
+            nupur_sys::read::rb_enc_to_index(&nupur_sys::value::Ruby::get_unchecked(), self.0)
+        }
     }
 
     /// UTF-8 or US-ASCII: text in it is already UTF-8, character for

@@ -46,8 +46,7 @@ pub fn utf8_str_filled(
     // is its buffer, the room `rb_str_new` allocated), referenced only from
     // this frame. Seen as `MaybeUninit`, so nothing reads it unwritten.
     let buf: &mut [core::mem::MaybeUninit<u8>] = unsafe {
-        let dst = nupur_sys::read::rstring_ptr(ruby.gvl(), str.as_raw())
-            as *mut core::mem::MaybeUninit<u8>;
+        let dst = nupur_sys::read::rstring_ptr(str.as_sys()) as *mut core::mem::MaybeUninit<u8>;
         if len == 0 || dst.is_null() {
             &mut []
         } else {
@@ -101,10 +100,9 @@ impl Drop for EmptyUnlessFilled {
     fn drop(&mut self) {
         /* Run while a panic unwinds, too, where a second panic aborts. */
         crate::no_unwind::must_not_unwind::<crate::no_unwind::DropUnfilled, _>(|| {
-            let s = self.0.as_raw();
             // SAFETY: the String just made, unfrozen and referenced only
             // from `utf8_str_filled`'s frame.
-            unsafe { nupur_sys::read::str_empty_unfrozen(crate::rb::value::gvl_of(&self.0), s) };
+            unsafe { nupur_sys::read::str_empty_unfrozen(self.0.as_sys()) };
         })
     }
 }

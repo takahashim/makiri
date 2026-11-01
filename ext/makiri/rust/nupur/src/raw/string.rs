@@ -116,7 +116,7 @@ pub fn enc_find(_: &Ruby, name: &core::ffi::CStr) -> Result<Option<Encoding>, Er
         if index < 0 {
             core::ptr::null_mut()
         } else {
-            nupur_sys::read::rb_enc_from_index(inside.gvl(), index)
+            nupur_sys::read::rb_enc_from_index(inside.ruby(), index)
         }
     })?;
     // SAFETY: a non-null answer is one of Ruby's encodings, which live for

@@ -9,7 +9,7 @@
 //!
 //! Ruby's C is reached only through wrappers here, each taking its proof: a
 //! raising call the protection's token ([`raising`], [`protect::Protected`]),
-//! any other the GVL's ([`read`], [`gvl::Gvl`]). Of rb-sys itself only the
+//! any other a value's or the GVL's token's ([`read`], [`value::Value`], [`value::Ruby`]). Of rb-sys itself only the
 //! types and constants Nupur names are re-exported, and no C function, so
 //! those rules are types rather than lints.
 //!
@@ -47,12 +47,12 @@ pub use rb_sys::{
     RUBY_API_VERSION_MAJOR, RUBY_API_VERSION_MINOR, RUBY_DATA_FUNC, VALUE,
 };
 
-pub mod gvl;
 pub mod int;
 pub mod no_unwind;
 pub mod protect;
 pub mod raising;
 pub mod read;
+pub mod value;
 
 /* `rake dylint`'s self-test: what the lints must report here. */
 #[cfg(nupur_sys_lint_probe)]

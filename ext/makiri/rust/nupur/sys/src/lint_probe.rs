@@ -49,7 +49,7 @@ mod gvl_proof {
         unsafe { rb_sys::rb_block_given_p() != 0 } //~ ffi_without_gvl_proof
     }
 
-    fn with_the_proof(_: &crate::gvl::Gvl) -> bool {
+    fn with_the_proof(_: &crate::value::Ruby) -> bool {
         unsafe { rb_sys::rb_block_given_p() != 0 }
     }
 
@@ -63,11 +63,11 @@ mod gvl_proof {
 /// raising ones did not name - and one the table says raises nothing passes.
 #[rustfmt::skip] // keeps each marker on the line reported
 mod classified {
-    fn unclassified(_: &crate::gvl::Gvl) {
+    fn unclassified(_: &crate::value::Ruby) {
         unsafe { rb_sys::rb_undef_alloc_func(rb_sys::rb_cObject) } //~ raising_call_outside_protect
     }
 
-    fn classified(_: &crate::gvl::Gvl) -> bool {
+    fn classified(_: &crate::value::Ruby) -> bool {
         unsafe { rb_sys::rb_block_given_p() != 0 }
     }
 }

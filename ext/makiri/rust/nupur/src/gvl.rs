@@ -92,7 +92,7 @@ pub fn without_gvl<F: FnOnce() -> R + Send, R>(
         // This variant raises nothing (see above), so no Rust frame is jumped.
         unsafe {
             nupur_sys::read::rb_thread_call_without_gvl2(
-                ruby.gvl(),
+                ruby.sys(),
                 Some(run::<F, R>),
                 &mut slot as *mut Slot<F, R> as *mut c_void,
                 None,

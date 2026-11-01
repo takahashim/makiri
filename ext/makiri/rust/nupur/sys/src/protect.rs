@@ -53,14 +53,11 @@ pub struct Protected {
 }
 
 impl Protected {
-    /// The proof of the GVL, which the protection implies: `rb_protect` runs
-    /// only under it.
+    /// The GVL's token, which the protection implies (`rb_protect` runs only
+    /// under it), lent for the borrow of this one.
     #[inline(always)]
-    pub fn gvl(&self) -> &crate::gvl::Gvl {
-        // SAFETY: inside `rb_protect`, which the token proves, the thread is
-        // a Ruby thread holding the GVL; the proof is lent for the token's
-        // borrow.
-        unsafe { crate::gvl::Gvl::assume() }
+    pub fn ruby(&self) -> &crate::value::Ruby {
+        crate::value::Ruby::lent()
     }
 }
 

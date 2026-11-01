@@ -48,7 +48,7 @@ impl External {
         }
         self.0.set(bytes);
         // SAFETY: a plain counter adjustment, with the GVL held (`&Ruby`).
-        unsafe { nupur_sys::read::rb_gc_adjust_memory_usage(ruby.gvl(), delta) };
+        unsafe { nupur_sys::read::rb_gc_adjust_memory_usage(ruby.sys(), delta) };
     }
 
     /// [`report`](Self::report) `more` bytes than were.

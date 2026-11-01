@@ -204,13 +204,7 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
     #[inline]
     pub fn is(&self, v: Value) -> bool {
         // SAFETY: `v` is a live VALUE; the type check does not raise.
-        unsafe {
-            nupur_sys::read::rb_typeddata_is_kind_of(
-                crate::rb::value::gvl_of(&v),
-                v.as_raw(),
-                self.raw.as_ptr(),
-            ) != 0
-        }
+        unsafe { nupur_sys::read::rb_typeddata_is_kind_of(v.as_sys(), self.raw.as_ptr()) }
     }
 
     /// `Ok` for an object of this type (or one deriving from it), else Ruby's
@@ -337,7 +331,7 @@ impl<T: Payload + 'static, const N: usize> Typed<T, N> {
         // is `T`'s with `N` slots (a derived type holds the same); the data
         // is the envelope `wrap_built` wrote, and the handle holds the object
         // until after the borrow.
-        unsafe { &*(data_pointer(self.value().as_raw()) as *const Envelope<T, N>) }
+        unsafe { &*(data_pointer(self.value().as_sys()) as *const Envelope<T, N>) }
     }
 
     /// The payload, borrowed for as long as the handle is.

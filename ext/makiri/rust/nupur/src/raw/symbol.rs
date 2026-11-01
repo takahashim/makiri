@@ -13,7 +13,7 @@ pub fn intern(_: &Ruby, name: &str) -> Result<Id, Error> {
             inside,
             p,
             n,
-            nupur_sys::read::rb_utf8_encoding(inside.gvl()),
+            nupur_sys::read::rb_utf8_encoding(inside.ruby()),
         )
     })
     .map(Id::from_raw)

@@ -39,7 +39,7 @@ pub(super) unsafe extern "C" fn mark_cb<T: Payload, const N: usize>(ptr: *mut c_
             // GVL held; a slot holds a live value (or `Qfalse`); and this
             // frame loses nothing to a longjmp (the no_unwind guard's Drop
             // does nothing unless unwinding).
-            unsafe { nupur_sys::read::gc_mark_in_dmark(nupur_sys::gvl::Gvl::assume(), r) };
+            unsafe { nupur_sys::read::gc_mark_in_dmark(nupur_sys::value::Value::from_raw(r)) };
         }
     })
 }
@@ -61,7 +61,7 @@ fn give_back(reported: usize) {
         // its callbacks with the GVL held.
         unsafe {
             nupur_sys::read::rb_gc_adjust_memory_usage(
-                nupur_sys::gvl::Gvl::assume(),
+                &nupur_sys::value::Ruby::get_unchecked(),
                 n.saturating_neg(),
             )
         };
@@ -86,7 +86,7 @@ pub(super) unsafe extern "C" fn free_cb<T: Payload, const N: usize>(ptr: *mut c_
             let reported = crate::caught::quietly(0, || data.reported_external());
             crate::caught::quietly((), || drop(data));
             give_back(reported);
-            nupur_sys::read::ruby_xfree(nupur_sys::gvl::Gvl::assume(), ptr);
+            nupur_sys::read::ruby_xfree(&nupur_sys::value::Ruby::get_unchecked(), ptr);
         }
     })
 }

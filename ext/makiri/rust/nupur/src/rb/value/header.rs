@@ -60,7 +60,7 @@ impl RString {
         let inline = c_int::try_from(bits).unwrap_or(c_int::MAX);
         if inline == RUBY_ENCODING_INLINE_MAX as c_int {
             // SAFETY: a live String, by type.
-            unsafe { nupur_sys::read::enc_get_index_of_string(super::gvl_of(&self), self.as_raw()) }
+            unsafe { nupur_sys::read::enc_get_index_of_string(self.as_sys()) }
         } else {
             inline
         }
@@ -72,7 +72,7 @@ impl RString {
     pub(crate) fn has_string_class(self) -> bool {
         // SAFETY: as `flags`; `rb_cString` is a C global Ruby sets once at
         // boot.
-        let string = nupur_sys::read::rb_cString(super::gvl_of(&self));
+        let string = nupur_sys::read::rb_cString(self.as_sys().ruby());
         unsafe { (*(self.as_raw() as *const nupur_sys::RBasic)).klass == string }
     }
 }

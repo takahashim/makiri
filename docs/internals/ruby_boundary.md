@@ -410,12 +410,15 @@ Ruby value takes `&Ruby` as the GVL's proof.
 
 Below them, the reads of Ruby's C that raise nothing (the C functions, the
 stable API, the C globals that hold a class) are `nupur_sys::read`'s, and
-each takes `nupur_sys`'s own proof, a `&Gvl`. Nupur lends one from a `Ruby`
-(`Ruby::gvl`), from a Ruby value (`rb::value::gvl_of`: a value exists only
-where the GVL is held, and is `!Send`), and inside the protection
-(`Protected::gvl`), each for the borrow of what it came from, so a proof
-cannot be kept past its source. `Gvl::assume`, the `unsafe fn` that makes one, is held
-by `gvl_token_outside_entry` to those places and to the GC's callbacks. A
+each takes a proof of the GVL that is a type of `nupur_sys`'s: the value it
+reads (`nupur_sys::value::Value`, which Nupur's `Value` holds: a value exists
+only where the GVL is held, and is `!Send`), or, for a read of no value, the
+token (`nupur_sys::value::Ruby`, which Nupur's `Ruby` holds). So a read of a
+value needs nothing beside it, and a read that only needs the value to be
+live is safe: `nil_p(v)`, `rb_type(v)`. A value or the protection lends the
+token (`Value::ruby`, `Protected::ruby`) for its borrow. The token's maker
+is held by `gvl_token_outside_entry` to Nupur's `Ruby`, the GC's callbacks
+and an `Encoding`. A
 function that can raise only outside a precondition (`rb_enc_get` of a
 non-String) has a wrapper named for it, whose contract each caller upholds
 (see "Raises ruled out at one call site").

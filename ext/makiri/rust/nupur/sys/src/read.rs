@@ -1,5 +1,6 @@
-//! Ruby's C that raises nothing, each read taking the proof of the GVL
-//! ([`Gvl`]): the C functions the lints' table finds no raise in
+//! Ruby's C that raises nothing, each read taking a proof of the GVL - the
+//! value it reads ([`Value`]), or the token ([`Ruby`]) when it reads none:
+//! the C functions the lints' table finds no raise in
 //! (`makiri_lints`' `NON_RAISING`, and the one `REVIEWED` for any caller),
 //! the inline reads of rb-sys's stable API, and the C globals that hold a
 //! class.
@@ -14,10 +15,10 @@
 //!
 //! # Safety
 //!
-//! Every function that takes a raw `VALUE` or pointer is an `unsafe fn` for
-//! what that cannot show: each argument is what the C function takes - a
-//! live value of the kind it names, a pointer to memory it may read (or
-//! write, or free) for the call. Holding the GVL is the token's.
+//! A function is an `unsafe fn` for what its types cannot show: a value of
+//! the kind the C function names (a String, a Bignum), a pointer to memory
+//! it may read (or write, or free) for the call. A value being live, and the
+//! GVL held, are the [`Value`]'s and the [`Ruby`]'s.
 
 #![allow(unsafe_code)]
 #![allow(clippy::missing_safety_doc)]
@@ -26,7 +27,7 @@ use core::ffi::{c_int, c_void};
 
 use rb_sys::stable_api::{get_default, StableApiDefinition};
 
-use crate::gvl::Gvl;
+use crate::value::{Ruby, Value};
 use crate::{rb_data_type_t, rb_encoding, ruby_value_type, size_t, ssize_t, ID, VALUE};
 use rb_sys::rb_unblock_function_t;
 
@@ -34,7 +35,7 @@ macro_rules! reads {
     ($(fn $name:ident($($arg:ident: $ty:ty),*) $(-> $ret:ty)?;)*) => {$(
         #[doc = concat!("`", stringify!($name), "`, with the GVL.")]
         #[inline(always)]
-        pub unsafe fn $name(_: &Gvl, $($arg: $ty),*) $(-> $ret)? {
+        pub unsafe fn $name(_: &Ruby, $($arg: $ty),*) $(-> $ret)? {
             // SAFETY: the caller's (the module's contract); the token is the
             // GVL.
             unsafe { rb_sys::$name($($arg),*) }
@@ -43,7 +44,6 @@ macro_rules! reads {
 }
 
 reads! {
-    fn rb_ary_entry(ary: VALUE, off: core::ffi::c_long) -> VALUE;
     fn rb_ascii8bit_encindex() -> c_int;
     fn rb_block_given_p() -> c_int;
     fn rb_enc_from_index(idx: c_int) -> *mut rb_encoding;
@@ -51,14 +51,12 @@ reads! {
     fn rb_ext_ractor_safe(flag: bool);
     fn rb_gc_adjust_memory_usage(diff: ssize_t);
     fn rb_keyword_given_p() -> c_int;
-    fn rb_obj_hide(obj: VALUE) -> VALUE;
     fn rb_thread_call_without_gvl2(
         func: Option<unsafe extern "C" fn(arg1: *mut c_void) -> *mut c_void>,
         data1: *mut c_void,
         ubf: rb_unblock_function_t,
         data2: *mut c_void
     ) -> *mut c_void;
-    fn rb_typeddata_is_kind_of(obj: VALUE, data_type: *const rb_data_type_t) -> c_int;
     fn rb_usascii_encindex() -> c_int;
     fn rb_utf8_encindex() -> c_int;
     fn rb_utf8_encoding() -> *mut rb_encoding;
@@ -101,120 +99,154 @@ pub fn ruby_stack_low() -> bool {
     ruby_native_thread_p() && unsafe { rb_sys::ruby_stack_check() != 0 }
 }
 
+/// `rb_ary_entry`: element `off`, `nil` past the end.
+///
+/// # Safety
+///
+/// `ary` is an Array.
+#[inline(always)]
+pub unsafe fn rb_ary_entry(ary: Value, off: core::ffi::c_long) -> VALUE {
+    // SAFETY: the contract; the read is bounds-checked by Ruby.
+    unsafe { rb_sys::rb_ary_entry(ary.as_raw(), off) }
+}
+
+/// `rb_obj_hide`: take `obj`'s class away.
+///
+/// # Safety
+///
+/// `obj` is a heap object no Ruby code holds, and none will be handed while
+/// it is hidden.
+#[inline(always)]
+pub unsafe fn rb_obj_hide(obj: Value) -> VALUE {
+    // SAFETY: the contract.
+    unsafe { rb_sys::rb_obj_hide(obj.as_raw()) }
+}
+
+/// `rb_typeddata_is_kind_of`: is `obj` a TypedData object of `data_type`?
+///
+/// # Safety
+///
+/// `data_type` points to a registered data type.
+#[inline(always)]
+pub unsafe fn rb_typeddata_is_kind_of(obj: Value, data_type: *const rb_data_type_t) -> bool {
+    // SAFETY: the contract; `obj` is live.
+    unsafe { rb_sys::rb_typeddata_is_kind_of(obj.as_raw(), data_type) != 0 }
+}
+
 /* ---- the stable API's inline reads ---- */
 
 /// `RB_NIL_P`.
 #[inline(always)]
-pub fn nil_p(_: &Gvl, v: VALUE) -> bool {
-    get_default().nil_p(v)
+pub fn nil_p(v: Value) -> bool {
+    get_default().nil_p(v.as_raw())
 }
 
 /// `RB_TEST`: Ruby's truthiness.
 #[inline(always)]
-pub fn rb_test(_: &Gvl, v: VALUE) -> bool {
-    get_default().rb_test(v)
+pub fn rb_test(v: Value) -> bool {
+    get_default().rb_test(v.as_raw())
 }
 
 /// `RB_SPECIAL_CONST_P`: an immediate.
 #[inline(always)]
-pub fn special_const_p(_: &Gvl, v: VALUE) -> bool {
-    get_default().special_const_p(v)
+pub fn special_const_p(v: Value) -> bool {
+    get_default().special_const_p(v.as_raw())
 }
 
 /// `RB_FIXNUM_P`.
 #[inline(always)]
-pub fn fixnum_p(_: &Gvl, v: VALUE) -> bool {
-    get_default().fixnum_p(v)
+pub fn fixnum_p(v: Value) -> bool {
+    get_default().fixnum_p(v.as_raw())
 }
 
 /// `RB_FIX2LONG`, in Rust's width: `v` must be a Fixnum.
 #[inline(always)]
-pub fn fix2long(_: &Gvl, v: VALUE) -> i64 {
-    i64::from(get_default().fix2long(v))
+pub fn fix2long(v: Value) -> i64 {
+    i64::from(get_default().fix2long(v.as_raw()))
 }
 
 /// `RB_OBJ_FROZEN` of a heap object.
 #[inline(always)]
-pub unsafe fn frozen_p(_: &Gvl, v: VALUE) -> bool {
-    // SAFETY: the caller's: a live, non-immediate value.
-    unsafe { get_default().frozen_p(v) }
+pub unsafe fn frozen_p(v: Value) -> bool {
+    // SAFETY: the caller's: a non-immediate value.
+    unsafe { get_default().frozen_p(v.as_raw()) }
 }
 
 /// `rb_type`.
 #[inline(always)]
-pub unsafe fn rb_type(_: &Gvl, v: VALUE) -> ruby_value_type {
-    // SAFETY: the caller's: a live value.
-    unsafe { get_default().rb_type(v) }
+pub fn rb_type(v: Value) -> ruby_value_type {
+    // SAFETY: a live value, by type.
+    unsafe { get_default().rb_type(v.as_raw()) }
 }
 
 /// `RB_SYMBOL_P`.
 #[inline(always)]
-pub unsafe fn symbol_p(_: &Gvl, v: VALUE) -> bool {
-    // SAFETY: the caller's: a live value.
-    unsafe { get_default().symbol_p(v) }
+pub fn symbol_p(v: Value) -> bool {
+    // SAFETY: a live value, by type.
+    unsafe { get_default().symbol_p(v.as_raw()) }
 }
 
 /// `RB_INTEGER_TYPE_P`.
 #[inline(always)]
-pub unsafe fn integer_type_p(_: &Gvl, v: VALUE) -> bool {
-    // SAFETY: the caller's: a live value.
-    unsafe { get_default().integer_type_p(v) }
+pub fn integer_type_p(v: Value) -> bool {
+    // SAFETY: a live value, by type.
+    unsafe { get_default().integer_type_p(v.as_raw()) }
 }
 
 /// `RB_FLOAT_TYPE_P`.
 #[inline(always)]
-pub unsafe fn float_type_p(_: &Gvl, v: VALUE) -> bool {
-    // SAFETY: the caller's: a live value.
-    unsafe { get_default().float_type_p(v) }
+pub fn float_type_p(v: Value) -> bool {
+    // SAFETY: a live value, by type.
+    unsafe { get_default().float_type_p(v.as_raw()) }
 }
 
 /// `RBIGNUM_NEGATIVE_P`.
 #[inline(always)]
-pub unsafe fn bignum_negative_p(_: &Gvl, v: VALUE) -> bool {
+pub unsafe fn bignum_negative_p(v: Value) -> bool {
     // SAFETY: the caller's: a live Bignum.
-    unsafe { get_default().bignum_negative_p(v) }
+    unsafe { get_default().bignum_negative_p(v.as_raw()) }
 }
 
 /// `RSTRING_LEN`, as a `usize`.
 #[inline(always)]
-pub unsafe fn rstring_len(_: &Gvl, v: VALUE) -> usize {
+pub unsafe fn rstring_len(v: Value) -> usize {
     // SAFETY: the caller's: a live String.
-    crate::int::len(unsafe { get_default().rstring_len(v) })
+    crate::int::len(unsafe { get_default().rstring_len(v.as_raw()) })
 }
 
 /// `RSTRING_PTR`.
 #[inline(always)]
-pub unsafe fn rstring_ptr(_: &Gvl, v: VALUE) -> *const core::ffi::c_char {
+pub unsafe fn rstring_ptr(v: Value) -> *const core::ffi::c_char {
     // SAFETY: the caller's: a live String.
-    unsafe { get_default().rstring_ptr(v) }
+    unsafe { get_default().rstring_ptr(v.as_raw()) }
 }
 
 /// `RARRAY_LEN`, as a `usize`.
 #[inline(always)]
-pub unsafe fn rarray_len(_: &Gvl, v: VALUE) -> usize {
+pub unsafe fn rarray_len(v: Value) -> usize {
     // SAFETY: the caller's: a live Array.
-    crate::int::len(unsafe { get_default().rarray_len(v) })
+    crate::int::len(unsafe { get_default().rarray_len(v.as_raw()) })
 }
 
 /// `RHASH_SIZE`.
 #[inline(always)]
-pub unsafe fn rhash_size(_: &Gvl, v: VALUE) -> usize {
+pub unsafe fn rhash_size(v: Value) -> usize {
     // SAFETY: the caller's: a live Hash.
-    unsafe { get_default().rhash_size(v) }
+    unsafe { get_default().rhash_size(v.as_raw()) }
 }
 
 /// `NUM2DBL` of a Float.
 #[inline(always)]
-pub unsafe fn num2dbl(_: &Gvl, v: VALUE) -> f64 {
+pub unsafe fn num2dbl(v: Value) -> f64 {
     // SAFETY: the caller's: a live Float.
-    unsafe { get_default().num2dbl(v) }
+    unsafe { get_default().num2dbl(v.as_raw()) }
 }
 
 /// `RTYPEDDATA_GET_DATA`.
 #[inline(always)]
-pub unsafe fn rtypeddata_get_data(_: &Gvl, v: VALUE) -> *mut c_void {
+pub unsafe fn rtypeddata_get_data(v: Value) -> *mut c_void {
     // SAFETY: the caller's: a live TypedData object.
-    unsafe { get_default().rtypeddata_get_data(v) }
+    unsafe { get_default().rtypeddata_get_data(v.as_raw()) }
 }
 
 /* ---- the C globals that hold a class ---- */
@@ -224,7 +256,7 @@ macro_rules! globals {
         #[doc = concat!("`", stringify!($name), "`, a C global Ruby sets once at boot.")]
         #[inline(always)]
         #[allow(non_snake_case)]
-        pub fn $name(_: &Gvl) -> VALUE {
+        pub fn $name(_: &Ruby) -> VALUE {
             // SAFETY: set at boot and never again; a Ruby thread (the token)
             // runs after boot.
             unsafe { rb_sys::$name }
@@ -262,7 +294,7 @@ globals! {
 ///
 /// # Safety
 ///
-/// `str` is a live String (not a File, whose encoding is a method call, nor
+/// `str` is a String (not a File, whose encoding is a method call, nor
 /// a Symbol, whose is a String made).
 #[inline(always)]
 #[cfg_attr(
@@ -272,9 +304,9 @@ globals! {
         reason = "rb_enc_get raises for a File (a method call) or a Symbol (a String made); the contract is a String, whose tag it reads"
     )
 )]
-pub unsafe fn enc_get_of_string(_: &Gvl, str: VALUE) -> *mut rb_encoding {
+pub unsafe fn enc_get_of_string(str: Value) -> *mut rb_encoding {
     // SAFETY: the contract.
-    unsafe { rb_sys::rb_enc_get(str) }
+    unsafe { rb_sys::rb_enc_get(str.as_raw()) }
 }
 
 /// `rb_enc_get_index` of a String: its encoding's index, looked up past
@@ -282,7 +314,7 @@ pub unsafe fn enc_get_of_string(_: &Gvl, str: VALUE) -> *mut rb_encoding {
 ///
 /// # Safety
 ///
-/// `str` is a live String.
+/// `str` is a String.
 #[inline(always)]
 #[cfg_attr(
     dylint_lib = "makiri_lints",
@@ -291,17 +323,16 @@ pub unsafe fn enc_get_of_string(_: &Gvl, str: VALUE) -> *mut rb_encoding {
         reason = "rb_enc_get_index raises for a File or a Symbol, as rb_enc_get; the contract is a String, whose index is an ivar read when it is not inline"
     )
 )]
-pub unsafe fn enc_get_index_of_string(_: &Gvl, str: VALUE) -> c_int {
+pub unsafe fn enc_get_index_of_string(str: Value) -> c_int {
     // SAFETY: the contract.
-    unsafe { rb_sys::rb_enc_get_index(str) }
+    unsafe { rb_sys::rb_enc_get_index(str.as_raw()) }
 }
 
 /// `rb_attr_get` of a hidden ivar: one whose name has no `@`.
 ///
 /// # Safety
 ///
-/// `obj` is a live object, and `id` a name without `@` (`rb_is_instance_id`
-/// is false for it).
+/// `id` is a name without `@` (`rb_is_instance_id` is false for it).
 #[inline(always)]
 #[cfg_attr(
     dylint_lib = "makiri_lints",
@@ -310,9 +341,9 @@ pub unsafe fn enc_get_index_of_string(_: &Gvl, str: VALUE) -> c_int {
         reason = "rb_attr_get raises only RactorIsolationError, and only for an @ name (rb_is_instance_id) of a class, a module or a shareable object read from another Ractor; the contract is a name without @"
     )
 )]
-pub unsafe fn attr_get_hidden(_: &Gvl, obj: VALUE, id: ID) -> VALUE {
+pub unsafe fn attr_get_hidden(obj: Value, id: ID) -> VALUE {
     // SAFETY: the contract.
-    unsafe { rb_sys::rb_attr_get(obj, id) }
+    unsafe { rb_sys::rb_attr_get(obj.as_raw(), id) }
 }
 
 /// `rb_obj_is_kind_of` of a class or module: an instance of `module` or of
@@ -320,7 +351,7 @@ pub unsafe fn attr_get_hidden(_: &Gvl, obj: VALUE, id: ID) -> VALUE {
 ///
 /// # Safety
 ///
-/// `v` is a live value, and `module` a live class or module.
+/// `module` is a class or module.
 #[inline(always)]
 #[cfg_attr(
     dylint_lib = "makiri_lints",
@@ -329,9 +360,9 @@ pub unsafe fn attr_get_hidden(_: &Gvl, obj: VALUE, id: ID) -> VALUE {
         reason = "its one raise, a non-class, is ruled out by the contract"
     )
 )]
-pub unsafe fn obj_is_kind_of_module(_: &Gvl, v: VALUE, module: VALUE) -> bool {
+pub unsafe fn obj_is_kind_of_module(v: Value, module: Value) -> bool {
     // SAFETY: the contract.
-    unsafe { rb_sys::rb_obj_is_kind_of(v, module) == rb_sys::Qtrue as VALUE }
+    unsafe { rb_sys::rb_obj_is_kind_of(v.as_raw(), module.as_raw()) == rb_sys::Qtrue as VALUE }
 }
 
 /// `rb_class_inherited_p` of two classes or modules: is `sub` `sup` or a
@@ -339,7 +370,7 @@ pub unsafe fn obj_is_kind_of_module(_: &Gvl, v: VALUE, module: VALUE) -> bool {
 ///
 /// # Safety
 ///
-/// `sub` and `sup` are live classes or modules.
+/// `sub` and `sup` are classes or modules.
 #[inline(always)]
 #[cfg_attr(
     dylint_lib = "makiri_lints",
@@ -348,9 +379,9 @@ pub unsafe fn obj_is_kind_of_module(_: &Gvl, v: VALUE, module: VALUE) -> bool {
         reason = "its one raise, a non-class, is ruled out by the contract"
     )
 )]
-pub unsafe fn class_inherited_p_of_modules(_: &Gvl, sub: VALUE, sup: VALUE) -> bool {
+pub unsafe fn class_inherited_p_of_modules(sub: Value, sup: Value) -> bool {
     // SAFETY: the contract.
-    unsafe { rb_sys::rb_class_inherited_p(sub, sup) == rb_sys::Qtrue as VALUE }
+    unsafe { rb_sys::rb_class_inherited_p(sub.as_raw(), sup.as_raw()) == rb_sys::Qtrue as VALUE }
 }
 
 /// `rb_absint_size` of an Integer: the bytes its magnitude takes. Reads its
@@ -358,7 +389,7 @@ pub unsafe fn class_inherited_p_of_modules(_: &Gvl, sub: VALUE, sup: VALUE) -> b
 ///
 /// # Safety
 ///
-/// `v` is a live Integer.
+/// `v` is an Integer.
 #[inline(always)]
 #[cfg_attr(
     dylint_lib = "makiri_lints",
@@ -367,16 +398,16 @@ pub unsafe fn class_inherited_p_of_modules(_: &Gvl, sub: VALUE, sup: VALUE) -> b
         reason = "its raise is for a non-Integer, converted by `#to_int`; the contract is an Integer"
     )
 )]
-pub unsafe fn absint_size_of_integer(_: &Gvl, v: VALUE) -> size_t {
+pub unsafe fn absint_size_of_integer(v: Value) -> size_t {
     // SAFETY: the contract.
-    unsafe { rb_sys::rb_absint_size(v, core::ptr::null_mut()) }
+    unsafe { rb_sys::rb_absint_size(v.as_raw(), core::ptr::null_mut()) }
 }
 
 /// `rb_str_set_len(str, 0)` of an unfrozen String: empty it.
 ///
 /// # Safety
 ///
-/// `str` is a live, unfrozen String.
+/// `str` is an unfrozen String.
 #[inline(always)]
 #[cfg_attr(
     dylint_lib = "makiri_lints",
@@ -385,18 +416,18 @@ pub unsafe fn absint_size_of_integer(_: &Gvl, v: VALUE) -> size_t {
         reason = "rb_str_set_len raises for a frozen String or a length past its room; the contract is unfrozen, and 0 is within any"
     )
 )]
-pub unsafe fn str_empty_unfrozen(_: &Gvl, str: VALUE) {
+pub unsafe fn str_empty_unfrozen(str: Value) {
     // SAFETY: the contract.
-    unsafe { rb_sys::rb_str_set_len(str, 0) }
+    unsafe { rb_sys::rb_str_set_len(str.as_raw(), 0) }
 }
 
 /// `rb_gc_mark`, from a TypedData type's mark callback.
 ///
 /// # Safety
 ///
-/// Called from a `dmark` callback in Ruby's mark phase, on a live value (or
-/// `Qfalse`, which a mark ignores), with nothing on the frames above it that
-/// a `longjmp` would leak.
+/// Called from a `dmark` callback in Ruby's mark phase (a value made there
+/// from a slot, which holds a live value or `Qfalse`, which a mark ignores),
+/// with nothing on the frames above it that a `longjmp` would leak.
 #[inline(always)]
 #[cfg_attr(
     dylint_lib = "makiri_lints",
@@ -405,9 +436,9 @@ pub unsafe fn str_empty_unfrozen(_: &Gvl, str: VALUE) {
         reason = "rb_gc_mark raises NoMemoryError only when the mark stack cannot grow, a longjmp the contract's frame loses nothing to and every C extension's dmark is exposed to alike"
     )
 )]
-pub unsafe fn gc_mark_in_dmark(_: &Gvl, v: VALUE) {
+pub unsafe fn gc_mark_in_dmark(v: Value) {
     // SAFETY: the contract.
-    unsafe { rb_sys::rb_gc_mark(v) }
+    unsafe { rb_sys::rb_gc_mark(v.as_raw()) }
 }
 
 /// The running Ruby's API `MAJOR.MINOR`, read from the `ruby_api_version`
