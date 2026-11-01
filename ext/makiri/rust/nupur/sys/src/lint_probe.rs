@@ -75,3 +75,19 @@ mod classified {
         unsafe { rb_sys::rb_block_given_p() != 0 }
     }
 }
+
+/// This crate's value types on the heap (`ruby_value_on_heap`): it has no
+/// `ReprValue`, so the lint knows them by name.
+#[rustfmt::skip] // keeps each marker on the line reported
+struct Kept {
+    values: Vec<crate::value::Value>, //~ ruby_value_on_heap
+    roots: Vec<crate::value::Root>, //~ ruby_value_on_heap
+    boxed: Box<crate::value::Value>, //~ ruby_value_on_heap
+}
+
+/// A protected call's `Caught` thrown away (`discarded_ruby_error`): a raise
+/// or an exit in it would be lost before Nupur made it an `Error`.
+#[rustfmt::skip] // keeps the marker on the line reported
+fn discarded(_: &crate::value::Ruby) -> Option<()> {
+    unsafe { crate::protect::call(|_| ()) }.ok() //~ discarded_ruby_error
+}

@@ -39,6 +39,7 @@ bundle exec rake oom               # OOM-injection sweep, then the raise sweep
 bundle exec rake miri              # the Ruby-free unsafe code's tests under Miri
 bundle exec rake verus             # Verus proofs (ext/makiri/rust/verus/)
 bundle exec rake rust:exhaustive   # the tests that run every input, in release
+bundle exec rake rust:compile_fail # the compile-fail doctests' error codes (nightly)
 bundle exec rake coverage          # llvm-cov report of our sources over the suite (macOS);
                                    # leaves the instrumented build: `rake clean compile`
 bundle exec rake bench             # perf vs Nokogiri (bench-only gems; runs outside bundle)
@@ -94,7 +95,8 @@ reason. The lints:
   (`script/check_non_raising.rb`).
 - `unraising_call_in_raw`, `runs_callers_ruby`,
   `raw_node_crossing`, `ruby_surface_in_bridge`.
-- `discarded_ruby_error`: an `Err` of `bridge::rb::Error` thrown away by
+- `discarded_ruby_error`: an `Err` of `bridge::rb::Error`, or of
+  `nupur_sys::protect::Caught` before Nupur makes it one, thrown away by
   `.ok()` / `.unwrap_or*` / `.is_ok()` / `let _ =` / `let _name =` / an
   Ok-only or `Err(_)` pattern / a `map_err(|_| ..)` / `drop`. It is FORBIDDEN
   in the extension, so no allow: handle the error with `Error::rescue`, which
@@ -240,6 +242,16 @@ Vacuity is checked by what must FAIL: an `assert(false)` at each
 `// [canary]` mark, one variant each, and the callers in `verus/canaries/`.
 What each proof trusts (`external_body`, `assume_specification`, `assume`)
 is pinned (`VERUS_TRUSTED`).
+
+### `rake rust:compile_fail`
+
+Each compile-fail doctest names the error it must fail with
+(`compile_fail,E0451`), so that a snippet failing for another reason - a
+typo, a private name - does not pass. Only nightly's rustdoc checks that
+code; stable's passes any failure. `rake rust:compile_fail` runs the
+workspace's doctests on nightly (CI: the sanitizer job, which has nightly
+already). The Lexbor reference's one (`reference/src/gvl.rs`) is not run
+there.
 
 ### `rake rust:exhaustive`
 

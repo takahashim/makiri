@@ -45,4 +45,16 @@ namespace :rust do
       sh "cargo test --release -p makiri_engine --no-default-features --lib -- --ignored exhaustive::"
     end
   end
+
+  # The compile-fail doctests, on nightly. Each names the error it expects
+  # (`compile_fail,E0451`), and only nightly's rustdoc checks that code: a
+  # stable run passes a snippet that fails for any reason at all, a typo
+  # included. The workspace's crates that have them; the Lexbor reference's
+  # one is left to its own run.
+  desc "Check the compile-fail doctests' error codes (nightly)"
+  task :compile_fail do
+    Dir.chdir("ext/makiri/rust") do
+      sh "cargo +nightly test --doc -p makiri_engine -p falloc -p nupur_sys"
+    end
+  end
 end

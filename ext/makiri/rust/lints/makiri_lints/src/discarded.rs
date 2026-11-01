@@ -46,10 +46,14 @@ fn is_ruby_result<'tcx>(cx: &LateContext<'tcx>, ty: rustc_middle::ty::Ty<'tcx>) 
     args.types().nth(1).is_some_and(|e| is_ruby_error(cx, e))
 }
 
-/// Whether `ty` is `nupur::rb::error::Error` itself.
+/// The errors that carry a raise or an exit: Nupur's `Error`, and what
+/// `nupur_sys::protect::call` comes back with before Nupur makes it one.
+const RUBY_ERRORS: &[&str] = &["nupur::rb::error::Error", "nupur_sys::protect::Caught"];
+
+/// Whether `ty` is one of [`RUBY_ERRORS`] itself.
 fn is_ruby_error<'tcx>(cx: &LateContext<'tcx>, ty: rustc_middle::ty::Ty<'tcx>) -> bool {
     ty.ty_adt_def()
-        .is_some_and(|e| path_of(cx, e.did()) == "nupur::rb::error::Error")
+        .is_some_and(|e| RUBY_ERRORS.contains(&path_of(cx, e.did()).as_str()))
 }
 
 /// Whether `pat` binds nothing a reader would use: `_`, or a name that

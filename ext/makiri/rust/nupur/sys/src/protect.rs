@@ -26,8 +26,9 @@ use rb_sys::VALUE;
 /// neither `Send` nor `Sync`, so a GVL-released body cannot carry it either.
 ///
 /// Not made outside this crate, so a wrapper of [`crate::raising`] cannot be
-/// called outside the protection (each rustdoc checks the error code, so a
-/// build that failed for another reason does not pass):
+/// called outside the protection (each names the error it must fail with,
+/// which `rake rust:compile_fail` checks on nightly; stable's rustdoc does
+/// not):
 ///
 /// ```compile_fail,E0451
 /// let made = nupur_sys::protect::Protected { _not_send: core::marker::PhantomData };

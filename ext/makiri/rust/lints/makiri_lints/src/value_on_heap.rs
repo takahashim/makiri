@@ -81,13 +81,17 @@ fn heap_container<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>) -> bool {
 /// slot of the object that holds it, so no more to be kept elsewhere).
 const SYS_VALUES: &[&str] = &["nupur_sys::value::Value", "nupur_sys::value::Root"];
 
-fn is_ruby_value<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>, repr: DefId) -> bool {
+fn is_ruby_value<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>, repr: Option<DefId>) -> bool {
     if let ty::Adt(adt, _) = ty.kind()
         && SYS_VALUES.contains(&crate::paths::path_of(cx, adt.did()).as_str())
     {
         return true;
     }
-    !ty.has_escaping_bound_vars() && clippy_utils::ty::implements_trait(cx, ty, repr, &[])
+    /* The layer's trait, where the crate has it: `nupur_sys` has none, and
+     * is held by `SYS_VALUES` alone. */
+    repr.is_some_and(|repr| {
+        !ty.has_escaping_bound_vars() && clippy_utils::ty::implements_trait(cx, ty, repr, &[])
+    })
 }
 
 /// Whether `ty` holds a Ruby value by value (not behind a reference or a
@@ -95,7 +99,7 @@ fn is_ruby_value<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>, repr: DefId) -> boo
 fn holds_value<'tcx>(
     cx: &LateContext<'tcx>,
     ty: Ty<'tcx>,
-    repr: DefId,
+    repr: Option<DefId>,
     seen: &mut HashSet<Ty<'tcx>>,
 ) -> bool {
     if !seen.insert(ty) {
@@ -134,7 +138,7 @@ fn holds_value<'tcx>(
 fn on_heap<'tcx>(
     cx: &LateContext<'tcx>,
     ty: Ty<'tcx>,
-    repr: DefId,
+    repr: Option<DefId>,
     seen: &mut HashSet<Ty<'tcx>>,
 ) -> Option<Ty<'tcx>> {
     if !seen.insert(ty) {
@@ -171,9 +175,7 @@ fn on_heap<'tcx>(
 }
 
 fn check_ty<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>, span: Span, what: &str) {
-    let (Some(repr), _) = traits(cx) else {
-        return;
-    };
+    let (repr, _) = traits(cx);
     if let Some(container) = on_heap(cx, ty, repr, &mut HashSet::new()) {
         report(cx, container, span, what);
     }
@@ -204,9 +206,7 @@ fn is_wrapped_data<'tcx>(cx: &LateContext<'tcx>, did: LocalDefId, wrapped: &[Def
 }
 
 pub(crate) fn check_item<'tcx>(cx: &LateContext<'tcx>, item: &'tcx Item<'tcx>) {
-    let (Some(repr), wrapped) = traits(cx) else {
-        return;
-    };
+    let (repr, wrapped) = traits(cx);
     match item.kind {
         ItemKind::Static(..) | ItemKind::Const(..) => {
             let is_const = matches!(item.kind, ItemKind::Const(..));
@@ -310,9 +310,7 @@ pub(crate) fn check_fn<'tcx>(
 /// index or a dereference of one) is not: the storage it reads was checked
 /// where it was declared.
 pub(crate) fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
-    let (Some(repr), _) = traits(cx) else {
-        return;
-    };
+    let (repr, _) = traits(cx);
     if expr.is_syntactic_place_expr() {
         return;
     }
@@ -337,7 +335,11 @@ pub(crate) fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
 /// an enclosing expression that holds the container too (reported there,
 /// once), a `let`'s binding, a function's result (its return type), or an
 /// assignment to a place (checked where it is declared).
-fn reported_elsewhere<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>, repr: DefId) -> bool {
+fn reported_elsewhere<'tcx>(
+    cx: &LateContext<'tcx>,
+    expr: &'tcx Expr<'tcx>,
+    repr: Option<DefId>,
+) -> bool {
     let mut id = expr.hir_id;
     loop {
         match cx.tcx.parent_hir_node(id) {

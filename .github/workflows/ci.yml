@@ -306,6 +306,11 @@ jobs:
       - name: Build + test under AddressSanitizer
         run: bundle exec rake sanitize
 
+      # The compile-fail doctests' error codes, which only nightly's rustdoc
+      # checks (rakelib/rust.rake), on the nightly this job has anyway.
+      - name: Compile-fail doctests' error codes
+        run: bundle exec rake rust:compile_fail
+
       # The Ruby-free engine tests under ASan too - the XPath and CSS evaluation
       # cases, and the arena, tree and mutation self-checks, which reach states
       # no public API can build and

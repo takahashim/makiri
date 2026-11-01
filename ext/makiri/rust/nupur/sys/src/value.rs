@@ -24,7 +24,7 @@ use rb_sys::VALUE;
 /// only inside this crate (`Value::from_raw` is crate-private), and never
 /// turned back into one outside it:
 ///
-/// ```compile_fail,E0423
+/// ```compile_fail,E0603
 /// let made = nupur_sys::value::Value(0, core::marker::PhantomData);
 /// ```
 #[derive(Clone, Copy)]
@@ -89,7 +89,7 @@ impl Value {
 /// A zero-sized token, neither `Send` nor `Sync`, made only by
 /// [`Ruby::get_unchecked`] outside this crate:
 ///
-/// ```compile_fail,E0423
+/// ```compile_fail,E0603
 /// let made = nupur_sys::value::Ruby(core::marker::PhantomData);
 /// ```
 pub struct Ruby(PhantomData<*mut ()>);
