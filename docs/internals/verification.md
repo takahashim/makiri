@@ -103,7 +103,7 @@ reason. The lints:
   whose signature holds no `&Ruby`, Ruby value or handle made from one.
   `extern "C"` entries and unsafe fns are exempt.
 - `c_integer_outside_int`: an integer `as` or a named `c_long` at the Ruby
-  boundary outside `nupur::int`.
+  boundary outside `nupur_sys::int`.
 - `gvl_token_outside_entry`: the GVL's token, `Ruby`, made anywhere but where
   Ruby calls in - `get_unchecked` (crate-private) in `rb::method`, `finish` in
   a `method!` / `function!` expansion, `run_init` in an

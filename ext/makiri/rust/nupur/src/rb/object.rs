@@ -41,7 +41,7 @@ pub fn ivar_set(obj: Value, id: HiddenId, v: impl ReprValue) -> Result<(), Error
 #[inline]
 pub(crate) unsafe fn obj_hide(v: Value) {
     // SAFETY: a live object; hiding writes only its class field.
-    unsafe { nupur_sys::rb_obj_hide(v.as_raw()) };
+    unsafe { nupur_sys::read::rb_obj_hide(super::value::gvl_of(v), v.as_raw()) };
 }
 
 /// Whether `v` is a class or a module - what `rb_obj_is_kind_of` and

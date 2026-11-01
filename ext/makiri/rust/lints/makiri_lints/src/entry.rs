@@ -17,6 +17,11 @@
 //!   `finish` in `finish_cary`, beside it);
 //! - `run_init`: in an `extern "C"` function named `Init_*`, which Ruby
 //!   calls as the extension loads.
+//!
+//! `nupur_sys`'s own proof, `Gvl`, which its reads take, is held the same
+//! way: `Gvl::assume` only where Nupur has a proof to lend (a `Ruby`, a
+//! Ruby value, an `Encoding`), in the GC's callbacks and the data read they
+//! share, and inside the protection (`GVL_ASSUMERS`).
 
 use clippy_utils::diagnostics::span_lint_and_help;
 use rustc_hir::Expr;
@@ -34,6 +39,20 @@ const TRAMPOLINES: &[&str] = &[
     "nupur::rb::method::finish_cary",
 ];
 const RUN_INIT: &str = "nupur::rb::method::run_init";
+/// `nupur_sys`'s proof of the GVL, taken on the caller's word, and the
+/// modules that may take it: where a `Ruby` lends it, where a Ruby value is
+/// the proof, the GC's callbacks and the reads they share, an `Encoding`
+/// (made only where a token or a value was), and the protection, inside
+/// which the GVL is held.
+const GVL_ASSUME: &str = "nupur_sys::gvl::assume";
+const GVL_ASSUMERS: &[&str] = &[
+    "nupur::rb::ruby",
+    "nupur::rb::value",
+    "nupur::typed::callbacks",
+    "nupur::typed::data_type",
+    "nupur::encoding",
+    "nupur_sys::protect",
+];
 /// The macros of nupur's whose expansion is a trampoline, by name: a
 /// `#[macro_export]` macro is named at the crate's root but defined where it
 /// is written, so it is matched by its crate and its name.
@@ -54,6 +73,8 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         from_trampoline_macro(cx, expr.span) || module_of(cx, expr.hir_id) == "nupur::rb::method"
     } else if target == RUN_INIT {
         in_init_function(cx, expr)
+    } else if target == GVL_ASSUME {
+        GVL_ASSUMERS.contains(&module_of(cx, expr.hir_id).as_str())
     } else {
         return;
     };
@@ -68,7 +89,8 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         None,
         "a `Ruby` token is made only where Ruby calls in with the GVL held: \
          `get_unchecked` in `rb::method`, `finish` in a `method!` / `function!` \
-         trampoline, `run_init` in the extension's `extern \"C\" fn Init_*`",
+         trampoline, `run_init` in the extension's `extern \"C\" fn Init_*`; and \
+         `nupur_sys`'s `Gvl::assume` only where Nupur has a proof to lend (GVL_ASSUMERS)",
     );
 }
 

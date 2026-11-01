@@ -63,7 +63,6 @@ fn in_bridge(module: &str) -> bool {
 /// The modules that may spell a raw `VALUE`: the C calls, TypedData and
 /// the GC callbacks, and the `bridge::rb` files that are the typed values.
 const VALUE_HOMES: &[&str] = &[
-    "nupur::int",
     "nupur::raw",
     "nupur::typed",
     "nupur::rb::value",

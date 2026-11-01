@@ -62,8 +62,14 @@ fn give_back(reported: usize) {
     if reported != 0 {
         let n = nupur_sys::ssize_t::try_from(reported).unwrap_or(nupur_sys::ssize_t::MAX);
         // SAFETY: a plain counter adjustment, from the free hook, where it
-        // only subtracts - as Ruby's own `xfree` does from here.
-        unsafe { nupur_sys::rb_gc_adjust_memory_usage(n.saturating_neg()) };
+        // only subtracts - as Ruby's own `xfree` does from here; the GC runs
+        // its callbacks with the GVL held.
+        unsafe {
+            nupur_sys::read::rb_gc_adjust_memory_usage(
+                nupur_sys::gvl::Gvl::assume(),
+                n.saturating_neg(),
+            )
+        };
     }
 }
 
@@ -85,7 +91,7 @@ pub(super) unsafe extern "C" fn free_cb<T: Payload, const N: usize>(ptr: *mut c_
             let reported = crate::caught::quietly(0, || data.reported_external());
             crate::caught::quietly((), || drop(data));
             give_back(reported);
-            nupur_sys::ruby_xfree(ptr);
+            nupur_sys::read::ruby_xfree(nupur_sys::gvl::Gvl::assume(), ptr);
         }
     })
 }

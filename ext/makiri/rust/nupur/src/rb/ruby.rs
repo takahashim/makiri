@@ -25,8 +25,8 @@ macro_rules! globals {
             #[doc = concat!("`", stringify!($global), "`.")]
             #[inline]
             pub fn $method(&self) -> $kind {
-                // SAFETY: a C global Ruby sets once at boot, read under the GVL.
-                let v = unsafe { Value::from_raw(nupur_sys::$global) };
+                // SAFETY: a C global Ruby sets once at boot: a live value.
+                let v = unsafe { Value::from_raw(nupur_sys::read::$global(self.gvl())) };
                 $kind::from_known(v)
             }
         )*
@@ -43,6 +43,14 @@ impl Ruby {
     #[inline]
     pub(crate) unsafe fn get_unchecked() -> Ruby {
         Ruby(PhantomData)
+    }
+
+    /// The proof of the GVL the token is, for `nupur_sys`'s reads.
+    #[inline(always)]
+    pub(crate) fn gvl(&self) -> &nupur_sys::gvl::Gvl {
+        // SAFETY: a `Ruby` exists only on a Ruby thread holding the GVL, and
+        // the proof is lent for the token's borrow.
+        unsafe { nupur_sys::gvl::Gvl::assume() }
     }
 
     /// `nil`.

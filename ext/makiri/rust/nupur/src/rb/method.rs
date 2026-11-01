@@ -351,9 +351,9 @@ macro_rules! __trampoline {
 /// Raises nothing and runs no Ruby code; like [`keyword_given`], it reads
 /// the current frame.
 #[inline]
-pub fn block_given(_: &Ruby) -> bool {
+pub fn block_given(ruby: &Ruby) -> bool {
     // SAFETY: under the GVL (`&Ruby`); a read of the current control frame.
-    unsafe { nupur_sys::rb_block_given_p() != 0 }
+    unsafe { nupur_sys::read::rb_block_given_p(ruby.gvl()) != 0 }
 }
 
 /// Yield `v` to the method's block (`rb_yield`): the caller's Ruby, which
@@ -388,9 +388,9 @@ pub fn yield_dropping_error_for_test(ruby: &Ruby) {
 /// answers for a method only from that method's own body, before the method
 /// calls into Ruby (a method's argument scan is called first thing).
 #[inline]
-pub fn keyword_given(_: &Ruby) -> bool {
+pub fn keyword_given(ruby: &Ruby) -> bool {
     // SAFETY: under the GVL (`&Ruby`); a read of the current control frame.
-    unsafe { nupur_sys::rb_keyword_given_p() != 0 }
+    unsafe { nupur_sys::read::rb_keyword_given_p(ruby.gvl()) != 0 }
 }
 
 /// `rb_ext_ractor_safe(true)`: every method the running `Init_` defines from
@@ -405,10 +405,10 @@ pub fn keyword_given(_: &Ruby) -> bool {
 /// extension's part is its own: its statics, what its methods assume the GVL
 /// serialises (only one Ractor's threads now), and no Marshal hook on a
 /// class of wrapped objects, through which a Ractor would copy one.
-pub fn declare_ractor_safe(_: &Ruby) {
+pub fn declare_ractor_safe(ruby: &Ruby) {
     // SAFETY: under the GVL (`&Ruby`); sets the running thread's extension
     // config.
-    unsafe { nupur_sys::rb_ext_ractor_safe(true) }
+    unsafe { nupur_sys::read::rb_ext_ractor_safe(ruby.gvl(), true) }
 }
 
 /// What the extension's `Init_` runs its two phases through.

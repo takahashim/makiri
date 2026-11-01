@@ -204,7 +204,13 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
     #[inline]
     pub fn is(&self, v: Value) -> bool {
         // SAFETY: `v` is a live VALUE; the type check does not raise.
-        unsafe { nupur_sys::rb_typeddata_is_kind_of(v.as_raw(), self.raw.as_ptr()) != 0 }
+        unsafe {
+            nupur_sys::read::rb_typeddata_is_kind_of(
+                crate::rb::value::gvl_of(v),
+                v.as_raw(),
+                self.raw.as_ptr(),
+            ) != 0
+        }
     }
 
     /// `Ok` for an object of this type (or one deriving from it), else Ruby's

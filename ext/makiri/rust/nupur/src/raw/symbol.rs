@@ -9,7 +9,12 @@ pub fn intern(_: &Ruby, name: &str) -> Result<Id, Error> {
     let (p, n) = (name.as_ptr() as *const c_char, c_len(name.len())?);
     call(|inside| unsafe {
         injected_raise(inside);
-        nupur_sys::raising::rb_intern3(inside, p, n, nupur_sys::rb_utf8_encoding())
+        nupur_sys::raising::rb_intern3(
+            inside,
+            p,
+            n,
+            nupur_sys::read::rb_utf8_encoding(inside.gvl()),
+        )
     })
     .map(Id::from_raw)
 }

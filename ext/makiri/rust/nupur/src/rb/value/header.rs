@@ -80,6 +80,7 @@ impl RString {
     pub(crate) fn has_string_class(self) -> bool {
         // SAFETY: as `flags`; `rb_cString` is a C global Ruby sets once at
         // boot.
-        unsafe { (*(self.as_raw() as *const nupur_sys::RBasic)).klass == nupur_sys::rb_cString }
+        let string = nupur_sys::read::rb_cString(super::gvl_of(self));
+        unsafe { (*(self.as_raw() as *const nupur_sys::RBasic)).klass == string }
     }
 }

@@ -46,10 +46,8 @@ pub fn utf8_str_filled(
     // is its buffer, the room `rb_str_new` allocated), referenced only from
     // this frame. Seen as `MaybeUninit`, so nothing reads it unwritten.
     let buf: &mut [core::mem::MaybeUninit<u8>] = unsafe {
-        let dst = nupur_sys::StableApiDefinition::rstring_ptr(
-            nupur_sys::stable_api::get_default(),
-            str.as_raw(),
-        ) as *mut core::mem::MaybeUninit<u8>;
+        let dst = nupur_sys::read::rstring_ptr(ruby.gvl(), str.as_raw())
+            as *mut core::mem::MaybeUninit<u8>;
         if len == 0 || dst.is_null() {
             &mut []
         } else {

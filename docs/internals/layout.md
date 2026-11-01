@@ -188,7 +188,7 @@ ext/makiri/rust/           the extension (package makiri_rs, lib `makiri`)
                            `end`, whatever the word
     source_lines.rs        `lines_build`: the line table is exactly 0 and
                            the offset past each newline, for every input
-    int.rs                 `nupur::int` at both widths of a C `long`: the
+    int.rs                 `nupur_sys::int` at both widths of a C `long`: the
                            Fixnum range exactly, the Fixnum's bits, and a
                            length and a capacity that never truncate
     xml_expand.rs          `xml::chars::expand`: `scan_char_ref` answers the

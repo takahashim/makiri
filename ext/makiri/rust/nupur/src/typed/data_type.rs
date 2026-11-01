@@ -103,11 +103,11 @@ impl DataType {
 /// it is collected; every reader of a payload comes through here or
 /// [`typed_data_known`].
 pub(super) fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void, Error> {
-    let (v, ty) = (v.as_raw(), ty.as_ptr());
+    let (gvl, v, ty) = (crate::rb::value::gvl_of(v), v.as_raw(), ty.as_ptr());
     // SAFETY: `v` is a live value and `ty` a registered data type; the data
     // pointer is read only once the type is known to match.
     unsafe {
-        if nupur_sys::rb_typeddata_is_kind_of(v, ty) != 0 {
+        if nupur_sys::read::rb_typeddata_is_kind_of(gvl, v, ty) != 0 {
             let p = data_pointer(v);
             if p.is_null() {
                 return Err(crate::rb::error::type_error(
@@ -127,12 +127,12 @@ pub(super) fn typed_data(v: Value, ty: &'static DataType) -> Result<*mut c_void,
 /// The data pointer of a TypedData object, read without a check.
 ///
 /// # Safety
-/// `v` is a live TypedData object.
+/// `v` is a live TypedData object, read with the GVL held (a live value's
+/// thread, or the GC's callback).
 #[inline]
 pub(super) unsafe fn data_pointer(v: VALUE) -> *mut c_void {
-    use nupur_sys::stable_api::StableApiDefinition;
     // SAFETY: the caller's contract.
-    unsafe { nupur_sys::stable_api::get_default().rtypeddata_get_data(v) }
+    unsafe { nupur_sys::read::rtypeddata_get_data(nupur_sys::gvl::Gvl::assume(), v) }
 }
 
 /// The data pointer of a TypedData object whose type the caller has already
@@ -144,11 +144,11 @@ pub(super) unsafe fn data_pointer(v: VALUE) -> *mut c_void {
 /// the method's trampoline makes it the internal error (`rb::error::INTERNAL_ERROR`), where a raise
 /// would longjmp past them.
 pub(super) fn typed_data_known(v: Value, ty: &'static DataType) -> *mut c_void {
-    let (v, ty) = (v.as_raw(), ty.as_ptr());
+    let (gvl, v, ty) = (crate::rb::value::gvl_of(v), v.as_raw(), ty.as_ptr());
     // SAFETY: as in `typed_data`; the assert is the type check.
     unsafe {
         assert!(
-            nupur_sys::rb_typeddata_is_kind_of(v, ty) != 0,
+            nupur_sys::read::rb_typeddata_is_kind_of(gvl, v, ty) != 0,
             "a VALUE of an established type had a different one"
         );
         let p = data_pointer(v);

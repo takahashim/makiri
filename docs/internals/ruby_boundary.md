@@ -400,6 +400,17 @@ The value-level wrappers are safe and typed. They take and return
 key's kind, a substring's bounds, `to_encoding`'s argument. One with no
 Ruby value takes `&Ruby` as the GVL's proof.
 
+Below them, the reads of Ruby's C that raise nothing (the C functions, the
+stable API, the C globals that hold a class) are `nupur_sys::read`'s, and
+each takes `nupur_sys`'s own proof, a `&Gvl`. Nupur lends one from a `Ruby`
+(`Ruby::gvl`), from a Ruby value (`rb::value::gvl_of`: a value exists only
+where the GVL is held, and is `!Send`), and inside the protection
+(`Protected::gvl`). `Gvl::assume`, the `unsafe fn` that makes one, is held
+by `gvl_token_outside_entry` to those places and to the GC's callbacks. A
+function that can raise, but not where Nupur calls it (`rb_enc_get` of a
+String), has no wrapper there: its `allow` stays at the call, so a later
+caller does not inherit the reason.
+
 Only those over raw memory stay `unsafe`, and they are `nupur`'s alone:
 `typed_object_zalloc`, `check_typeddata` and `utf8_str_unwritten` (the raw
 half under `utf8_str_filled`), all `pub(crate)`. So are the three that
@@ -412,8 +423,8 @@ which only a trampoline's raise may call. A String made in place is
 
 A raw `VALUE` is an integer to Rust, which no lint can tell from a `u64` in
 a `Vec`. It is spelled, or read from a C global of Ruby's (`rb_cObject`),
-only in `raw/`, `int.rs`, `typed/` and the `bridge::rb` files that are the
-typed values. `rake dylint`'s `raw_ruby_outside_bridge` enforces this, and
+only in `nupur_sys` and in Nupur's `raw/`, `typed/` and the `bridge::rb`
+files that are the typed values. `rake dylint`'s `raw_ruby_outside_bridge` enforces this, and
 also fails on any `rb_sys::` outside `nupur`, which it counts as part of
 the bridge. The extension has no rb-sys dependency, so its `bridge/` names
 none.
@@ -484,7 +495,8 @@ Outside a registered method a panic does not become `InternalError`:
 
 ## C integers
 
-**A C integer is converted in one place, `nupur::int`.** A C `long` is 32
+**A C integer is converted in one place, `nupur_sys::int`**, which Nupur
+reaches as `crate::int`. A C `long` is 32
 bits on Windows and `i64` itself everywhere the code is built and linted, so
 `n as c_long` truncates where no compiler warning can show it. Ruby's ranges
 follow the `long` too: a Fixnum is 2^30 - 1 at most on Windows. Each Windows

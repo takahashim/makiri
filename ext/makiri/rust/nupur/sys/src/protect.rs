@@ -52,6 +52,18 @@ pub struct Protected {
     _not_send: PhantomData<*mut ()>,
 }
 
+impl Protected {
+    /// The proof of the GVL, which the protection implies: `rb_protect` runs
+    /// only under it.
+    #[inline(always)]
+    pub fn gvl(&self) -> &crate::gvl::Gvl {
+        // SAFETY: inside `rb_protect`, which the token proves, the thread is
+        // a Ruby thread holding the GVL; the proof is lent for the token's
+        // borrow.
+        unsafe { crate::gvl::Gvl::assume() }
+    }
+}
+
 /// What a protected call came back with instead of its value.
 #[derive(Clone, Copy)]
 pub enum Caught {

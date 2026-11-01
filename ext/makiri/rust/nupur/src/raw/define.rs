@@ -12,9 +12,9 @@ pub fn define_class_under(
 ) -> Result<Value, Error> {
     let sup = match sup {
         Some(c) => c.as_raw(),
-        // SAFETY: `rb_cObject`, a C global Ruby sets once at boot - read
-        // here, in `raw`, where a raw `VALUE` may be spelled.
-        None => unsafe { nupur_sys::rb_cObject },
+        /* `rb_cObject`, read here, in `raw`, where a raw `VALUE` may be
+         * spelled. */
+        None => nupur_sys::read::rb_cObject(crate::rb::value::gvl_of(outer)),
     };
     let (outer, name) = (outer.as_raw(), name.as_ptr());
     let v = call(|inside| unsafe {

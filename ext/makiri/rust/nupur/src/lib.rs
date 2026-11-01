@@ -176,7 +176,7 @@ pub(crate) mod cname;
 
 // Every conversion between Rust's integer widths and C's `long` - the
 // layer's own: what it hands an extension is in Rust's widths.
-pub(crate) mod int;
+pub(crate) use nupur_sys::int;
 
 // TypedData: wrapping a Rust value as a Ruby object, and its GC hooks.
 pub mod typed;

@@ -1,5 +1,5 @@
 //! `c_integer_outside_int`: a C integer handled outside the one module that
-//! converts them, `nupur::int`.
+//! converts them, `nupur_sys::int`.
 //!
 //! A C `long` is 64 bits where Makiri is built and 32 bits on Windows (LLP64),
 //! and `c_long` is a type alias: on the machines the code is written and
@@ -16,7 +16,7 @@
 //! - write an integer-to-integer `as` cast (the source's type may be an
 //!   alias the lint cannot see either - `rb_sys`'s answers are `c_long`), nor
 //! - name `c_long` / `c_ulong`, so no signature carries one: a length is a
-//!   `usize`, an index an `i64`, and `nupur::int` says how each becomes C's.
+//!   `usize`, an index an `i64`, and `nupur_sys::int` says how each becomes C's.
 //!
 //! A conversion with `From` / `TryFrom` needs no exemption: it compiles to
 //! what each target allows, and fails where a value does not fit.
@@ -35,8 +35,8 @@ use crate::paths::{NUPUR, NUPUR_SYS, module_of, ours, path_of, within};
 /// probes are in both crates.
 fn held(module: &str) -> bool {
     /* `nupur_sys::raising` restates the C signatures, `long`s and all, and
-     * converts nothing: the conversions are still `nupur::int`'s. */
-    if !ours(module) || within(module, "nupur::int") || within(module, "nupur_sys::raising") {
+     * converts nothing: the conversions are still `nupur_sys::int`'s. */
+    if !ours(module) || within(module, "nupur_sys::int") || within(module, "nupur_sys::raising") {
         return false;
     }
     [NUPUR, NUPUR_SYS, "bridge", "glue", "init", "lint_probe"]
@@ -65,7 +65,7 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
         expr.span.source_callsite(),
         format!("an `as` cast from `{src}` to `{dst}` at the Ruby boundary"),
         None,
-        "convert with `From` / `TryFrom`, or through `nupur::int`: a C `long` is 32 bits on \
+        "convert with `From` / `TryFrom`, or through `nupur_sys::int`: a C `long` is 32 bits on \
          Windows, and an `as` there truncates where this machine cannot show it",
     );
 }
@@ -89,7 +89,7 @@ pub fn check_path(cx: &LateContext<'_>, path: &Path<'_>, hir_id: HirId) {
         path.span.source_callsite(),
         format!("`{name}` named at the Ruby boundary"),
         None,
-        "take and return Rust's widths (`usize`, `i64`) and let `nupur::int` make the C `long`: \
+        "take and return Rust's widths (`usize`, `i64`) and let `nupur_sys::int` make the C `long`: \
          it is 32 bits on Windows",
     );
 }

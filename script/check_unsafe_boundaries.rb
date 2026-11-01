@@ -59,7 +59,7 @@ UNSAFE_ISLANDS = {
   "nupur/gvl.rs" => 3,
   "nupur/raw/check.rs" => 4,
   "nupur/raw/data.rs" => 4,
-  "nupur/raw/define.rs" => 22,
+  "nupur/raw/define.rs" => 21,
   "nupur/raw/exception.rs" => 5,
   "nupur/raw/iterate.rs" => 6,
   "nupur/raw/mod.rs" => 1,
@@ -71,15 +71,16 @@ UNSAFE_ISLANDS = {
   "nupur/rb/kept.rs" => 2,
   "nupur/rb/method.rs" => 17,
   "nupur/rb/object.rs" => 5,
-  "nupur/rb/ruby.rs" => 5,
-  "nupur/rb/value.rs" => 18,
+  "nupur/rb/ruby.rs" => 6,
+  "nupur/rb/value.rs" => 19,
   "nupur/rb/value/header.rs" => 3,
-  "nupur/stack.rs" => 1,
   "nupur/string/make.rs" => 5,
   "nupur/string/read.rs" => 2,
+  "nupur/sys/gvl.rs" => 1,
   "nupur/sys/no_unwind.rs" => 2,
-  "nupur/sys/protect.rs" => 25,
+  "nupur/sys/protect.rs" => 26,
   "nupur/sys/raising.rs" => 7,
+  "nupur/sys/read.rs" => 30,
   "nupur/typed/callbacks.rs" => 10,
   "nupur/typed/data_type.rs" => 12,
   "nupur/typed/external.rs" => 1,
@@ -168,8 +169,8 @@ FORBID_FILES = %w[
   glue/xml_node/mutate.rs glue/xml_node/ns.rs glue/xml_node/read.rs
   glue/xml_node/serialize.rs glue/xpath_context.rs nupur/args.rs
   nupur/build.rs nupur/cname.rs nupur/describe.rs
-  nupur/hash.rs nupur/int.rs nupur/msg.rs
-  nupur/rb/class.rs nupur/rb/convert.rs nupur/rb/error.rs
+  nupur/hash.rs nupur/msg.rs nupur/rb/class.rs
+  nupur/rb/convert.rs nupur/rb/error.rs nupur/sys/int.rs
   nupur/table.rs reference/gvl.rs reference/lexbor/contains_guard.rs
 ].freeze
 

@@ -42,6 +42,10 @@ mod entry {
     fn init(check: fn(&crate::rb::Ruby) -> Result<(), crate::rb::Error>) {
         unsafe { crate::rb::method::run_init(check, check) } //~ gvl_token_outside_entry
     }
+
+    fn sys_proof() -> &'static nupur_sys::gvl::Gvl {
+        unsafe { nupur_sys::gvl::Gvl::assume() } //~ ffi_without_gvl_proof gvl_token_outside_entry
+    }
 }
 
 /// A handle that holds its object forgotten (`forgotten_handle`).

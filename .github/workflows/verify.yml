@@ -17,7 +17,7 @@ on:
       - "ext/makiri/rust/falloc/**"
       - "ext/makiri/rust/nupur/src/utf8_copy.rs"
       - "ext/makiri/rust/nupur/src/string/make.rs"
-      - "ext/makiri/rust/nupur/src/int.rs"
+      - "ext/makiri/rust/nupur/sys/src/int.rs"
       - "ext/makiri/rust/verus/**"
       - "ext/makiri/rust/Cargo.toml"
       - "ext/makiri/rust/Cargo.lock"

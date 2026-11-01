@@ -26,11 +26,7 @@ pub fn stack_probe(_: &Ruby) -> fn() -> bool {
 )]
 fn stack_low() -> bool {
     /* The pointer outlives the token it was handed out for, so a call can
-     * come from a thread Ruby does not run, which has no execution context to
-     * read: it answers "room left", as a build with no probe does. A Ruby
-     * thread - with the GVL or without it - reads its own stack's bounds. */
-    // SAFETY: `ruby_native_thread_p` reads only the calling thread's own
-    // thread-local state, from any thread; `ruby_stack_check` takes no
-    // argument, raises nothing, and reads that Ruby thread's stack bounds.
-    unsafe { nupur_sys::ruby_native_thread_p() != 0 && nupur_sys::ruby_stack_check() != 0 }
+     * come from a thread Ruby does not run: `ruby_stack_low` answers "room
+     * left" there. */
+    nupur_sys::read::ruby_stack_low()
 }

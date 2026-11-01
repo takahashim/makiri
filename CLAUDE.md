@@ -92,8 +92,8 @@ When a rule here changes, change its reasoning there in the same commit.
   the vendored C API raise survey and Ruby's headers; an unclassified
   function is refused. A call that can raise but not where we call it is an
   `allow` at that call with its reason, never a crate-wide entry.
-- **A raw `VALUE` and `rb_sys::` stay in `nupur`'s `raw/`, `int.rs`,
-  `typed/` and the `bridge::rb` value files** (`raw_ruby_outside_bridge`).
+- **A raw `VALUE` and `rb_sys::` stay in `nupur_sys` and in `nupur`'s
+  `raw/`, `typed/` and the `bridge::rb` value files** (`raw_ruby_outside_bridge`).
   `bridge/` is `#![forbid(unsafe_code)]`; every `unsafe` that touches Ruby
   is `nupur`'s.
 - **A Document's content is reached only through a guard** (`bridge::dom`
@@ -105,7 +105,8 @@ When a rule here changes, change its reasoning there in the same commit.
   bare `rescue` passes it through. In `Init_makiri` a failure after
   definition has begun is `fatal`; only the first, Ruby API check is a
   `LoadError` (`run_init`).
-- **A C integer is converted only in `nupur::int`.** No integer `as` cast and
+- **A C integer is converted only in `nupur_sys::int`** (Nupur's
+  `crate::int`). No integer `as` cast and
   no `c_long` / `c_ulong` in Nupur, `bridge`, `glue` or `init`
   (`c_integer_outside_int`): a `long` is 32 bits on Windows. Verus proves
   `int`'s conversions at both widths (`verus/int.rs`); a change goes
