@@ -62,7 +62,7 @@ impl RString {
     /// with the builtin indices (`encoding`'s one table of them). Every strict read asks, so it
     /// is on the hot path: `rb_enc_get` + `rb_utf8_encoding` cost Makiri's
     /// `Node#[]` ~13%.
-    pub fn reads_as_utf8_bytes(self) -> bool {
+    pub(crate) fn reads_as_utf8_bytes(self) -> bool {
         crate::encoding::reads_as_utf8_index(self.encoding_index())
     }
 
@@ -75,10 +75,10 @@ impl RString {
     pub fn known_utf8(self) -> bool {
         match self.enc_coderange() {
             /* Every byte < 0x80 in an ASCII-compatible encoding. */
-            crate::rb::Coderange::SevenBit => true,
+            crate::rb::value::Coderange::SevenBit => true,
             /* Valid for its own encoding, which has to be UTF-8 for that to
              * mean valid UTF-8 - asked by index, from the flags. */
-            crate::rb::Coderange::Valid => crate::encoding::is_utf8_index(self.encoding_index()),
+            crate::rb::value::Coderange::Valid => crate::encoding::is_utf8_index(self.encoding_index()),
             _ => false,
         }
     }

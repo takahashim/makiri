@@ -14,7 +14,7 @@ use super::{AsRawValue, RString};
 
 /// A String's coderange, as Ruby caches it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Coderange {
+pub(crate) enum Coderange {
     Unknown,
     SevenBit,
     Valid,
@@ -33,7 +33,7 @@ impl RString {
     /// The String's cached coderange - a read of its header flags, which
     /// never scans and never allocates.
     #[inline]
-    pub fn enc_coderange(self) -> Coderange {
+    pub(crate) fn enc_coderange(self) -> Coderange {
         const MASK: VALUE = nupur_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_MASK as VALUE;
         const SEVEN: VALUE = nupur_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_7BIT as VALUE;
         const VALID: VALUE = nupur_sys::ruby_coderange_type::RUBY_ENC_CODERANGE_VALID as VALUE;

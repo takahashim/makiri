@@ -39,7 +39,7 @@ pub fn int(ruby: &Ruby, n: i64) -> Result<Integer, Error> {
 }
 
 /// An Integer from an unsigned value.
-pub fn uint(ruby: &Ruby, n: u64) -> Result<Integer, Error> {
+pub(crate) fn uint(ruby: &Ruby, n: u64) -> Result<Integer, Error> {
     raw::int_from_u64(ruby, n)
 }
 
