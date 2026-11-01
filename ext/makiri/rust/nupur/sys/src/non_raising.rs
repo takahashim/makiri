@@ -30,8 +30,9 @@ use core::ffi::{c_int, c_void};
 
 use rb_sys::stable_api::{get_default, StableApiDefinition};
 
+use crate::data_type::DataType;
 use crate::value::{Root, Ruby, Value};
-use crate::{rb_data_type_t, rb_encoding, ruby_value_type, size_t, ssize_t, ID};
+use crate::{rb_encoding, ruby_value_type, size_t, ssize_t, ID};
 use rb_sys::rb_unblock_function_t;
 use rb_sys::VALUE;
 
@@ -146,14 +147,10 @@ pub unsafe fn rb_obj_hide(obj: Value) {
 }
 
 /// `rb_typeddata_is_kind_of`: is `obj` a TypedData object of `data_type`?
-///
-/// # Safety
-///
-/// `data_type` points to a registered data type.
 #[inline(always)]
-pub unsafe fn rb_typeddata_is_kind_of(obj: Value, data_type: *const rb_data_type_t) -> bool {
-    // SAFETY: the contract; `obj` is live.
-    unsafe { rb_sys::rb_typeddata_is_kind_of(obj.as_raw(), data_type) != 0 }
+pub fn rb_typeddata_is_kind_of(obj: Value, data_type: &DataType) -> bool {
+    // SAFETY: `obj` is live, and `data_type` a type's own table.
+    unsafe { rb_sys::rb_typeddata_is_kind_of(obj.as_raw(), data_type.as_ptr()) != 0 }
 }
 
 /// A heap object's header flags word (`RBasic::flags`), as bits.

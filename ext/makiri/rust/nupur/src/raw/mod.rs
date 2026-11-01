@@ -46,7 +46,6 @@ use crate::rb::{
     Error, ExceptionClass, Float, Id, Integer, RArray, RClass, RHash, RModule, RString, Range,
     Ruby, Symbol, Value,
 };
-use nupur_sys::rb_data_type_t;
 
 use crate::encoding::Encoding;
 

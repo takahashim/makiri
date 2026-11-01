@@ -32,10 +32,12 @@
 
 use core::ffi::{c_int, c_void};
 
+use crate::data_type::DataType;
 use crate::protect::Protected;
 use crate::value::Value;
-use crate::{rb_data_type_t, rb_encoding, rb_enumerator_size_func, size_t, ID};
+use crate::{rb_encoding, size_t, ID};
 use rb_sys::VALUE;
+use rb_sys::{rb_data_type_t, rb_enumerator_size_func};
 
 /// What a wrapper's argument is to C: a [`Value`] its `VALUE`, a pointer to
 /// values a pointer to `VALUE`s (`Value` is `repr(transparent)`), and
@@ -84,6 +86,34 @@ impl IntoC<Option<unsafe extern "C" fn() -> VALUE>> for Option<unsafe extern "C"
     }
 }
 
+/// A TypedData type, as the C API takes it: its `rb_data_type_t`.
+impl IntoC<*const rb_data_type_t> for &DataType {
+    #[inline(always)]
+    fn into_c(self) -> *const rb_data_type_t {
+        self.as_ptr()
+    }
+}
+
+/// An enumerator's size function (`rb_enumeratorize_with_size`'s
+/// `size_fn`), in values: `Value` is `repr(transparent)`, so it is the
+/// function C calls.
+pub type EnumeratorSize =
+    Option<unsafe extern "C" fn(recv: Value, argv: Value, eobj: Value) -> Value>;
+
+impl IntoC<rb_enumerator_size_func> for EnumeratorSize {
+    #[inline(always)]
+    fn into_c(self) -> rb_enumerator_size_func {
+        // SAFETY: the same function pointer; its arguments and answer are
+        // `VALUE`s to C.
+        self.map(|f| unsafe {
+            core::mem::transmute::<
+                unsafe extern "C" fn(Value, Value, Value) -> Value,
+                unsafe extern "C" fn(VALUE, VALUE, VALUE) -> VALUE,
+            >(f)
+        })
+    }
+}
+
 /// What C's answer is to a wrapper's caller: a `VALUE` a [`Value`], anything
 /// else itself.
 trait FromC<C> {
@@ -127,10 +157,10 @@ raising! {
     fn rb_big2ll(arg1: Value) -> core::ffi::c_longlong;
     fn rb_big2ull(arg1: Value) -> core::ffi::c_ulonglong;
     fn rb_check_frozen(obj: Value);
-    fn rb_check_typeddata(obj: Value, data_type: *const rb_data_type_t) -> *mut c_void;
+    fn rb_check_typeddata(obj: Value, data_type: &DataType) -> *mut c_void;
     fn rb_const_get(space: Value, name: ID) -> Value;
     fn rb_const_set(space: Value, name: ID, val: Value);
-    fn rb_data_typed_object_zalloc(klass: Value, size: size_t, type_: *const rb_data_type_t) -> Value;
+    fn rb_data_typed_object_zalloc(klass: Value, size: size_t, type_: &DataType) -> Value;
     fn rb_define_class_under(outer: Value, name: *const core::ffi::c_char, super_: Value) -> Value;
     fn rb_define_method(klass: Value, mid: *const core::ffi::c_char, func: Option<unsafe extern "C" fn() -> Value>, arity: core::ffi::c_int);
     fn rb_define_module(name: *const core::ffi::c_char) -> Value;
@@ -142,7 +172,7 @@ raising! {
     fn rb_enc_find_index(name: *const core::ffi::c_char) -> core::ffi::c_int;
     fn rb_enc_from_encoding(enc: *const rb_encoding) -> Value;
     fn rb_enc_interned_str(ptr: *const core::ffi::c_char, len: core::ffi::c_long, enc: *const rb_encoding) -> Value;
-    fn rb_enumeratorize_with_size(recv: Value, meth: Value, argc: core::ffi::c_int, argv: *const Value, func: rb_enumerator_size_func) -> Value;
+    fn rb_enumeratorize_with_size(recv: Value, meth: Value, argc: core::ffi::c_int, argv: *const Value, func: EnumeratorSize) -> Value;
     fn rb_exc_new_str(etype: Value, str_: Value) -> Value;
     fn rb_float_new(d: f64) -> Value;
     fn rb_funcallv(recv: Value, mid: ID, argc: core::ffi::c_int, argv: *const Value) -> Value;
