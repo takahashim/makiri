@@ -56,14 +56,6 @@ impl Value {
         self.0 == other.0
     }
 
-    /// The value's word, as an identity: the same for every reference to one
-    /// object, different for two live objects - a key to compare by, never a
-    /// value to turn back into one.
-    #[inline(always)]
-    pub fn identity(self) -> usize {
-        crate::int::word(self.0)
-    }
-
     /// `Qundef`?
     #[inline(always)]
     pub fn is_undef(self) -> bool {

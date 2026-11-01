@@ -459,14 +459,6 @@ pub fn same_value(a: impl ReprValue, b: impl ReprValue) -> bool {
     a.as_sys().is(b.as_sys())
 }
 
-/// VALUE identity as a word: the same for every reference to one object, and
-/// different for two live objects - a key to compare by, never a value to
-/// turn back into one.
-#[inline]
-pub fn identity_word(v: impl ReprValue) -> usize {
-    v.as_sys().identity()
-}
-
 /// An interned name - a method's, an ivar's, a constant's - as `rb_intern`
 /// makes it (`raw::intern`). Only the layer turns one into the raw `ID` it
 /// hands C, so a caller can keep and compare one but never forge one.
