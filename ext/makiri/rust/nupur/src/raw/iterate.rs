@@ -15,7 +15,7 @@ use super::*;
 )]
 pub fn yield_value(_: &Ruby, v: Value) -> Result<Value, Error> {
     let v = v.as_raw();
-    let out = call(|| unsafe { nupur_sys::rb_yield(v) })?;
+    let out = call(|inside| unsafe { nupur_sys::raising::rb_yield(inside, v) })?;
     // SAFETY: what the block returned, live on this frame.
     Ok(unsafe { Value::from_raw(out) })
 }
@@ -75,8 +75,8 @@ pub fn hash_foreach(h: RHash, visit: &mut dyn FnMut(Value, Value) -> bool) -> Re
         latch: crate::caught::PanicLatch::new(),
     };
     let (h, arg) = (h.as_raw(), &mut walk as *mut Walk<'_> as VALUE);
-    let walked = call(|| unsafe {
-        nupur_sys::rb_hash_foreach(h, Some(each), arg);
+    let walked = call(|inside| unsafe {
+        nupur_sys::raising::rb_hash_foreach(inside, h, Some(each), arg);
         nupur_sys::Qnil as VALUE
     });
     /* Out of the C frames: safe to unwind from here. */

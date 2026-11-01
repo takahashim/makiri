@@ -6,9 +6,9 @@ use super::*;
 #[inline]
 pub(crate) fn ary_new_capa(_: &Ruby, capa: usize) -> Result<RArray, Error> {
     let n = crate::int::capacity(capa);
-    let v = call(|| unsafe {
-        injected_raise();
-        nupur_sys::rb_ary_new_capa(n)
+    let v = call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_ary_new_capa(inside, n)
     })?;
     typed(v, RArray::from_value, "a C call made no Array")
 }
@@ -18,9 +18,9 @@ pub(crate) fn ary_new_capa(_: &Ruby, capa: usize) -> Result<RArray, Error> {
 #[inline]
 pub(crate) fn ary_push(a: RArray, v: Value) -> Result<(), Error> {
     let (a, v) = (a.as_raw(), v.as_raw());
-    call(|| unsafe {
-        injected_raise();
-        nupur_sys::rb_ary_push(a, v)
+    call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_ary_push(inside, a, v)
     })
     .map(|_| ())
 }
@@ -31,9 +31,9 @@ pub(crate) fn ary_push(a: RArray, v: Value) -> Result<(), Error> {
 #[inline]
 pub fn ivar_set(obj: Value, id: crate::rb::HiddenId, v: Value) -> Result<(), Error> {
     let (o, v, id) = (obj.as_raw(), v.as_raw(), id.as_raw());
-    call(|| unsafe {
-        injected_raise();
-        nupur_sys::rb_ivar_set(o, id, v)
+    call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_ivar_set(inside, o, id, v)
     })
     .map(|_| ())
 }
@@ -49,7 +49,7 @@ pub(crate) fn table_get(h: RHash, n: u32) -> Result<Option<Value>, Error> {
         return Ok(None);
     };
     let h = h.as_raw();
-    let v = call(|| unsafe { nupur_sys::rb_hash_lookup2(h, key, UNDEF) })?;
+    let v = call(|inside| unsafe { nupur_sys::raising::rb_hash_lookup2(inside, h, key, UNDEF) })?;
     // SAFETY: a value of the Hash's, or `Qundef`, which is not handed out.
     Ok((v != UNDEF).then(|| unsafe { Value::from_raw(v) }))
 }
@@ -65,9 +65,9 @@ pub(crate) fn table_set(h: RHash, n: u32, v: Value) -> Result<(), Error> {
         )
     })?;
     let (h, v) = (h.as_raw(), v.as_raw());
-    call(|| unsafe {
-        injected_raise();
-        nupur_sys::rb_hash_aset(h, key, v)
+    call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_hash_aset(inside, h, key, v)
     })
     .map(|_| ())
 }
@@ -87,9 +87,9 @@ pub(super) fn plain_key_or_refuse(k: Value) -> Result<(), Error> {
 /// `rb_hash_new`: raises `NoMemoryError`.
 #[inline]
 pub(crate) fn hash_new(_: &Ruby) -> Result<RHash, Error> {
-    let v = call(|| unsafe {
-        injected_raise();
-        nupur_sys::rb_hash_new()
+    let v = call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_hash_new(inside)
     })?;
     typed(v, RHash::from_value, "a C call made no Hash")
 }
@@ -114,9 +114,9 @@ pub(crate) fn hidden_hash_new(ruby: &Ruby) -> Result<RHash, Error> {
 pub(crate) fn hash_aset(h: RHash, k: Value, v: Value) -> Result<(), Error> {
     plain_key_or_refuse(k)?;
     let (h, k, v) = (h.as_raw(), k.as_raw(), v.as_raw());
-    call(|| unsafe {
-        injected_raise();
-        nupur_sys::rb_hash_aset(h, k, v)
+    call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_hash_aset(inside, h, k, v)
     })
     .map(|_| ())
 }
@@ -130,9 +130,9 @@ pub(crate) fn int_from_i64(_: &Ruby, n: i64) -> Result<Integer, Error> {
         // SAFETY: an immediate.
         return Ok(Integer::from_known(unsafe { Value::from_raw(v) }));
     }
-    let v = call(|| unsafe {
-        injected_raise();
-        nupur_sys::rb_ll2inum(n)
+    let v = call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_ll2inum(inside, n)
     })?;
     typed(v, Integer::from_value, "a C call made no Integer")
 }
@@ -145,9 +145,9 @@ pub(crate) fn int_from_u64(_: &Ruby, n: u64) -> Result<Integer, Error> {
         // SAFETY: an immediate.
         return Ok(Integer::from_known(unsafe { Value::from_raw(v) }));
     }
-    let v = call(|| unsafe {
-        injected_raise();
-        nupur_sys::rb_ull2inum(n)
+    let v = call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_ull2inum(inside, n)
     })?;
     typed(v, Integer::from_value, "a C call made no Integer")
 }
@@ -155,9 +155,9 @@ pub(crate) fn int_from_u64(_: &Ruby, n: u64) -> Result<Integer, Error> {
 /// `rb_float_new`: raises `NoMemoryError` for a value that is not a flonum.
 #[inline]
 pub(crate) fn float_new(_: &Ruby, f: f64) -> Result<Float, Error> {
-    let v = call(|| unsafe {
-        injected_raise();
-        nupur_sys::rb_float_new(f)
+    let v = call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_float_new(inside, f)
     })?;
     typed(v, Float::from_value, "a C call made no Float")
 }
@@ -167,9 +167,9 @@ pub(crate) fn float_new(_: &Ruby, f: f64) -> Result<Float, Error> {
 #[inline]
 pub(crate) fn enumeratorize(obj: Value, meth: Symbol) -> Result<Value, Error> {
     let (o, m) = (obj.as_raw(), meth.as_raw());
-    let v = call(|| unsafe {
-        injected_raise();
-        nupur_sys::rb_enumeratorize_with_size(o, m, 0, core::ptr::null(), None)
+    let v = call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_enumeratorize_with_size(inside, o, m, 0, core::ptr::null(), None)
     })?;
     typed(v, Some, "a C call made no value")
 }
@@ -187,9 +187,9 @@ pub fn hash_lookup(h: RHash, key: Value) -> Result<Option<Value>, Error> {
     const UNDEF: VALUE = nupur_sys::Qundef as VALUE;
     plain_key_or_refuse(key)?;
     let (h, key) = (h.as_raw(), key.as_raw());
-    let v = call(|| unsafe {
-        injected_raise();
-        nupur_sys::rb_hash_lookup2(h, key, UNDEF)
+    let v = call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_hash_lookup2(inside, h, key, UNDEF)
     })?;
     // SAFETY: a value of the Hash's, or `Qundef`, which is not handed out.
     Ok((v != UNDEF).then(|| unsafe { Value::from_raw(v) }))
@@ -205,7 +205,7 @@ pub fn range_values(r: Range) -> Result<(Value, Value, bool), Error> {
         &mut end as *mut VALUE,
         &mut excl as *mut c_int,
     );
-    call(|| unsafe { nupur_sys::rb_range_values(r, pb, pe, px) })?;
+    call(|inside| unsafe { nupur_sys::raising::rb_range_values(inside, r, pb, pe, px) })?;
     // SAFETY: the Range's own ends, live while it is.
     Ok(unsafe { (Value::from_raw(beg), Value::from_raw(end), excl != 0) })
 }
@@ -215,7 +215,9 @@ pub fn range_values(r: Range) -> Result<(Value, Value, bool), Error> {
 /// `Integer::to_i64`, which answers a Fixnum itself.
 pub(crate) fn big2ll(n: Integer) -> Result<i64, Error> {
     let n = n.as_raw();
-    Ok(i64::from(call(|| unsafe { nupur_sys::rb_big2ll(n) })?))
+    Ok(i64::from(call(|inside| unsafe {
+        nupur_sys::raising::rb_big2ll(inside, n)
+    })?))
 }
 
 /// `rb_big2ull`: raises `RangeError` past a `u64`. For a non-negative Bignum
@@ -224,5 +226,7 @@ pub(crate) fn big2ll(n: Integer) -> Result<i64, Error> {
 /// itself.
 pub(crate) fn big2ull(n: Integer) -> Result<u64, Error> {
     let n = n.as_raw();
-    Ok(u64::from(call(|| unsafe { nupur_sys::rb_big2ull(n) })?))
+    Ok(u64::from(call(|inside| unsafe {
+        nupur_sys::raising::rb_big2ull(inside, n)
+    })?))
 }

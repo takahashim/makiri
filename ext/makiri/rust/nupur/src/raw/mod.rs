@@ -7,7 +7,9 @@
 //! every one runs inside [`call`] ([`protect`]): a bare `rb_protect` whose `extern "C"`
 //! thunk holds nothing but that one C call and the `Copy` values it reads. The
 //! only frame a raise crosses is the thunk's own, which owns nothing. A
-//! caller gets a `Result` and owns whatever it likes across the call.
+//! caller gets a `Result` and owns whatever it likes across the call. The C
+//! call is `nupur_sys::raising`'s, which takes the `&Protected` that only
+//! `call` lends its closure.
 //! `rake dylint`'s `raising_call_outside_protect` refuses a raising C call
 //! anywhere else, so a new one is a new wrapper here, with its raise stated.
 //!

@@ -6,8 +6,7 @@
 //! The protection itself is `nupur_sys::protect`'s - the `rb_protect` thunk,
 //! the pending exit, `$!` - and each function here is its safe face: it holds
 //! the proof of the GVL its caller has, and makes the raw exception a
-//! `nupur_sys` call came back with an [`Error`]. The raise sweep's hook
-//! ([`injected_raise`]) is here too, until the wrappers that call it move.
+//! `nupur_sys` call came back with an [`Error`].
 //!
 //! The rest of `raw` is the wrappers, every one a C call made inside
 //! [`call`]; `rake dylint` holds it to that (`unraising_call_in_raw`).
@@ -19,35 +18,13 @@ use core::ffi::c_int;
 
 use crate::rb::value::AsRawValue;
 use crate::rb::{Error, Ruby, Value};
-use nupur_sys::protect::Caught;
+use nupur_sys::protect::{Caught, Protected};
 
 pub(crate) use nupur_sys::protect::reset_pending_exit;
 
-/// The raise sweep's hook (`script/check_raise_injection.rb`): in an
-/// `alloc-inject` build the armed allocating call below raises `NoMemoryError`
-/// in place of its allocation, as a real failure would - so the sweep can make
-/// every one of them raise in turn. Nothing in any other build. Called inside
-/// the thunk, so the raise is protected like the call's. Whether a call is
-/// armed is the extension's to answer ([`set_raise_injector`]).
-#[inline(always)]
-pub(super) unsafe fn injected_raise() {
-    #[cfg(feature = "alloc-inject")]
-    if RAISE_INJECTOR.get().is_some_and(|armed| armed()) {
-        /* Raises without allocating: Ruby keeps the exception preallocated. */
-        unsafe { nupur_sys::rb_memerror() }
-    }
-}
-
-/// The function that answers whether the next allocating call raises.
+pub(super) use nupur_sys::protect::injected_raise;
 #[cfg(feature = "alloc-inject")]
-static RAISE_INJECTOR: std::sync::OnceLock<fn() -> bool> = std::sync::OnceLock::new();
-
-/// Register the raise sweep's answer, once (`crate::inject::install`, which
-/// registers the allocation half with it); a second registration is ignored.
-#[cfg(feature = "alloc-inject")]
-pub(crate) fn set_raise_injector(armed: fn() -> bool) {
-    let _ = RAISE_INJECTOR.set(armed);
-}
+pub(crate) use nupur_sys::protect::set_raise_injector;
 
 /// The exit pending, as the `Err` that resumes it, or `None`.
 #[inline]
@@ -75,7 +52,8 @@ pub(crate) fn resume(state: c_int) -> ! {
 /// `nupur_sys::protect::call`; a raise comes back as `Err`, and `$!` is
 /// cleared (an error the caller handles rather than raises is run under
 /// [`keeping_errinfo`]). `F: Copy` and `T: Copy` are that call's: the
-/// thunk's frame owns nothing a skipped destructor would leak.
+/// thunk's frame owns nothing a skipped destructor would leak. `f` is lent
+/// the `&Protected` that `nupur_sys::raising`'s wrappers take.
 #[inline]
 #[cfg_attr(
     dylint_lib = "makiri_lints",
@@ -84,10 +62,10 @@ pub(crate) fn resume(state: c_int) -> ! {
         reason = "the raw module's alone: every wrapper that hands it its C call holds the proof"
     )
 )]
-pub(super) fn call<T: Copy, F: FnOnce() -> T + Copy>(f: F) -> Result<T, Error> {
+pub(super) fn call<T: Copy, F: FnOnce(&Protected) -> T + Copy>(f: F) -> Result<T, Error> {
     // SAFETY: every caller is a wrapper of `raw` holding a proof of the GVL;
     // `f` owns nothing (it is `Copy`).
-    match unsafe { nupur_sys::protect::call(move |_| f()) } {
+    match unsafe { nupur_sys::protect::call(f) } {
         Ok(out) => Ok(out),
         Err(caught) => Err(error_of(caught)),
     }

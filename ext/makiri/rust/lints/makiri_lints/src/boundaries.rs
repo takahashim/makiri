@@ -274,11 +274,13 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
 }
 
 /// The calls that run the caller's Ruby code: Ruby's C API that converts or
-/// calls (`to_s`, `to_str`, a method, a block), and the bridge's wrappers
-/// over it.
+/// calls (`to_s`, `to_str`, a method, a block) - rb-sys's own, or
+/// `nupur_sys::raising`'s wrapper of it, named the same - and the bridge's
+/// wrappers over it.
 fn runs_callers_ruby(path: &str) -> bool {
     if let Some(name) = path
         .strip_prefix("rb_sys::")
+        .or_else(|| path.strip_prefix("nupur_sys::raising::"))
         .and_then(|p| p.rsplit("::").next())
     {
         return matches!(

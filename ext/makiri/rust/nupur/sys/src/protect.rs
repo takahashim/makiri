@@ -25,8 +25,16 @@ use crate::VALUE;
 /// is a `T` chosen outside, so the reference cannot leave the call. It is
 /// neither `Send` nor `Sync`, so a GVL-released body cannot carry it either.
 ///
-/// Kept out of a place that outlives the call (each rustdoc checks the
-/// error code, so a build that failed for another reason does not pass):
+/// Not made outside this crate, so a wrapper of [`crate::raising`] cannot be
+/// called outside the protection (each rustdoc checks the error code, so a
+/// build that failed for another reason does not pass):
+///
+/// ```compile_fail,E0451
+/// let made = nupur_sys::protect::Protected { _not_send: core::marker::PhantomData };
+/// let _ = unsafe { nupur_sys::raising::rb_hash_new(&made) };
+/// ```
+///
+/// kept out of a place that outlives the call:
 ///
 /// ```compile_fail,E0521
 /// let kept = core::cell::Cell::new(None);
@@ -56,6 +64,33 @@ pub enum Caught {
     /// The closure did not run, though `rb_protect` reported no exit: an
     /// internal error, never an answer.
     NotRun,
+}
+
+/// The raise sweep's hook (`script/check_raise_injection.rb`): in an
+/// `alloc-inject` build the armed allocating call raises `NoMemoryError` in
+/// place of its allocation, as a real failure would - so the sweep can make
+/// every one of them raise in turn. Nothing in any other build. It takes the
+/// token, so the raise is protected like the call's. Whether a call is armed
+/// is the extension's to answer ([`set_raise_injector`]).
+#[inline(always)]
+pub fn injected_raise(_: &Protected) {
+    #[cfg(feature = "alloc-inject")]
+    if RAISE_INJECTOR.get().is_some_and(|armed| armed()) {
+        /* Raises without allocating: Ruby keeps the exception preallocated.
+         * SAFETY: inside the protection, which the token proves. */
+        unsafe { rb_sys::rb_memerror() }
+    }
+}
+
+/// The function that answers whether the next allocating call raises.
+#[cfg(feature = "alloc-inject")]
+static RAISE_INJECTOR: std::sync::OnceLock<fn() -> bool> = std::sync::OnceLock::new();
+
+/// Register the raise sweep's answer, once (Nupur's `inject::install`, which
+/// registers the allocation half with it); a second registration is ignored.
+#[cfg(feature = "alloc-inject")]
+pub fn set_raise_injector(armed: fn() -> bool) {
+    let _ = RAISE_INJECTOR.set(armed);
 }
 
 thread_local! {

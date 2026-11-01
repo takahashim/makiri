@@ -51,9 +51,11 @@ ext/makiri/rust/           the extension (package makiri_rs, lib `makiri`)
     sys/                   Ruby's C API for nupur (crate `nupur_sys`), the
                            one crate that depends on rb-sys. It holds the
                            protection (`protect`: the `rb_protect` thunk,
-                           `$!`, a pending exit) and `no_unwind`; for the
-                           rest it re-exports rb-sys whole, and nupur
-                           reaches every rb-sys item through it
+                           `$!`, a pending exit), the raising C calls, each
+                           taking the protection's token (`raising`), and
+                           `no_unwind`; for the rest it re-exports rb-sys
+                           whole, and nupur reaches every rb-sys item
+                           through it
   falloc/                  fallible allocation (crate `falloc`): every engine
                            allocation goes through here, so `rake oom` can
                            fail it and OOM raises rather than aborting the

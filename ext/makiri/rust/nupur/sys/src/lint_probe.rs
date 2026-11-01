@@ -26,3 +26,17 @@ extern "C" fn unguarded() {} //~ unguarded_no_unwind_site
 fn cast(n: i64) -> i32 {
     n as i32 //~ c_integer_outside_int
 }
+
+/// A wrapper of a call that cannot raise, beside the ones that can
+/// (`unraising_call_in_raw`): the `raising` module holds only calls that need
+/// the protection.
+#[rustfmt::skip] // keeps each marker on the line reported
+mod raising {
+    unsafe fn rb_utf8_encoding(_: &crate::protect::Protected) -> *mut crate::rb_encoding {
+        unsafe { rb_sys::rb_utf8_encoding() } //~ unraising_call_in_raw
+    }
+
+    unsafe fn rb_ary_new(_: &crate::protect::Protected) -> crate::VALUE {
+        unsafe { rb_sys::rb_ary_new() }
+    }
+}

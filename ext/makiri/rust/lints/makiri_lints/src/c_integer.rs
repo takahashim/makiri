@@ -34,7 +34,9 @@ use crate::paths::{NUPUR, NUPUR_SYS, module_of, ours, path_of, within};
 /// extension's Ruby boundary, bar the module that converts. The self-tests'
 /// probes are in both crates.
 fn held(module: &str) -> bool {
-    if !ours(module) || within(module, "nupur::int") {
+    /* `nupur_sys::raising` restates the C signatures, `long`s and all, and
+     * converts nothing: the conversions are still `nupur::int`'s. */
+    if !ours(module) || within(module, "nupur::int") || within(module, "nupur_sys::raising") {
         return false;
     }
     [NUPUR, NUPUR_SYS, "bridge", "glue", "init", "lint_probe"]

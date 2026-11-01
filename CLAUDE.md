@@ -84,7 +84,9 @@ When a rule here changes, change its reasoning there in the same commit.
   the GC goes through a `typed::External`, and `nupur`'s free callback gives
   it back.
 - **Every C call that can raise is a wrapper in `nupur/src/raw/`, run under
-  `rb_protect` through `raw::call`, returning `Result`.** A raise must never
+  `rb_protect` through `raw::call`, returning `Result`.** The C call is
+  `nupur_sys::raising`'s, which takes the `&Protected` only `call` lends.
+  A raise must never
   `longjmp` over a Rust frame. Which calls raise is classified in
   `lints/makiri_lints/src/raising.rs` (`NON_RAISING`, `REVIEWED`), held to
   the vendored C API raise survey and Ruby's headers; an unclassified

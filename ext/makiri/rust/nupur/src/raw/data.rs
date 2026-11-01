@@ -8,7 +8,7 @@ pub(crate) unsafe fn check_typeddata(
     v: VALUE,
     ty: *const rb_data_type_t,
 ) -> Result<*mut c_void, Error> {
-    call(|| unsafe { nupur_sys::rb_check_typeddata(v, ty) })
+    call(|inside| unsafe { nupur_sys::raising::rb_check_typeddata(inside, v, ty) })
 }
 
 /// `rb_data_typed_object_zalloc`: raises `NoMemoryError`. For an embeddable
@@ -21,8 +21,8 @@ pub(crate) unsafe fn typed_object_zalloc(
 ) -> Result<VALUE, Error> {
     let size = nupur_sys::size_t::try_from(size)
         .map_err(|_| crate::rb::error::internal_error("a wrapped object too large"))?;
-    call(|| unsafe {
-        injected_raise();
-        nupur_sys::rb_data_typed_object_zalloc(klass, size, ty)
+    call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_data_typed_object_zalloc(inside, klass, size, ty)
     })
 }

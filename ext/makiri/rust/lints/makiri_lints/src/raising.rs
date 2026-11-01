@@ -96,9 +96,23 @@ const REVIEWED: &[(&str, &str)] = &[(
 )];
 
 /// Where the protection, `$!` and the raises on purpose live: the
-/// `rb_protect` thunk and its state (`nupur_sys`), and their safe face in
-/// Nupur's types, with the raise sweep's hook.
-const PROTECT: &[&str] = &["nupur::raw::protect", "nupur_sys::protect"];
+/// `rb_protect` thunk and its state (`nupur_sys::protect`), the wrappers
+/// that take its token (`nupur_sys::raising`), and their safe face in
+/// Nupur's types.
+const PROTECT: &[&str] = &[
+    "nupur::raw::protect",
+    "nupur_sys::protect",
+    "nupur_sys::raising",
+    "nupur_sys::lint_probe::raising",
+];
+
+/// The wrappers of the raising C calls, each taking the protection's token:
+/// a call of one is a raising call, which a `call` exists to protect.
+const RAISING_WRAPPERS: &str = "nupur_sys::raising::";
+
+/// The module of those wrappers, and the self-test's stand-in: each one there
+/// must wrap a call that can raise.
+const WRAPPER_HOMES: &[&str] = &["nupur_sys::raising", "nupur_sys::lint_probe::raising"];
 
 /// The modules held to `unraising_call_in_raw`: `raw` itself, and the
 /// self-test's stand-in.
@@ -166,6 +180,16 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
              belongs with the values (rb::value, or rb::object for an object's ivars and class), and the protection itself in raw::protect",
         );
     }
+    if WRAPPER_HOMES.contains(&module.as_str()) && !may_raise(name) {
+        span_lint_and_help(
+            cx,
+            UNRAISING_CALL_IN_RAW,
+            expr.span.source_callsite(),
+            format!("`{name}` cannot raise, and is wrapped to take the protection's token"),
+            None,
+            "nupur_sys::raising holds the C calls that can raise; one that cannot needs no              rb_protect - or it is missing from makiri_lints' tables the other way (NON_RAISING              or REVIEWED lists it)",
+        );
+    }
 }
 
 /// A `call` whose closure calls nothing of Ruby's C that can raise.
@@ -182,7 +206,12 @@ fn check_protected_closure<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>)
     let body = cx.tcx.hir_body(closure.body);
     let raises = clippy_utils::visitors::for_each_expr(cx.tcx, body.value, |e| {
         match callee(cx, e).map(|did| path_of(cx, did)) {
-            Some(path) if rb_sys_function(&path).is_some_and(may_raise) => ControlFlow::Break(()),
+            Some(path)
+                if rb_sys_function(&path).is_some_and(may_raise)
+                    || path.starts_with(RAISING_WRAPPERS) =>
+            {
+                ControlFlow::Break(())
+            }
             _ => ControlFlow::Continue(()),
         }
     })

@@ -12,6 +12,11 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
+[features]
+# The raise half of `rake oom`'s hooks (`protect::injected_raise`), which
+# Nupur's own `alloc-inject` turns on.
+alloc-inject = []
+
 [dependencies]
 # Deliberately WITHOUT `link-ruby`: the extension is dlopen'd into a Ruby that
 # already provides the rb_* symbols. The features are the ones Nupur was

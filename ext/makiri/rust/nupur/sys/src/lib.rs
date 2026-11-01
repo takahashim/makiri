@@ -16,11 +16,15 @@
 //! The crate denies `unsafe_code`, and the files that need it carry an
 //! `allow` each, as Nupur does.
 #![deny(unsafe_code)]
+/* Built as a dependency under `rake dylint`, the crate sees `dylint_lib` but
+ * not the lints, so their `allow`s name lints it does not know. */
+#![cfg_attr(dylint_lib = "makiri_lints", allow(unknown_lints))]
 
 pub use rb_sys::*;
 
 pub mod no_unwind;
 pub mod protect;
+pub mod raising;
 
 /* `rake dylint`'s self-test: what the lints must report here. */
 #[cfg(nupur_sys_lint_probe)]

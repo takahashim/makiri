@@ -16,7 +16,7 @@ workspace = true
 # The hooks of `rake oom`: the extension installs both (`inject::install`) -
 # one makes the armed allocating call raise, the other fails a checked
 # copy's heap buffer. Off, the checks are gone. The extension's own `alloc-inject` turns this on.
-alloc-inject = []
+alloc-inject = ["nupur_sys/alloc-inject"]
 
 [dependencies]
 # Ruby's C API, through the one crate that depends on rb-sys (`sys/`): Nupur

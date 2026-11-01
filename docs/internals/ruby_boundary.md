@@ -289,6 +289,15 @@ whose `extern "C"` thunk is the only frame a raise crosses, and the raise
 comes back as `Err`. A caller may then own copies, hold document guards and
 build Ruby objects in any order.
 
+The C call itself is a function of `nupur_sys::raising`, one per raising C
+function, with the C signature and a `&Protected` first. Only the thunk
+lends a `&Protected`, to the closure `raw::call` runs, so these functions
+cannot be called outside the protection: the type keeps the rule that
+`raising_call_outside_protect` checks. The lint stays while `nupur_sys`
+still re-exports rb-sys whole, since a raising function that has no
+wrapper can still be reached directly. `unraising_call_in_raw` also
+refuses a wrapper in `nupur_sys::raising` of a function that cannot raise.
+
 ### Classifying which functions raise
 
 Which C functions can raise is decided in `lints/makiri_lints`, in two lists
