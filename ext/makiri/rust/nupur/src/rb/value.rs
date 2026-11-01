@@ -44,6 +44,12 @@ impl Value {
         // SAFETY: the caller's.
         Value(unsafe { nupur_sys::value::Value::from_raw(v) })
     }
+
+    /// The value a `nupur_sys` call returned, which is one already.
+    #[inline(always)]
+    pub(crate) const fn from_sys(v: nupur_sys::value::Value) -> Value {
+        Value(v)
+    }
 }
 
 /// `Object`, the default superclass (`rb_cObject`, a C global Ruby sets once
@@ -51,7 +57,7 @@ impl Value {
 #[inline]
 pub(crate) fn object_class<V: ReprValue>(of: &V) -> RClass {
     // SAFETY: a C global Ruby set at boot: a live class.
-    RClass::from_known(unsafe { Value::from_raw(read::rb_cObject(of.as_value().0.ruby())) })
+    RClass::from_known(Value::from_sys(read::rb_cObject(of.as_value().0.ruby())))
 }
 
 /// What every Ruby value type is: a `Value` underneath.
@@ -218,7 +224,7 @@ handle!(
     Range,
     // SAFETY: `rb_cRange`, a C global Ruby sets once at boot; a value
     // existing means this is a Ruby thread, and the test reads its ancestry.
-    |v| v.is_kind_of(RClass::from_known(unsafe { Value::from_raw(read::rb_cRange(v.0.ruby())) }))
+    |v| v.is_kind_of(RClass::from_known(Value::from_sys(read::rb_cRange(v.0.ruby()))))
 );
 handle!(
     /// A Class.
@@ -238,7 +244,7 @@ handle!(
      * test, so a debug build would recurse without end. */
     |v| of_type(v, ruby_value_type::RUBY_T_CLASS)
         // SAFETY: a C global Ruby sets once at boot, read under the GVL.
-        && class_inherits(v, unsafe { Value::from_raw(read::rb_eException(v.0.ruby())) })
+        && class_inherits(v, Value::from_sys(read::rb_eException(v.0.ruby())))
 );
 
 impl RString {
@@ -543,9 +549,8 @@ pub(crate) fn ary_entry(a: RArray, i: usize) -> Value {
     /* Converted, not cut: a `long` is 32 bits on Windows, where an index
      * past one would wrap to an element that is there. No Array has one. */
     let Ok(i) = i.try_into() else {
-        // SAFETY: `nil`, an immediate.
-        return unsafe { Value::from_raw(nupur_sys::Qnil as VALUE) };
+        return Value::from_sys(a.as_sys().ruby().qnil());
     };
     // SAFETY: `a` is a live Array; the read is bounds-checked by Ruby.
-    unsafe { Value::from_raw(read::rb_ary_entry(a.as_sys(), i)) }
+    Value::from_sys(unsafe { read::rb_ary_entry(a.as_sys(), i) })
 }

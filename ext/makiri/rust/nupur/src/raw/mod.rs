@@ -64,12 +64,16 @@ pub(crate) use protect::{
 /// a C function that answered with another kind is an error, not a value read
 /// as the wrong type.
 #[inline]
-fn typed<T>(v: VALUE, of: fn(Value) -> Option<T>, what: &'static str) -> Result<T, Error> {
+fn typed<T>(
+    v: nupur_sys::value::Value,
+    of: fn(Value) -> Option<T>,
+    what: &'static str,
+) -> Result<T, Error> {
     // SAFETY: `v` is what a Ruby C call just returned: a live value, on this
     // frame's stack until it is converted.
     /* `what` is the whole message, a literal: this runs on the path that
      * raises a caught panic, which must stay `fmt`-free (`rake no_unwind`). */
-    of(unsafe { Value::from_raw(v) }).ok_or_else(|| crate::rb::error::internal_error(what))
+    of(Value::from_sys(v)).ok_or_else(|| crate::rb::error::internal_error(what))
 }
 
 /// A length for the C API's `long` (whichever width the call's parameter

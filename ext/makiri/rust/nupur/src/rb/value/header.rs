@@ -73,6 +73,6 @@ impl RString {
         // SAFETY: as `flags`; `rb_cString` is a C global Ruby sets once at
         // boot.
         let string = nupur_sys::read::rb_cString(self.as_sys().ruby());
-        unsafe { (*(self.as_raw() as *const nupur_sys::RBasic)).klass == string }
+        unsafe { (*(self.as_raw() as *const nupur_sys::RBasic)).klass == string.as_raw() }
     }
 }

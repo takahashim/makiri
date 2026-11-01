@@ -66,7 +66,7 @@ impl Protected {
 pub enum Caught {
     /// A raise: the exception Ruby left in `$!`, taken (`$!` is clear again).
     /// A live value, which the caller keeps on its stack.
-    Exception(VALUE),
+    Exception(crate::value::Value),
     /// Any other non-local exit (a `break` or `throw` out of a block, a thread
     /// kill), by its `rb_protect` state - now pending ([`pending_exit`]).
     Jump(c_int),
@@ -308,12 +308,12 @@ pub unsafe fn forget_errinfo() {
 ///
 /// # Safety
 ///
-/// Under the GVL, with nothing owned on the frames it leaves; `exc` a live
+/// Under the GVL, with nothing owned on the frames it leaves; `exc` an
 /// exception object.
 #[inline]
-pub unsafe fn exc_raise(exc: VALUE) -> ! {
+pub unsafe fn exc_raise(exc: crate::value::Value) -> ! {
     // SAFETY: the contract.
-    unsafe { rb_sys::rb_exc_raise(exc) }
+    unsafe { rb_sys::rb_exc_raise(exc.as_raw()) }
 }
 
 /// `rb_exc_fatal`: raise `exc` as Ruby's `fatal`. Raises, by design.
@@ -322,9 +322,9 @@ pub unsafe fn exc_raise(exc: VALUE) -> ! {
 ///
 /// As [`exc_raise`].
 #[inline]
-pub unsafe fn exc_fatal(exc: VALUE) -> ! {
+pub unsafe fn exc_fatal(exc: crate::value::Value) -> ! {
     // SAFETY: the contract.
-    unsafe { rb_sys::rb_exc_fatal(exc) }
+    unsafe { rb_sys::rb_exc_fatal(exc.as_raw()) }
 }
 
 /// What a non-zero `rb_protect` state stands for: the exception Ruby left in
@@ -340,7 +340,9 @@ unsafe fn caught(state: c_int) -> Caught {
         // SAFETY: the contract.
         let exc = unsafe { take_errinfo() };
         if exc != rb_sys::Qnil as VALUE {
-            return Caught::Exception(exc);
+            // SAFETY: the exception Ruby just left in `$!`, taken, under
+            // the caller's GVL.
+            return Caught::Exception(unsafe { crate::value::Value::from_raw(exc) });
         }
     }
     PENDING_JUMP.set(state);

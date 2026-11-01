@@ -48,6 +48,18 @@ impl Value {
         self.0
     }
 
+    /// `Qundef`?
+    #[inline(always)]
+    pub fn is_undef(self) -> bool {
+        self.0 == rb_sys::Qundef as VALUE
+    }
+
+    /// `true`?
+    #[inline(always)]
+    pub fn is_true(self) -> bool {
+        self.0 == rb_sys::Qtrue as VALUE
+    }
+
     /// The GVL's token this value proves, for a read that takes no value
     /// (a C global's class, say), lent for the borrow of the value.
     #[inline(always)]
@@ -78,6 +90,51 @@ impl Ruby {
     #[inline(always)]
     pub unsafe fn get_unchecked() -> Ruby {
         Ruby(PhantomData)
+    }
+
+    /// `nil`.
+    #[inline(always)]
+    pub fn qnil(&self) -> Value {
+        // SAFETY: an immediate, and the token is the GVL.
+        unsafe { Value::from_raw(rb_sys::Qnil as VALUE) }
+    }
+
+    /// `true`.
+    #[inline(always)]
+    pub fn qtrue(&self) -> Value {
+        // SAFETY: as `qnil`.
+        unsafe { Value::from_raw(rb_sys::Qtrue as VALUE) }
+    }
+
+    /// `false`.
+    #[inline(always)]
+    pub fn qfalse(&self) -> Value {
+        // SAFETY: as `qnil`.
+        unsafe { Value::from_raw(rb_sys::Qfalse as VALUE) }
+    }
+
+    /// `Qundef`, the C API's "no value" - never a Ruby object, and never
+    /// handed to Ruby code; a lookup's default, compared with
+    /// [`Value::is_undef`].
+    #[inline(always)]
+    pub fn qundef(&self) -> Value {
+        // SAFETY: as `qnil`.
+        unsafe { Value::from_raw(rb_sys::Qundef as VALUE) }
+    }
+
+    /// The Fixnum `n` is (`LONG2FIX`), or `None` past a Fixnum's range
+    /// ([`crate::int::fixnum`]).
+    #[inline(always)]
+    pub fn fixnum(&self, n: i64) -> Option<Value> {
+        // SAFETY: an immediate, built from its bits.
+        crate::int::fixnum(n).map(|v| unsafe { Value::from_raw(v) })
+    }
+
+    /// [`Ruby::fixnum`] for an unsigned value.
+    #[inline(always)]
+    pub fn posfixnum(&self, n: u64) -> Option<Value> {
+        // SAFETY: as `fixnum`.
+        crate::int::posfixnum(n).map(|v| unsafe { Value::from_raw(v) })
     }
 
     /// The token, lent for the protection's borrow (`Protected::ruby`).

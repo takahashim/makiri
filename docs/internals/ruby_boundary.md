@@ -290,7 +290,8 @@ comes back as `Err`. A caller may then own copies, hold document guards and
 build Ruby objects in any order.
 
 The C call itself is a function of `nupur_sys::raising`, one per raising C
-function, with the C signature and a `&Protected` first. Only the thunk
+function, with the C signature (a `Value` where C has a Ruby value) and a
+`&Protected` first. Only the thunk
 lends a `&Protected`, to the closure `raw::call` runs, so these functions
 cannot be called outside the protection: the type keeps the rule that
 `raising_call_outside_protect` checks. `nupur_sys` re-exports rb-sys's
@@ -434,9 +435,11 @@ which only a trampoline's raise may call. A String made in place is
 ### Where a raw `VALUE` may appear
 
 A raw `VALUE` is an integer to Rust, which no lint can tell from a `u64` in
-a `Vec`. It is spelled, or read from a C global of Ruby's
-(`nupur_sys::read::rb_cObject`), only in `nupur_sys` and in Nupur's
-`raw/`, `typed/` and the `bridge::rb` files that are the typed values.
+a `Vec`. It is spelled only in `nupur_sys` and in Nupur's `raw/`, `typed/`
+and the `bridge::rb` files that are the typed values. `nupur_sys`'s
+wrappers take and return `nupur_sys::value::Value`, not a raw `VALUE`: a C
+call's answer, a C global's class and a constant (`Ruby::qnil`,
+`Ruby::fixnum`) are each a value from the start.
 `rake dylint`'s `raw_ruby_outside_bridge` enforces this, and also fails on
 any `rb_sys::` outside the layer, which it counts as part of the bridge. The extension has no rb-sys dependency, so its `bridge/` names
 none.

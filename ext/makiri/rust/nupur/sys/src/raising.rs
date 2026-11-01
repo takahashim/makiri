@@ -33,7 +33,68 @@
 use core::ffi::c_void;
 
 use crate::protect::Protected;
+use crate::value::Value;
 use crate::{rb_data_type_t, rb_encoding, rb_enumerator_size_func, size_t, ID, VALUE};
+
+/// What a wrapper's argument is to C: a [`Value`] its `VALUE`, a pointer to
+/// values a pointer to `VALUE`s (`Value` is `repr(transparent)`), and
+/// anything else itself.
+trait IntoC<C> {
+    fn into_c(self) -> C;
+}
+
+impl<T> IntoC<T> for T {
+    #[inline(always)]
+    fn into_c(self) -> T {
+        self
+    }
+}
+
+impl IntoC<VALUE> for Value {
+    #[inline(always)]
+    fn into_c(self) -> VALUE {
+        self.as_raw()
+    }
+}
+
+impl IntoC<*const VALUE> for *const Value {
+    #[inline(always)]
+    fn into_c(self) -> *const VALUE {
+        self.cast()
+    }
+}
+
+impl IntoC<*mut VALUE> for *mut Value {
+    #[inline(always)]
+    fn into_c(self) -> *mut VALUE {
+        self.cast()
+    }
+}
+
+/// What C's answer is to a wrapper's caller: a `VALUE` a [`Value`], anything
+/// else itself.
+trait FromC<C> {
+    /// # Safety
+    ///
+    /// `c` is what a C call of Ruby's just returned, on its thread.
+    unsafe fn from_c(c: C) -> Self;
+}
+
+impl<T> FromC<T> for T {
+    #[inline(always)]
+    unsafe fn from_c(c: T) -> T {
+        c
+    }
+}
+
+impl FromC<VALUE> for Value {
+    #[inline(always)]
+    unsafe fn from_c(c: VALUE) -> Value {
+        // SAFETY: what a C call of Ruby's returned, under the protection: a
+        // live value on this frame, or a special constant (`Qundef`).
+        unsafe { Value::from_raw(c) }
+    }
+}
 
 macro_rules! raising {
     ($(fn $name:ident($($arg:ident: $ty:ty),*) $(-> $ret:ty)?;)*) => {$(
@@ -42,61 +103,71 @@ macro_rules! raising {
         pub unsafe fn $name(_: &Protected, $($arg: $ty),*) $(-> $ret)? {
             // SAFETY: the caller's (the module's contract); the token is the
             // protection and the GVL.
-            unsafe { rb_sys::$name($($arg),*) }
+            unsafe { FromC::from_c(rb_sys::$name($(IntoC::into_c($arg)),*)) }
         }
     )*};
 }
 
 raising! {
-    fn rb_ary_new_capa(capa: core::ffi::c_long) -> VALUE;
-    fn rb_ary_push(ary: VALUE, elem: VALUE) -> VALUE;
-    fn rb_big2ll(arg1: VALUE) -> core::ffi::c_longlong;
-    fn rb_big2ull(arg1: VALUE) -> core::ffi::c_ulonglong;
-    fn rb_check_frozen(obj: VALUE);
-    fn rb_check_typeddata(obj: VALUE, data_type: *const rb_data_type_t) -> *mut c_void;
-    fn rb_const_get(space: VALUE, name: ID) -> VALUE;
-    fn rb_const_set(space: VALUE, name: ID, val: VALUE);
-    fn rb_data_typed_object_zalloc(klass: VALUE, size: size_t, type_: *const rb_data_type_t) -> VALUE;
-    fn rb_define_class_under(outer: VALUE, name: *const core::ffi::c_char, super_: VALUE) -> VALUE;
-    fn rb_define_method(klass: VALUE, mid: *const core::ffi::c_char, func: Option<unsafe extern "C" fn() -> VALUE>, arity: core::ffi::c_int);
-    fn rb_define_module(name: *const core::ffi::c_char) -> VALUE;
-    fn rb_define_module_function(klass: VALUE, mid: *const core::ffi::c_char, func: Option<unsafe extern "C" fn() -> VALUE>, arity: core::ffi::c_int);
-    fn rb_define_module_under(outer: VALUE, name: *const core::ffi::c_char) -> VALUE;
-    fn rb_define_private_method(klass: VALUE, mid: *const core::ffi::c_char, func: Option<unsafe extern "C" fn() -> VALUE>, arity: core::ffi::c_int);
-    fn rb_define_singleton_method(obj: VALUE, mid: *const core::ffi::c_char, func: Option<unsafe extern "C" fn() -> VALUE>, arity: core::ffi::c_int);
-    fn rb_enc_associate(obj: VALUE, enc: *const rb_encoding) -> VALUE;
+    fn rb_ary_new_capa(capa: core::ffi::c_long) -> Value;
+    fn rb_ary_push(ary: Value, elem: Value) -> Value;
+    fn rb_big2ll(arg1: Value) -> core::ffi::c_longlong;
+    fn rb_big2ull(arg1: Value) -> core::ffi::c_ulonglong;
+    fn rb_check_frozen(obj: Value);
+    fn rb_check_typeddata(obj: Value, data_type: *const rb_data_type_t) -> *mut c_void;
+    fn rb_const_get(space: Value, name: ID) -> Value;
+    fn rb_const_set(space: Value, name: ID, val: Value);
+    fn rb_data_typed_object_zalloc(klass: Value, size: size_t, type_: *const rb_data_type_t) -> Value;
+    fn rb_define_class_under(outer: Value, name: *const core::ffi::c_char, super_: Value) -> Value;
+    fn rb_define_method(klass: Value, mid: *const core::ffi::c_char, func: Option<unsafe extern "C" fn() -> VALUE>, arity: core::ffi::c_int);
+    fn rb_define_module(name: *const core::ffi::c_char) -> Value;
+    fn rb_define_module_function(klass: Value, mid: *const core::ffi::c_char, func: Option<unsafe extern "C" fn() -> VALUE>, arity: core::ffi::c_int);
+    fn rb_define_module_under(outer: Value, name: *const core::ffi::c_char) -> Value;
+    fn rb_define_private_method(klass: Value, mid: *const core::ffi::c_char, func: Option<unsafe extern "C" fn() -> VALUE>, arity: core::ffi::c_int);
+    fn rb_define_singleton_method(obj: Value, mid: *const core::ffi::c_char, func: Option<unsafe extern "C" fn() -> VALUE>, arity: core::ffi::c_int);
+    fn rb_enc_associate(obj: Value, enc: *const rb_encoding) -> Value;
     fn rb_enc_find_index(name: *const core::ffi::c_char) -> core::ffi::c_int;
-    fn rb_enc_from_encoding(enc: *const rb_encoding) -> VALUE;
-    fn rb_enc_interned_str(ptr: *const core::ffi::c_char, len: core::ffi::c_long, enc: *const rb_encoding) -> VALUE;
-    fn rb_enumeratorize_with_size(recv: VALUE, meth: VALUE, argc: core::ffi::c_int, argv: *const VALUE, func: rb_enumerator_size_func) -> VALUE;
-    fn rb_exc_new_str(etype: VALUE, str_: VALUE) -> VALUE;
-    fn rb_exc_raise(exc: VALUE) -> !;
-    fn rb_float_new(d: f64) -> VALUE;
-    fn rb_funcallv(recv: VALUE, mid: ID, argc: core::ffi::c_int, argv: *const VALUE) -> VALUE;
-    fn rb_gc_register_mark_object(object: VALUE);
-    fn rb_hash_aset(hash: VALUE, key: VALUE, val: VALUE) -> VALUE;
-    fn rb_hash_foreach(hash: VALUE, func: Option<unsafe extern "C" fn(key: VALUE, val: VALUE, arg: VALUE) -> core::ffi::c_int>, arg: VALUE);
-    fn rb_hash_lookup2(hash: VALUE, key: VALUE, def: VALUE) -> VALUE;
-    fn rb_hash_new() -> VALUE;
-    fn rb_id2sym(id: ID) -> VALUE;
-    fn rb_include_module(klass: VALUE, module: VALUE);
+    fn rb_enc_from_encoding(enc: *const rb_encoding) -> Value;
+    fn rb_enc_interned_str(ptr: *const core::ffi::c_char, len: core::ffi::c_long, enc: *const rb_encoding) -> Value;
+    fn rb_enumeratorize_with_size(recv: Value, meth: Value, argc: core::ffi::c_int, argv: *const Value, func: rb_enumerator_size_func) -> Value;
+    fn rb_exc_new_str(etype: Value, str_: Value) -> Value;
+    fn rb_float_new(d: f64) -> Value;
+    fn rb_funcallv(recv: Value, mid: ID, argc: core::ffi::c_int, argv: *const Value) -> Value;
+    fn rb_gc_register_mark_object(object: Value);
+    fn rb_hash_aset(hash: Value, key: Value, val: Value) -> Value;
+    fn rb_hash_foreach(hash: Value, func: Option<unsafe extern "C" fn(key: VALUE, val: VALUE, arg: VALUE) -> core::ffi::c_int>, arg: VALUE);
+    fn rb_hash_lookup2(hash: Value, key: Value, def: Value) -> Value;
+    fn rb_hash_new() -> Value;
+    fn rb_id2sym(id: ID) -> Value;
+    fn rb_include_module(klass: Value, module: Value);
     fn rb_intern(name: *const core::ffi::c_char) -> ID;
     fn rb_intern3(name: *const core::ffi::c_char, len: core::ffi::c_long, enc: *const rb_encoding) -> ID;
-    fn rb_ivar_set(obj: VALUE, name: ID, val: VALUE) -> VALUE;
-    fn rb_ll2inum(num: core::ffi::c_longlong) -> VALUE;
-    fn rb_module_new() -> VALUE;
-    fn rb_obj_classname(obj: VALUE) -> *const core::ffi::c_char;
-    fn rb_obj_freeze(obj: VALUE) -> VALUE;
-    fn rb_obj_reveal(obj: VALUE, klass: VALUE) -> VALUE;
-    fn rb_range_beg_len(range: VALUE, begp: *mut core::ffi::c_long, lenp: *mut core::ffi::c_long, len: core::ffi::c_long, err: core::ffi::c_int) -> VALUE;
-    fn rb_range_values(range: VALUE, begp: *mut VALUE, endp: *mut VALUE, exclp: *mut core::ffi::c_int) -> core::ffi::c_int;
-    fn rb_str_dup(str_: VALUE) -> VALUE;
-    fn rb_str_encode(str_: VALUE, to: VALUE, ecflags: core::ffi::c_int, ecopts: VALUE) -> VALUE;
-    fn rb_sym2str(symbol: VALUE) -> VALUE;
+    fn rb_ivar_set(obj: Value, name: ID, val: Value) -> Value;
+    fn rb_ll2inum(num: core::ffi::c_longlong) -> Value;
+    fn rb_module_new() -> Value;
+    fn rb_obj_classname(obj: Value) -> *const core::ffi::c_char;
+    fn rb_obj_freeze(obj: Value) -> Value;
+    fn rb_obj_reveal(obj: Value, klass: Value) -> Value;
+    fn rb_range_beg_len(range: Value, begp: *mut core::ffi::c_long, lenp: *mut core::ffi::c_long, len: core::ffi::c_long, err: core::ffi::c_int) -> Value;
+    fn rb_range_values(range: Value, begp: *mut Value, endp: *mut Value, exclp: *mut core::ffi::c_int) -> core::ffi::c_int;
+    fn rb_str_dup(str_: Value) -> Value;
+    fn rb_str_encode(str_: Value, to: Value, ecflags: core::ffi::c_int, ecopts: Value) -> Value;
+    fn rb_sym2str(symbol: Value) -> Value;
     fn rb_thread_check_ints();
-    fn rb_to_encoding(obj: VALUE) -> *mut rb_encoding;
-    fn rb_ull2inum(num: core::ffi::c_ulonglong) -> VALUE;
-    fn rb_undef_alloc_func(klass: VALUE);
-    fn rb_utf8_str_new(ptr: *const core::ffi::c_char, len: core::ffi::c_long) -> VALUE;
-    fn rb_yield(val: VALUE) -> VALUE;
+    fn rb_to_encoding(obj: Value) -> *mut rb_encoding;
+    fn rb_ull2inum(num: core::ffi::c_ulonglong) -> Value;
+    fn rb_undef_alloc_func(klass: Value);
+    fn rb_utf8_str_new(ptr: *const core::ffi::c_char, len: core::ffi::c_long) -> Value;
+    fn rb_yield(val: Value) -> Value;
+}
+
+/// `rb_exc_raise`, inside the protection: raise `exc`. Raises, by design.
+///
+/// # Safety
+///
+/// `exc` is an exception object.
+#[inline(always)]
+pub unsafe fn rb_exc_raise(_: &Protected, exc: Value) -> ! {
+    // SAFETY: the contract; the token is the protection.
+    unsafe { rb_sys::rb_exc_raise(exc.as_raw()) }
 }

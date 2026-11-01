@@ -101,22 +101,6 @@ pub fn check_path(cx: &LateContext<'_>, path: &Path<'_>, hir_id: HirId) {
 
 fn report_raw_ruby(cx: &LateContext<'_>, kind: DefKind, did: DefId, span: Span, hir_id: HirId) {
     let target = path_of(cx, did);
-    if is_class_global_read(&target) {
-        let module = module_of(cx, hir_id);
-        if in_layer(&module) && !VALUE_HOMES.iter().any(|m| within(&module, m)) {
-            span_lint_and_help(
-                cx,
-                RAW_RUBY_OUTSIDE_BRIDGE,
-                span,
-                "a raw `VALUE` (a C global's class) outside the files that are the typed values",
-                None,
-                "a VALUE is an integer to Rust, which no lint can follow into a Vec or a \
-                 field; read the class where the typed values are (`Ruby`'s globals, \
-                 `rb::value`) and hold an `RClass`",
-            );
-        }
-        return;
-    }
     if !target.starts_with("rb_sys::") {
         return;
     }
@@ -148,20 +132,6 @@ fn report_raw_ruby(cx: &LateContext<'_>, kind: DefKind, did: DefId, span: Span, 
              field; hold a bridge::rb value (Value, RString, ...) instead",
         );
     }
-}
-
-/// `nupur_sys::read`'s read of a C global that holds a class
-/// (`rb_cObject(gvl)`, `rb_eArgError(gvl)`): the global itself is out of
-/// Nupur's reach, so this is the raw `VALUE` it reads.
-fn is_class_global_read(path: &str) -> bool {
-    path.strip_prefix("nupur_sys::read::").is_some_and(|name| {
-        let mut b = name.bytes();
-        b.next() == Some(b'r')
-            && b.next() == Some(b'b')
-            && b.next() == Some(b'_')
-            && matches!(b.next(), Some(b'c' | b'e'))
-            && b.next().is_some_and(|c| c.is_ascii_uppercase())
-    })
 }
 
 /// A C global of Ruby's that holds a value (`rb_cObject`, `rb_eArgError`):

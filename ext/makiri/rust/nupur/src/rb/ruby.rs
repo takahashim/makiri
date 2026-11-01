@@ -26,7 +26,7 @@ macro_rules! globals {
             #[inline]
             pub fn $method(&self) -> $kind {
                 // SAFETY: a C global Ruby sets once at boot: a live value.
-                let v = unsafe { Value::from_raw(nupur_sys::read::$global(self.sys())) };
+                let v = Value::from_sys(nupur_sys::read::$global(self.sys()));
                 $kind::from_known(v)
             }
         )*
@@ -55,22 +55,19 @@ impl Ruby {
     /// `nil`.
     #[inline]
     pub fn qnil(&self) -> Value {
-        // SAFETY: an immediate.
-        unsafe { Value::from_raw(nupur_sys::Qnil as nupur_sys::VALUE) }
+        Value::from_sys(self.0.qnil())
     }
 
     /// `true`.
     #[inline]
     pub fn qtrue(&self) -> Value {
-        // SAFETY: an immediate.
-        unsafe { Value::from_raw(nupur_sys::Qtrue as nupur_sys::VALUE) }
+        Value::from_sys(self.0.qtrue())
     }
 
     /// `false`.
     #[inline]
     pub fn qfalse(&self) -> Value {
-        // SAFETY: an immediate.
-        unsafe { Value::from_raw(nupur_sys::Qfalse as nupur_sys::VALUE) }
+        Value::from_sys(self.0.qfalse())
     }
 
     globals! { ExceptionClass:

@@ -14,7 +14,7 @@ use super::value::{AsRawValue, HiddenId, RClass, RModule, ReprValue, Value};
 #[inline]
 pub fn ivar_get(obj: Value, id: HiddenId) -> Value {
     // SAFETY: a live object, and a `HiddenId` is never an `@` name.
-    unsafe { Value::from_raw(nupur_sys::read::attr_get_hidden(obj.as_sys(), id.as_raw())) }
+    Value::from_sys(unsafe { nupur_sys::read::attr_get_hidden(obj.as_sys(), id.as_raw()) })
 }
 
 /// Set the hidden ivar `id` (a name without `@`, so Ruby code cannot see it)

@@ -105,9 +105,10 @@ pub fn ruby_stack_low() -> bool {
 ///
 /// `ary` is an Array.
 #[inline(always)]
-pub unsafe fn rb_ary_entry(ary: Value, off: core::ffi::c_long) -> VALUE {
-    // SAFETY: the contract; the read is bounds-checked by Ruby.
-    unsafe { rb_sys::rb_ary_entry(ary.as_raw(), off) }
+pub unsafe fn rb_ary_entry(ary: Value, off: core::ffi::c_long) -> Value {
+    // SAFETY: the contract; the read is bounds-checked by Ruby, and answers
+    // an element (live while the Array is) or `nil`.
+    unsafe { Value::from_raw(rb_sys::rb_ary_entry(ary.as_raw(), off)) }
 }
 
 /// `rb_obj_hide`: take `obj`'s class away.
@@ -117,9 +118,9 @@ pub unsafe fn rb_ary_entry(ary: Value, off: core::ffi::c_long) -> VALUE {
 /// `obj` is a heap object no Ruby code holds, and none will be handed while
 /// it is hidden.
 #[inline(always)]
-pub unsafe fn rb_obj_hide(obj: Value) -> VALUE {
+pub unsafe fn rb_obj_hide(obj: Value) {
     // SAFETY: the contract.
-    unsafe { rb_sys::rb_obj_hide(obj.as_raw()) }
+    unsafe { rb_sys::rb_obj_hide(obj.as_raw()) };
 }
 
 /// `rb_typeddata_is_kind_of`: is `obj` a TypedData object of `data_type`?
@@ -256,10 +257,10 @@ macro_rules! globals {
         #[doc = concat!("`", stringify!($name), "`, a C global Ruby sets once at boot.")]
         #[inline(always)]
         #[allow(non_snake_case)]
-        pub fn $name(_: &Ruby) -> VALUE {
-            // SAFETY: set at boot and never again; a Ruby thread (the token)
-            // runs after boot.
-            unsafe { rb_sys::$name }
+        pub fn $name(_: &Ruby) -> Value {
+            // SAFETY: set at boot and never again, to a class that lives as
+            // long as the process; a Ruby thread (the token) runs after boot.
+            unsafe { Value::from_raw(rb_sys::$name) }
         }
     )*};
 }
@@ -341,9 +342,9 @@ pub unsafe fn enc_get_index_of_string(str: Value) -> c_int {
         reason = "rb_attr_get raises only RactorIsolationError, and only for an @ name (rb_is_instance_id) of a class, a module or a shareable object read from another Ractor; the contract is a name without @"
     )
 )]
-pub unsafe fn attr_get_hidden(obj: Value, id: ID) -> VALUE {
-    // SAFETY: the contract.
-    unsafe { rb_sys::rb_attr_get(obj.as_raw(), id) }
+pub unsafe fn attr_get_hidden(obj: Value, id: ID) -> Value {
+    // SAFETY: the contract; the ivar's value, live while `obj` is, or `nil`.
+    unsafe { Value::from_raw(rb_sys::rb_attr_get(obj.as_raw(), id)) }
 }
 
 /// `rb_obj_is_kind_of` of a class or module: an instance of `module` or of

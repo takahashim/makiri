@@ -51,7 +51,7 @@ pub fn enc_interned_str(bytes: &[u8], enc: Encoding) -> Result<RString, Error> {
 /// `rb_str_dup`: raises `NoMemoryError`.
 #[inline]
 pub fn str_dup(s: RString) -> Result<RString, Error> {
-    let v = s.as_raw();
+    let v = s.as_sys();
     let d = call(|inside| unsafe {
         injected_raise(inside);
         nupur_sys::raising::rb_str_dup(inside, v)
@@ -63,7 +63,7 @@ pub fn str_dup(s: RString) -> Result<RString, Error> {
 /// frozen String, and `ArgumentError` for an encoding its bytes cannot carry.
 #[inline]
 pub fn enc_associate(s: RString, enc: Encoding) -> Result<RString, Error> {
-    let (v, e) = (s.as_raw(), enc.as_raw());
+    let (v, e) = (s.as_sys(), enc.as_raw());
     let r = call(|inside| unsafe { nupur_sys::raising::rb_enc_associate(inside, v, e) })?;
     typed(r, RString::from_value, "a C call made no String")
 }
@@ -74,7 +74,7 @@ pub fn enc_associate(s: RString, enc: Encoding) -> Result<RString, Error> {
 /// String's allocation raises `NoMemoryError`.
 #[inline]
 pub fn str_encode(s: RString, enc: Encoding, flags: c_int) -> Result<RString, Error> {
-    let (v, e) = (s.as_raw(), enc.as_raw());
+    let (v, e) = (s.as_sys(), enc.as_raw());
     let r = call(|inside| unsafe {
         injected_raise(inside);
         nupur_sys::raising::rb_str_encode(
@@ -82,7 +82,7 @@ pub fn str_encode(s: RString, enc: Encoding, flags: c_int) -> Result<RString, Er
             v,
             nupur_sys::raising::rb_enc_from_encoding(inside, e),
             flags,
-            nupur_sys::Qnil as VALUE,
+            inside.ruby().qnil(),
         )
     })?;
     typed(r, RString::from_value, "a C call made no String")
@@ -99,7 +99,7 @@ pub fn to_encoding(ruby: &Ruby, v: Value) -> Result<Encoding, Error> {
             "an Encoding or a String was expected",
         ));
     }
-    let r = v.as_raw();
+    let r = v.as_sys();
     let e = call(|inside| unsafe { nupur_sys::raising::rb_to_encoding(inside, r) })?;
     // SAFETY: Ruby's encodings live for the process.
     Ok(unsafe { Encoding::from_raw(e) })

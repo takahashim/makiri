@@ -81,12 +81,6 @@ mod c_integer {
     }
 }
 
-/// A C global's class, a raw `VALUE`, read outside the files that are the
-/// typed values (`raw_ruby_outside_bridge`).
-fn raw_global(ruby: &crate::rb::Ruby) -> bool {
-    nupur_sys::read::rb_cObject(ruby.sys()) != 0 //~ raw_ruby_outside_bridge
-}
-
 /// What `raw` holds (`unraising_call_in_raw`), in a stand-in for it: a read
 /// that raises nothing, outside `call` or as all a `call` protects, is
 /// reported.

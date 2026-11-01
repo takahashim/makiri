@@ -74,9 +74,7 @@ pub(super) fn call<T: Copy, F: FnOnce(&Protected) -> T + Copy>(f: F) -> Result<T
 #[inline]
 fn error_of(caught: Caught) -> Error {
     match caught {
-        // SAFETY: the exception Ruby just left in `$!`, taken, on this
-        // frame's stack until it is wrapped.
-        Caught::Exception(exc) => Error::exception(unsafe { Value::from_raw(exc) }),
+        Caught::Exception(exc) => Error::exception(Value::from_sys(exc)),
         Caught::Jump(state) => Error::jump(state),
         Caught::NotRun => crate::rb::error::internal_error("a protected call did not run"),
     }
@@ -112,7 +110,7 @@ pub(crate) fn forget_errinfo(_: &Ruby) {
 pub(crate) fn exc_raise(exc: Value) -> ! {
     // SAFETY: `exc` is a live exception object, a Ruby value and so the
     // proof of the GVL; the one caller owns nothing.
-    unsafe { nupur_sys::protect::exc_raise(exc.as_raw()) }
+    unsafe { nupur_sys::protect::exc_raise(exc.as_sys()) }
 }
 
 /// `rb_exc_fatal`: raise `exc` as Ruby's `fatal` - for a panic in
@@ -121,5 +119,5 @@ pub(crate) fn exc_raise(exc: Value) -> ! {
 #[inline]
 pub(crate) fn exc_fatal(exc: Value) -> ! {
     // SAFETY: as `exc_raise`.
-    unsafe { nupur_sys::protect::exc_fatal(exc.as_raw()) }
+    unsafe { nupur_sys::protect::exc_fatal(exc.as_sys()) }
 }
