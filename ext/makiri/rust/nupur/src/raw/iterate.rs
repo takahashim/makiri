@@ -7,7 +7,7 @@ use super::*;
 /// non-exception exits as the jump `rb_protect` caught), and is raised again
 /// at the method's return, so it reaches the block's caller as it left.
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         runs_callers_ruby,
         reason = "rb_yield: the wrapper `rb::method::yield_value` is, and its callers allow it"
@@ -23,14 +23,14 @@ pub fn yield_value(_: &Ruby, v: Value) -> Result<Value, Error> {
 /// DROPPED (`rb::method::yield_dropping_error_for_test`).
 #[doc(hidden)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         runs_callers_ruby,
         reason = "the test hook's block, which is the point of it"
     )
 )]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         discarded_ruby_error,
         reason = "dropping the block's exit is what the test hook is for"

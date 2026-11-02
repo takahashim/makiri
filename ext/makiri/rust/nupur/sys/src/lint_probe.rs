@@ -1,4 +1,4 @@
-//! What the extension's lints (`lints/makiri_lints`) must report in
+//! What the extension's lints (`lints/nupur_lints`) must report in
 //! `nupur_sys`, the crate under the binding layer that alone depends on
 //! rb-sys: that the layer's rules reach it too. Compiled only under
 //! `--cfg nupur_sys_lint_probe`, by `rake dylint`, which fails unless the

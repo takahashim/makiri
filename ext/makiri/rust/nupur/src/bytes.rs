@@ -49,7 +49,7 @@ impl ByteSet {
             /* `b` < 256, so the byte is exact; a `const fn` has no `TryFrom`. */
             #[allow(clippy::cast_possible_truncation, reason = "b < 256, the loop's bound")]
             #[cfg_attr(
-                dylint_lib = "makiri_lints",
+                dylint_lib = "nupur_lints",
                 allow(
                     c_integer_outside_int,
                     reason = "a byte index below 256, in a const fn, which has no TryFrom"
@@ -149,7 +149,7 @@ fn vector_skip(s: &[u8], mut i: usize, set: &ByteSet) -> usize {
     reason = "SSE2 takes bytes as i8: the bits are the byte's, reinterpreted"
 )]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         c_integer_outside_int,
         reason = "a byte reinterpreted as SSE2's i8 lane, bit for bit"

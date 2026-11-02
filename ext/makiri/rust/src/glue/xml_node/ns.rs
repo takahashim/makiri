@@ -26,7 +26,7 @@ fn ns_class(ruby: &Ruby) -> Result<RClass, Error> {
 /// Ruby code all the same, so no borrow of the arena is held across the call.
 /// One of the two calls `runs_callers_ruby` (`rake dylint`) allows.
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         runs_callers_ruby,
         reason = "Makiri's own Data class, called with no borrow of the arena held"

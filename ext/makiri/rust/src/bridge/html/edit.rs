@@ -44,7 +44,7 @@ pub fn edit<'a>(ruby: &Ruby, this: &'a mut HtmlSelf) -> Result<HtmlEdit<'a>, Err
 /// owner refuses it as it refuses `delete` - checked with the receiver's own
 /// frozen flag, before and after the arguments are converted.
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         raw_node_crossing,
         reason = "an Attr's owner, as the wrapper cache's identity key; it does not escape"

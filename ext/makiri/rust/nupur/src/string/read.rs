@@ -162,7 +162,7 @@ struct Unlock(RString);
 
 impl Drop for Unlock {
     #[cfg_attr(
-        dylint_lib = "makiri_lints",
+        dylint_lib = "nupur_lints",
         allow(
             ffi_without_gvl_proof,
             reason = "it guards the String `with_locked_bytes` locked, with the String as its proof, and lives only in that frame"

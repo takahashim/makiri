@@ -45,7 +45,7 @@ pub(crate) fn pending_exit() -> Option<Error> {
 /// calls it, as a trampoline's last act, with nothing owned.
 #[inline]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         ffi_without_gvl_proof,
         reason = "crate-private: only a trampoline's raise resumes an exit, with the GVL"
@@ -64,7 +64,7 @@ pub(crate) fn resume(state: c_int) -> ! {
 /// the `&Protected` that `nupur_sys::raising`'s wrappers take.
 #[inline]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         ffi_without_gvl_proof,
         reason = "the raw module's alone: every wrapper that hands it its C call holds the proof"
@@ -94,7 +94,7 @@ fn error_of(caught: Caught) -> Error {
 /// (`nupur_sys::protect::keeping_errinfo`).
 #[inline]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         ffi_without_gvl_proof,
         reason = "crate-private: called only from functions holding a proof, around their protected calls"

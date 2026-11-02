@@ -32,7 +32,7 @@ Nupurのルールの大部分は、その型とクレートの依存関係であ
 
 ### 型で保持できないこと
 
-一部のルールは型として表現できません。Makiri ではこれらをコードのチェック（`lints/makiri_lints` にある `rake dylint` の lint、`rake no_unwind`、`rake unsafe:boundaries`）によって保持しているため、他で Nupur のコピーを使用する場合は独自チェックが必要です。
+一部のルールは型として表現できません。Makiri ではこれらをコードのチェック（`lints/nupur_lints` にある `rake dylint` の lint、`rake no_unwind`、`rake unsafe:boundaries`）によって保持しているため、他で Nupur のコピーを使用する場合は独自チェックが必要です。
 
 - **トークンは Ruby から呼び出される場所でのみ作成されること**：Ruby が GVL を保持した状態でコードを呼び出したという事実は呼び出し元の状態であり、型で表現することはできません。`gvl_token_outside_entry` は トランポリン や `run_init` を Ruby が呼び出す場所に限定し、`nupur_sys` のトークン作成処理（`Ruby::assume_gvl`）を `entry_token` に制限します。
 - **Ruby の値は GC のスタックスキャンに見える場所に留まること**：値は `Copy` であり、スキャンから内容が見えない `Vec` や `Box` への格納を型の仕組みだけで防ぐことはできません。`ruby_value_on_heap` がバインディング、フィールド、static、式の型を読み取って検出します。
@@ -82,7 +82,7 @@ pub extern "C" fn Init_nupur_test() {
 
 - `rb::Error` はメッセージをインラインで持つ（256 バイト）ので、生成時にメモリ割り当てが起きません。その代わり `Result<_, Error>` はどれも clippy の `result_large_err` の既定値を超えます。Makiri と同じく、拡張ライブラリの `clippy.toml` に `large-error-threshold = 288` を書いてください。
 - プロファイルは Nupur のテスト用拡張ライブラリと同じく `panic = "unwind"` にします。`abort` だと、メソッド内の panic が内部エラーとして Ruby に届く前にホストプロセスを殺してしまいます。
-- Nupur の lint を `allow` するときは `cfg_attr(dylint_lib = "makiri_lints", ...)` の下に書くので、拡張ライブラリの `Cargo.toml` に cfg を登録してください。登録しないと、その `allow` のたびに警告が出ます。書き方は `[lints.rust] unexpected_cfgs = { level = "warn", check-cfg = ['cfg(dylint_lib, values(any()))'] }` です。lint は `MAKIRI_LINTS_EXTENSION=<crate 名> cargo dylint --path <makiri>/ext/makiri/rust/lints/makiri_lints --no-deps` で拡張ライブラリに掛かります。
+- Nupur の lint を `allow` するときは `cfg_attr(dylint_lib = "nupur_lints", ...)` の下に書くので、拡張ライブラリの `Cargo.toml` に cfg を登録してください。登録しないと、その `allow` のたびに警告が出ます。書き方は `[lints.rust] unexpected_cfgs = { level = "warn", check-cfg = ['cfg(dylint_lib, values(any()))'] }` です。lint は `NUPUR_LINTS_EXTENSION=<crate 名> cargo dylint --path <makiri>/ext/makiri/rust/lints/nupur_lints --no-deps` で拡張ライブラリに掛かります。
 
 渡されたオブジェクトのメソッドを呼ぶ拡張ライブラリ（`to_json` を呼ぶ JSON の生成器など）は、`rb::call` を通して呼びます。安全に呼ぶための規則はそのモジュールの文書にあり、要点は一つです。呼び出された側が無効にしうるものを、呼び出しをまたいで持たないことです。
 

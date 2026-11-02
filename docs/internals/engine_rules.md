@@ -79,7 +79,7 @@ read without a call (`bridge::ruby::Describe` / `AsText` / `ExceptionText`,
 `format!` / `to_owned` / `to_string` / `vec!` / `from_utf8_lossy` /
 `into_owned` / `CString::new`, by the path each resolves to. `lexbor/`, which
 that build leaves out, is reference code and outside the rule. A site that
-must is `#[cfg_attr(dylint_lib = "makiri_lints", allow(infallible_allocation))]`
+must is `#[cfg_attr(dylint_lib = "nupur_lints", allow(infallible_allocation))]`
 with its reason; there is one, the `__panic(1)` hook.
 
 ## A node's `source` offset

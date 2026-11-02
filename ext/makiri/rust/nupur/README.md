@@ -79,7 +79,7 @@ that breaks one does not compile. `src/lib.rs` states each in full.
 ### What the types do not hold
 
 Some rules cannot be types. Makiri holds these with checks of the code
-(`rake dylint`'s lints in `lints/makiri_lints`, `rake no_unwind`,
+(`rake dylint`'s lints in `lints/nupur_lints`, `rake no_unwind`,
 `rake unsafe:boundaries`), so a copy of Nupur used elsewhere needs checks of
 its own:
 
@@ -157,11 +157,11 @@ Three things an extension's own build needs to know:
   does; with `abort`, a panic in a method would kill the host instead of
   reaching Ruby as the internal error.
 - An `allow` of one of Nupur's lints sits under
-  `cfg_attr(dylint_lib = "makiri_lints", ...)`, so register the cfg in the
+  `cfg_attr(dylint_lib = "nupur_lints", ...)`, so register the cfg in the
   extension's `Cargo.toml`, or every such allow warns:
   `[lints.rust] unexpected_cfgs = { level = "warn", check-cfg = ['cfg(dylint_lib, values(any()))'] }`.
   The lints run over the extension with
-  `MAKIRI_LINTS_EXTENSION=<its crate> cargo dylint --path <makiri>/ext/makiri/rust/lints/makiri_lints --no-deps`.
+  `NUPUR_LINTS_EXTENSION=<its crate> cargo dylint --path <makiri>/ext/makiri/rust/lints/nupur_lints --no-deps`.
 
 An extension that calls a method of an object it was handed (a JSON
 generator calling `to_json`) does it through `rb::call`, whose module doc

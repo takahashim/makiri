@@ -4,7 +4,7 @@
 //! (`rb_obj_hide`, `rb_gc_adjust_memory_usage`, `ruby_xfree`) or releases the
 //! GVL (`rb_thread_call_without_gvl2`); what they share is that none can
 //! raise. Here are the C functions the lints' table finds no raise in
-//! (`makiri_lints`' `NON_RAISING`, and the one `REVIEWED` for any caller),
+//! (`nupur_lints`' `NON_RAISING`, and the one `REVIEWED` for any caller),
 //! the inline reads of rb-sys's stable API, and the C globals that hold a
 //! class.
 //!
@@ -74,7 +74,7 @@ reads! {
 /// `enc` is one of Ruby's encodings, which live for the process.
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         ffi_without_gvl_proof,
         reason = "reads a field of an encoding, which lives for the process and is never written"
@@ -90,7 +90,7 @@ pub unsafe fn rb_enc_to_index(enc: *const rb_encoding) -> c_int {
 /// and is safe from any thread.
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         ffi_without_gvl_proof,
         reason = "asks whether this is a Ruby thread at all, which any thread may ask"
@@ -109,7 +109,7 @@ pub fn ruby_native_thread_p() -> bool {
 /// thread, so it takes no proof.
 #[inline]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         ffi_without_gvl_proof,
         reason = "reads the stack only on a thread Ruby made, with the GVL or without it, as `ruby_native_thread_p` answers first"
@@ -380,7 +380,7 @@ globals! {
 /// it has not been unlocked since).
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         raising_call_outside_protect,
         reason = "rb_str_unlocktmp raises only for a String that is not locked; the contract is one that is"
@@ -401,7 +401,7 @@ pub unsafe fn str_unlocktmp_of_locked(str: Value) {
 /// a Symbol, whose is a String made).
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         raising_call_outside_protect,
         reason = "rb_enc_get raises for a File (a method call) or a Symbol (a String made); the contract is a String, whose tag it reads"
@@ -420,7 +420,7 @@ pub unsafe fn enc_get_of_string(str: Value) -> *mut rb_encoding {
 /// `str` is a String.
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         raising_call_outside_protect,
         reason = "rb_enc_get_index raises for a File or a Symbol, as rb_enc_get; the contract is a String, whose index is an ivar read when it is not inline"
@@ -438,7 +438,7 @@ pub unsafe fn enc_get_index_of_string(str: Value) -> c_int {
 /// `id` is a name without `@` (`rb_is_instance_id` is false for it).
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         raising_call_outside_protect,
         reason = "rb_attr_get raises only RactorIsolationError, and only for an @ name (rb_is_instance_id) of a class, a module or a shareable object read from another Ractor; the contract is a name without @"
@@ -457,7 +457,7 @@ pub unsafe fn attr_get_hidden(obj: Value, id: ID) -> Value {
 /// `module` is a class or module.
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         raising_call_outside_protect,
         reason = "its one raise, a non-class, is ruled out by the contract"
@@ -476,7 +476,7 @@ pub unsafe fn obj_is_kind_of_module(v: Value, module: Value) -> bool {
 /// `sub` and `sup` are classes or modules.
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         raising_call_outside_protect,
         reason = "its one raise, a non-class, is ruled out by the contract"
@@ -495,7 +495,7 @@ pub unsafe fn class_inherited_p_of_modules(sub: Value, sup: Value) -> bool {
 /// `v` is an Integer.
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         raising_call_outside_protect,
         reason = "its raise is for a non-Integer, converted by `#to_int`; the contract is an Integer"
@@ -513,7 +513,7 @@ pub unsafe fn absint_size_of_integer(v: Value) -> size_t {
 /// `str` is an unfrozen String.
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         raising_call_outside_protect,
         reason = "rb_str_set_len raises for a frozen String or a length past its room; the contract is unfrozen, and 0 is within any"
@@ -533,7 +533,7 @@ pub unsafe fn str_empty_unfrozen(str: Value) {
 /// nothing on the frames above it that a `longjmp` would leak.
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         raising_call_outside_protect,
         reason = "rb_gc_mark raises NoMemoryError only when the mark stack cannot grow, a longjmp the contract's frame loses nothing to and every C extension's dmark is exposed to alike"
@@ -555,7 +555,7 @@ pub unsafe fn gc_mark_in_dmark(root: Root) {
 /// holding the GVL.
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(ffi_without_gvl_proof, reason = "the dfree contract is the proof")
 )]
 pub unsafe fn gc_give_back_in_dfree(n: ssize_t) {
@@ -572,7 +572,7 @@ pub unsafe fn gc_give_back_in_dfree(n: ssize_t) {
 /// object's data, once.
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(ffi_without_gvl_proof, reason = "the dfree contract is the proof")
 )]
 pub unsafe fn xfree_in_dfree(ptr: *mut c_void) {

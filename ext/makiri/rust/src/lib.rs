@@ -14,7 +14,7 @@
 /* An `Err` of a Ruby error is never dropped: `Error::rescue` handles the
  * classes it names and hands every exit back. `forbid`, so no `allow`
  * reopens the rule. */
-#![cfg_attr(dylint_lib = "makiri_lints", forbid(discarded_ruby_error))]
+#![cfg_attr(dylint_lib = "nupur_lints", forbid(discarded_ruby_error))]
 // A panic unwinds into `Makiri::InternalError` at a method's trampoline (or
 // `fatal` outside one) - a broken invariant, never an answer. `Cargo.toml`'s clippy lints therefore refuse a
 // new `unwrap()` or `panic!` in the shipped crate; a site that genuinely wants

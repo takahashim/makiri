@@ -305,7 +305,7 @@ where rb-sys is in reach. `unraising_call_in_raw` also refuses a wrapper in
 
 ### Classifying which functions raise
 
-Which C functions can raise is decided in `lints/makiri_lints`, in two lists
+Which C functions can raise is decided in `lints/nupur_lints`, in two lists
 in `raising.rs`:
 
 - `NON_RAISING`: the functions the C API raise survey finds no path to a
@@ -330,7 +330,7 @@ cannot be. Its `typed` reading, a callee whose type matches the call's,
 drops 60 of those paths and leaves direct ones, which is what `REVIEWED`
 reasons cite.
 
-The survey's result is vendored in `lints/makiri_lints/raise_survey.json`
+The survey's result is vendored in `lints/nupur_lints/raise_survey.json`
 (`script/update_raise_survey.rb`), and `rake dylint` runs
 `script/check_non_raising.rb`. It fails on:
 

@@ -121,7 +121,7 @@ struct EmptyUnlessFilled(RString);
 
 impl Drop for EmptyUnlessFilled {
     #[cfg_attr(
-        dylint_lib = "makiri_lints",
+        dylint_lib = "nupur_lints",
         allow(
             ffi_without_gvl_proof,
             reason = "it guards the String `utf8_str_filled` made, with its token, and lives only in that frame"
