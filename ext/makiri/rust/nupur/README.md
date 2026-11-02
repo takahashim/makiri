@@ -27,14 +27,22 @@ Nupur as `crate::nupur`, and its `bridge` re-exports `rb`, `typed`, `gvl`,
 Most of Nupur's rules are its types and its crates' dependencies, so code
 that breaks one does not compile. `src/lib.rs` states each in full.
 
-- **No raise crosses Rust.** A raise is a `longjmp` over Rust frames, which
-  must not happen. Every C call that can raise is a wrapper in
-  `nupur_sys::raising` that takes a `&Protected`. Only `rb_protect`'s thunk
-  makes one, and lends it to the closure that `raw::call` runs, so the raise
-  comes back as an `Err`; a method's `Err` is raised by its trampoline once
-  every Rust frame of the method has returned. Nupur has no other way to
-  call a C function: it does not depend on rb-sys, and `nupur_sys`
-  re-exports no C function.
+- **No raise skips Rust's cleanup.** A raise is a `longjmp`, which runs no
+  destructor of the Rust frames it crosses. Every C call that can raise is
+  a wrapper in `nupur_sys::raising` that takes a `&Protected`. Only
+  `rb_protect`'s thunk makes one, and lends it to the closure that
+  `raw::call` runs, so the raise comes back as an `Err`. Nupur has no other
+  way to call a C function: it does not depend on rb-sys, and `nupur_sys`
+  re-exports no C function. A raise leaves Ruby unprotected in two places,
+  each over frames that own nothing to release:
+  - a method's trampoline raises its `Err` (or resumes a `break` or
+    `throw`), and `Init_` raises its `fatal`, once every Rust frame of the
+    method has returned;
+  - `rb_gc_mark`, in a wrapped object's mark callback
+    (`nupur_sys::non_raising::gc_mark_in_dmark`), can raise `NoMemoryError`
+    when Ruby's mark stack cannot grow. The callback holds nothing that
+    needs cleanup, and every C extension's mark function takes the same
+    risk.
 - **No panic reaches C.** A trampoline turns a panic into the internal
   error; a callback C calls catches one (`caught::PanicLatch`) for its
   caller to resume. Code that must not unwind is a `no_unwind` site, and a
