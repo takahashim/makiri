@@ -307,10 +307,15 @@ macro_rules! globals {
 }
 
 globals! {
+    rb_cArray,
     rb_cEncoding,
+    rb_cFloat,
+    rb_cHash,
+    rb_cInteger,
     rb_cObject,
     rb_cRange,
     rb_cString,
+    rb_cSymbol,
     rb_eArgError,
     rb_eEncodingError,
     rb_eException,

@@ -155,6 +155,7 @@ raising! {
     fn rb_ary_new_capa(capa: core::ffi::c_long) -> Value;
     fn rb_ary_push(ary: Value, elem: Value) -> Value;
     fn rb_big2ll(arg1: Value) -> core::ffi::c_longlong;
+    fn rb_big2str(x: Value, base: core::ffi::c_int) -> Value;
     fn rb_big2ull(arg1: Value) -> core::ffi::c_ulonglong;
     fn rb_check_frozen(obj: Value);
     fn rb_check_typeddata(obj: Value, data_type: &DataType) -> *mut c_void;
@@ -195,6 +196,7 @@ raising! {
     fn rb_str_dup(str_: Value) -> Value;
     fn rb_str_encode(str_: Value, to: Value, ecflags: core::ffi::c_int, ecopts: Value) -> Value;
     fn rb_str_new(ptr: *const core::ffi::c_char, len: core::ffi::c_long) -> Value;
+    fn rb_str_to_inum(str_: Value, base: core::ffi::c_int, badcheck: core::ffi::c_int) -> Value;
     fn rb_sym2str(symbol: Value) -> Value;
     fn rb_thread_check_ints();
     fn rb_to_encoding(obj: Value) -> *mut rb_encoding;

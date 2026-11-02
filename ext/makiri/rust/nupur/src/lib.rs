@@ -88,7 +88,7 @@
 //! Most of these are types and dependencies. What they cannot state rests on
 //! checks of the code: in Makiri `rake dylint` (`lints/makiri_lints`, whose
 //! first group is the layer's and names only `nupur::` and `nupur_sys::`
-//! paths, so a copy changes its `paths::EXTENSION` alone), `rake no_unwind`
+//! paths, so another extension sets `MAKIRI_LINTS_EXTENSION` to its crate name and runs them), `rake no_unwind`
 //! and `rake unsafe:boundaries`. A copy of this layer elsewhere needs its
 //! own:
 //!

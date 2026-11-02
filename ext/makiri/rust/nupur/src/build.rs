@@ -38,6 +38,25 @@ pub fn int(ruby: &Ruby, n: i64) -> Result<Integer, Error> {
     raw::int_from_i64(ruby, n)
 }
 
+/// The Integer `digits` spell in decimal - an optional `-`, then one or
+/// more ASCII digits, nothing else - which may be past an `i64` (a Bignum).
+/// Anything else is `ArgumentError`, decided here before Ruby reads them.
+/// A value an `i64` holds is made without a String.
+pub fn int_from_decimal(ruby: &Ruby, digits: &[u8]) -> Result<Integer, Error> {
+    let body = digits.strip_prefix(b"-").unwrap_or(digits);
+    if body.is_empty() || !body.iter().all(u8::is_ascii_digit) {
+        return Err(crate::rb::error::arg_error("not a decimal integer"));
+    }
+    /* All ASCII, checked above. */
+    if let Some(n) = core::str::from_utf8(digits)
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+    {
+        return int(ruby, n);
+    }
+    raw::str_to_inum(crate::string::binary_str(ruby, digits)?)
+}
+
 /// An Integer from an unsigned value.
 pub(crate) fn uint(ruby: &Ruby, n: u64) -> Result<Integer, Error> {
     raw::int_from_u64(ruby, n)

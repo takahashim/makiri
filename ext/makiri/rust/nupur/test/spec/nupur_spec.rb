@@ -236,6 +236,45 @@ RSpec.describe "nupur" do
       expect { NupurTest.usize_of(2**64) }.to raise_error(RangeError)
     end
 
+    it "tells a builtin class's own instance from a subclass's and a singleton's" do
+      expect(NupurTest.exact_class([])).to eq(:Array)
+      expect(NupurTest.exact_class({})).to eq(:Hash)
+      expect(NupurTest.exact_class(+"s")).to eq(:String)
+      expect(NupurTest.exact_class(2**70)).to eq(:Integer)
+      # 1e300 is past a flonum's range, so a heap Float with a header.
+      expect(NupurTest.exact_class(1e300)).to eq(:Float)
+      expect(NupurTest.exact_class(1.5)).to be_nil
+      expect(NupurTest.exact_class(Class.new(Hash).new)).to be_nil
+      s = +"s"
+      def s.to_json(*) = "x"
+      expect(NupurTest.exact_class(s)).to be_nil
+      # Immediates have no header: a Fixnum, a Symbol, nil.
+      expect(NupurTest.exact_class(1)).to be_nil
+      expect(NupurTest.exact_class(:a)).to be_nil
+      expect(NupurTest.exact_class(nil)).to be_nil
+    end
+
+    it "writes an Integer's decimal digits, a Bignum's included" do
+      [0, 7, -7, 2**62, -(2**62), 2**63, -(2**63), 10**40, -(10**40)].each do |n|
+        expect(NupurTest.decimal_of(n)).to eq(n.to_s)
+      end
+    end
+
+    it "makes an Integer from decimal digits, refusing anything else" do
+      %w[0 -1 9223372036854775807 9223372036854775808 -9223372036854775809].each do |d|
+        expect(NupurTest.int_from_decimal(d)).to eq(Integer(d))
+      end
+      expect(NupurTest.int_from_decimal("1" * 400)).to eq(Integer("1" * 400))
+      ["", "-", "1_000", " 1", "1e3", "0x10", "+1", "1\0"].each do |bad|
+        expect { NupurTest.int_from_decimal(bad) }.to raise_error(ArgumentError)
+      end
+    end
+
+    it "reads a Symbol's name" do
+      expect(NupurTest.symbol_name(:abc)).to eq("abc")
+      expect(NupurTest.symbol_name(:"é")).to eq("é")
+    end
+
     it "reads a Float as an f64, bit for bit" do
       bits = ->(x) { [x].pack("D").unpack1("Q") }
       [0.0, -0.0, 1.5, 1e300, -2.5e-310, Float::INFINITY, Float::NAN].each do |x|

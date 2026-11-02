@@ -229,3 +229,30 @@ pub(crate) fn big2ull(n: Integer) -> Result<u64, Error> {
         nupur_sys::raising::rb_big2ull(inside, n)
     })?))
 }
+
+/// `rb_big2str(n, 10)`: a Bignum's decimal digits, as a new US-ASCII String.
+/// Raises `NoMemoryError`. For a Bignum only (the C reads a Bignum's digits
+/// unchecked), so crate-private: the one caller is `Integer::to_decimal`,
+/// which writes a Fixnum itself.
+pub(crate) fn big2str(n: Integer) -> Result<RString, Error> {
+    let n = n.as_sys();
+    let v = call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_big2str(inside, n, 10)
+    })?;
+    typed(v, RString::from_value, "a C call made no String")
+}
+
+/// `rb_str_to_inum(s, 10, 1)`: the Integer `s`'s decimal digits spell, which
+/// may be a Bignum. Raises `ArgumentError` for anything but digits and
+/// `NoMemoryError`. Crate-private: `build::int_from_decimal` checks the
+/// digits first and hands a String of its own, so no caller's String (whose
+/// encoding or subclass the C would read) reaches it.
+pub(crate) fn str_to_inum(s: RString) -> Result<Integer, Error> {
+    let s = s.as_sys();
+    let v = call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_str_to_inum(inside, s, 10, 1)
+    })?;
+    typed(v, Integer::from_value, "a C call made no Integer")
+}
