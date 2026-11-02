@@ -54,6 +54,7 @@ UNSAFE_ISLANDS = {
   "engine/no_unwind.rs" => 2,
   "falloc/lib.rs" => 1,
   "init.rs" => 1,
+  "nupur/bytes.rs" => 4,
   "nupur/encoding.rs" => 6,
   "nupur/gvl.rs" => 3,
   "nupur/raw/check.rs" => 4,
