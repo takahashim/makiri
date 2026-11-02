@@ -7,7 +7,11 @@ use crate::bridge::rb::{Error, ReprValue, Value};
 
 /* ---- assembling Ruby Strings ---- */
 
-pub use crate::nupur::string::utf8_str;
+/* The engine's text is UTF-8 by the engine's own invariant (every input
+ * is decoded or checked on the way in), so its bytes are made a String
+ * unchecked: Nupur's trusting constructor, under the name the bridge has
+ * always used. */
+pub use crate::nupur::string::utf8_str_trusting as utf8_str;
 
 /// Join the text index's document-order slices, totalling `total` bytes,
 /// into one UTF-8 String (`nupur::string::utf8_str_from_slices`). The joined

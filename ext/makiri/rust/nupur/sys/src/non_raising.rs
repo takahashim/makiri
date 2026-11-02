@@ -175,6 +175,34 @@ pub unsafe fn rbasic_klass(v: Value) -> Value {
     unsafe { Value::from_raw((*(v.as_raw() as *const rb_sys::RBasic)).klass) }
 }
 
+/// Marks a String's bytes known valid in its encoding - all ASCII
+/// (`7BIT`) when `ascii`, else `VALID` - so Ruby never scans them for it:
+/// `RB_ENC_CODERANGE_SET`, an inline function of Ruby's headers, which
+/// replaces the bits under `RUBY_ENC_CODERANGE_MASK` in the header flags.
+///
+/// # Safety
+///
+/// `v` is a String that no other thread can see yet, and its bytes are
+/// valid in its encoding (and all ASCII when `ascii`). Ruby's string
+/// functions take the mark on trust: a wrong one breaks an invariant they
+/// rely on.
+#[inline]
+pub unsafe fn str_mark_coderange(v: Value, ascii: bool) {
+    use rb_sys::ruby_coderange_type as cr;
+    let mark = if ascii {
+        cr::RUBY_ENC_CODERANGE_7BIT
+    } else {
+        cr::RUBY_ENC_CODERANGE_VALID
+    } as VALUE;
+    let mask = cr::RUBY_ENC_CODERANGE_MASK as VALUE;
+    // SAFETY: the contract: a heap object (a String), seen by this thread
+    // alone, whose header is `RBasic`.
+    unsafe {
+        let basic = v.as_raw() as *mut rb_sys::RBasic;
+        (*basic).flags = ((*basic).flags & !mask) | mark;
+    }
+}
+
 /* ---- the stable API's inline reads ---- */
 
 /// `RB_NIL_P`.

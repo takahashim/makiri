@@ -131,6 +131,18 @@ RSpec.describe "nupur" do
   end
 
   describe "a String read as checked UTF-8" do
+    it "marks a String made of text valid, and leaves one made of trusted bytes for Ruby to scan" do
+      require "objspace"
+      coderange = ->(s) { ObjectSpace.dump(s)[/"coderange":"(\w+)"/, 1] || "unknown" }
+      expect(coderange.(NupurTest.read_text("abc"))).to eq("7bit")
+      expect(coderange.(NupurTest.read_text("café"))).to eq("valid")
+      expect(coderange.(NupurTest.trusting_str("abc".b))).to eq("unknown")
+      broken = NupurTest.trusting_str("\xFF".b)
+      expect(broken.encoding).to eq(Encoding::UTF_8)
+      expect(broken.valid_encoding?).to be(false)
+      expect(coderange.(broken)).to eq("broken")
+    end
+
     it "copies UTF-8, and transcodes another encoding first" do
       expect(NupurTest.read_text("café")).to eq("café")
       expect(NupurTest.read_text("café".encode("Shift_JIS", fallback: { "é" => "e" }))).to eq("cafe")

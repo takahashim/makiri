@@ -207,7 +207,7 @@ Nupur is not published, and is used only inside Makiri's workspace.
 | `typed` | TypedData: wrapping a Rust payload as a Ruby object, its slots and GC callbacks, memory reported to the GC |
 | `gvl` | Running a body with the GVL released |
 | `build` | Building Arrays, Hashes, numbers, Symbols and UTF-8 Strings |
-| `string`, `encoding`, `utf8_copy` | Reading Strings by copying, as checked UTF-8 (`read_utf8`) or as bytes (`read_bytes`); making UTF-8 (`utf8_str`) and ASCII-8BIT (`binary_str`) Strings; encodings |
+| `string`, `encoding`, `utf8_copy` | Reading Strings by copying, as checked UTF-8 (`read_utf8`) or as bytes (`read_bytes`); making UTF-8 Strings, of text marked valid (`utf8_str`, which takes a `&str`) or of bytes the caller holds to be UTF-8 (`utf8_str_trusting`), and ASCII-8BIT ones (`binary_str`); encodings |
 | `args`, `hash` | Reading a method's arguments and keywords; walking a Hash |
 | `describe`, `msg` | Writing Ruby values into an exception message without a call or an allocation |
 | `abi` | What the binary assumes of the running Ruby, and the load-time checks of it |

@@ -115,7 +115,13 @@ fn read_text(ruby: &Ruby, s: Value) -> Result<Value, Error> {
     let s = string_arg(s)?;
     let copy =
         nupur::string::read_utf8(ruby, s, |b| b.contains(&0).then_some(())).map_err(read_error)?;
-    Ok(nupur::string::utf8_str(ruby, copy.as_str().as_bytes())?.as_value())
+    Ok(nupur::string::utf8_str(ruby, copy.as_str())?.as_value())
+}
+
+/// `s`'s bytes, whatever they are, made a UTF-8 String unchecked.
+fn trusting_str(ruby: &Ruby, s: Value) -> Result<Value, Error> {
+    let bytes = nupur::string::read_bytes(string_arg(s)?)?;
+    Ok(nupur::string::utf8_str_trusting(ruby, &bytes)?.as_value())
 }
 
 /// `s` read under a cap of `max` bytes of UTF-8.
@@ -445,6 +451,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     m.define_module_function("yield_each", function!(yield_each, 1))?;
     m.define_module_function("drop_exit", function!(drop_exit, 0))?;
     m.define_module_function("read_text", function!(read_text, 1))?;
+    m.define_module_function("trusting_str", function!(trusting_str, 1))?;
     m.define_module_function("read_capped", function!(read_capped, 2))?;
     m.define_module_function("transcode_kind", function!(transcode_kind, 1))?;
     m.define_module_function("filled", function!(filled, 1))?;

@@ -1,4 +1,5 @@
-//! Making a Ruby String: a copy of some bytes ([`utf8_str`]), one written
+//! Making a Ruby String: a copy of some text ([`utf8_str`]) or of bytes
+//! the caller holds to be UTF-8 ([`utf8_str_trusting`]), one written
 //! in place front to back ([`utf8_str_filled`]) - from several slices at once
 //! ([`utf8_str_from_slices`]) - and a frozen, interned name
 //! ([`interned_utf8`]).
@@ -8,12 +9,33 @@
 use crate::rb::value::AsSys;
 use crate::rb::{Error, RString, Ruby};
 
-/// A UTF-8 String holding a copy of `bytes`; a failed allocation is `Err`
+/// A UTF-8 String holding a copy of `text`; a failed allocation is `Err`
 /// (`NoMemoryError`).
 ///
-/// `bytes` must be valid UTF-8 (the String is tagged so without a check).
-/// Bytes that were not would make a wrong String, never a memory error.
-pub fn utf8_str(ruby: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
+/// A `&str` is UTF-8 by its type, so the String is marked so (its coderange
+/// `7BIT` or `VALID`): Ruby never scans it to find out. A reader with bytes
+/// it has checked has a `&str` of them ([`crate::utf8_copy::Utf8Copy`]'s
+/// `as_str`, `core::str::from_utf8`); bytes it has not are
+/// [`utf8_str_trusting`]'s.
+pub fn utf8_str(ruby: &Ruby, text: &str) -> Result<RString, Error> {
+    let s = crate::raw::utf8_str_new(ruby, text.as_bytes())?;
+    // SAFETY: `s` was made just now from `text`'s bytes and is referenced
+    // only from this frame; a `&str` is valid UTF-8, all ASCII when
+    // `is_ascii` says so.
+    unsafe { nupur_sys::non_raising::str_mark_coderange(s.as_sys(), text.is_ascii()) };
+    Ok(s)
+}
+
+/// A UTF-8 String holding a copy of `bytes`, which the caller holds to be
+/// UTF-8 by some invariant of its own and does not check (the name says
+/// so, as [`nupur_sys::non_raising`]'s names say their preconditions). A
+/// failed allocation is `Err` (`NoMemoryError`).
+///
+/// The String is tagged UTF-8 and its coderange left unknown, so Ruby
+/// scans it when it first needs to know: bytes that were not UTF-8 make a
+/// String Ruby reports broken (`valid_encoding?` false), never a memory
+/// error and never a String marked valid that is not.
+pub fn utf8_str_trusting(ruby: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
     crate::raw::utf8_str_new(ruby, bytes)
 }
 

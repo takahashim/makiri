@@ -115,7 +115,7 @@ Magnus のほうが記述は容易です。引数や返り値を自動変換し�
 | `typed` | TypedData: Rust のペイロードを Ruby オブジェクトとしてラップ、そのスロットと GC コールバック、GC へ報告するメモリ |
 | `gvl` | GVL を解放した状態での処理実行 |
 | `build` | Array、Hash、数値、Symbol、UTF-8 String の構築 |
-| `string`, `encoding`, `utf8_copy` | コピーによる String の読み取り（検査済み UTF-8 として `read_utf8`、バイト列として `read_bytes`）、UTF-8（`utf8_str`）と ASCII-8BIT（`binary_str`）の String の生成、エンコーディング |
+| `string`, `encoding`, `utf8_copy` | コピーによる String の読み取り（検査済み UTF-8 として `read_utf8`、バイト列として `read_bytes`）、UTF-8 の String の生成（`&str` を受け取り有効と印を付ける `utf8_str`、呼び出し側が UTF-8 と保証するバイト列から作る `utf8_str_trusting`）と ASCII-8BIT の String の生成（`binary_str`）、エンコーディング |
 | `args`, `hash` | メソッドの引数・キーワード引数の読み取り、Hash のトラバース |
 | `describe`, `msg` | 呼び出しやメモリ割り当てを行わずに例外メッセージへ Ruby 値を書き込む処理 |
 | `abi` | バイナリが実行中 Ruby に対して前提とする内容と、ロード時のチェック |
