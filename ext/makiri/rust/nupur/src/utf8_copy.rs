@@ -29,8 +29,10 @@ pub(crate) fn set_alloc_injector(fails: fn() -> bool) {
 }
 
 /// Room for exactly `len` more bytes in the empty `v`, or `false`: a heap
-/// copy's one allocation, which the OOM sweep can fail.
-fn reserve_exact(v: &mut Vec<u8>, len: usize) -> bool {
+/// copy's one allocation, which the OOM sweep can fail. The layer's other
+/// byte copy (`string::read_bytes`) reserves through it too, so the sweep
+/// sees that one as well.
+pub(crate) fn reserve_exact(v: &mut Vec<u8>, len: usize) -> bool {
     #[cfg(feature = "alloc-inject")]
     if ALLOC_INJECTOR.get().is_some_and(|fails| fails()) {
         return false;

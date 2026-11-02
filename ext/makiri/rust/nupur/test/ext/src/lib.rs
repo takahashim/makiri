@@ -151,6 +151,13 @@ fn filled(ruby: &Ruby, n: Value) -> Result<Value, Error> {
     Ok(s.as_value())
 }
 
+/// `s`'s bytes as they are, in a new ASCII-8BIT String: `read_bytes` into
+/// `binary_str`, whatever `s`'s encoding.
+fn binary_copy(ruby: &Ruby, s: Value) -> Result<Value, Error> {
+    let bytes = nupur::string::read_bytes(string_arg(s)?)?;
+    Ok(nupur::string::binary_str(ruby, &bytes)?.as_value())
+}
+
 /// `"abcd"` from two slices, or (`short`) a total the slices fall short of,
 /// which is an internal error.
 fn slices(ruby: &Ruby, short: bool) -> Result<Value, Error> {
@@ -255,6 +262,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     m.define_module_function("transcode_kind", function!(transcode_kind, 1))?;
     m.define_module_function("filled", function!(filled, 1))?;
     m.define_module_function("slices", function!(slices, 1))?;
+    m.define_module_function("binary_copy", function!(binary_copy, 1))?;
     m.define_module_function("kw", function!(kw, -1))?;
     m.define_module_function("shape", function!(shape, -1))?;
     m.define_module_function("pairs", function!(pairs, 1))?;

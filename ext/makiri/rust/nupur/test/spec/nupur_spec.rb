@@ -178,6 +178,19 @@ RSpec.describe "nupur" do
       expect(NupurTest.slices(false)).to eq("abcd")
       expect { NupurTest.slices(true) }.to raise_error(NupurTest::InternalError)
     end
+
+    it "as ASCII-8BIT, from a String's bytes read as they are, whatever its encoding" do
+      bin = "\xFF\x00\xFE".b
+      copy = NupurTest.binary_copy(bin)
+      expect(copy).to eq(bin)
+      expect(copy.encoding).to eq(Encoding::ASCII_8BIT)
+      expect(copy).not_to equal(bin)
+
+      utf16 = "ab".encode("UTF-16LE")
+      expect(NupurTest.binary_copy(utf16)).to eq(utf16.b)
+      expect(NupurTest.binary_copy("")).to eq("".b)
+      expect(NupurTest.binary_copy("\x82".dup.force_encoding("Shift_JIS"))).to eq("\x82".b)
+    end
   end
 
   describe "a method's arguments" do

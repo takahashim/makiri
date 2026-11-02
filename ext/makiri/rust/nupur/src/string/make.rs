@@ -17,6 +17,13 @@ pub fn utf8_str(ruby: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
     crate::raw::utf8_str_new(ruby, bytes)
 }
 
+/// An ASCII-8BIT String holding a copy of `bytes` - a hash, a key, bytes
+/// that are not text; a failed allocation is `Err` (`NoMemoryError`). Any
+/// bytes are valid in it, so nothing is checked.
+pub fn binary_str(ruby: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
+    crate::raw::binary_str_new(ruby, bytes)
+}
+
 /// A UTF-8 String of exactly `len` bytes, written by `fill` straight into
 /// the new String's buffer - one allocation, no intermediate copy. The
 /// String's allocation raises `NoMemoryError`; `fill`'s `Err` is returned in

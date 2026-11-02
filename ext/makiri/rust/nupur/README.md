@@ -144,6 +144,16 @@ The test extension also wraps an object with a slot (`TypedType`, `Birth`),
 reads arguments and keywords (`args`), walks a Hash, reads Strings, and runs
 a body with the GVL released.
 
+Two things an extension's own build needs to know:
+
+- `rb::Error` holds its message inline (256 bytes), so that making one
+  allocates nothing, which puts every `Result<_, Error>` past clippy's
+  default for `result_large_err`. Set `large-error-threshold = 288` in the
+  extension's `clippy.toml`, as Makiri does.
+- The profile builds with `panic = "unwind"`, as Nupur's test extension
+  does; with `abort`, a panic in a method would kill the host instead of
+  reaching Ruby as the internal error.
+
 ## Compared with Magnus
 
 Nupur replaced Magnus in Makiri, and keeps many of its names (`Value`,
@@ -183,7 +193,7 @@ Nupur is not published, and is used only inside Makiri's workspace.
 | `typed` | TypedData: wrapping a Rust payload as a Ruby object, its slots and GC callbacks, memory reported to the GC |
 | `gvl` | Running a body with the GVL released |
 | `build` | Building Arrays, Hashes, numbers, Symbols and UTF-8 Strings |
-| `string`, `encoding`, `utf8_copy` | Reading and writing Strings by copying, and their encodings |
+| `string`, `encoding`, `utf8_copy` | Reading Strings by copying, as checked UTF-8 (`read_utf8`) or as bytes (`read_bytes`); making UTF-8 (`utf8_str`) and ASCII-8BIT (`binary_str`) Strings; encodings |
 | `args`, `hash` | Reading a method's arguments and keywords; walking a Hash |
 | `describe`, `msg` | Writing Ruby values into an exception message without a call or an allocation |
 | `abi` | What the binary assumes of the running Ruby, and the load-time checks of it |

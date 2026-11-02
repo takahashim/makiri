@@ -194,6 +194,7 @@ raising! {
     fn rb_range_values(range: Value, begp: *mut Value, endp: *mut Value, exclp: *mut core::ffi::c_int) -> core::ffi::c_int;
     fn rb_str_dup(str_: Value) -> Value;
     fn rb_str_encode(str_: Value, to: Value, ecflags: core::ffi::c_int, ecopts: Value) -> Value;
+    fn rb_str_new(ptr: *const core::ffi::c_char, len: core::ffi::c_long) -> Value;
     fn rb_sym2str(symbol: Value) -> Value;
     fn rb_thread_check_ints();
     fn rb_to_encoding(obj: Value) -> *mut rb_encoding;

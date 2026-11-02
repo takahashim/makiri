@@ -15,6 +15,18 @@ pub(crate) fn utf8_str_new(_: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
     typed(v, RString::from_value, "a C call made no String")
 }
 
+/// `rb_str_new` of `bytes`: an ASCII-8BIT String, which carries any bytes.
+/// Raises `NoMemoryError`.
+#[inline]
+pub(crate) fn binary_str_new(_: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
+    let (p, n) = (bytes.as_ptr() as *const c_char, c_len(bytes.len())?);
+    let v = call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_str_new(inside, p, n)
+    })?;
+    typed(v, RString::from_value, "a C call made no String")
+}
+
 /// A UTF-8 String of `len` bytes whose content is NOT written:
 /// `rb_utf8_str_new(NULL, len)`, which raises `NoMemoryError`. What
 /// `string::utf8_str_filled` writes in place.
