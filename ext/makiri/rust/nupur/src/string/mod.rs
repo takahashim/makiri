@@ -5,11 +5,14 @@
 //! and [`RString::append_to`](crate::rb::RString::append_to), each a read and
 //! a copy with nothing run between, so nothing Ruby does afterwards - a GC,
 //! the String rewritten or grown - reaches what the caller holds; as text,
-//! [`read_utf8`]. Making one (`make`) is a copy, or a String written in
-//! place front to back through an [`Unwritten`].
+//! [`read_utf8`], as bytes whatever the encoding, [`read_bytes`]. Making one
+//! (`make`) is a copy - UTF-8 ([`utf8_str`]) or ASCII-8BIT ([`binary_str`])
+//! - or a String written in place front to back through an [`Unwritten`].
 
 mod make;
 mod read;
 
-pub use make::{interned_utf8, utf8_str, utf8_str_filled, utf8_str_from_slices, Unwritten};
-pub use read::{read_utf8, read_utf8_within, to_utf8, NoRoom, ReadError, Transcode};
+pub use make::{
+    binary_str, interned_utf8, utf8_str, utf8_str_filled, utf8_str_from_slices, Unwritten,
+};
+pub use read::{read_bytes, read_utf8, read_utf8_within, to_utf8, NoRoom, ReadError, Transcode};

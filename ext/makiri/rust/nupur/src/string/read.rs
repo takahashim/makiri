@@ -148,6 +148,34 @@ pub fn to_utf8(
     }
 }
 
+/* ---- reading a String's bytes as they are ---- */
+
+/// `s`'s bytes, copied out as they are, whatever the String's encoding - a
+/// password, a key, a blob: bytes that are not text and are not checked as
+/// any. The one allocation is fallible (`NoMemoryError`, which the OOM sweep
+/// can inject), and the copy is [`RString::append_to`]'s, so nothing Ruby
+/// does afterwards reaches it. The caller owns the `Vec`, and so decides
+/// what becomes of a secret in it (zeroing it, say).
+pub fn read_bytes(s: RString) -> Result<Vec<u8>, Error> {
+    let len = s.len();
+    let mut v = Vec::new();
+    if !crate::utf8_copy::reserve_exact(&mut v, len) {
+        return Err(Error::new(
+            crate::rb::Builtin::NoMemoryError,
+            "failed to allocate memory",
+        ));
+    }
+    /* Nothing ran between the length read and the copy, so the room holds
+     * the String; a copy that fell short would hand back a truncated secret,
+     * which is an invariant broken, never a shorter answer. */
+    match s.append_to(0, &mut v) {
+        Ok(n) if n == len => Ok(v),
+        _ => Err(crate::rb::error::internal_error(
+            "a String's length changed under a copy",
+        )),
+    }
+}
+
 /* ---- reading a String as checked UTF-8 ---- */
 
 /// Why [`read_utf8`] gave no copy.

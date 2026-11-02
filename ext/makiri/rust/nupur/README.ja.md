@@ -78,6 +78,11 @@ pub extern "C" fn Init_nupur_test() {
 
 テスト用拡張ライブラリでは、スロットを持つオブジェクトのラップ（`TypedType`, `Birth`）、引数とキーワードの読み取り（`args`）、Hash のトラバース、String の読み取り、GVL 解放状態での処理の実行などもカバーしています。
 
+拡張ライブラリ側のビルドで知っておくべきことが二つあります。
+
+- `rb::Error` はメッセージをインラインで持つ（256 バイト）ので、生成時にメモリ割り当てが起きません。その代わり `Result<_, Error>` はどれも clippy の `result_large_err` の既定値を超えます。Makiri と同じく、拡張ライブラリの `clippy.toml` に `large-error-threshold = 288` を書いてください。
+- プロファイルは Nupur のテスト用拡張ライブラリと同じく `panic = "unwind"` にします。`abort` だと、メソッド内の panic が内部エラーとして Ruby に届く前にホストプロセスを殺してしまいます。
+
 ## Magnus との比較
 
 Nupur は Makiri において Magnus を置き換えたものであり、多くの名称（`Value`、`RString`、`Error`、`method!`）を継承しています。ここでの比較対象は、2026 年 10 月の置き換えまで Makiri で使用されていた Magnus 0.8.2 です。
@@ -107,7 +112,7 @@ Magnus のほうが記述は容易です。引数や返り値を自動変換し�
 | `typed` | TypedData: Rust のペイロードを Ruby オブジェクトとしてラップ、そのスロットと GC コールバック、GC へ報告するメモリ |
 | `gvl` | GVL を解放した状態での処理実行 |
 | `build` | Array、Hash、数値、Symbol、UTF-8 String の構築 |
-| `string`, `encoding`, `utf8_copy` | コピーによる String の読み書き、およびエンコーディング |
+| `string`, `encoding`, `utf8_copy` | コピーによる String の読み取り（検査済み UTF-8 として `read_utf8`、バイト列として `read_bytes`）、UTF-8（`utf8_str`）と ASCII-8BIT（`binary_str`）の String の生成、エンコーディング |
 | `args`, `hash` | メソッドの引数・キーワード引数の読み取り、Hash のトラバース |
 | `describe`, `msg` | 呼び出しやメモリ割り当てを行わずに例外メッセージへ Ruby 値を書き込む処理 |
 | `abi` | バイナリが実行中 Ruby に対して前提とする内容と、ロード時のチェック |
