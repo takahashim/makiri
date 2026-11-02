@@ -151,8 +151,8 @@
 //!   an `allow` stating why. An extension that asks calls through
 //!   [`rb::call`], and holds nothing across the call that the callee could
 //!   invalidate: no payload borrow beyond a `Cell`, no `RefCell` guard, no
-//!   guard of its own, no Ruby collection walked in place (that module says
-//!   why each).
+//!   guard of its own, no slice of a Ruby collection (that module says why
+//!   each).
 //! - **Declared Ractor-safe, the extension's own state is too.** What the
 //!   layer keeps is safe across Ractors; what the extension keeps - its
 //!   statics, whatever its methods take the GVL to serialise (now only one

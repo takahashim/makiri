@@ -152,7 +152,9 @@ macro_rules! raising {
 }
 
 raising! {
+    fn rb_ary_cat(ary: Value, train: *const Value, len: core::ffi::c_long) -> Value;
     fn rb_ary_new_capa(capa: core::ffi::c_long) -> Value;
+    fn rb_ary_new_from_values(n: core::ffi::c_long, elts: *const Value) -> Value;
     fn rb_ary_push(ary: Value, elem: Value) -> Value;
     fn rb_big2ll(arg1: Value) -> core::ffi::c_longlong;
     fn rb_big2str(x: Value, base: core::ffi::c_int) -> Value;
@@ -181,6 +183,7 @@ raising! {
     fn rb_funcallv_public(recv: Value, mid: ID, argc: core::ffi::c_int, argv: *const Value) -> Value;
     fn rb_gc_register_mark_object(object: Value);
     fn rb_hash_aset(hash: Value, key: Value, val: Value) -> Value;
+    fn rb_hash_bulk_insert(argc: core::ffi::c_long, argv: *const Value, hash: Value);
     fn rb_hash_lookup2(hash: Value, key: Value, def: Value) -> Value;
     fn rb_hash_new() -> Value;
     fn rb_id2sym(id: ID) -> Value;

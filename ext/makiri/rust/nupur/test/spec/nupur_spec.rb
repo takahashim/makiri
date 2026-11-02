@@ -193,6 +193,41 @@ RSpec.describe "nupur" do
     end
   end
 
+  describe "values built without a call each" do
+    def bits(x) = [x].pack("D").unpack1("Q")
+
+    it "makes the same Float Ruby makes, a flonum where Ruby's is one" do
+      edge = [0.0, -0.0, 1.0, -1.0, 0.1, 1.5, 1e-77, 1.72723e-77, 1e77, 1e78, 1e-78, 5e-324,
+              Float::MAX, Float::MIN, Float::INFINITY, -Float::INFINITY, Float::EPSILON,
+              2.0**255, 2.0**256, 2.0**-255, 2.0**-256]
+      rng = Random.new(7)
+      randoms = Array.new(20_000) { [rng.rand(2**64)].pack("Q").unpack1("D") }.reject(&:nan?)
+      (edge + randoms).each do |x|
+        made = NupurTest.float_of_bits(bits(x))
+        expect(bits(made)).to eq(bits(x))
+        # An immediate is the same object as Ruby's own; a heap Float never is.
+        expect(made.equal?(x)).to eq(x.equal?(x + 0.0))
+      end
+      expect(NupurTest.float_of_bits(bits(Float::NAN))).to be_nan
+    end
+
+    it "makes an Array of several values, and appends several, in one call each" do
+      expect(NupurTest.ary_bulk(1, "b", :c, nil, 2.5)).to eq([1, "b", :c, nil, 2.5])
+      expect(NupurTest.ary_bulk).to eq([])
+    end
+
+    it "inserts several pairs in one call, a later key winning" do
+      expect(NupurTest.hash_bulk("a", 1, :b, 2, "a", 3)).to eq({ "a" => 3, b: 2 })
+      expect(NupurTest.hash_bulk).to eq({})
+    end
+
+    it "refuses a key Ruby would hash with a method call, and an odd count" do
+      expect { NupurTest.hash_bulk([1], 2) }.to raise_error(TypeError)
+      expect { NupurTest.hash_bulk(Class.new(String).new("k"), 2) }.to raise_error(TypeError)
+      expect { NupurTest.hash_bulk("a", 1, "b") }.to raise_error(ArgumentError, /odd/)
+    end
+  end
+
   describe "a method called" do
     it "calls a public method with its arguments and answers its value" do
       expect(NupurTest.send_public([3, 1, 2], "sort")).to eq([1, 2, 3])

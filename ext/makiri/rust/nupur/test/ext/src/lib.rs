@@ -303,6 +303,29 @@ fn object_const_defined(ruby: &Ruby, name: Value) -> Result<bool, Error> {
     ruby.class_object().const_defined(ruby, name.as_str())
 }
 
+/* ---- numbers and collections built without a call each ---- */
+
+/// The Float of the bits `bits`, through `build::float` - a flonum built
+/// from its bits, a heap Float otherwise.
+fn float_of_bits(ruby: &Ruby, bits: Value) -> Result<Value, Error> {
+    let bits = integer_arg(bits)?.to_u64()?;
+    Ok(nupur::build::float(ruby, f64::from_bits(bits))?.as_value())
+}
+
+/// `[a, b, c]` through `build::ary_from`, then `d, e` through `ary_cat`.
+fn ary_bulk(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
+    let a = nupur::build::ary_from(ruby, args.get(..3).unwrap_or_default())?;
+    nupur::build::ary_cat(a, args.get(3..).unwrap_or_default())?;
+    Ok(a.as_value())
+}
+
+/// A Hash of `pairs` (key, value, ...) through `build::hash_insert_pairs`.
+fn hash_bulk(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
+    let h = nupur::build::hash(ruby)?;
+    nupur::build::hash_insert_pairs(h, args)?;
+    Ok(h.as_value())
+}
+
 /* ---- Init ---- */
 
 static INTERNAL: RbConst<ExceptionClass> = RbConst::new();
@@ -351,6 +374,9 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     m.define_module_function("int_from_decimal", function!(int_from_decimal, 1))?;
     m.define_module_function("symbol_name", function!(symbol_name, 1))?;
     m.define_module_function("send_public", function!(send_public, -1))?;
+    m.define_module_function("float_of_bits", function!(float_of_bits, 1))?;
+    m.define_module_function("ary_bulk", function!(ary_bulk, -1))?;
+    m.define_module_function("hash_bulk", function!(hash_bulk, -1))?;
     m.define_module_function("responds_to_s", function!(responds_to_s, 1))?;
     m.define_module_function("object_const_defined", function!(object_const_defined, 1))?;
     Ok(())

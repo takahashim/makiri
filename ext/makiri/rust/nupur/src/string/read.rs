@@ -55,15 +55,23 @@ impl RString {
 
     /// Whether this String's text is read as UTF-8 bytes with no transcode -
     /// its encoding UTF-8, US-ASCII or ASCII-8BIT
-    /// ([`Encoding::is_utf8_ascii_or_binary`]) - asked of the String itself, by
+    /// (`Encoding::is_utf8_ascii_or_binary`) - asked of the String itself, by
     /// index and with no call on the common path: the index is read from the String's
     /// flags, where Ruby keeps it inline for every encoding below
     /// `RUBY_ENCODING_INLINE_MAX` (the builtin three are 0-2), and compared
     /// with the builtin indices (`encoding`'s one table of them). Every strict read asks, so it
     /// is on the hot path: `rb_enc_get` + `rb_utf8_encoding` cost Makiri's
     /// `Node#[]` ~13%.
-    pub(crate) fn reads_as_utf8_bytes(self) -> bool {
+    pub fn reads_as_utf8_bytes(self) -> bool {
         crate::encoding::reads_as_utf8_index(self.encoding_index())
+    }
+
+    /// Whether this String is ASCII-8BIT, asked as
+    /// [`reads_as_utf8_bytes`](Self::reads_as_utf8_bytes) asks: from its
+    /// flags, with no call. A reader that takes UTF-8 and US-ASCII as text
+    /// but binary only when it is ASCII tells the two apart with it.
+    pub fn is_binary(self) -> bool {
+        crate::encoding::is_ascii8bit_index(self.encoding_index())
     }
 
     /// Whether Ruby already knows this String to be valid UTF-8, from its
