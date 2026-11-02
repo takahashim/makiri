@@ -193,6 +193,43 @@ RSpec.describe "nupur" do
     end
   end
 
+  describe "a String read in place" do
+    it "lends its bytes to a closure that cannot touch Ruby" do
+      expect(NupurTest.lent_sum("abc")).to eq(97 + 98 + 99)
+      expect(NupurTest.lent_sum("")).to eq(0)
+      expect(NupurTest.lent_sum("x" * 10_000)).to eq(120 * 10_000)
+    end
+
+    it "is locked while lent to a reader that may run Ruby, and unlocked after" do
+      s = +"hello"
+      expect(NupurTest.locked_len(s) { |str| str.length }.first).to eq(5)
+      expect { NupurTest.locked_len(s) { |str| str << "!" } }.to raise_error(RuntimeError, /locked/)
+      expect { s << "!" }.not_to raise_error
+      expect(s).to eq("hello!")
+    end
+
+    it "leaves the String unlocked when the reader's Ruby raises" do
+      s = +"x"
+      expect { NupurTest.locked_len(s) { raise IOError, "inside" } }.to raise_error(IOError, "inside")
+      expect { s << "y" }.not_to raise_error
+    end
+
+    it "answers whether Ruby holds a String to be UTF-8, scanning once and keeping it" do
+      expect(NupurTest.knows_utf8(+"abc")).to be(true)
+      expect(NupurTest.knows_utf8(+"é")).to be(true)
+      expect(NupurTest.knows_utf8("\xFF".dup.force_encoding("UTF-8"))).to be(false)
+      expect(NupurTest.knows_utf8("\xC3\xA9".b)).to be(false)
+      expect(NupurTest.knows_utf8("ab".b)).to be(true)
+    end
+  end
+
+  describe "a value's kind" do
+    it "is read once, with the handle" do
+      expect([nil, true, false, 1, 2**70, 1.5, 1e300, "s", :s, [], {}, Object.new, 1r].map { NupurTest.kind_of(_1) })
+        .to eq(%i[nil true false fixnum bignum float float string symbol array hash other other])
+    end
+  end
+
   describe "values built without a call each" do
     def bits(x) = [x].pack("D").unpack1("Q")
 

@@ -205,6 +205,13 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
     {
         check_gvl_released(cx, body);
     }
+    /* A String's bytes lent to a closure: held as a GVL-released body is,
+     * since nothing in it may touch Ruby while the slice is out. */
+    if path == "nupur::string::read::with_bytes"
+        && let ExprKind::MethodCall(_, _, [body], _) = expr.kind
+    {
+        check_gvl_released(cx, body);
+    }
 }
 
 /// The calls that run the caller's Ruby code: Ruby's C API that converts or

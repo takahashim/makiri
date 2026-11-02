@@ -326,6 +326,51 @@ fn hash_bulk(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     Ok(h.as_value())
 }
 
+/* ---- reading a String in place, and a value's kind ---- */
+
+/// The byte sum of `s`, read through `with_bytes`.
+fn lent_sum(_: &Ruby, s: Value) -> Result<u64, Error> {
+    let s = string_arg(s)?;
+    Ok(s.with_bytes(|b| b.iter().map(|&x| u64::from(x)).sum()))
+}
+
+/// `[length, appended]`: the length read under `with_locked_bytes`, and
+/// whether `block`, run with the lock held, could append to `s` - it must
+/// not, so the spec's block raises and this answers the error.
+fn locked_len(ruby: &Ruby, s: Value) -> Result<Value, Error> {
+    let s = string_arg(s)?;
+    let n = s.with_locked_bytes(|b| b.len())?;
+    let inner = s.with_locked_bytes(|_| nupur::rb::method::yield_value(ruby, s.as_value()))?;
+    let out = nupur::build::ary(ruby, 2)?;
+    nupur::build::push(out, nupur::build::int(ruby, i64::try_from(n).unwrap_or(0))?)?;
+    nupur::build::push(out, inner?)?;
+    Ok(out.as_value())
+}
+
+/// Whether Ruby holds `s` to be UTF-8, through `ruby_knows_utf8`.
+fn knows_utf8(_: &Ruby, s: Value) -> Result<bool, Error> {
+    string_arg(s)?.ruby_knows_utf8()
+}
+
+/// `v`'s kind, through `Value::kind`, as a Symbol.
+fn kind_of(ruby: &Ruby, v: Value) -> Result<Value, Error> {
+    use nupur::rb::Kind;
+    let k = match v.kind() {
+        Kind::Nil => "nil",
+        Kind::True => "true",
+        Kind::False => "false",
+        Kind::Fixnum(_) => "fixnum",
+        Kind::Bignum(_) => "bignum",
+        Kind::Float(_) => "float",
+        Kind::String(_) => "string",
+        Kind::Symbol(_) => "symbol",
+        Kind::Array(_) => "array",
+        Kind::Hash(_) => "hash",
+        Kind::Other => "other",
+    };
+    Ok(nupur::build::symbol(ruby, k)?.as_value())
+}
+
 /* ---- Init ---- */
 
 static INTERNAL: RbConst<ExceptionClass> = RbConst::new();
@@ -375,6 +420,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     m.define_module_function("symbol_name", function!(symbol_name, 1))?;
     m.define_module_function("send_public", function!(send_public, -1))?;
     m.define_module_function("float_of_bits", function!(float_of_bits, 1))?;
+    m.define_module_function("lent_sum", function!(lent_sum, 1))?;
+    m.define_module_function("locked_len", function!(locked_len, 1))?;
+    m.define_module_function("knows_utf8", function!(knows_utf8, 1))?;
+    m.define_module_function("kind_of", function!(kind_of, 1))?;
     m.define_module_function("ary_bulk", function!(ary_bulk, -1))?;
     m.define_module_function("hash_bulk", function!(hash_bulk, -1))?;
     m.define_module_function("responds_to_s", function!(responds_to_s, 1))?;
