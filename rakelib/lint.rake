@@ -30,7 +30,7 @@ task lint: :lexbor do
     sh "cargo", "fmt", "--all", "--", "--check"
     # nupur's documentation is what an extension on the layer reads first:
     # a link that resolves nowhere, or to an item it cannot see, fails.
-    sh({ "RUSTDOCFLAGS" => "-D warnings" }, "cargo", "doc", "-p", "nupur", "--no-deps", "--all-features")
+    sh({ "RUSTDOCFLAGS" => "-D warnings" }, "cargo", "doc", "-p", "nupur", "-p", "nupur_sys", "--no-deps", "--all-features")
   end
   # The Lexbor reference is a workspace of its own, which `--workspace` does
   # not reach.

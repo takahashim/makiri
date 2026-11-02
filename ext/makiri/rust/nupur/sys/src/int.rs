@@ -9,7 +9,7 @@
 //! 2`, so 2^30 - 1 at most on Windows. `c_long` is an alias, `i64` itself
 //! where the code is built and linted, so a truncation there is invisible to
 //! rustc and clippy - which is why each Windows bug was found by review. So
-//! the rules are written once, over a [`Long`] of either width, and
+//! the rules are written once, over a `Long` of either width, and
 //! instantiated at this target's: the tests run them at both widths on any
 //! machine, and hold the host's instance to rb-sys's own constants and
 //! `long2fix`. `verus/int.rs` proves the rules at both widths for every

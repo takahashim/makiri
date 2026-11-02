@@ -132,7 +132,7 @@ impl Ruby {
     }
 
     /// The Fixnum `n` is (`LONG2FIX`), or `None` past a Fixnum's range
-    /// ([`crate::int::fixnum`]).
+    /// (`int::fixnum`, crate-private).
     #[inline(always)]
     pub fn fixnum(&self, n: i64) -> Option<Value> {
         // SAFETY: an immediate, built from its bits.
