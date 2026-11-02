@@ -14,14 +14,15 @@
 //!
 //! # What the layer guarantees
 //!
-//! - **No raise crosses Rust.** Every C call that can raise is a wrapper in
-//!   `nupur_sys::raising` that takes a `&Protected`. Only `rb_protect`'s
-//!   thunk makes one, and lends it to the closure that `raw::call` runs, so
-//!   the call runs under `rb_protect` by its type and its raise comes back as
-//!   `Err`. Nupur has no other way to call one: it does not depend on rb-sys,
-//!   and `nupur_sys` re-exports no C function. A method's `Err` is raised by
-//!   its trampoline ([`rb::method::finish`]) once every Rust frame of the
-//!   method has returned.
+//! - **No raise skips Rust's cleanup.** Every C call that can raise is a
+//!   wrapper in `nupur_sys::raising` that takes a `&Protected`. Only
+//!   `rb_protect`'s thunk makes one, and lends it to the closure that
+//!   `raw::call` runs, so the call runs under `rb_protect` by its type and
+//!   its raise comes back as `Err`. Nupur has no other way to call one: it
+//!   does not depend on rb-sys, and `nupur_sys` re-exports no C function.
+//!   The raises outside it cross frames that own nothing: a trampoline's
+//!   ([`rb::method::finish`], `run_init`), and `gc_mark_in_dmark`'s
+//!   `NoMemoryError`, as in any C extension's mark function.
 //! - **No panic reaches C.** A trampoline catches a panic and raises the
 //!   internal error in its place; a callback C runs latches one
 //!   ([`caught::PanicLatch`]) for its caller to resume. What must not unwind
@@ -37,13 +38,9 @@
 //!   `rb::method`'s private `entry_token`, which only the two entries Ruby
 //!   calls use: a method's trampoline and [`rb::method::run_init`].
 //!
-//!   A value lends the token for its borrow (`Value::ruby`), so a function
-//!   takes `&Ruby` only when it holds no Ruby value (or handle made from
-//!   one, `self` included) to show. Two kinds take `&Ruby` against that
-//!   rule: the reads of the running method's own frame
-//!   (`rb::method::block_given`, `keyword_given`, `yield_value`), whose token
-//!   stands for that frame as well as for the GVL, and `Opaque::get`, whose
-//!   value lives in a static and so proves nothing. The
+//!   An [`rb::Value`] lends no [`rb::Ruby`], so a function takes `&Ruby`
+//!   when it reads something no argument proves - a C global, the running
+//!   method's frame, an `Opaque` - even if it holds a value too. The
 //!   few calls of Ruby's C that take no proof need no GVL (whether this is a
 //!   Ruby thread, an encoding's index) or run in a GC callback, whose
 //!   contract is the proof (`gc_mark_in_dmark`).
@@ -165,8 +162,7 @@
 //!   `extern "C" fn Init_*` alone, [`rb::method::finish`] from the
 //!   `method!` / `function!` expansions alone, and `nupur_sys`'s maker
 //!   (`Ruby::assume_gvl`) from `rb::method::entry_token` alone. Checked by
-//!   `gvl_token_outside_entry`; that `entry_token` is the only maker here is
-//!   the compiler's, since it is private to `rb::method`.
+//!   `gvl_token_outside_entry`, not the compiler: `assume_gvl` is `pub`.
 
 #![deny(unsafe_code)]
 /* The casts that lose a value. Where the code is built a C `long` is `i64`

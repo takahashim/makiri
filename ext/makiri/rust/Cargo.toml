@@ -72,10 +72,9 @@ alloc-inject = ["makiri_engine/alloc-inject", "falloc/alloc-inject", "nupur/allo
 # Ruby, no Lexbor (`engine/`).
 makiri_engine = { path = "engine", version = "0.0.1" }
 falloc = { path = "falloc", version = "0.0.1" }
-# `nupur` is the binding layer (`nupur/`): rb-sys, and every `unsafe` that
-# talks to Ruby, behind safe types - the one layer between the glue and Ruby
-# (magnus stood here until 2026-10). rb-sys comes with it; nothing here names
-# it directly.
+# `nupur` is the binding layer (`nupur/`): every `unsafe` that talks to Ruby,
+# behind safe types - the one layer between the glue and Ruby. rb-sys comes with it,
+# through `nupur_sys` (`nupur/sys/`) alone; neither this crate nor `nupur` names it.
 nupur = { path = "nupur", version = "0.0.1" }
 
 # `unwind`, so a panic reaches Ruby as an exception instead of killing the host

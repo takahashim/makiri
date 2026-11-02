@@ -18,8 +18,10 @@ use super::value::{ExceptionClass, RClass, RModule, Value};
 ///
 /// `nupur_sys`'s token underneath, which its calls that take no value take.
 ///
-/// The field is `rb`'s, so the one maker, `rb::method`'s private
-/// `entry_token`, can build one: no other module of the layer can.
+/// The field is `rb`'s, and it is built only from an owned `nupur_sys`
+/// token, which `Ruby::assume_gvl` alone makes. That `rb::method`'s private
+/// `entry_token` is the one caller of `assume_gvl`, and so the one maker of
+/// this token, is `gvl_token_outside_entry`'s to hold.
 pub struct Ruby(pub(super) nupur_sys::value::Ruby);
 
 macro_rules! globals {
