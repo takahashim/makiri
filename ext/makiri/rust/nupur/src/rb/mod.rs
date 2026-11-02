@@ -13,6 +13,7 @@
 //! (`method::finish`). So the C functions an extension trusts are the ones
 //! `raw/` names, and no other code stands between them and its methods.
 
+pub mod call;
 pub mod class;
 pub mod convert;
 pub mod error;

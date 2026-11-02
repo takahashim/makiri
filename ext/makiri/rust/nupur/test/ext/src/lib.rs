@@ -267,6 +267,42 @@ fn symbol_name(_: &Ruby, s: Value) -> Result<Value, Error> {
     Ok(sym.name()?.as_value())
 }
 
+/* ---- calling a method ---- */
+
+static TO_S: nupur::rb::call::IdConst = nupur::rb::call::IdConst::new(c"to_s");
+
+/// `recv.public_send(name, *rest)`, through `rb::call::public_method`.
+fn send_public(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
+    let a = nupur::args::scan(
+        ruby,
+        args,
+        Shape {
+            rest: true,
+            ..Shape::positional(2, 0)
+        },
+    )?;
+    let name = nupur::string::read_utf8(ruby, string_arg(a.required(1))?, |_| None::<()>)
+        .map_err(read_error)?;
+    let cname = std::ffi::CString::new(name.as_str())
+        .map_err(|_| nupur::rb::error::arg_error("a name with a NUL"))?;
+    let id = nupur::rb::Id::intern(ruby, &cname)?;
+    nupur::rb::call::public_method(a.required(0), id, a.rest())
+}
+
+/// Whether `recv` responds to `to_s` publicly, through `IdConst` and
+/// `rb::call::responds_to`.
+fn responds_to_s(ruby: &Ruby, recv: Value) -> Result<bool, Error> {
+    let id = TO_S.get(ruby)?;
+    nupur::rb::call::responds_to(recv, id)
+}
+
+/// Whether `Object` holds the constant `name`, through `Module::const_defined`.
+fn object_const_defined(ruby: &Ruby, name: Value) -> Result<bool, Error> {
+    let name =
+        nupur::string::read_utf8(ruby, string_arg(name)?, |_| None::<()>).map_err(read_error)?;
+    ruby.class_object().const_defined(ruby, name.as_str())
+}
+
 /* ---- Init ---- */
 
 static INTERNAL: RbConst<ExceptionClass> = RbConst::new();
@@ -314,6 +350,9 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     m.define_module_function("decimal_of", function!(decimal_of, 1))?;
     m.define_module_function("int_from_decimal", function!(int_from_decimal, 1))?;
     m.define_module_function("symbol_name", function!(symbol_name, 1))?;
+    m.define_module_function("send_public", function!(send_public, -1))?;
+    m.define_module_function("responds_to_s", function!(responds_to_s, 1))?;
+    m.define_module_function("object_const_defined", function!(object_const_defined, 1))?;
     Ok(())
 }
 

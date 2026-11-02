@@ -58,7 +58,7 @@ UNSAFE_ISLANDS = {
   "nupur/gvl.rs" => 3,
   "nupur/raw/check.rs" => 4,
   "nupur/raw/data.rs" => 4,
-  "nupur/raw/define.rs" => 16,
+  "nupur/raw/define.rs" => 19,
   "nupur/raw/exception.rs" => 5,
   "nupur/raw/iterate.rs" => 4,
   "nupur/raw/protect.rs" => 8,
@@ -167,9 +167,10 @@ FORBID_FILES = %w[
   glue/xml_node/serialize.rs glue/xpath_context.rs nupur/abi.rs
   nupur/args.rs nupur/build.rs nupur/cname.rs
   nupur/describe.rs nupur/hash.rs nupur/msg.rs
-  nupur/rb/class.rs nupur/rb/convert.rs nupur/rb/error.rs
-  nupur/rb/kept.rs nupur/stack.rs nupur/sys/int.rs
-  nupur/table.rs reference/gvl.rs reference/lexbor/contains_guard.rs
+  nupur/rb/call.rs nupur/rb/class.rs nupur/rb/convert.rs
+  nupur/rb/error.rs nupur/rb/kept.rs nupur/stack.rs
+  nupur/sys/int.rs nupur/table.rs reference/gvl.rs
+  reference/lexbor/contains_guard.rs
 ].freeze
 
 UNSAFE_USE = /\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)/

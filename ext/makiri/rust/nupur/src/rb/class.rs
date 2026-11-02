@@ -88,6 +88,14 @@ pub trait Module: ReprValue {
         crate::raw::const_get(ruby, self.as_value(), &c_name(name)?)
     }
 
+    /// Whether this module itself holds a constant `name` - an autoload
+    /// counts, and nothing is loaded. For a library the caller may or may
+    /// not have required (`JSON::State`).
+    fn const_defined(self, ruby: &Ruby, name: &str) -> Result<bool, Error> {
+        let id = crate::rb::Id::intern(ruby, &c_name(name)?)?;
+        crate::raw::const_defined_at(self.as_value(), id)
+    }
+
     /// `self.name(*args)`: the caller's Ruby - see `raw::call_method`.
     #[cfg_attr(
         dylint_lib = "makiri_lints",

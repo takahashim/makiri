@@ -243,6 +243,10 @@ fn runs_callers_ruby(path: &str) -> bool {
         path,
         "nupur::raw::define::call_method"
             | "nupur::raw::iterate::yield_value"
+            | "nupur::raw::define::call_public"
+            | "nupur::raw::define::respond_to"
+            | "nupur::rb::call::public_method"
+            | "nupur::rb::call::responds_to"
             | "nupur::rb::class::Module::call_method"
             | "nupur::rb::method::yield_value"
     )

@@ -81,6 +81,7 @@ impl Ruby {
         class_float => rb_cFloat,
         class_hash => rb_cHash,
         class_integer => rb_cInteger,
+        class_object => rb_cObject,
         class_range => rb_cRange,
         class_string => rb_cString,
         class_symbol => rb_cSymbol,

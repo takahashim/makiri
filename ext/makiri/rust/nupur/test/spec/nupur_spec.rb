@@ -193,6 +193,58 @@ RSpec.describe "nupur" do
     end
   end
 
+  describe "a method called" do
+    it "calls a public method with its arguments and answers its value" do
+      expect(NupurTest.send_public([3, 1, 2], "sort")).to eq([1, 2, 3])
+      expect(NupurTest.send_public(5, "+", 2)).to eq(7)
+    end
+
+    it "refuses a private method, as public_send does" do
+      o = Class.new { private def secret = 1 }.new
+      expect { NupurTest.send_public(o, "secret") }.to raise_error(NoMethodError, /private method/)
+    end
+
+    it "passes the method's raise, throw and break back through" do
+      o = Object.new
+      def o.boom = raise(IOError, "from Ruby")
+      def o.toss = throw(:out, 42)
+      expect { NupurTest.send_public(o, "boom") }.to raise_error(IOError, "from Ruby")
+      expect(catch(:out) { NupurTest.send_public(o, "toss") }).to eq(42)
+      expect([1, 2].each { |x| break x * 10 if NupurTest.send_public(x, "odd?") }).to eq(10)
+    end
+
+    it "may call back into the extension" do
+      o = Object.new
+      def o.again = NupurTest.send_public(self, "object_id")
+      expect(NupurTest.send_public(o, "again")).to eq(o.object_id)
+    end
+
+    it "keeps the value it answers alive under GC.stress" do
+      o = Object.new
+      def o.fresh = Array.new(100) { |i| "s#{i}" }
+      GC.stress = true
+      begin
+        v = NupurTest.send_public(o, "fresh")
+      ensure
+        GC.stress = false
+      end
+      GC.start
+      expect(v.last).to eq("s99")
+    end
+
+    it "asks respond_to? for a public method, honouring respond_to_missing?" do
+      expect(NupurTest.responds_to_s(Object.new)).to be(true)
+      expect(NupurTest.responds_to_s(BasicObject.new)).to be(false)
+      hidden = Class.new { private def to_s = "x" }.new
+      expect(NupurTest.responds_to_s(hidden)).to be(false)
+    end
+
+    it "tells whether a constant is defined, loading nothing" do
+      expect(NupurTest.object_const_defined("String")).to be(true)
+      expect(NupurTest.object_const_defined("NoSuchConstantHere")).to be(false)
+    end
+  end
+
   describe "a method's arguments" do
     it "reads a keyword, nil when absent; a braced Hash is positional" do
       expect(NupurTest.kw(a: 1)).to eq(1)

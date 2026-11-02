@@ -113,6 +113,11 @@ fn allocations() {
 fn callers_ruby(ruby: &crate::bridge::rb::Ruby, m: crate::bridge::rb::RModule) {
     let _ = crate::bridge::rb::Module::call_method(m, ruby, "new", &[]); //~ discarded_ruby_error runs_callers_ruby
     let _ = crate::bridge::rb::method::yield_value(ruby, ruby.qnil()); //~ discarded_ruby_error runs_callers_ruby
+    static TO_S: crate::bridge::rb::call::IdConst = crate::bridge::rb::call::IdConst::new(c"to_s");
+    if let Ok(id) = TO_S.get(ruby) { //~ discarded_ruby_error
+        let _ = crate::bridge::rb::call::public_method(m, id, &[]); //~ discarded_ruby_error runs_callers_ruby
+        let _ = crate::bridge::rb::call::responds_to(m, id); //~ discarded_ruby_error runs_callers_ruby
+    }
 }
 
 /// Stands in for a `bridge/` module: the bridge-scoped lints treat

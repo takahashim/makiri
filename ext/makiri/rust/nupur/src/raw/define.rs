@@ -125,6 +125,53 @@ pub fn const_get(ruby: &Ruby, outer: Value, name: &core::ffi::CStr) -> Result<Va
     Ok(Value::from_sys(v))
 }
 
+/// Whether `outer` itself holds a constant `id` (`rb_const_defined_at`),
+/// an autoload counting as one; nothing is loaded. Raises nothing in
+/// practice; protected as every C call that is not classified.
+pub fn const_defined_at(outer: Value, id: crate::rb::Id) -> Result<bool, Error> {
+    let (outer, id) = (outer.as_sys(), id.as_raw());
+    let r = call(|inside| unsafe { nupur_sys::raising::rb_const_defined_at(inside, outer, id) })?;
+    Ok(r != 0)
+}
+
+/// `recv.public_send(id, *args)` (`rb_funcallv_public`): only a public
+/// method, a private or protected one being `NoMethodError`. The caller's
+/// Ruby, as [`call_method`] is.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        runs_callers_ruby,
+        reason = "rb_funcallv_public: the wrapper `rb::call::public_method` is, and its callers allow it"
+    )
+)]
+pub fn call_public(recv: Value, id: crate::rb::Id, args: &[Value]) -> Result<Value, Error> {
+    let argc = c_int::try_from(args.len())
+        .map_err(|_| crate::rb::error::arg_error("too many arguments"))?;
+    let (recv, id) = (recv.as_sys(), id.as_raw());
+    /* `Value` is transparent over `VALUE`, so the slice is the C array. */
+    let argv = args.as_ptr().cast::<nupur_sys::value::Value>();
+    let v = call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_funcallv_public(inside, recv, id, argc, argv)
+    })?;
+    Ok(Value::from_sys(v))
+}
+
+/// Whether `recv` has a public method `id` (`rb_respond_to`): Ruby's own
+/// `respond_to?`, which a class may redefine - the caller's Ruby.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        runs_callers_ruby,
+        reason = "rb_respond_to: the wrapper `rb::call::responds_to` is, and its callers allow it"
+    )
+)]
+pub fn respond_to(recv: Value, id: crate::rb::Id) -> Result<bool, Error> {
+    let (recv, id) = (recv.as_sys(), id.as_raw());
+    let r = call(|inside| unsafe { nupur_sys::raising::rb_respond_to(inside, recv, id) })?;
+    Ok(r != 0)
+}
+
 /// `recv.name(*args)` (`rb_funcallv`): the caller's Ruby, which is why each
 /// call of it is allowed where it is made (`rake dylint`'s
 /// `runs_callers_ruby`), with the reason it may run there.

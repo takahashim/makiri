@@ -144,7 +144,7 @@ The test extension also wraps an object with a slot (`TypedType`, `Birth`),
 reads arguments and keywords (`args`), walks a Hash, reads Strings, and runs
 a body with the GVL released.
 
-Two things an extension's own build needs to know:
+Three things an extension's own build needs to know:
 
 - `rb::Error` holds its message inline (256 bytes), so that making one
   allocates nothing, which puts every `Result<_, Error>` past clippy's
@@ -153,6 +153,17 @@ Two things an extension's own build needs to know:
 - The profile builds with `panic = "unwind"`, as Nupur's test extension
   does; with `abort`, a panic in a method would kill the host instead of
   reaching Ruby as the internal error.
+- An `allow` of one of Nupur's lints sits under
+  `cfg_attr(dylint_lib = "makiri_lints", ...)`, so register the cfg in the
+  extension's `Cargo.toml`, or every such allow warns:
+  `[lints.rust] unexpected_cfgs = { level = "warn", check-cfg = ['cfg(dylint_lib, values(any()))'] }`.
+  The lints run over the extension with
+  `MAKIRI_LINTS_EXTENSION=<its crate> cargo dylint --path <makiri>/ext/makiri/rust/lints/makiri_lints --no-deps`.
+
+An extension that calls a method of an object it was handed (a JSON
+generator calling `to_json`) does it through `rb::call`, whose module doc
+gives the one rule that keeps it safe: hold nothing across the call that
+the callee could invalidate.
 
 ## Compared with Magnus
 
@@ -189,7 +200,7 @@ Nupur is not published, and is used only inside Makiri's workspace.
 
 | Nupur | What it holds |
 | --- | --- |
-| `rb` | `Value` and the class-checked handles, `Error`, the `method!` / `function!` trampolines, class and module definitions |
+| `rb` | `Value` and the class-checked handles, `Error`, the `method!` / `function!` trampolines, class and module definitions; `rb::call`, calling a public method of any object |
 | `typed` | TypedData: wrapping a Rust payload as a Ruby object, its slots and GC callbacks, memory reported to the GC |
 | `gvl` | Running a body with the GVL released |
 | `build` | Building Arrays, Hashes, numbers, Symbols and UTF-8 Strings |

@@ -148,7 +148,11 @@
 //!   today, yet not a guarantee. Checked by `ruby_in_gvl_released_body`.
 //! - **Nothing runs the caller's Ruby unasked** - a `to_s`, a block, a
 //!   method call. Checked by `runs_callers_ruby`, with each sanctioned call
-//!   an `allow` stating why.
+//!   an `allow` stating why. An extension that asks calls through
+//!   [`rb::call`], and holds nothing across the call that the callee could
+//!   invalidate: no payload borrow beyond a `Cell`, no `RefCell` guard, no
+//!   guard of its own, no Ruby collection walked in place (that module says
+//!   why each).
 //! - **Declared Ractor-safe, the extension's own state is too.** What the
 //!   layer keeps is safe across Ractors; what the extension keeps - its
 //!   statics, whatever its methods take the GVL to serialise (now only one
