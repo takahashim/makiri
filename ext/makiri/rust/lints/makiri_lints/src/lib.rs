@@ -4,7 +4,7 @@
 //! The lints over the binding layer and the extension built on it, in two
 //! groups. Paths are named as [`paths`] spells them: the layer's items by
 //! its own crate name (`nupur::...`), the extension's by its path inside
-//! [`paths::EXTENSION`].
+//! [`paths::extension`].
 //!
 //! # The layer's guarantees (nupur)
 //!
@@ -39,7 +39,9 @@
 //! # The extension's own layout (Makiri)
 //!
 //! Where Makiri draws its own lines - its engine, its glue and bridge, its
-//! allocation policy - in [`boundaries`]: `ruby_layer_in_engine`,
+//! allocation policy - in [`boundaries`], which another extension running
+//! these lints (`MAKIRI_LINTS_EXTENSION`) is not held to
+//! ([`paths::makiri_policy_applies`]): `ruby_layer_in_engine`,
 //! `infallible_allocation`, `raw_node_crossing`, `ruby_surface_in_bridge`. The
 //! engine is a crate of its own (`makiri_engine`, [`paths::ENGINE`]) that
 //! depends on no Ruby, so `ruby_layer_in_engine` has nothing to find there;
