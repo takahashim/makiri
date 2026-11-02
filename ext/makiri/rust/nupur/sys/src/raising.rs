@@ -199,6 +199,7 @@ raising! {
     fn rb_obj_reveal(obj: Value, klass: Value) -> Value;
     fn rb_range_beg_len(range: Value, begp: *mut core::ffi::c_long, lenp: *mut core::ffi::c_long, len: core::ffi::c_long, err: core::ffi::c_int) -> Value;
     fn rb_respond_to(obj: Value, mid: ID) -> core::ffi::c_int;
+    fn rb_ractor_make_shareable(obj: Value) -> Value;
     fn rb_range_values(range: Value, begp: *mut Value, endp: *mut Value, exclp: *mut core::ffi::c_int) -> core::ffi::c_int;
     fn rb_str_dup(str_: Value) -> Value;
     fn rb_str_encode(str_: Value, to: Value, ecflags: core::ffi::c_int, ecopts: Value) -> Value;

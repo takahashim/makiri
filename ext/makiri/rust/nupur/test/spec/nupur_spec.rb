@@ -193,6 +193,35 @@ RSpec.describe "nupur" do
     end
   end
 
+  describe "a wrapped object shared between Ractors" do
+    it "is frozen and shareable from birth, with what its slot holds" do
+      held = +"slot"
+      o = NupurTest::Shared.new(7, held)
+      expect(o).to be_frozen
+      expect(Ractor.shareable?(o)).to be(true)
+      expect(held).to be_frozen
+      expect(o.held).to equal(held)
+    end
+
+    it "is read from other Ractors without a copy" do
+      skip "no Ractor" unless defined?(Ractor)
+      o = NupurTest::Shared.new(42, "x")
+      rs = 3.times.map { Ractor.new(o) { |shared| [shared.n, shared.object_id] } }
+      results = rs.map { |r| r.respond_to?(:value) ? r.value : r.take }
+      expect(results).to all(eq([42, o.object_id]))
+    end
+
+    it "refuses a slot value that cannot be made shareable" do
+      not_shareable = Object.new.instance_eval { proc { self } }
+      expect { NupurTest::Shared.new(1, not_shareable) }.to raise_error(Ractor::Error)
+    end
+
+    it "is not shareable when its type does not ask to be" do
+      expect(Ractor.shareable?(NupurTest::Holder.new(1))).to be(false)
+      expect { Ractor.make_shareable(NupurTest::Holder.new(1)) }.to raise_error(Ractor::Error)
+    end
+  end
+
   describe "a String read in place" do
     it "lends its bytes to a closure that cannot touch Ruby" do
       expect(NupurTest.lent_sum("abc")).to eq(97 + 98 + 99)

@@ -39,32 +39,59 @@ const _: () = assert!(
 /// Every type is freed at once when its object is collected
 /// (`RUBY_TYPED_FREE_IMMEDIATELY`: the free callback only drops and frees,
 /// which needs no deferral). What a type chooses is whether its data may be
-/// embedded in the object's own slot (`RUBY_TYPED_EMBEDDABLE`). And no type
-/// may be made shareable (`RUBY_TYPED_FROZEN_SHAREABLE` is not among the
-/// choices): an object made shareable could be read from two Ractors at
-/// once, and a payload's cells (a borrow count, a cache) are not atomic.
-/// Without the flag Ruby refuses to make one shareable.
+/// embedded in the object's own slot (`RUBY_TYPED_EMBEDDABLE`), and whether
+/// a frozen object may be shared between Ractors
+/// (`RUBY_TYPED_FROZEN_SHAREABLE`). A shareable object can be read from two
+/// Ractors at once, so only a payload that is `Sync` may choose it - which
+/// Nupur's `TypedType::shareable` holds by its bound; without the flag Ruby
+/// refuses to make an object shareable.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct DataFlags {
     embeddable: bool,
+    shareable: bool,
 }
 
 impl DataFlags {
     /// Data apart from the object, in a block of its own.
-    pub const SEPARATE: DataFlags = DataFlags { embeddable: false };
+    pub const SEPARATE: DataFlags = DataFlags {
+        embeddable: false,
+        shareable: false,
+    };
     /// Data that Ruby may embed in the object's own slot.
-    pub const EMBEDDABLE: DataFlags = DataFlags { embeddable: true };
+    pub const EMBEDDABLE: DataFlags = DataFlags {
+        embeddable: true,
+        shareable: false,
+    };
+
+    /// These flags, and a frozen object of the type shareable between
+    /// Ractors.
+    pub const fn frozen_shareable(self) -> DataFlags {
+        DataFlags {
+            embeddable: self.embeddable,
+            shareable: true,
+        }
+    }
+
+    /// Whether a frozen object of the type may be shared between Ractors.
+    pub const fn is_shareable(self) -> bool {
+        self.shareable
+    }
 
     /// The `flags` word, as `rb_data_type_t` holds it.
     const fn bits(self) -> VALUE {
         const FREE_IMMEDIATELY: VALUE =
             rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_FREE_IMMEDIATELY as VALUE;
         const EMBEDDABLE: VALUE = rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_EMBEDDABLE as VALUE;
+        const SHAREABLE: VALUE =
+            rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_FROZEN_SHAREABLE as VALUE;
+        let mut bits = FREE_IMMEDIATELY;
         if self.embeddable {
-            FREE_IMMEDIATELY | EMBEDDABLE
-        } else {
-            FREE_IMMEDIATELY
+            bits |= EMBEDDABLE;
         }
+        if self.shareable {
+            bits |= SHAREABLE;
+        }
+        bits
     }
 }
 
@@ -150,8 +177,25 @@ mod tests {
         assert_eq!(ty.0.flags, VALUE::from(FREE_IMMEDIATELY_FLAG));
     }
 
-    /// Neither kind of type is one Ruby may make shareable.
+    /// Neither kind of type is one Ruby may make shareable unless it asks.
     #[test]
+    fn no_type_is_frozen_shareable_unless_asked() {
+        const SHAREABLE_BIT: VALUE =
+            rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_FROZEN_SHAREABLE as VALUE;
+        for flags in [DataFlags::SEPARATE, DataFlags::EMBEDDABLE] {
+            let asked = DataType::new(
+                c"nupur::test",
+                None,
+                Some(mark),
+                Some(free),
+                Some(size),
+                flags.frozen_shareable(),
+            );
+            assert_eq!(asked.0.flags & SHAREABLE_BIT, SHAREABLE_BIT);
+        }
+        no_type_is_frozen_shareable();
+    }
+
     fn no_type_is_frozen_shareable() {
         const SHAREABLE: VALUE =
             rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_FROZEN_SHAREABLE as VALUE;

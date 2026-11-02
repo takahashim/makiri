@@ -50,7 +50,10 @@ impl ByteSet {
             #[allow(clippy::cast_possible_truncation, reason = "b < 256, the loop's bound")]
             #[cfg_attr(
                 dylint_lib = "makiri_lints",
-                allow(c_integer_outside_int, reason = "a byte index below 256, in a const fn, which has no TryFrom")
+                allow(
+                    c_integer_outside_int,
+                    reason = "a byte index below 256, in a const fn, which has no TryFrom"
+                )
             )]
             let c = b as u8;
             let mut hit = c < below || (high && c >= 0x80);
@@ -147,7 +150,10 @@ fn vector_skip(s: &[u8], mut i: usize, set: &ByteSet) -> usize {
 )]
 #[cfg_attr(
     dylint_lib = "makiri_lints",
-    allow(c_integer_outside_int, reason = "a byte reinterpreted as SSE2's i8 lane, bit for bit")
+    allow(
+        c_integer_outside_int,
+        reason = "a byte reinterpreted as SSE2's i8 lane, bit for bit"
+    )
 )]
 fn vector_skip(s: &[u8], mut i: usize, set: &ByteSet) -> usize {
     use core::arch::x86_64::*;
@@ -203,15 +209,17 @@ fn vector_skip(s: &[u8], i: usize, set: &ByteSet) -> usize {
 /// other target, compiled everywhere so the tests hold it too.
 #[cfg_attr(
     any(target_arch = "aarch64", target_arch = "x86_64"),
-    allow(dead_code, reason = "the vector paths stand in for it here; the tests still run it")
+    allow(
+        dead_code,
+        reason = "the vector paths stand in for it here; the tests still run it"
+    )
 )]
 #[inline]
 fn swar_skip(s: &[u8], mut i: usize, set: &ByteSet) -> usize {
     const ONES: u64 = 0x0101_0101_0101_0101;
     const HIGHS: u64 = 0x8080_8080_8080_8080;
-    let has_less = |x: u64, n: u8| {
-        n != 0 && x.wrapping_sub(ONES.wrapping_mul(u64::from(n))) & !x & HIGHS != 0
-    };
+    let has_less =
+        |x: u64, n: u8| n != 0 && x.wrapping_sub(ONES.wrapping_mul(u64::from(n))) & !x & HIGHS != 0;
     let has_byte = |x: u64, b: u8| has_less(x ^ ONES.wrapping_mul(u64::from(b)), 1);
     while let Some(chunk) = s.get(i..i + 8) {
         let mut word = [0u8; 8];
@@ -252,9 +260,13 @@ mod tests {
     /// The definition, from the set's own parts rather than its table.
     fn scalar(s: &[u8], from: usize, set: &ByteSet) -> usize {
         let member = |b: u8| {
-            b < set.below || (set.high && b >= 0x80) || set.eq.iter().take(set.n_eq).any(|&e| e == b)
+            b < set.below
+                || (set.high && b >= 0x80)
+                || set.eq.iter().take(set.n_eq).any(|&e| e == b)
         };
-        (from.min(s.len())..s.len()).find(|&i| member(s[i])).unwrap_or(s.len())
+        (from.min(s.len())..s.len())
+            .find(|&i| member(s[i]))
+            .unwrap_or(s.len())
     }
 
     #[test]
@@ -299,7 +311,11 @@ mod tests {
                 for from in [0, 1, 7, 15, 16, 17, len.saturating_sub(1), len, len + 3] {
                     let want = scalar(&s, from, set);
                     assert_eq!(find(&s, from, set), want, "{s:?} from {from} {set:?}");
-                    assert_eq!(find_swar(&s, from, set), want, "swar {s:?} from {from} {set:?}");
+                    assert_eq!(
+                        find_swar(&s, from, set),
+                        want,
+                        "swar {s:?} from {from} {set:?}"
+                    );
                 }
             }
         }

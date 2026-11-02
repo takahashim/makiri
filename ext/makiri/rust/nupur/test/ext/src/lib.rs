@@ -371,6 +371,44 @@ fn kind_of(ruby: &Ruby, v: Value) -> Result<Value, Error> {
     Ok(nupur::build::symbol(ruby, k)?.as_value())
 }
 
+/* ---- a wrapped object shared between Ractors ---- */
+
+/// A payload read from several Ractors at once: plain data, `Sync`.
+struct Shared {
+    n: i64,
+}
+
+impl Payload for Shared {}
+
+static SHARED: TypedType<Shared, 1> = TypedType::shareable(c"NupurTest::Shared");
+static SHARED_CLASS: RbConst<DataClass> = RbConst::new();
+
+/// `Shared.new(n, v)`: an object holding `n`, keeping `v` in its slot, made
+/// shareable as it is made.
+fn shared_new(ruby: &Ruby, n: Value, v: Value) -> Result<Value, Error> {
+    let class = SHARED_CLASS.defined(ruby)?;
+    let made = SHARED.wrap(
+        ruby,
+        Birth {
+            klass: class,
+            data: Shared {
+                n: integer_arg(n)?.to_i64()?,
+            },
+            roots: [v],
+        },
+    )?;
+    Ok(made.value())
+}
+
+/// `#n` and `#held`.
+fn shared_n(_: &Ruby, this: Value) -> Result<i64, Error> {
+    Ok(SHARED.check(this)?.data().n)
+}
+
+fn shared_held(_: &Ruby, this: Value) -> Result<Value, Error> {
+    Ok(SHARED.check(this)?.root::<0>())
+}
+
 /* ---- Init ---- */
 
 static INTERNAL: RbConst<ExceptionClass> = RbConst::new();
@@ -388,6 +426,12 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     let internal = m.define_error("InternalError", ruby.exception_exception())?;
     INTERNAL.set(internal)?;
     nupur::rb::error::INTERNAL_ERROR.set(internal)?;
+
+    let shared = m.define_data_class("Shared", None)?;
+    SHARED_CLASS.set(shared)?;
+    shared.define_singleton_method("new", function!(shared_new, 2))?;
+    shared.define_method("n", method!(shared_n, 0))?;
+    shared.define_method("held", method!(shared_held, 0))?;
 
     let holder = m.define_data_class("Holder", None)?;
     HOLDER_CLASS.set(holder)?;
