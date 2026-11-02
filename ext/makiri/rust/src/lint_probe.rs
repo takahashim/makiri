@@ -98,9 +98,12 @@ impl Drop for GuardedDrop {
     }
 }
 
+#[rustfmt::skip] // keeps each marker on the line reported
 fn gvl_released(ruby: &crate::bridge::rb::Ruby) -> Result<(), crate::bridge::rb::Error> {
     let _ = crate::bridge::gvl::without_gvl(ruby, || crate::bridge::ruby::type_error("x")); //~ discarded_ruby_error ruby_in_gvl_released_body
     crate::bridge::gvl::without_gvl(ruby, || engine::names_only_the_engine(b"x"))?;
+    let _ = crate::bridge::gvl::without_gvl_cancellable(ruby, |_| crate::bridge::ruby::type_error("x")); //~ discarded_ruby_error ruby_in_gvl_released_body
+    crate::bridge::gvl::without_gvl_cancellable(ruby, |_| engine::names_only_the_engine(b"x"))?;
     Ok(())
 }
 

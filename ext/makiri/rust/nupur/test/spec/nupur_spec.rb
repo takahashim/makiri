@@ -395,6 +395,23 @@ RSpec.describe "nupur" do
       expect(NupurTest.pairs({ a: 1, "b" => 2 })).to eq([[:a, 1], ["b", 2]])
     end
 
+    it "stops a cancellable body that a Timeout interrupts, and raises the Timeout" do
+      require "timeout"
+      expect(NupurTest.spin_cancellable(10)).to be(true)
+      t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      expect { Timeout.timeout(0.1) { NupurTest.spin_cancellable(20_000) } }.to raise_error(Timeout::Error)
+      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0).to be < 2
+    end
+
+    it "stops a cancellable body on Thread#kill" do
+      t = Thread.new { NupurTest.spin_cancellable(20_000) }
+      sleep 0.05
+      t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      t.kill
+      expect(t.join(2)).to eq(t)
+      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0).to be < 2
+    end
+
     it "runs a body with the GVL released and returns its answer" do
       expect(NupurTest.sum_without_gvl(1000)).to eq(499_500)
     end

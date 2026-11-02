@@ -205,7 +205,7 @@ Nupur is not published, and is used only inside Makiri's workspace.
 | --- | --- |
 | `rb` | `Value` and the class-checked handles, `Error`, the `method!` / `function!` trampolines, class and module definitions; `rb::call`, calling a public method of any object |
 | `typed` | TypedData: wrapping a Rust payload as a Ruby object, its slots and GC callbacks, memory reported to the GC |
-| `gvl` | Running a body with the GVL released |
+| `gvl` | Running a body with the GVL released (`without_gvl`), or one that stops when Ruby asks for the thread back (`without_gvl_cancellable`, its body asking a `Cancel`) |
 | `build` | Building Arrays, Hashes, numbers, Symbols and UTF-8 Strings |
 | `string`, `encoding`, `utf8_copy` | Reading Strings by copying, as checked UTF-8 (`read_utf8`) or as bytes (`read_bytes`); making UTF-8 Strings, of text marked valid (`utf8_str`, which takes a `&str`) or of bytes the caller holds to be UTF-8 (`utf8_str_trusting`), and ASCII-8BIT ones (`binary_str`); encodings |
 | `args`, `hash` | Reading a method's arguments and keywords; walking a Hash |

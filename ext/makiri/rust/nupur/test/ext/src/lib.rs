@@ -208,6 +208,23 @@ fn pairs(ruby: &Ruby, h: Value) -> Result<Value, Error> {
 }
 
 /// `0 + 1 + ... + (n - 1)`, summed with the GVL released.
+/// Spins with the GVL released for up to `ms` milliseconds, asking its
+/// `Cancel` as it goes: `true` when it ran the whole time, `false` when it
+/// was asked to stop and Ruby then raised nothing.
+fn spin_cancellable(ruby: &Ruby, ms: Value) -> Result<bool, Error> {
+    let ms = integer_arg(ms)?.to_u64()?;
+    nupur::gvl::without_gvl_cancellable(ruby, move |cancel| {
+        let until = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+        while std::time::Instant::now() < until {
+            if cancel.requested() {
+                return false;
+            }
+            std::hint::spin_loop();
+        }
+        true
+    })
+}
+
 fn sum_without_gvl(ruby: &Ruby, n: Value) -> Result<u64, Error> {
     let n = integer_arg(n)?.to_u64()?;
     nupur::gvl::without_gvl(ruby, move || (0..n).sum::<u64>())
@@ -469,6 +486,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     m.define_module_function("shape", function!(shape, -1))?;
     m.define_module_function("pairs", function!(pairs, 1))?;
     m.define_module_function("sum_without_gvl", function!(sum_without_gvl, 1))?;
+    m.define_module_function("spin_cancellable", function!(spin_cancellable, 1))?;
     m.define_module_function("frozen_check", function!(frozen_check, 1))?;
     m.define_module_function("booleans", function!(booleans, 0))?;
     m.define_module_function("usize_of", function!(usize_of, 1))?;

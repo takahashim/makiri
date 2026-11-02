@@ -113,7 +113,7 @@ Magnus のほうが記述は容易です。引数や返り値を自動変換し�
 | --- | --- |
 | `rb` | `Value` とクラスチェック付きハンドル、`Error`、`method!` / `function!` トランポリン、クラス・モジュール定義、任意のオブジェクトの public メソッドを呼ぶ `rb::call` |
 | `typed` | TypedData: Rust のペイロードを Ruby オブジェクトとしてラップ、そのスロットと GC コールバック、GC へ報告するメモリ |
-| `gvl` | GVL を解放した状態での処理実行 |
+| `gvl` | GVL を解放した本体の実行（`without_gvl`）と、Ruby がスレッドを返すよう求めたら止まる本体の実行（`without_gvl_cancellable`。本体は `Cancel` に問い合わせる） |
 | `build` | Array、Hash、数値、Symbol、UTF-8 String の構築 |
 | `string`, `encoding`, `utf8_copy` | コピーによる String の読み取り（検査済み UTF-8 として `read_utf8`、バイト列として `read_bytes`）、UTF-8 の String の生成（`&str` を受け取り有効と印を付ける `utf8_str`、呼び出し側が UTF-8 と保証するバイト列から作る `utf8_str_trusting`）と ASCII-8BIT の String の生成（`binary_str`）、エンコーディング |
 | `args`, `hash` | メソッドの引数・キーワード引数の読み取り、Hash のトラバース |
