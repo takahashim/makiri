@@ -347,13 +347,19 @@ globals! {
     rb_eArgError,
     rb_eEncodingError,
     rb_eException,
+    rb_eFrozenError,
+    rb_eIndexError,
+    rb_eKeyError,
     rb_eLoadError,
     rb_eNoMemError,
     rb_eNotImpError,
     rb_eRangeError,
     rb_eRuntimeError,
     rb_eStandardError,
+    rb_eStopIteration,
+    rb_eThreadError,
     rb_eTypeError,
+    rb_eZeroDivError,
 }
 
 /* ---- the C calls that raise, but not under their precondition ---- */

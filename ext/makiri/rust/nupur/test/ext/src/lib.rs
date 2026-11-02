@@ -110,6 +110,19 @@ fn read_error<P>(e: ReadError<P>) -> Error {
     }
 }
 
+/// Raises Ruby's own class `n` of the builtins past the first ten.
+fn raise_builtin(_: &Ruby, n: Value) -> Result<Value, Error> {
+    let class = match integer_arg(n)?.to_u64()? {
+        0 => Builtin::KeyError,
+        1 => Builtin::IndexError,
+        2 => Builtin::FrozenError,
+        3 => Builtin::ThreadError,
+        4 => Builtin::StopIteration,
+        _ => Builtin::ZeroDivisionError,
+    };
+    Err(Error::new(class, "nupur: raised by name"))
+}
+
 /// `s` read as checked UTF-8 with no NUL, and made a new String.
 fn read_text(ruby: &Ruby, s: Value) -> Result<Value, Error> {
     let s = string_arg(s)?;
@@ -475,6 +488,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     m.define_module_function("yield_each", function!(yield_each, 1))?;
     m.define_module_function("drop_exit", function!(drop_exit, 0))?;
     m.define_module_function("read_text", function!(read_text, 1))?;
+    m.define_module_function("raise_builtin", function!(raise_builtin, 1))?;
     m.define_module_function("trusting_str", function!(trusting_str, 1))?;
     m.define_module_function("read_capped", function!(read_capped, 2))?;
     m.define_module_function("transcode_kind", function!(transcode_kind, 1))?;

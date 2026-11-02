@@ -416,6 +416,12 @@ RSpec.describe "nupur" do
       expect(NupurTest.sum_without_gvl(1000)).to eq(499_500)
     end
 
+    it "raises each builtin class by name, as Ruby's own" do
+      [KeyError, IndexError, FrozenError, ThreadError, StopIteration, ZeroDivisionError].each_with_index do |c, i|
+        expect { NupurTest.raise_builtin(i) }.to raise_error(c, "nupur: raised by name")
+      end
+    end
+
     it "answers a frozen value with Ruby's own FrozenError" do
       expect(NupurTest.frozen_check(+"x")).to be_nil
       expect { NupurTest.frozen_check("x".freeze) }.to raise_error(FrozenError)
