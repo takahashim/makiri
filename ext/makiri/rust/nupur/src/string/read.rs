@@ -121,19 +121,32 @@ impl RString {
 }
 
 impl RString {
-    /// The String's bytes, lent to `f` while the String is locked
-    /// (`rb_str_locktmp`): for a reader that makes Ruby objects as it goes
-    /// (a JSON parser), and so cannot take [`with_bytes`](Self::with_bytes),
-    /// whose closure may not touch Ruby.
+    /// The String's bytes, lent to `f` while the String cannot change: for
+    /// a reader that makes Ruby objects as it goes (a JSON parser), and so
+    /// cannot take [`with_bytes`](Self::with_bytes), whose closure may not
+    /// touch Ruby.
     ///
-    /// While the lock is held Ruby refuses every change to the String
-    /// (`String#<<`, `replace`, `clear`, ... raise), whoever asks, so even
-    /// Ruby code `f` ran could not grow, shrink or free the buffer; the
-    /// String is kept alive and in place by this frame, which the GC's stack
-    /// scan sees, until `f` returns. The lock is released on every way out,
-    /// a panic included. A String already locked - by another reader, or by
-    /// `f` reading it again - is Ruby's `RuntimeError`, returned.
+    /// A frozen String cannot change: Ruby refuses every change to it, so
+    /// it is lent as it is. That is also the only kind another Ractor can
+    /// hold - a String shareable between Ractors is frozen - and so the
+    /// only kind two Ractors may read at once; nothing is written to it,
+    /// so they race on nothing. An unfrozen String, which only its own
+    /// Ractor can reach, is locked (`rb_str_locktmp`) for the loan: Ruby
+    /// then refuses every change to it (`String#<<`, `replace`, `clear`, ...
+    /// raise), whoever asks. Either way the String is kept alive, and in
+    /// place, by this frame, which the GC's stack scan sees, until `f`
+    /// returns; a lock is released on every way out, a panic included. An
+    /// unfrozen String already locked - by another reader, or by `f`
+    /// reading it again - is Ruby's `RuntimeError`, returned.
     pub fn with_locked_bytes<R>(self, f: impl FnOnce(&[u8]) -> R) -> Result<R, Error> {
+        use crate::rb::ReprValue;
+        if self.is_frozen() {
+            // SAFETY: a frozen String's bytes never change, and this frame
+            // keeps it alive and in place until `f` returns.
+            let r = f(unsafe { self.as_slice() });
+            nupur_sys::value::keep_alive(self.as_sys());
+            return Ok(r);
+        }
         crate::raw::str_locktmp(self)?;
         let unlock = Unlock(self);
         // SAFETY: the String is locked until `unlock` drops, after `f`, and

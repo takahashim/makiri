@@ -237,6 +237,16 @@ RSpec.describe "nupur" do
       expect(s).to eq("hello!")
     end
 
+    it "lends a frozen String unlocked, so Ractors may read one shared String at once" do
+      frozen = "shared".freeze
+      expect(NupurTest.locked_len(frozen) { |str| str.length }.first).to eq(6)
+      skip "no Ractor" unless defined?(Ractor)
+      s = Ractor.make_shareable(("x" * 1_000).freeze)
+      rs = 4.times.map { Ractor.new(s) { |str| 2_000.times.sum { NupurTest.locked_len(str) { |x| x.length }.first } } }
+      expect(rs.map { |r| r.respond_to?(:value) ? r.value : r.take }).to all(eq(1_000 * 2_000))
+      expect { s.dup << "y" }.not_to raise_error
+    end
+
     it "leaves the String unlocked when the reader's Ruby raises" do
       s = +"x"
       expect { NupurTest.locked_len(s) { raise IOError, "inside" } }.to raise_error(IOError, "inside")
