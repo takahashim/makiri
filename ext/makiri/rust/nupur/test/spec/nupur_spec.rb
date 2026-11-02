@@ -369,6 +369,13 @@ RSpec.describe "nupur" do
   end
 
   describe "a method's arguments" do
+    it "refuses an unknown keyword when asked to, as Ruby words it" do
+      expect(NupurTest.kw_only(a: 1, b: 2)).to eq(1)
+      expect(NupurTest.kw_only).to be_nil
+      expect { NupurTest.kw_only(a: 1, c: 2) }.to raise_error(ArgumentError, "unknown keyword: :c")
+      expect { NupurTest.kw_only(**{ "a" => 1 }) }.to raise_error(ArgumentError, "unknown keyword: String key")
+    end
+
     it "reads a keyword, nil when absent; a braced Hash is positional" do
       expect(NupurTest.kw(a: 1)).to eq(1)
       expect(NupurTest.kw).to be_nil

@@ -181,6 +181,13 @@ fn kw(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
         .unwrap_or_else(|| ruby.qnil()))
 }
 
+/// `kw_only(a:, b:)`: refuses any other keyword, then answers `a`.
+fn kw_only(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
+    let kw = Kwargs::scan(ruby, args)?;
+    kw.only(&["a", "b"])?;
+    Ok(kw.value(ruby, "a")?.unwrap_or_else(|| ruby.qnil()))
+}
+
 /// One required argument and one optional: how many were given.
 fn shape(ruby: &Ruby, args: &[Value]) -> Result<i64, Error> {
     let a = nupur::args::scan(ruby, args, Shape::positional(1, 1))?;
@@ -458,6 +465,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     m.define_module_function("slices", function!(slices, 1))?;
     m.define_module_function("binary_copy", function!(binary_copy, 1))?;
     m.define_module_function("kw", function!(kw, -1))?;
+    m.define_module_function("kw_only", function!(kw_only, -1))?;
     m.define_module_function("shape", function!(shape, -1))?;
     m.define_module_function("pairs", function!(pairs, 1))?;
     m.define_module_function("sum_without_gvl", function!(sum_without_gvl, 1))?;

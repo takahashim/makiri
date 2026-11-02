@@ -227,6 +227,36 @@ impl Kwargs {
             .filter(|v: &Value| !v.is_nil()))
     }
 
+    /// Refuses any keyword not in `known`, as Ruby refuses one a method does
+    /// not take: `ArgumentError`, worded as Ruby words it
+    /// (`unknown keyword: :mcost`, the first one found). [`value`](Self::value)
+    /// is a plain lookup that ignores the rest, so a method whose keywords
+    /// set something - a cost, a limit - calls this first: a misspelt one
+    /// must not quietly leave the default in place.
+    pub fn only(self, known: &[&str]) -> Result<(), Error> {
+        let Some(h) = self.0 else {
+            return Ok(());
+        };
+        crate::hash::hash_foreach(h, |k, _| {
+            /* A key given with `**{"name" => v}` is a String; one a method
+             * takes is a Symbol, so a String is unknown whatever it says. */
+            let Some(sym) = crate::rb::Symbol::from_value(k) else {
+                return Err(crate::rb::error::arg_error(format_args!(
+                    "unknown keyword: {} key",
+                    ClassName(k)
+                )));
+            };
+            let name = crate::string::read_bytes(sym.name()?)?;
+            if known.iter().any(|n| n.as_bytes() == name.as_slice()) {
+                return Ok(());
+            }
+            Err(match core::str::from_utf8(&name) {
+                Ok(n) => crate::rb::error::arg_error(format_args!("unknown keyword: :{n}")),
+                Err(_) => crate::rb::error::arg_error("unknown keyword"),
+            })
+        })
+    }
+
     /// Keyword `name`, read for truthiness: absent and `nil` are false, any
     /// other value - `0` included, this being Ruby - true.
     pub fn flag(self, ruby: &Ruby, name: &str) -> Result<bool, Error> {
