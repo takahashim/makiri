@@ -7,18 +7,10 @@
 * An HTML parse stops with `Makiri::Error` ("document size limit
   exceeded") once the document it builds passes `max_amplification:` times
   its input (default 256, never less than 64 MiB), so a crafted input can no
-  longer build a document thousands of times its size; ordinary documents
-  build 10-50 times theirs. The keyword is taken
-  by `Makiri::HTML`, `Document#fragment` and `DocumentFragment.parse`, and a
-  negative value lifts the limit. `inner_html=` and `outer_html=` use the
-  default.
-* An unknown keyword is `ArgumentError` in `DocumentFragment.parse`,
-  `Document#fragment`, `to_html`, `inner_html`, `outer_html`, `to_xml` and
-  `canonicalize`, as it already was in `Makiri::HTML` and `Makiri::XML`.
-  They used to ignore one, so a misspelt `max_amplification:` left the
-  parse under the default limit, and a misspelt `encoding:` wrote UTF-8.
-  `#xpath`, `#at_xpath` and `XPathContext.new` read their other keywords as
-  namespace bindings, as before.
+  longer build a document far larger than itself; ordinary documents build
+  10-50 times theirs. The keyword is taken by `Makiri::HTML`,
+  `Document#fragment` and `DocumentFragment.parse`, and a negative value
+  lifts the limit. `inner_html=` and `outer_html=` use the default.
 * A selector, an XPath expression, a name or text is checked to be UTF-8 by
   Makiri itself, on its own copy of the bytes, rather than trusted on the
   String's cached coderange, which another C extension could leave wrong.
@@ -35,95 +27,63 @@
 
 * A source install needs Rust 1.95 or newer (it was 1.84). Binary gems
   need no toolchain.
-* The extension no longer depends on magnus: it is built on rb-sys alone,
-  with its own layer for Ruby values, method definitions and raising C
-  calls. Every C call that can raise runs under `rb_protect`, and no Ruby
-  value is kept where the GC cannot see it.
-* An exception message is at most 256 bytes; one quoting a longer selector,
-  expression or name ends in `...`.
-* `XPathContext#node=`, `#register_namespace(s)` and `#register_variable(s)`
-  on a frozen context raise `FrozenError`: a frozen context keeps its node,
-  its namespaces and its variables.
-* A keywords-only call of `#xpath` / `#at_xpath` (`doc.xpath(s: uri)`, no
-  expression) raises Ruby's arity error, `ArgumentError`, rather than a
-  `TypeError` about the Hash, as a call with no arguments does.
-* On Windows, an index or a length (`NodeSet#[]`, `to_xml(indent:)`) takes
-  the same range as on Linux and macOS, a 64-bit integer, where one past
-  2^31 raised `RangeError`.
-* A namespace binding given as a keyword (`doc.xpath(expr, k => uri)`,
-  `XPathContext.new(node, k => uri)`) must have a Symbol or plain String
-  key: a key of a String subclass raises `TypeError`, since copying it into
-  a Hash would run the subclass's `#hash`.
-* `XPathContext#register_namespaces` reads its Hash as every namespace Hash
-  is read, natively, running none of the caller's Ruby; anything but a Hash
-  is `TypeError`.
+* An unknown keyword is `ArgumentError` in `DocumentFragment.parse`,
+  `Document#fragment`, `to_html`, `inner_html`, `outer_html`, `to_xml` and
+  `canonicalize`, as it already was in `Makiri::HTML` and `Makiri::XML`;
+  a misspelt one was ignored. `#xpath`, `#at_xpath` and `XPathContext.new`
+  read their other keywords as namespace bindings, as before.
 * HTML `to_html`, `to_s`, `outer_html` and `inner_html` take `encoding:`
   naming UTF-8 (a String, a Symbol or an `Encoding`), which code written
   for Nokogiri passes, and refuse any other with `ArgumentError`: HTML is
   written as UTF-8 alone. `NodeSet#to_html` passes its keywords to each
   node's.
+* An exception message is at most 256 bytes; one quoting a longer selector,
+  expression or name ends in `...`.
+* `XPathContext#node=`, `#register_namespace(s)` and `#register_variable(s)`
+  on a frozen context raise `FrozenError`.
+* A namespace binding given as a keyword (`doc.xpath(expr, k => uri)`) must
+  have a Symbol or plain String key; a String subclass raises `TypeError`.
+  `XPathContext#register_namespaces` takes a Hash alone; anything else is
+  `TypeError`.
 
 ### Fixed
 
+* `Node#search` and `#at` read a string as XPath when it names an axis
+  (`ancestor::div`) outside a quoted string, not for any `::`: a selector
+  with `::` in an attribute value (`a[title='a::b']`) answered nothing, and
+  one with a pseudo-element (`p::before`) raised
+  `Makiri::XPath::SyntaxError`.
+* `Makiri::XML`'s `#css`, `#at_css` and `#matches?` take a selector as
+  `Makiri::HTML`'s do, a `String` or a `Symbol`, anything else a
+  `TypeError`. They called `to_s` on it, so `nil` raised
+  `Makiri::CSS::SyntaxError` and `1` was the selector `"1"`.
 * A fragment's String `context:` naming no built-in tag (`"my-el"`) is
-  `ArgumentError` ("unknown fragment context element") in every document.
-  `Document#fragment` took one when the document already held such an
-  element, so the same call answered differently by document.
+  `ArgumentError` in every document; `Document#fragment` took one when the
+  document already held such an element. `"SVG"` and `"MATH"` name the SVG
+  and MathML roots in any case, as an HTML tag does; only the lower-case
+  names did.
+* Inserting a fragment one of whose children is frozen raises
+  `FrozenError`, as inserting a frozen node does, in HTML and XML, and
+  inserts nothing.
 * An XML Document reports what its factories (`create_element`,
   `create_text_node`, `clone_node`, ...) grow it by to the GC, as an HTML
   one does, so a loop that only makes nodes is collected on memory pressure.
-* `Makiri::XML`'s `#css`, `#at_css` and `#matches?` take a selector as
-  `Makiri::HTML`'s do, as 0.17.0.rc2 said every name argument does: a
-  `String` or a `Symbol`, anything else a `TypeError`. They converted it
-  with `to_s`, running the caller's `#to_s`, so `nil` raised
-  `Makiri::CSS::SyntaxError` and `1` was parsed as the selector `"1"`.
-* Inserting a fragment one of whose children is frozen raises
-  `FrozenError`, as inserting a frozen node does, in HTML and XML: the
-  fragment's children are relinked. Nothing is inserted.
-* An XML document declaring `encoding="US-ASCII"` must hold ASCII alone,
-  whatever decodes it (a UTF-8 String, a byte order mark, the declaration):
-  a character past ASCII raises `Makiri::XML::SyntaxError`, where it was
-  read. A String tagged US-ASCII still claims no encoding, and is read as
-  UTF-8 when the document declares none.
-* An XML declaration naming Ruby's binary encoding (`BINARY`,
-  `ASCII-8BIT`) is an unknown encoding, as a name XML does not register is;
-  the document was read as UTF-8.
-* `Document#import_node` refuses a Document of either kind, into a
-  document of either kind, with `Makiri::Error` ("cannot import a
-  document"), as an HTML Document into an HTML one already did. An XML
-  Document raised `TypeError`, worded two ways.
-* A broken internal invariant met by an XPath evaluation or an XML edit
-  raises `Makiri::InternalError`, which a bare `rescue` lets through. It
-  raised `Makiri::Error`.
+* An XML document that begins with a UTF-16 byte order mark and declares
+  `encoding="UTF-16"`, as XML 1.0 writes one, parses (UTF-32's too), and so
+  does `to_xml(encoding: "UTF-16")`'s output; both raised
+  `Makiri::XML::SyntaxError`.
+* An XML document declaring `encoding="US-ASCII"` that holds a character
+  past ASCII raises `Makiri::XML::SyntaxError`, a UTF-8 String or a byte
+  order mark included; the character was read.
 * XML `to_xml(encoding: "US-ASCII")` writes a character past ASCII as a
   character reference, in a US-ASCII String. It wrote the UTF-8 bytes
   under the US-ASCII declaration, which `Makiri::XML` then refused.
-* A fragment's String `context:` takes `"SVG"` or `"MATH"` in any case as
-  the SVG or MathML root, as it takes an HTML tag in any case. Only the
-  lower-case names were; another case named an HTML element.
-* An XML document that begins with a UTF-16 byte order mark and declares
-  `encoding="UTF-16"` - the form XML 1.0 gives a UTF-16 document - parses,
-  as does UTF-32's; it raised `Makiri::XML::SyntaxError` for an encoding
-  conflict, and so did `to_xml(encoding: "UTF-16")`'s output read back.
-* `to_xml(encoding:)` declares only a name `Makiri::XML` reads back:
-  `"BINARY"` (`"ASCII-8BIT"`) is `ArgumentError`, and Ruby's names for the
-  process's encodings (`"locale"`, `"external"`, ...) declare the
-  encoding's own name. Both wrote a declaration `Makiri::XML` refused.
-* `Node#search` and `#at` read a string as XPath when it names an axis
-  (`ancestor::div`) outside a quoted string, not for any `::`: a selector
-  with `::` in an attribute value (`a[title='a::b']`) was evaluated as XPath
-  and answered nothing, and one with a pseudo-element (`p::before`) raised
-  `Makiri::XPath::SyntaxError`.
-* `Makiri::XML`'s `max_bytes:` past a 64-bit Integer is no limit, as the
-  HTML parse's limits take one; it raised `RangeError`, as a negative
-  Bignum did where a negative Fixnum is `ArgumentError`.
 * `to_xml(encoding:)` naming an encoding other than UTF-8 raises
   `Makiri::Error` when an element or attribute name, a doctype, a comment,
   a CDATA section or a processing instruction holds a character the
   encoding has no form for. A character reference is markup only in text
-  and attribute values, and it wrote one there too, so a name came out
-  ill-formed and a comment read back as other text. Text and attribute
-  values still take a character reference.
+  and attribute values; written elsewhere, it made a name ill-formed and
+  changed a comment's text.
 
 ## [0.17.0.rc2] - 2026-10-24
 
