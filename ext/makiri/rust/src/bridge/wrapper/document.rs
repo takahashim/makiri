@@ -423,22 +423,6 @@ pub(in crate::bridge) fn with_html_parsed_known<R>(
     Ok(f(read.parsed()))
 }
 
-/// [`with_html_parsed_known`] for a Document of either kind: `None` for an
-/// XML one.
-pub(in crate::bridge) fn with_html_parsed_if<R>(
-    rb_doc: Value,
-    f: impl FnOnce(&HtmlParsed) -> R,
-) -> Result<Option<R>, Error> {
-    let doc = doc_known(rb_doc);
-    match body_known(&doc)? {
-        Body::Html(c) => {
-            let read = HtmlRead::of(c).map_err(held_error)?;
-            Ok(Some(f(read.parsed())))
-        }
-        Body::Xml(_) => Ok(None),
-    }
-}
-
 /// The hidden ivar a Document keeps its parse-warning Array in.
 static ERRORS: HiddenIvar = HiddenIvar::new(c"makiri_errors");
 

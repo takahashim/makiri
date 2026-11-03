@@ -36,6 +36,8 @@
 
 #![forbid(unsafe_code)]
 
+use core::ops::ControlFlow;
+
 use crate::dom_rules::Tree;
 use crate::node_type::NodeType;
 use crate::ptr_table::{mix64, PtrMap, TableKey};
@@ -113,8 +115,13 @@ pub fn previous_element_sibling<T: Tree>(tree: &T, n: T::Node) -> Option<T::Node
 
 /// `root`'s subtree in post-order, `root` last - Nokogiri's `traverse` order:
 /// each node after its children, siblings in order. Over the same links, and
-/// iterative, so a deep tree costs no native stack.
-pub fn post_order<T: Tree>(tree: &T, root: T::Node, out: &mut dyn FnMut(T::Node)) {
+/// iterative, so a deep tree costs no native stack. The walk stops when `out`
+/// answers `Break`, and answers `Break` then.
+pub fn post_order<T: Tree>(
+    tree: &T,
+    root: T::Node,
+    out: &mut dyn FnMut(T::Node) -> ControlFlow<()>,
+) -> ControlFlow<()> {
     let deepest = |mut n: T::Node| {
         while let Some(c) = tree.first_child(n) {
             n = c;
@@ -123,9 +130,11 @@ pub fn post_order<T: Tree>(tree: &T, root: T::Node, out: &mut dyn FnMut(T::Node)
     };
     let mut n = deepest(root);
     loop {
-        out(n);
+        if out(n).is_break() {
+            return ControlFlow::Break(());
+        }
         if n == root {
-            return;
+            return ControlFlow::Continue(());
         }
         n = match tree.next_sibling(n) {
             Some(s) => deepest(s),
@@ -133,7 +142,7 @@ pub fn post_order<T: Tree>(tree: &T, root: T::Node, out: &mut dyn FnMut(T::Node)
                 Some(p) => p,
                 /* Not under `root` after all: a broken link, not a shorter
                  * walk - but nothing more to visit either way. */
-                None => return,
+                None => return ControlFlow::Continue(()),
             },
         };
     }

@@ -16,6 +16,8 @@
 
 #![forbid(unsafe_code)]
 
+use core::ops::ControlFlow;
+
 use crate::bridge::rb::Ruby;
 
 use crate::bridge::rb::{prelude::*, Error, RString, Value};

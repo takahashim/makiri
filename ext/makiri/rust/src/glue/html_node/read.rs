@@ -281,13 +281,13 @@ pub fn root_node(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
 /// `#children`: every child node, as a NodeSet.
 pub fn children(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     this.read()?
-        .set(ruby, false, |n, out| n.children().for_each(out))
+        .set(ruby, false, |n, out| n.children().try_for_each(out))
 }
 
 /// `#element_children` / `#elements`: the child elements only.
 pub fn element_children(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     this.read()?
-        .set(ruby, true, |n, out| n.children().for_each(out))
+        .set(ruby, true, |n, out| n.children().try_for_each(out))
 }
 
 /// `#_traverse_order`: this node and its descendants in post-order, as
@@ -302,7 +302,7 @@ pub fn traverse_order(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error
 /// `#ancestors`: the ancestor elements, nearest first.
 pub fn ancestors(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     this.read()?
-        .set(ruby, true, |n, out| n.ancestors().for_each(out))
+        .set(ruby, true, |n, out| n.ancestors().try_for_each(out))
 }
 
 /* ------------------------------------------------------------------ *
@@ -371,7 +371,7 @@ pub fn attribute_nodes(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Erro
         node.element()
             .into_iter()
             .flat_map(|el| el.attrs())
-            .for_each(|at| out(at.node()))
+            .try_for_each(|at| out(at.node()))
     })
 }
 

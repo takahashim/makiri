@@ -79,28 +79,35 @@ impl Cx {
     /// guard, released when the engine returns an owned value. No Ruby runs
     /// while it is held - Makiri runs no custom-function handler. The outer
     /// `Err` is a read the document refused.
+    ///
+    /// With the value, whether the evaluate built the HTML document's kept
+    /// document-order index, read in the same read before and after it, for
+    /// the caller to report once the read is over
+    /// ([`account_kept_order`](crate::bridge::wrapper::account_kept_order)).
     #[allow(clippy::result_large_err)]
     fn run(
         &self,
         document: Value,
         ast: &Ast,
         answer: Answer,
-    ) -> Result<Result<XPathValue, XPathError>, Error> {
+    ) -> Result<(Result<XPathValue, XPathError>, bool), Error> {
         Ok(match DocKind::of(document) {
             DocKind::Xml => {
                 let handle = doc_known(document);
                 let doc = xml_read(&handle)?;
-                run_on(&self.session, &*doc, ast, answer)
+                (run_on(&self.session, &*doc, ast, answer), false)
             }
             DocKind::Html => {
                 let handle = doc_known(document);
                 let doc = html_read(&handle)?;
-                run_on(
+                let had = doc.parsed().has_doc_order();
+                let value = run_on(
                     &self.session,
                     crate::html_dom::xpath::dom(doc.parsed()),
                     ast,
                     answer,
-                )
+                );
+                (value, !had && doc.parsed().has_doc_order())
             }
         })
     }
@@ -277,10 +284,11 @@ pub fn evaluate_query(
     document: Value,
     answer: Answer,
 ) -> Result<XPathValue, Error> {
+    let (value, built_order) = ctx.run(document, ast, answer)?;
     /* A document-order index the evaluate built is the document's now. */
-    let value = crate::bridge::wrapper::with_kept_order_accounted(ruby, document, || {
-        ctx.run(document, ast, answer)
-    })?;
+    if built_order {
+        crate::bridge::wrapper::account_kept_order(ruby, document);
+    }
     value.map_err(|error| xpath_error(&error))
 }
 
