@@ -67,13 +67,14 @@ pub(crate) fn reads_as_utf8_index(index: c_int) -> bool {
 
 /// Whether the encoding of index `index` is UTF-8.
 #[inline]
-/// Whether `index` is ASCII-8BIT's.
-pub(crate) fn is_ascii8bit_index(index: c_int) -> bool {
-    is_builtin(&ASCII8BIT, index)
-}
-
 pub(crate) fn is_utf8_index(index: c_int) -> bool {
     is_builtin(&UTF8, index)
+}
+
+/// Whether the encoding of index `index` is ASCII-8BIT.
+#[inline]
+pub(crate) fn is_ascii8bit_index(index: c_int) -> bool {
+    is_builtin(&ASCII8BIT, index)
 }
 
 /// What a transcode ([`Encoding::encode`]) does with a byte sequence that is
@@ -168,10 +169,12 @@ impl Encoding {
         self.0
     }
 
+    /// US-ASCII.
     pub fn is_usascii(self) -> bool {
         is_builtin(&USASCII, self.index())
     }
 
+    /// ASCII-8BIT: bytes with no character encoding.
     pub fn is_ascii8bit(self) -> bool {
         is_builtin(&ASCII8BIT, self.index())
     }
@@ -188,7 +191,7 @@ impl Encoding {
     /// character. What a serialized String needs no transcoding into.
     pub fn is_utf8_or_ascii(self) -> bool {
         let index = self.index();
-        is_utf8_index(index) || is_builtin(&USASCII, index)
+        is_builtin(&UTF8, index) || is_builtin(&USASCII, index)
     }
 
     /// UTF-8, US-ASCII or ASCII-8BIT: an encoding whose text is read as

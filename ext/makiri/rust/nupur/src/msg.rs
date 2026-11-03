@@ -56,7 +56,7 @@ impl Msg {
     #[inline]
     fn finish(mut self) -> Msg {
         if self.cut {
-            let len = floor_char_boundary(self.bytes(), MSG_MAX - ELLIPSIS.len());
+            let len = floor_char_boundary(self.as_bytes(), MSG_MAX - ELLIPSIS.len());
             self.len = u16::try_from(len).unwrap_or(0);
             self.cut = false;
             self.push(ELLIPSIS);
@@ -93,16 +93,11 @@ impl Msg {
         self.buf.get(..usize::from(self.len)).unwrap_or(&[])
     }
 
-    #[inline]
-    fn bytes(&self) -> &[u8] {
-        self.as_bytes()
-    }
-
     /// The text.
     #[inline]
     pub fn as_str(&self) -> &str {
         /* UTF-8 by construction (`as_bytes`); the fallback is unreachable. */
-        core::str::from_utf8(self.bytes()).unwrap_or("error")
+        core::str::from_utf8(self.as_bytes()).unwrap_or("error")
     }
 }
 
