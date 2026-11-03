@@ -229,7 +229,7 @@ fn val_to_ruby(ruby: &Ruby, v: ValRef<'_>, document: Value) -> Result<Value, Err
          * a Text only from input the text contract has passed. */
         ValRef::String(t) => crate::bridge::string::utf8_str(ruby, t.as_slice())?.as_value(),
         ValRef::Number(d) => crate::bridge::build::float(ruby, d)?.as_value(),
-        ValRef::Boolean(b) => crate::bridge::ruby::boolean(ruby, b),
+        ValRef::Boolean(b) => ruby.boolean(b),
     })
 }
 
@@ -313,7 +313,7 @@ pub fn query_result(
             drop(value);
             return match first {
                 Some(n) => wrap_doc_node(ruby, DocKind::of(document), n, document),
-                None => Ok(crate::bridge::ruby::nil(ruby)),
+                None => Ok(ruby.qnil()),
             };
         }
     }

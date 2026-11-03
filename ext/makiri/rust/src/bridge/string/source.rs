@@ -49,7 +49,7 @@ impl HtmlSource {
         let (src, known_valid) =
             match crate::nupur::string::to_utf8(ruby, s, read_as, Unconvertible::Replace)? {
                 /* Ruby's cached verdict on the bytes, only a hint. */
-                Transcode::AsIs(src) => (src, src.known_utf8()),
+                Transcode::AsIs(src) => (src, src.cached_utf8()),
                 /* The transcode replaced every invalid or unmappable byte, so
                  * its result is valid UTF-8 whatever its coderange says. */
                 Transcode::Transcoded(src) => (src, true),
@@ -148,10 +148,10 @@ impl DocumentSource {
         s: RString,
         e: &'static crate::html::encoding::Encoding,
     ) -> Result<DocumentSource, Error> {
-        /* Ruby's own verdict (`RString::known_utf8`, which counts it only for bytes
+        /* Ruby's own verdict (`RString::cached_utf8`, which counts it only for bytes
          * it holds as UTF-8) is of use only where the bytes are read as
          * UTF-8. */
-        let known_valid = e == crate::html::encoding::UTF_8 && s.known_utf8();
+        let known_valid = e == crate::html::encoding::UTF_8 && s.cached_utf8();
         Ok(DocumentSource {
             source: HtmlSource {
                 bytes: ruby_string_bytes(s)?,

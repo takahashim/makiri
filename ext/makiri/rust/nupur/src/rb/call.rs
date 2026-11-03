@@ -49,6 +49,31 @@ pub fn public_method(recv: impl ReprValue, id: Id, args: &[Value]) -> Result<Val
     crate::raw::call_public(recv.as_value(), id, args)
 }
 
+/// `recv.name(*args)`: any method, private ones included (`rb_funcallv`) -
+/// what a class's own `new` or `members` is called through. `name` is
+/// interned on each call; a name called often is a [`public_method`] of an
+/// [`IdConst`].
+#[cfg_attr(
+    dylint_lib = "nupur_lints",
+    expect(
+        runs_callers_ruby,
+        reason = "the one way to call any method; each caller's own allow says why"
+    )
+)]
+pub fn call_method(
+    ruby: &Ruby,
+    recv: impl ReprValue,
+    name: &str,
+    args: &[Value],
+) -> Result<Value, Error> {
+    crate::raw::call_method(
+        ruby,
+        recv.as_value(),
+        &crate::rb::class::c_name(name)?,
+        args,
+    )
+}
+
 /// Whether `recv` has a public method `id`: Ruby's own `respond_to?`, which
 /// a class may redefine (so the caller's Ruby too), and which a
 /// `respond_to_missing?` answers for a method `method_missing` handles.

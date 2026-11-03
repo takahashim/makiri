@@ -1,7 +1,9 @@
-//! Reading a Ruby String: by copying, never by a slice handed out
-//! ([`RString::copy_to`], [`RString::append_to`]), and as text - in its own
-//! encoding, transcoded to UTF-8 where it is not read as UTF-8 bytes
-//! already, and checked to be UTF-8 on a copy ([`read_utf8`]).
+//! Reading a Ruby String: by copying ([`RString::copy_to`],
+//! [`RString::append_to`]), and as text - in its own encoding, transcoded to
+//! UTF-8 where it is not read as UTF-8 bytes already, and checked to be UTF-8
+//! on a copy ([`read_utf8`]). A slice of a String is handed out only on loan,
+//! to a closure, while nothing can change it ([`RString::with_bytes`],
+//! [`RString::with_locked_bytes`]).
 
 #![allow(unsafe_code)]
 
@@ -12,6 +14,8 @@ use crate::rb::{Error, RString, Ruby};
 /// [`RString::append_to`]'s refusal: the buffer had too little spare room.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NoRoom;
+
+/* ---- copying a String's bytes out ---- */
 
 impl RString {
     /// Copy the bytes from `offset` (none past the end) into `dst`, as many
@@ -77,14 +81,15 @@ impl RString {
         crate::encoding::is_ascii8bit_index(self.encoding_index())
     }
 
-    /// Whether Ruby already knows this String to be valid UTF-8, from its
+    /// Whether Ruby has already found this String valid UTF-8, from its
     /// cached coderange: a read of its flags, which never scans and never
-    /// allocates. Only a hint - for code that stays safe whatever it says (a
+    /// allocates - a String not scanned yet answers `false`, which
+    /// [`scanned_utf8`](Self::scanned_utf8) would scan to answer. Only a hint - for code that stays safe whatever it says (a
     /// reader that would otherwise repair or check the bytes itself). A wrong
     /// coderange (another C extension's, a Ruby bug) must never decide what a
     /// `&str` holds: that is [`crate::utf8_copy::Utf8Copy`]'s own check.
     #[inline]
-    pub fn known_utf8(self) -> bool {
+    pub fn cached_utf8(self) -> bool {
         match self.enc_coderange() {
             /* Every byte < 0x80 in an ASCII-compatible encoding. */
             crate::rb::value::Coderange::SevenBit => true,
@@ -98,9 +103,11 @@ impl RString {
     }
 }
 
+/* ---- lending a String's bytes while nothing can change them ---- */
+
 impl RString {
-    /// The String's bytes, lent to `f` for the length of the call: the one
-    /// way the layer hands out a slice of a String, for a reader that must
+    /// The String's bytes, lent to `f` for the length of the call: one of
+    /// the two ways the layer hands out a slice of a String, for a reader that must
     /// not pay for a copy (a JSON generator escaping as it reads).
     ///
     /// `f` is `Send`, so it can hold no Ruby value and no GVL token - neither
@@ -121,7 +128,8 @@ impl RString {
 }
 
 impl RString {
-    /// The String's bytes, lent to `f` while the String cannot change: for
+    /// The String's bytes, lent to `f` while the String cannot change: the
+    /// other way a slice is handed out, for
     /// a reader that makes Ruby objects as it goes (a JSON parser), and so
     /// cannot take [`with_bytes`](Self::with_bytes), whose closure may not
     /// touch Ruby.
@@ -182,25 +190,28 @@ impl Drop for Unlock {
     }
 }
 
+/* ---- the String's UTF-8, as Ruby holds it ---- */
+
 impl RString {
     /// Whether Ruby holds this String to be valid UTF-8 (or ASCII in an
-    /// ASCII-compatible encoding): its cached coderange, and where none is
-    /// cached yet, Ruby's own scan, whose answer Ruby then keeps in the
+    /// ASCII-compatible encoding): its cached coderange
+    /// ([`cached_utf8`](Self::cached_utf8)), and where none is cached yet,
+    /// Ruby's own scan - which can raise, hence the `Result` - whose answer Ruby then keeps in the
     /// String - so a String is scanned once, however often it is asked
     /// about. This trusts Ruby's validator and cache rather than checking
     /// the bytes with std's: right for a writer whose output keeps the
     /// String's bytes as they are (a JSON generator), never for making a
     /// `&str`, which is `utf8_copy`'s.
     #[inline]
-    pub fn ruby_knows_utf8(self) -> Result<bool, Error> {
-        if self.known_utf8() {
+    pub fn scanned_utf8(self) -> Result<bool, Error> {
+        if self.cached_utf8() {
             return Ok(true);
         }
         if !matches!(self.enc_coderange(), crate::rb::value::Coderange::Unknown) {
             return Ok(false);
         }
         crate::raw::enc_str_coderange(self)?;
-        Ok(self.known_utf8())
+        Ok(self.cached_utf8())
     }
 }
 

@@ -2,7 +2,7 @@
 //! the caller holds to be UTF-8 ([`utf8_str_trusting`]), one written
 //! in place front to back ([`utf8_str_filled`]) - from several slices at once
 //! ([`utf8_str_from_slices`]) - and a frozen, interned name
-//! ([`interned_utf8`]).
+//! ([`interned_utf8_trusting`]).
 
 #![allow(unsafe_code)]
 
@@ -164,12 +164,6 @@ impl Unwritten<'_> {
         self.at += src.len();
         true
     }
-
-    /// How many bytes are written.
-    #[inline]
-    pub fn written(&self) -> usize {
-        self.at
-    }
 }
 
 /// `dst.copy_from_slice(src)` for slices of one length, with no `memcpy`
@@ -231,9 +225,10 @@ pub fn utf8_str_from_slices<'a>(
 /// A frozen, deduplicated UTF-8 String of `bytes` - Ruby's own `-"name"`
 /// (`rb_enc_interned_str`), so every read of one name answers the same
 /// object and allocates nothing once Ruby has it. For names, never for
-/// character data a caller may expect to edit. Safe with any bytes: they are
-/// copied, and bytes that were not UTF-8 would make a wrong String, never a
-/// memory error.
-pub fn interned_utf8(ruby: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
+/// character data a caller may expect to edit. `bytes` are the caller's to
+/// hold UTF-8 (the name says so, as [`utf8_str_trusting`]'s does): they are
+/// copied unchecked, and bytes that were not would make a wrong String,
+/// never a memory error.
+pub fn interned_utf8_trusting(ruby: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
     crate::raw::enc_interned_str(bytes, crate::encoding::Encoding::utf8(ruby))
 }

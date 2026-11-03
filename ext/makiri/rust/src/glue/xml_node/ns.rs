@@ -33,7 +33,7 @@ fn ns_class(ruby: &Ruby) -> Result<RClass, Error> {
     )
 )]
 fn new_ns(ruby: &Ruby, class: RClass, prefix: Value, href: Value) -> Result<Value, Error> {
-    class.call_method(ruby, "new", &[prefix, href])
+    crate::bridge::rb::call::call_method(ruby, class, "new", &[prefix, href])
 }
 
 /// A prefix as Ruby sees it: nil for none (the default namespace), else the

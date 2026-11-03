@@ -17,13 +17,17 @@
 use nupur_sys::non_raising;
 use nupur_sys::ruby_value_type;
 
-use super::error::{Builtin, Error};
+use super::error::Error;
 use super::object::{class_inherits, obj_is_kind_of};
-use super::ruby::Ruby;
 
 // What a String's header says of it: its coderange, encoding index, class.
 mod header;
 pub(crate) use header::Coderange;
+// An Integer as a Rust number or as decimal digits.
+mod integer;
+// Interned names: a method's, a constant's, a hidden ivar's.
+mod id;
+pub use id::{HiddenId, Id};
 
 /// Any Ruby value.
 #[derive(Clone, Copy)]
@@ -43,6 +47,8 @@ impl Value {
 
 /// `Object`, the default superclass (`rb_cObject`, a C global Ruby sets once
 /// at boot), for a definition that names none; `of` is the proof of the GVL.
+/// `Ruby::class_object` answers the same, for a caller holding the token:
+/// this is for `Module::define_data_class`, whose callers hand it none.
 #[inline]
 pub(crate) fn object_class<V: ReprValue>(of: &V) -> RClass {
     RClass::from_known(Value::from_sys(non_raising::rb_cObject(
@@ -364,128 +370,6 @@ impl Range {
     }
 }
 
-impl Integer {
-    /// As a `u64`; a negative value or one out of range is `RangeError`.
-    #[inline]
-    pub fn to_u64(self) -> Result<u64, Error> {
-        if self.is_negative() {
-            return Err(Error::new(
-                Builtin::RangeError,
-                "can't convert negative integer to unsigned",
-            ));
-        }
-        if non_raising::fixnum_p(self.0 .0) {
-            /* Not negative, checked above. */
-            return u64::try_from(non_raising::fix2long(self.0 .0))
-                .map_err(|_| crate::rb::error::internal_error("a negative Fixnum"));
-        }
-        crate::raw::big2ull(self)
-    }
-
-    /// As an `i64`; a value out of its range is Ruby's `RangeError`.
-    #[inline]
-    pub fn to_i64(self) -> Result<i64, Error> {
-        if non_raising::fixnum_p(self.0 .0) {
-            return Ok(non_raising::fix2long(self.0 .0));
-        }
-        crate::raw::big2ll(self)
-    }
-
-    /// As a `usize`; a negative value or one out of range is `RangeError`.
-    #[inline]
-    pub fn to_usize(self) -> Result<usize, Error> {
-        /* Through `to_u64`, so a value past a narrower `usize` is refused
-         * rather than truncated. */
-        usize::try_from(self.to_u64()?).map_err(|_| {
-            Error::new(
-                Builtin::RangeError,
-                "integer too big to convert into a usize",
-            )
-        })
-    }
-
-    /// As a `usize`, or `None` when it is negative or past one - and only
-    /// then: any other failure of the conversion is passed on, never read as
-    /// "out of range" (for a limit, that would lift it). "Past one" is
-    /// decided from the value's size, so no `RangeError` is made and dropped.
-    pub fn to_usize_within(self) -> Result<Option<usize>, Error> {
-        if self.is_negative() {
-            return Ok(None);
-        }
-        if !non_raising::fixnum_p(self.0 .0) && !self.magnitude_fits_u64() {
-            return Ok(None);
-        }
-        Ok(usize::try_from(self.to_u64()?).ok())
-    }
-
-    /// Whether a Bignum's magnitude fits a `u64`: `rb_absint_size`, which
-    /// reads its digits and raises nothing - so "too large" is answered
-    /// without making the `RangeError` `rb_big2ull` would raise.
-    #[inline]
-    fn magnitude_fits_u64(self) -> bool {
-        // SAFETY: `self` is a live Integer, by type.
-        let bytes = unsafe { non_raising::absint_size_of_integer(self.0 .0) };
-        u64::try_from(bytes).is_ok_and(|b| b <= 8)
-    }
-
-    /// The decimal digits, with a `-` for a negative value, as a new
-    /// String: a Fixnum written here, a Bignum by Ruby (`rb_big2str`). A
-    /// failed allocation is `NoMemoryError`.
-    pub fn to_decimal(self, ruby: &Ruby) -> Result<RString, Error> {
-        if non_raising::fixnum_p(self.0 .0) {
-            let mut buf = [0u8; 24];
-            let n = write_i64(non_raising::fix2long(self.0 .0), &mut buf);
-            /* Digits and a sign: ASCII, which `from_utf8` confirms in a step. */
-            let digits = core::str::from_utf8(buf.get(..n).unwrap_or_default())
-                .map_err(|_| crate::rb::error::internal_error("a Fixnum's digits are not ASCII"))?;
-            return crate::string::utf8_str(ruby, digits);
-        }
-        crate::raw::big2str(self)
-    }
-
-    /// Below zero? Reads the sign, converts nothing.
-    #[inline]
-    pub fn is_negative(self) -> bool {
-        if non_raising::fixnum_p(self.0 .0) {
-            return non_raising::fix2long(self.0 .0) < 0;
-        }
-        // SAFETY: a non-Fixnum Integer is a live Bignum.
-        unsafe { non_raising::bignum_negative_p(self.0 .0) }
-    }
-}
-
-/// `n` in decimal into `buf`, which holds any `i64` (20 digits and a sign);
-/// how many bytes.
-fn write_i64(n: i64, buf: &mut [u8; 24]) -> usize {
-    let mut digits = [0u8; 20];
-    let mut m = n.unsigned_abs();
-    let mut k = 0;
-    loop {
-        if let Some(d) = digits.get_mut(k) {
-            *d = b'0' + u8::try_from(m % 10).unwrap_or(0);
-        }
-        k += 1;
-        m /= 10;
-        if m == 0 {
-            break;
-        }
-    }
-    let mut at = 0;
-    if n < 0 {
-        if let Some(sign) = buf.first_mut() {
-            *sign = b'-';
-        }
-        at = 1;
-    }
-    for d in digits.iter().take(k).rev() {
-        if let Some(slot) = buf.get_mut(at) {
-            *slot = *d;
-        }
-        at += 1;
-    }
-    at
-}
-
 impl Symbol {
     /// The Symbol's name, as Ruby holds it (`rb_sym2str`): a frozen String
     /// in the Symbol's own encoding.
@@ -551,82 +435,10 @@ impl Value {
 
 /* ---- immediates and identity ---- */
 
-/// `nil`, as a `Value`.
-#[inline]
-pub fn nil(ruby: &Ruby) -> Value {
-    ruby.qnil().as_value()
-}
-
-/// `true`/`false`, as a `Value`.
-#[inline]
-pub fn boolean(ruby: &Ruby, b: bool) -> Value {
-    if b {
-        ruby.qtrue().as_value()
-    } else {
-        ruby.qfalse().as_value()
-    }
-}
-
 /// VALUE identity, for the several sites that compare two references.
 #[inline]
 pub fn same_value(a: impl ReprValue, b: impl ReprValue) -> bool {
     a.as_sys().is(b.as_sys())
-}
-
-/// An interned name - a method's, an ivar's, a constant's - as `rb_intern`
-/// makes it (`raw::intern`). Only the layer turns one into the raw `ID` it
-/// hands C, so a caller can keep and compare one but never forge one.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[repr(transparent)]
-pub struct Id(nupur_sys::ID);
-
-impl Id {
-    /// The interned name `name` (`rb_intern`); a new name grows the symbol
-    /// table, so it can raise `NoMemoryError`.
-    pub fn intern(ruby: &Ruby, name: &core::ffi::CStr) -> Result<Id, Error> {
-        crate::raw::intern_cstr(ruby, name)
-    }
-
-    #[inline]
-    pub(crate) const fn from_raw(id: nupur_sys::ID) -> Id {
-        Id(id)
-    }
-
-    #[inline]
-    pub(crate) const fn as_raw(self) -> nupur_sys::ID {
-        self.0
-    }
-}
-
-/// The name of a hidden instance variable: an [`Id`] interned from a name
-/// that does not start with `@`, so no Ruby code can read or write it.
-///
-/// What the ivar reads and writes take ([`crate::rb::object::ivar_get`],
-/// [`crate::rb::object::ivar_set`]): Ruby's Ractor checks on an ivar - of a
-/// class or module, or of a shareable object, from another Ractor - apply to
-/// an `@` name alone (`rb_is_instance_id`, in every release from 3.3), so
-/// with one of these the read raises nothing in any Ractor.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[repr(transparent)]
-pub struct HiddenId(Id);
-
-impl HiddenId {
-    /// The hidden name `name` (`rb_intern`): `ArgumentError` for one that
-    /// starts with `@`, and `NoMemoryError` as [`Id::intern`].
-    pub fn intern(ruby: &Ruby, name: &core::ffi::CStr) -> Result<HiddenId, Error> {
-        if name.to_bytes().first() == Some(&b'@') {
-            return Err(Error::new(
-                crate::rb::Builtin::ArgumentError,
-                "a hidden ivar's name does not start with @",
-            ));
-        }
-        Id::intern(ruby, name).map(HiddenId)
-    }
-
-    #[inline]
-    pub(crate) const fn as_raw(self) -> nupur_sys::ID {
-        self.0.as_raw()
-    }
 }
 
 /* ---- a C read that raises nothing (so it is not `raw`'s, which holds the

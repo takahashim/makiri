@@ -398,9 +398,9 @@ fn locked_len(ruby: &Ruby, s: Value) -> Result<Value, Error> {
     Ok(out.as_value())
 }
 
-/// Whether Ruby holds `s` to be UTF-8, through `ruby_knows_utf8`.
+/// Whether Ruby holds `s` to be UTF-8, through `scanned_utf8`.
 fn knows_utf8(_: &Ruby, s: Value) -> Result<bool, Error> {
-    string_arg(s)?.ruby_knows_utf8()
+    string_arg(s)?.scanned_utf8()
 }
 
 /// `v`'s kind, through `Value::kind`, as a Symbol.

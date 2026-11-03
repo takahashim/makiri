@@ -47,14 +47,14 @@ impl<T: ReprValue> IntoValue for T {
 impl IntoValue for () {
     #[inline]
     fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
-        Ok(crate::rb::value::nil(ruby))
+        Ok(ruby.qnil())
     }
 }
 
 impl IntoValue for bool {
     #[inline]
     fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
-        Ok(crate::rb::value::boolean(ruby, self))
+        Ok(ruby.boolean(self))
     }
 }
 
@@ -63,7 +63,7 @@ impl<T: IntoValue> IntoValue for Option<T> {
     fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
         match self {
             Some(v) => v.into_value(ruby),
-            None => Ok(crate::rb::value::nil(ruby)),
+            None => Ok(ruby.qnil()),
         }
     }
 }
@@ -109,10 +109,8 @@ impl IntoValue for &'static str {
 impl<A: IntoValue, B: IntoValue> IntoValue for (A, B) {
     fn into_value(self, ruby: &Ruby) -> Result<Value, Error> {
         let (a, b) = (self.0.into_value(ruby)?, self.1.into_value(ruby)?);
-        let ary = crate::build::ary(ruby, 2)?;
-        crate::build::push(ary, a)?;
-        crate::build::push(ary, b)?;
-        Ok(ary.as_value())
+        /* One call for the pair, not one per element. */
+        crate::build::ary_from(ruby, &[a, b]).map(ReprValue::as_value)
     }
 }
 

@@ -37,7 +37,7 @@ pub(crate) fn yield_value(_: &Ruby, v: Value) -> Result<Value, Error> {
     )
 )]
 pub(crate) fn yield_dropping_error_for_test(ruby: &Ruby) {
-    let _ = yield_value(ruby, crate::rb::value::nil(ruby));
+    let _ = yield_value(ruby, ruby.qnil());
 }
 
 /// `rb_hash_foreach` over `h`, `visit` answering after each pair whether to
