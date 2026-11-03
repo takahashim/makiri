@@ -18,7 +18,7 @@ use crate::bridge::node_set::FreshSet;
 use crate::bridge::node_wrap::wrap_doc_node;
 use crate::bridge::string::ruby_verified_text;
 use crate::bridge::wrapper::{doc_known, html_read, xml_read, DocKind, NodeWord, DOC_TYPE};
-use crate::bridge::xml::{xml_node_document, xml_node_unwrap};
+use crate::bridge::xml::xml_node_unwrap;
 use crate::engine_error::{Error as XPathError, ErrorKind};
 use crate::html_dom::xpath::HtmlDom;
 pub use crate::init::{CLASS_XPATH_CONTEXT, EXC_XPATH_LIMIT_EXCEEDED, EXC_XPATH_SYNTAX_ERROR};
@@ -145,17 +145,19 @@ impl core::ops::DerefMut for Cx {
 pub fn context_for(ruby: &Ruby, rb_node: Value, document: Value) -> Result<Cx, Error> {
     DOC_TYPE.ensure(document)?; /* TypeError for a non-Document */
     if DocKind::of(document) == DocKind::Xml {
-        /* The context NODE: `xml_node_unwrap` resolves a Document receiver to
-         * its arena's document node, and any other node to itself. */
-        let node = xml_node_unwrap(ruby, rb_node)?;
-        /* Checked, not assumed, to be `document`'s, as the HTML branch's
-         * node is: the token names the node by its id alone. A node of
-         * another document is a caller's broken pairing. */
-        if !crate::bridge::ruby::same_value(xml_node_document(ruby, rb_node)?, document) {
+        /* The node must be `document`'s, as the HTML branch's lookup checks:
+         * a node of another document would be evaluated against this one's
+         * arena. Every caller passes the node's own keepalive, so a mismatch
+         * is a broken invariant. */
+        let own = crate::bridge::wrapper::keepalive_document(ruby, rb_node)?;
+        if !crate::bridge::ruby::same_value(own, document) {
             return Err(crate::bridge::ruby::internal_error(
                 "an XPath context node of another document",
             ));
         }
+        /* The context NODE: `xml_node_unwrap` resolves a Document receiver to
+         * its arena's document node, and any other node to itself. */
+        let node = xml_node_unwrap(ruby, rb_node)?;
         return Ok(Cx {
             session: Session::new(Some(Token::xml(node.to_token()))),
         });

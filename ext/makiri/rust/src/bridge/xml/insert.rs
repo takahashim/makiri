@@ -10,7 +10,7 @@ use super::*;
 /* ------------------------------------------------------------------ */
 /* The node methods live in `glue::xml_node::mutate`. What stays here is what
  * holds two arenas - an XML one and another, XML or HTML - at the same time,
- * which `with_arena_for_new_node`'s one-at-a-time lending cannot express. */
+ * which `new_xml_node`'s one-at-a-time lending cannot express. */
 
 /// A node copied in from another document, still to be taken out of it: the
 /// second half of the move `appendChild` performs across arenas. It holds the
