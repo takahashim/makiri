@@ -106,7 +106,17 @@ pub fn resolve_fragment_context(
         return Ok(ContextArg::Tag(FragmentTag::MATH));
     }
     html_doc_check(document)?;
-    let Some(tag) = html_read(&doc_known(document))?.doc().tag_id(name) else {
+    /* Only a built-in tag names a context. The lookup also finds a name the
+     * document itself has interned (a custom element it holds), which would
+     * make the answer depend on what the document contains - `"my-el"`
+     * accepted here and refused in a document without one, and always by
+     * `DocumentFragment.parse`'s shell - so a document's own id is refused
+     * as an unknown name is. */
+    let tag = html_read(&doc_known(document))?
+        .doc()
+        .tag_id(name)
+        .filter(|t| t.static_index().is_some());
+    let Some(tag) = tag else {
         return Err(unknown_context(name));
     };
     Ok(ContextArg::Tag(FragmentTag::html(tag)))

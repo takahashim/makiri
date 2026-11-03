@@ -60,8 +60,9 @@ pub(super) const GROWTH_MIN_BYTES: usize = 512 * 1024;
 /// a document's last edit is reported at its next one or not at all - an
 /// under-report, the safe direction. And AFTER a growth no edit follows - a
 /// factory's node, an imported copy, a parsed fragment, an adoption's copy
-/// (`bridge::html::lend_document` and `insert`, `bridge::xml::fragment_into`,
-/// `import_copy` and `insert`) - once the document's loan is over. It may run
+/// (`bridge::html::lend_document` and `insert`,
+/// `bridge::xml::with_arena_for_new_node`, `fragment_into`, `import_copy` and
+/// `insert`) - once the document's loan is over. It may run
 /// a collection, so, like [`account_document`], it must be called with
 /// `rb_doc` on the caller's stack and no borrowed Ruby String held - which is
 /// so at the start of an edit, before any argument is converted, and after a
