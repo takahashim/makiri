@@ -48,7 +48,10 @@ namespace (only xmlns=\"\" undeclares, and only the default)"
             "the namespace does not fit the qualified name (a prefix needs a namespace; \
 xml and xmlns take only their own)"
         }
-        MutError::Internal => "internal error mutating XML (no document)",
+        /* A null or stale document handle: a broken invariant. */
+        MutError::Internal => {
+            return crate::bridge::ruby::internal_error("internal error mutating XML (no document)")
+        }
         /* The document's own budget, not the machine's memory - so the same
          * exception a parse raises for the same cause. */
         MutError::Limit => {

@@ -31,7 +31,7 @@ impl ChildListHost for XmlSelf {
 }
 
 /* ------------------------------------------------------------------ *
- * the XML receiver and the node front door                           *
+ * the XML receiver                                                   *
  * ------------------------------------------------------------------ */
 
 /// A method receiver already checked to be an XML node or XML Document; see the
@@ -46,9 +46,8 @@ pub struct XmlSelf {
 
 impl crate::bridge::rb::TryConvert for XmlSelf {
     fn try_convert(ruby: &Ruby, value: Value) -> Result<Self, Error> {
-        /* One class test and one read of the wrapper: the node and its
-         * Document come from the same place ([`xml_node_unwrap`] and
-         * [`xml_node_document`] each ask, for the callers that need one). */
+        /* One class test and one read of the wrapper, as `xml_node_ref`'s:
+         * the node and its Document come from the same place. */
         if crate::bridge::ruby::is_kind_of(ruby, value, &CLASS_XML_DOCUMENT) {
             /* TypeError for any other Document */
             let document = XML_DOC_TYPE.check(value)?;

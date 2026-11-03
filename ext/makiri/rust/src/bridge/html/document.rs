@@ -26,8 +26,7 @@ use crate::bridge::string::DocumentSource;
 use crate::bridge::wrapper::{
     doc_known, html_read, new_html_document, node_repr, xml_read, NodeRepr,
 };
-use crate::bridge::xml::xml_node_document;
-use crate::bridge::xml::{xml_mut_result, xml_node_unwrap};
+use crate::bridge::xml::xml_mut_result;
 use crate::html_dom::html::{Detached, RawNode};
 use crate::html_dom::post_parse::{empty_html_document, HtmlParseError};
 use crate::html_dom::tree_guard::{GuardStop, ParseLimits};
@@ -186,12 +185,12 @@ pub fn document_errors(rb_doc: Value) -> Value {
 /// source is untouched and the copy is detached.
 pub fn import_node(ruby: &Ruby, rb_self: Value, node_v: Value, deep: bool) -> Result<Value, Error> {
     crate::bridge::html::check_owning_doc(&rb_self)?;
+    crate::bridge::dom_error::refuse_document_import(ruby, node_v)?;
 
     /* An XML node is TRANSLATED across representations (XML arena -> HTML
      * arena) into a detached subtree owned by this document. */
     if node_repr(node_v) == NodeRepr::Xml {
-        let xml_doc = xml_node_document(ruby, node_v)?;
-        let src = xml_node_unwrap(ruby, node_v)?;
+        let (src, xml_doc) = crate::bridge::xml::xml_node_ref(ruby, node_v)?;
         let imp = {
             let source = doc_known(xml_doc);
             let xdoc = xml_read(&source)?;
@@ -206,13 +205,6 @@ pub fn import_node(ruby: &Ruby, rb_self: Value, node_v: Value, deep: bool) -> Re
      * the edit holds the document, and reads it through its own borrow; one
      * of another document is read through that document's. */
     let (key, src_doc) = html_node_key(ruby, node_v)?;
-    /* The DOM's importNode refuses a document (NotSupportedError), as
-     * `clone_node` does here. */
-    if crate::bridge::ruby::same_value(node_v, src_doc) {
-        return Err(makiri_error(
-            "import_node cannot import a document; use #dup",
-        ));
-    }
     let raw = crate::bridge::html::node_ref(src_doc, key)?;
     let imp = if crate::bridge::ruby::same_value(src_doc, rb_self) {
         new_node(ruby, &rb_self, |d| d.copy(raw, deep).map(Detached::raw))?

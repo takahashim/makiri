@@ -1,5 +1,5 @@
 //! The receiver cleared for an edit (`Editing`), and the factories' gate
-//! (`with_arena_for_new_node`): the two ways to an arena's `&mut`.
+//! (`new_xml_node`): the two ways to change an arena.
 
 #![forbid(unsafe_code)]
 
@@ -9,43 +9,101 @@ use super::*;
 /* lending the arena for an edit                                      */
 /* ------------------------------------------------------------------ */
 
-/// Run `f` on `document`'s arena to build a DETACHED node - the factories'
-/// gate, and the one way a caller outside this module gets `&mut` to an XML
-/// arena without a receiver.
+/// Lend `rb_doc`'s arena to `f` to build a DETACHED node - the factories'
+/// gate, and the XML twin of `bridge::html::new_node`. It checks `rb_doc` is
+/// an XML Document, lends only [`XmlNewNodes`], which can make nodes and
+/// nothing else, and after the loan reports what it grew the document by.
 ///
 /// A detached node is not in the tree, so it is not in the name index and there
 /// is no receiver to check for frozenness. A TREE EDIT is [`Editing`]: it needs
 /// both, and the only way to get the `&mut` for one is to spend the token
-/// `begin_edit` hands out. The name says which of the two this is, because a
-/// mutator reaching for "the arena, mutably" would otherwise skip the checks
-/// simply by asking for the wrong thing - which is how the XML side came to have
-/// nine sites that correctly skip the index invalidation and eight that must
-/// not, with nothing but a reader's judgement telling them apart.
+/// `begin_edit` hands out. Lending [`XmlNewNodes`] rather than the arena keeps
+/// a factory from reaching the tree past those checks.
 ///
 /// Refused while a read of the document is held (`wrapper::xml_write`). The
-/// `&mut` lives for `f` alone, and `f` must not run Ruby:
-/// the arena is `Vec`s, so Ruby code that read or wrote this same document
-/// meanwhile would alias the borrow. That is why a method converts and checks
-/// its arguments FIRST and only then calls this, with nothing but engine calls
-/// inside - which are Ruby-free by construction.
-///
-/// A factory grows the arena with no edit after it, so it reports the growth
-/// here, after the loan, as `bridge::html`'s `lend_document` does
-/// (`account_growth`): the arguments were converted to copies before, and
-/// what `f` made is a bare node of the arena, which the Document keeps.
-pub fn with_arena_for_new_node<R>(
+/// loan lives for `f` alone, and `f` must not run Ruby: the arena is `Vec`s, so
+/// Ruby code that read or wrote this same document meanwhile would alias the
+/// borrow. That is why a method converts and checks its arguments FIRST and
+/// only then calls this, with nothing but engine calls inside.
+pub fn new_xml_node<R>(
     ruby: &Ruby,
-    document: Value,
-    f: impl FnOnce(&mut XmlDoc) -> R,
+    rb_doc: Value,
+    f: impl FnOnce(&mut XmlNewNodes<'_>) -> R,
 ) -> Result<R, Error> {
-    let document = doc_known(document);
-    /* The loan ends with this block, before the report below may collect. */
+    let doc = XML_DOC_TYPE.check(rb_doc)?;
+    /* The loan ends with this block, before the report below can run Ruby. */
     let r = {
-        let mut write = xml_write(&document)?;
-        f(&mut write)
+        let mut write = xml_write(&doc)?;
+        f(&mut XmlNewNodes(&mut write))
     };
-    crate::bridge::wrapper::account_growth_of(ruby, &document);
+    /* A factory grows the document with no edit after it to report it (a
+     * name of a megabyte), so it reports here, as HTML's `lend_document`:
+     * the arguments were copies, and what it made is a bare node. */
+    crate::bridge::wrapper::account_growth_of(ruby, &doc);
     Ok(r)
+}
+
+/// An XML arena lent to make detached nodes ([`new_xml_node`]): the
+/// factories' operations, and no way to the tree.
+pub struct XmlNewNodes<'a>(&'a mut XmlDoc);
+
+impl XmlNewNodes<'_> {
+    /// An element named `name`, holding `content` as its text when given.
+    pub fn element(&mut self, name: &[u8], content: Option<&[u8]>) -> Result<NodeId, MutError> {
+        let el = crate::xml::mutate::new_element(self.0, name)?;
+        if let Some(text) = content {
+            /* The element was made just now, so setting its content edits no
+             * tree and no index. */
+            crate::xml::mutate::set_content(self.0, el, text)?;
+        }
+        Ok(el)
+    }
+
+    /// The DOM's `createElementNS`: `name` split as `sp`, in namespace `ns`.
+    pub fn dom_element_ns(
+        &mut self,
+        name: &[u8],
+        sp: crate::xml::qname::Split,
+        ns: &[u8],
+    ) -> Result<NodeId, MutError> {
+        crate::xml::mutate::new_dom_element_ns(self.0, name, sp, ns)
+    }
+
+    /// The DOM's `createElement`, its split given rather than parsed.
+    pub fn loose_dom_element(
+        &mut self,
+        name: &[u8],
+        sp: crate::xml::qname::Split,
+        ns: &[u8],
+    ) -> Result<NodeId, MutError> {
+        crate::xml::mutate::new_loose_dom_element(self.0, name, sp, ns)
+    }
+
+    /// A document type node.
+    pub fn document_type(
+        &mut self,
+        name: &[u8],
+        pub_id: crate::xml::arena::DoctypeId<'_>,
+        sys_id: crate::xml::arena::DoctypeId<'_>,
+    ) -> Result<NodeId, MutError> {
+        crate::xml::mutate::new_document_type(self.0, name, pub_id, sys_id)
+    }
+
+    /// A text, CDATA or comment node of kind `ty`.
+    pub fn chardata(&mut self, ty: ArenaKind, text: &[u8]) -> Result<NodeId, MutError> {
+        crate::xml::mutate::new_chardata(self.0, ty, text)
+    }
+
+    /// A processing instruction.
+    pub fn pi(&mut self, target: &[u8], data: &[u8]) -> Result<NodeId, MutError> {
+        crate::xml::mutate::new_pi(self.0, target, data)
+    }
+
+    /// A detached copy of `src`, one of this arena's nodes (`deep`: its
+    /// subtree too).
+    pub fn clone_of(&mut self, src: NodeId, deep: bool) -> Result<NodeId, MutError> {
+        crate::xml::mutate::clone_node(self.0, src, deep)
+    }
 }
 
 /// The receiver cleared for an edit, and the PROOF of it.
@@ -59,7 +117,7 @@ pub fn with_arena_for_new_node<R>(
 /// edit, one record of it. Each spending checks again, so a second would not
 /// be unsound; taking the permit narrows what a caller can get wrong.
 ///
-/// [`with_arena_for_new_node`] stays for the FACTORIES, which build a detached node -
+/// [`new_xml_node`] stays for the FACTORIES, which build a detached node -
 /// not in the tree, so not in the index, and with no receiver to freeze. The
 /// HTML side has the same pair, `edit` and `HtmlEdit::with_tree`; XML had the `&mut`
 /// gate and the invalidate gate as two separate calls, and whether a site needed
@@ -94,7 +152,7 @@ impl Editing<'_> {
         self.document.value()
     }
 
-    /// Lend the arena for the change. `f` runs no Ruby (see [`with_arena_for_new_node`]),
+    /// Lend the arena for the change. `f` runs no Ruby (see [`new_xml_node`]),
     /// so every argument is converted BEFORE this. The frozen check is in
     /// `begin_edit`, ahead of that conversion, so a frozen receiver is reported
     /// before a bad argument, and again here. (The second check dates from
@@ -181,10 +239,7 @@ fn check_attr_owner_frozen(document: &DocHandle, id: NodeId) -> Result<(), Error
             _ => None,
         }
     };
-    match owner {
-        Some(owner) => crate::bridge::wrapper::check_node_frozen(document.value(), owner),
-        None => Ok(()),
-    }
+    crate::bridge::wrapper::check_attr_owner_frozen(document.value(), owner)
 }
 
 /// The receiver cleared for an edit - not frozen, nor an Attr whose owner is.

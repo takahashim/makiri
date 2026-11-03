@@ -151,10 +151,8 @@ pub fn aset(
     let nv = ruby_verified_name(ruby, rb_name, "attribute name")?;
     let vv = ruby_verified_data(ruby, rb_value, "attribute value")?;
     let name = check_dom_name(&nv, dom_name::Name::attribute, "attribute")?;
-    with_element(edit, |d, el| {
-        crate::bridge::html::set_attribute(d, el, name, &vv)
-    })?
-    .map_err(|_| makiri_error("failed to set attribute"))?;
+    with_element(edit, |d, el| d.set_attribute(el, name, vv.as_bytes()))?
+        .map_err(|_| makiri_error("failed to set attribute"))?;
     Ok(rb_value)
 }
 
@@ -183,7 +181,7 @@ pub fn set_attribute_ns(
     )?;
     let ns = nv.as_ref().map(|n| n.as_bytes());
     with_element(edit, |d, el| {
-        crate::bridge::html::set_attribute_ns(d, el, ns, qname, &vv)
+        d.set_attribute_ns(el, ns, qname, vv.as_bytes())
     })?
     .map_err(|_| makiri_error("failed to set namespaced attribute"))?;
     Ok(rb_value)
@@ -202,9 +200,7 @@ pub fn remove_attribute_ns(
     let lv = ruby_verified_text(ruby, rb_local, "attribute local name")?;
     let nv = namespace_arg(ruby, rb_ns, "namespace")?;
     let ns = nv.as_ref().map(|n| n.as_bytes());
-    with_element(edit, |d, el| {
-        crate::bridge::html::remove_attribute_ns(d, el, ns, &lv)
-    })?;
+    with_element(edit, |d, el| d.remove_attribute_ns(el, ns, lv.as_bytes()))?;
     Ok(ruby.qnil().as_value())
 }
 
@@ -215,7 +211,7 @@ pub fn set_content(ruby: &Ruby, mut this: HtmlSelf, rb_text: Value) -> Result<Va
     /* An Attr's content is its value, an attribute edit; a Text, Comment,
      * CDATA or PI node's is its data. Neither changes a child list. A
      * Document's or DocumentType's is nothing, so no edit is recorded. */
-    let set = |d: &mut HtmlDocMut<'_>, n: RawNode| crate::bridge::html::set_text_content(d, n, &tv);
+    let set = |d: &mut HtmlDocMut<'_>, n: RawNode| d.set_text_content(n, tv.as_bytes());
     match dom_rules::text_content(edit.node_type()?) {
         TextContent::AttrValue => edit.with_attributes(set)?,
         TextContent::Data => edit.with_data(set)?,
@@ -233,9 +229,7 @@ pub fn delete(ruby: &Ruby, mut this: HtmlSelf, rb_name: Value) -> Result<Value, 
         return Ok(rb_self);
     };
     let nv = ruby_verified_text(ruby, rb_name, "attribute name")?;
-    with_element(edit, |d, el| {
-        crate::bridge::html::remove_attribute(d, el, &nv)
-    })?;
+    with_element(edit, |d, el| d.remove_attribute(el, nv.as_bytes()))?;
     Ok(rb_self)
 }
 
@@ -485,7 +479,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
 
     check_owning_doc(&rb_self)?;
     let nv = ruby_verified_name(ruby, rb_name, "doctype name")?;
-    if !crate::bridge::html::valid_doctype_name(&nv) {
+    if !crate::html_dom::html::HtmlDoc::valid_doctype_name(nv.as_bytes()) {
         /* The caller's error, so the exception class is picked here - the
          * check itself is the DOM layer's. */
         return Err(Error::new(

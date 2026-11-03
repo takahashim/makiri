@@ -1,10 +1,10 @@
-//! A Ruby String as parser input: [`HtmlSource`] (fragments, and the bytes
-//! a document parse copies) and [`DocumentSource`] (a document parse, with
-//! the transport layer's encoding).
+//! A Ruby String as parser input: [`SourceBytes`] (its bytes, copied),
+//! [`HtmlSource`] (a fragment parse's, transcoded to UTF-8) and
+//! [`DocumentSource`] (a document parse's, with the transport layer's
+//! encoding).
 
 #![forbid(unsafe_code)]
 
-use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, RString};
 use crate::bridge::ruby::makiri_error;
 
@@ -13,21 +13,34 @@ use crate::ceiling_buf::OwnedBuf;
 
 use super::*;
 
-/// A Ruby String as HTML parser input, under the text-input contract: its
-/// encoding honoured (`nupur::string::to_utf8`, replacing what it cannot
-/// convert), its bytes copied out, and
-/// whether they are already known to be valid UTF-8, so the parser can skip
-/// its sanitisation.
-///
-/// The one place that turns a Ruby String into bytes an HTML parser reads.
-/// Both HTML entry points - a document parse and a fragment parse - take their
-/// input through it, so the engine below never sees a `VALUE`. The copy is
-/// what a document parse needs anyway, to read the source with the GVL
-/// released.
-pub struct HtmlSource {
+/// A Ruby String's bytes, copied out, and whether they are already known
+/// to be valid UTF-8 - never a scan, only what Ruby (or a transcode) has
+/// established - so a parser can skip its sanitisation. The bytes are what
+/// they are: whether they are read as the String's encoding is the maker's
+/// ([`HtmlSource`] transcodes, [`DocumentSource`] leaves it to the sniff).
+/// The copy is what a parse needs anyway, to read the source with the GVL
+/// released, and the engine below never sees a `VALUE`.
+pub struct SourceBytes {
     bytes: OwnedBuf,
     known_valid: bool,
 }
+
+impl SourceBytes {
+    /// Whether the bytes are valid UTF-8 already.
+    pub fn known_valid(&self) -> bool {
+        self.known_valid
+    }
+
+    /// The bytes.
+    pub fn bytes(&self) -> &[u8] {
+        self.bytes.as_slice()
+    }
+}
+
+/// A Ruby String as a FRAGMENT parse's input, under the text-input contract:
+/// its encoding honoured (`nupur::string::to_utf8`, replacing what it cannot
+/// convert), so its bytes are UTF-8.
+pub struct HtmlSource(SourceBytes);
 
 impl HtmlSource {
     /// `s` is a String by type: the caller has coerced it.
@@ -35,10 +48,11 @@ impl HtmlSource {
         Self::read_as(ruby, s, None)
     }
 
-    /// [`from_ruby`](Self::from_ruby), its bytes read as `read_as`'s
-    /// whatever the String says (`None`: as its own). Every invalid or
-    /// unmappable byte is replaced; a String whose encoding Ruby cannot
-    /// convert at all raises Ruby's own `EncodingError`, as it was.
+    /// [`from_ruby`](Self::from_ruby), but its bytes read as `read_as`'s
+    /// encoding whatever the String is tagged with (`None`: as its own).
+    /// Every invalid or unmappable byte is replaced; a String whose encoding
+    /// Ruby cannot convert at all raises Ruby's own `EncodingError`, as it
+    /// was.
     pub fn read_as(
         ruby: &crate::bridge::rb::Ruby,
         s: RString,
@@ -56,47 +70,17 @@ impl HtmlSource {
                 Transcode::Fault(e) => return Err(e),
             };
         let bytes = ruby_string_bytes(src)?;
-        Ok(HtmlSource { bytes, known_valid })
+        Ok(HtmlSource(SourceBytes { bytes, known_valid }))
     }
 
-    /// Whether the bytes are valid UTF-8 already - never a scan, only what
-    /// Ruby (or the transcode) has established.
+    /// Whether the bytes are valid UTF-8 already ([`SourceBytes`]).
     pub fn known_valid(&self) -> bool {
-        self.known_valid
+        self.0.known_valid()
     }
 
     /// The bytes.
     pub fn bytes(&self) -> &[u8] {
-        self.bytes.as_slice()
-    }
-
-    /// The bytes, owned - for a parse that runs with the GVL released.
-    pub fn into_bytes(self) -> OwnedBuf {
-        self.bytes
-    }
-}
-
-/// The encoding `encoding:` names, read the way the String's own encoding
-/// is read: by Ruby's name for it first, so `"US-ASCII"`, `"BINARY"` and
-/// `Encoding::UTF_32LE` mean what a String tagged with them means, and an
-/// Encoding Standard label Ruby does not know (`"latin1"`, `"unicode"`)
-/// second.
-#[derive(Clone, Copy)]
-pub enum GivenEncoding {
-    /// An encoding Ruby knows.
-    Ruby(Encoding),
-    /// An Encoding Standard label Ruby does not know.
-    Label(&'static crate::html::encoding::Encoding),
-}
-
-impl GivenEncoding {
-    /// The encoding `name` names, or None for a name neither Ruby nor the
-    /// Encoding Standard knows. May autoload a Ruby encoding - see
-    /// [`Encoding::find`], whose `Err` (not an unknown name) is passed on.
-    pub fn resolve(ruby: &Ruby, name: &[u8]) -> Result<Option<GivenEncoding>, Error> {
-        Ok(Encoding::find(ruby, name)?
-            .map(GivenEncoding::Ruby)
-            .or_else(|| crate::html::encoding::for_label(name).map(GivenEncoding::Label)))
+        self.0.bytes()
     }
 }
 
@@ -106,7 +90,7 @@ impl GivenEncoding {
 /// `html::encoding::transport_for`. One the Encoding Standard has no label
 /// for (UTF-32, CP51932, ...) is transcoded by Ruby and declared UTF-8.
 pub struct DocumentSource {
-    source: HtmlSource,
+    source: SourceBytes,
     transport: Option<&'static crate::html::encoding::Encoding>,
 }
 
@@ -128,12 +112,12 @@ impl DocumentSource {
             Transport::Unlabelled => {
                 /* The bytes are read as `enc`'s, whatever the String says. */
                 Ok(DocumentSource {
-                    source: HtmlSource::read_as(ruby, s, Some(enc))?,
+                    source: HtmlSource::read_as(ruby, s, Some(enc))?.0,
                     transport: Some(UTF_8),
                 })
             }
             Transport::Sniff => Ok(DocumentSource {
-                source: HtmlSource {
+                source: SourceBytes {
                     bytes: ruby_string_bytes(s)?,
                     known_valid: false,
                 },
@@ -153,7 +137,7 @@ impl DocumentSource {
          * UTF-8. */
         let known_valid = e == crate::html::encoding::UTF_8 && s.cached_utf8();
         Ok(DocumentSource {
-            source: HtmlSource {
+            source: SourceBytes {
                 bytes: ruby_string_bytes(s)?,
                 known_valid,
             },

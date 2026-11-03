@@ -80,6 +80,13 @@
 * An XML declaration naming Ruby's binary encoding (`BINARY`,
   `ASCII-8BIT`) is an unknown encoding, as a name XML does not register is;
   the document was read as UTF-8.
+* `Document#import_node` refuses a Document of either kind, into a
+  document of either kind, with `Makiri::Error` ("cannot import a
+  document"), as an HTML Document into an HTML one already did. An XML
+  Document raised `TypeError`, worded two ways.
+* A broken internal invariant met by an XPath evaluation or an XML edit
+  raises `Makiri::InternalError`, which a bare `rescue` lets through. It
+  raised `Makiri::Error`.
 
 ## [0.17.0.rc2] - 2026-10-24
 

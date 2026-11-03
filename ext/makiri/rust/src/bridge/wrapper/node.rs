@@ -23,12 +23,14 @@ use crate::xml::model::NodeId;
 /// node id - the HTML arena's in an HTML document, an XML [`NodeId`] in an
 /// XML one.
 ///
-/// Which of the two it is is not stored beside it. It is the document's
-/// representation - the wrapper's TypedData type, a NodeSet's [`DocKind`] -
-/// decided once, so a word is read back only through the reader named for
-/// that kind ([`xml`](Self::xml), [`html`](Self::html), [`token`](Self::token)).
-/// This type is where the word crosses between the typed forms and the
-/// untyped one, and so the one place in the glue a stored node is cast.
+/// The word itself does not say which of the two it is: the document's
+/// representation does - the wrapper's TypedData type, a NodeSet's
+/// [`DocKind`] - decided once, so a word is read back only through the reader
+/// named for that kind ([`xml`](Self::xml), [`html`](Self::html),
+/// [`token`](Self::token)). This type is where the word crosses between the
+/// typed forms and the untyped one, and so the one place in the bridge a
+/// stored node is cast. (A wrapper's own handle, [`NodeHandle`], does carry
+/// its kind.)
 ///
 /// `repr(transparent)` over `usize`: a NodeSet's buffer keeps the layout it had
 /// as `*mut c_void`. (A [`NodeData`] does not use it any more - it stores an
@@ -119,11 +121,18 @@ pub enum NodeHandle {
 /// A live representation-specific node that can become a long-lived wrapper
 /// handle. Its cache identity and stored handle are derived from the same
 /// value, so callers cannot accidentally pair an unrelated token and handle.
-pub(in crate::bridge) trait NodeHandleSource {
+pub(in crate::bridge) trait NodeHandleSource: Copy {
     /// The node's index in its document - its key in the document's node
     /// table, a Fixnum on every target - and the document's stamp.
     fn index_and_stamp(&self) -> (u32, u32);
     fn into_handle(self, document: Value) -> NodeHandle;
+    /// The TypedData type a wrapper of this representation is: named by the
+    /// node's own type, so a wrapper's type and its handle cannot disagree.
+    fn wrapper_type() -> &'static NodeWrapperType;
+    /// The leaf classes of this representation.
+    fn classes() -> &'static NodeClasses;
+    /// The node's type in `document`, or `None` for a node it does not have.
+    fn node_type(self, document: Value) -> Result<Option<NodeType>, Error>;
 }
 
 impl NodeHandle {
@@ -216,7 +225,7 @@ pub enum NodeRepr {
     Other,
 }
 
-/// Why [`node_token_in`] refused a node.
+/// Why [`node_word_in`] (and so [`node_token_in`]) refused a node.
 #[allow(
     clippy::large_enum_variant,
     reason = "an Error holds its message inline (`crate::msg::Msg`), so it is never boxed"
@@ -237,12 +246,43 @@ pub enum NotInDocument {
 /// never names a node of another document. The token's kind is `document`'s
 /// own, not one a caller passes alongside.
 pub fn node_token_in(ruby: &Ruby, rb_node: Value, document: Value) -> Result<Token, NotInDocument> {
-    let node_document = keepalive_document(ruby, rb_node).map_err(NotInDocument::Unusable)?;
-    if !crate::bridge::ruby::same_value(node_document, document) {
+    Ok(node_word_in(ruby, rb_node, document)?.token(DocKind::of(document)))
+}
+
+/// The word of `rb_node`, which must be a node of `document` (the document
+/// node included): the one check that a node belongs to a document, behind
+/// [`node_token_in`] and the words a NodeSet is built of
+/// (`node_set_of_nodes`), so the set's entry invariant and the engine's are
+/// one function.
+pub fn node_word_in(
+    ruby: &Ruby,
+    rb_node: Value,
+    document: Value,
+) -> Result<NodeWord, NotInDocument> {
+    if crate::bridge::ruby::is_kind_of(ruby, rb_node, &CLASS_DOCUMENT) {
+        if !crate::bridge::ruby::same_value(rb_node, document) {
+            return Err(NotInDocument::Foreign);
+        }
+        return node_raw(ruby, rb_node).map_err(NotInDocument::Unusable);
+    }
+    /* One read of the wrapper gives both its Document and its node. */
+    let nd = read_node(&NODE_DATA_TYPE, rb_node).map_err(NotInDocument::Unusable)?;
+    if !crate::bridge::ruby::same_value(nd.document, document) {
         return Err(NotInDocument::Foreign);
     }
-    let raw = node_raw(ruby, rb_node).map_err(NotInDocument::Unusable)?;
-    Ok(raw.token(DocKind::of(document)))
+    Ok(handle_word(nd.node))
+}
+
+/// The word a wrapper's handle names.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(raw_node_crossing, reason = "a node's word, for identity alone")
+)]
+fn handle_word(node: NodeHandle) -> NodeWord {
+    match node {
+        NodeHandle::Html(key) => NodeWord::from(key.raw_node()),
+        NodeHandle::Xml(id) => NodeWord::from(id),
+    }
 }
 
 /// The kind-AGNOSTIC node word (the base type, so HTML or XML). Only for the
@@ -265,10 +305,7 @@ pub fn node_raw(ruby: &Ruby, rb_node: Value) -> Result<NodeWord, Error> {
         });
     }
     /* TypeError for a non-node, as TypedData_Get_Struct raised. */
-    Ok(match read_node(&NODE_DATA_TYPE, rb_node)?.node {
-        NodeHandle::Html(key) => NodeWord::from(key.raw_node()),
-        NodeHandle::Xml(id) => NodeWord::from(id),
-    })
+    Ok(handle_word(read_node(&NODE_DATA_TYPE, rb_node)?.node))
 }
 
 /// Which representation `v` wraps ([`NodeRepr`]).

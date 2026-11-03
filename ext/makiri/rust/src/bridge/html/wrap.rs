@@ -23,36 +23,14 @@ static HTML_NODE_CLASSES: NodeClasses = NodeClasses {
     fragment: &CLASS_HTML_DOCUMENT_FRAGMENT,
 };
 
-/// Wrap a live HTML node handle into its `Makiri::HTML::*` leaf.
-///
-/// A DOCUMENT node maps back onto the Ruby Document rather than getting a
-/// second wrapper; a node type with no specific leaf (entity/notation, which
-/// the HTML parser does not produce) falls back to `Makiri::HTML::Node`.
+/// Wrap a live HTML node handle into its `Makiri::HTML::*` leaf
+/// ([`wrap_dom_node`](crate::bridge::wrapper::wrap_dom_node)): the Document node maps
+/// back onto the Ruby Document, a node type with no leaf of its own
+/// (entity/notation, which the HTML parser does not produce) falls back to
+/// `Makiri::HTML::Node`, and a node `document` does not have is
+/// `InternalError`.
 pub fn wrap_html_node(ruby: &Ruby, node: RawNode, document: Value) -> Result<Value, Error> {
-    // The caller hands `node` with the Document it belongs to.
-    let node_type = html_read(&doc_known(document))?.node(node).node_type();
-    wrap_html_node_of_type(ruby, node, node_type, document)
-}
-
-/// [`wrap_html_node`] for a node that must be one of `document`'s: an
-/// `InternalError` when it is not (another document's, or a stale word).
-pub(in crate::bridge) fn wrap_html_node_checked(
-    ruby: &Ruby,
-    node: RawNode,
-    document: Value,
-) -> Result<Value, Error> {
-    /* A wrapper in the table was made for this word, checked then - and a
-     * word names one node of one document for the document's life - so a
-     * hit needs no check, no type and no class. */
-    if let Some(cached) = crate::bridge::wrapper::cached_node(document, &node)? {
-        return Ok(cached);
-    }
-    let node_type = html_read(&doc_known(document))?
-        .doc()
-        .checked(node)
-        .map(|n| n.node_type())
-        .ok_or_else(|| crate::bridge::ruby::internal_error("a stored node of another document"))?;
-    wrap_html_node_of_type(ruby, node, node_type, document)
+    crate::bridge::wrapper::wrap_dom_node(ruby, node, document)
 }
 
 /// [`wrap_html_node`] for a caller that read the node's type already, in the
@@ -63,11 +41,7 @@ pub(super) fn wrap_html_node_of_type(
     node_type: NodeType,
     document: Value,
 ) -> Result<Value, Error> {
-    if node_type == NodeType::Document {
-        return Ok(document);
-    }
-    let klass = HTML_NODE_CLASSES.class_for(ruby, node_type)?;
-    crate::bridge::wrapper::wrap_cached(ruby, &HTML_NODE_TYPE, klass, node, document)
+    crate::bridge::wrapper::wrap_dom_node_of_type(ruby, node, node_type, document)
 }
 
 impl crate::bridge::wrapper::NodeHandleSource for RawNode {
@@ -77,6 +51,21 @@ impl crate::bridge::wrapper::NodeHandleSource for RawNode {
 
     fn into_handle(self, document: Value) -> NodeHandle {
         NodeHandle::Html(mint_html_key(self, document))
+    }
+
+    fn wrapper_type() -> &'static crate::bridge::wrapper::NodeWrapperType {
+        &HTML_NODE_TYPE
+    }
+
+    fn classes() -> &'static crate::bridge::wrapper::NodeClasses {
+        &HTML_NODE_CLASSES
+    }
+
+    fn node_type(self, document: Value) -> Result<Option<NodeType>, Error> {
+        Ok(html_read(&doc_known(document))?
+            .doc()
+            .checked(self)
+            .map(|n| n.node_type()))
     }
 }
 
@@ -96,8 +85,10 @@ fn mint_html_key(node: RawNode, document: Value) -> HtmlNodeKey {
         .expect("wrap_html_node: the node must belong to the document it is wrapped under")
 }
 
+/// A node wrapper without its node: node classes have no allocator, so only
+/// a broken invariant makes one (as XML's `wrapper_without_node`).
 fn uninitialized() -> Error {
-    crate::bridge::ruby::type_error("uninitialized HTML node")
+    crate::bridge::ruby::internal_error("an HTML node wrapper without its node")
 }
 
 /// The key and keepalive Document of an HTML node or HTML Document.

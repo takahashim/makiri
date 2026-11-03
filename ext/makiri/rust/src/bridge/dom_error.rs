@@ -45,3 +45,18 @@ fn message(e: PreInsertError) -> &'static str {
         },
     }
 }
+
+/// `import_node`'s refusal of a Document, of either kind into either kind:
+/// the DOM's importNode throws NotSupportedError for one, as `clone_node`
+/// refuses a Document here (`#dup` is the document copy).
+pub fn refuse_document_import(
+    ruby: &crate::bridge::rb::Ruby,
+    node: crate::bridge::rb::Value,
+) -> Result<(), Error> {
+    if crate::bridge::ruby::is_kind_of(ruby, node, &crate::init::CLASS_DOCUMENT) {
+        return Err(makiri_error(
+            "import_node cannot import a document; use #dup",
+        ));
+    }
+    Ok(())
+}

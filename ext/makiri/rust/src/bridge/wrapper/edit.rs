@@ -53,17 +53,18 @@ pub fn record_edit(rb_doc: Value, kind: EditKind) {
 
 /// [`record_edit`] for a caller that already holds the Document's handle.
 pub fn record_edit_in(doc: &DocHandle, kind: EditKind) {
-    doc_data_known(doc).update_edits(|e| e.record(kind));
+    doc.data().update_edits(|e| e.record(kind));
 }
 
-/// `Document#tree_version`: how many child-list edits the document has seen.
+/// `Document#tree_version`: the child lists' invalidation key - unchanged
+/// means no child list changed (see the contract above; not a count).
 /// `TypeError` for a non-Document.
 pub fn tree_version(rb_doc: Value) -> Result<u64, Error> {
     Ok(DOC_TYPE.check(rb_doc)?.data().edits.get().tree_version)
 }
 
-/// `Document#attribute_version`: how many attribute edits the document has
-/// seen. `TypeError` for a non-Document.
+/// `Document#attribute_version`: the attributes' invalidation key, as
+/// [`tree_version`]'s. `TypeError` for a non-Document.
 pub fn attribute_version(rb_doc: Value) -> Result<u64, Error> {
     Ok(DOC_TYPE.check(rb_doc)?.data().edits.get().attribute_version)
 }

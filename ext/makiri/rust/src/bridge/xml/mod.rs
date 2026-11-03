@@ -35,7 +35,6 @@ use crate::init::{
     CLASS_XML_DOCUMENT_TYPE, CLASS_XML_ELEMENT, CLASS_XML_NODE, CLASS_XML_PROCESSING_INSTRUCTION,
     CLASS_XML_TEXT,
 };
-use crate::node_type::NodeType as CrateKind;
 use crate::xml::attr_key::AttrKey;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, MutError, NodeId, ParseError, ParseLimits};
 use crate::xml::mutate::{clone_node, copy_node_from, import_subtree, remove as remove_node};

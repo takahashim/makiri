@@ -26,14 +26,17 @@ pub(in crate::bridge) fn wrap_doc_node(
     node: NodeWord,
     document: Value,
 ) -> Result<Value, Error> {
+    /* A null word is never stored (`NodeWord::NULL`): one read back is a
+     * broken set or query, refused rather than answered as nil. */
+    let null = || crate::bridge::ruby::internal_error("a null node word in a stored set");
     match kind {
-        DocKind::Xml => match node.xml() {
-            Some(id) => crate::bridge::xml::wrap_xml_node_checked(ruby, id, document),
-            None => Ok(ruby.qnil()),
-        },
-        DocKind::Html => match node.html() {
-            Some(n) => crate::bridge::html::wrap_html_node_checked(ruby, n, document),
-            None => Ok(ruby.qnil()),
-        },
+        DocKind::Xml => {
+            let id = node.xml().ok_or_else(null)?;
+            crate::bridge::wrapper::wrap_dom_node(ruby, id, document)
+        }
+        DocKind::Html => {
+            let n = node.html().ok_or_else(null)?;
+            crate::bridge::wrapper::wrap_dom_node(ruby, n, document)
+        }
     }
 }

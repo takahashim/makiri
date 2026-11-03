@@ -86,7 +86,7 @@ impl<C: Checked> Deref for RubyStr<C> {
 }
 
 impl RubyText {
-    /// The text as an engine input, borrowed for the guard's lifetime.
+    /// The text as an engine input, borrowed from this view's own copy.
     pub(crate) fn text(&self) -> crate::text::VerifiedText<'_> {
         /* The bridge checked the text contract when it built `self`. */
         crate::text::VerifiedText::from_checked(self)
@@ -95,26 +95,8 @@ impl RubyText {
 
 /* ---- the strict text contract ---- */
 
-/// What the strict-text check found.
-///
-/// The enum itself lives in [`crate::utf8_decode`] beside the pure [`text_verdict`];
-/// re-exported here so the bridge's callers keep naming it from this module.
-pub use crate::utf8_decode::TextVerdict;
-
-/// Check `bytes` against the strict contract, returning the specific
-/// violation so each caller can map it to its own error surface (`Makiri::Error`,
-/// `XML::SyntaxError`, or a reason string).
-///
-/// It resolves the String's cached coderange into an ordinary value, then
-/// delegates the actual check to the pure [`crate::utf8_decode::text_verdict`]; the
-/// logic is Ruby-free and testable under the always-compiled core.
-///
-/// `coderange_str` is consulted only for its CACHED coderange, which never
-/// scans and never allocates.
-pub fn text_check(coderange_str: RString, bytes: &[u8]) -> TextVerdict {
-    /* The cached coderange reads flags; it never scans and never allocates. */
-    crate::utf8_decode::text_verdict(bytes, coderange_str.cached_utf8())
-}
+/// What the strict-text check found ([`crate::utf8_decode`]'s).
+use crate::utf8_decode::TextVerdict;
 
 /// Why a String in another encoding was refused ([`ReadError::NoUtf8Form`]).
 const NOT_UTF8_CONVERTIBLE: &str = "could not be converted to UTF-8 from its encoding";
@@ -129,22 +111,34 @@ fn text_error(what: &str, problem: &str) -> Error {
     makiri_error(format_args!("{what} {problem}"))
 }
 
-/// The error for a checked view `nupur::string::read_utf8` refused: what each reader words
-/// its own way - its check's refusal, invalid UTF-8 - by `refused` and
-/// `not_utf8`, and the rest alike. With no cap `TooLong` cannot come back.
+/// What a refused read says, the one mapping of [`ReadError`]: a problem
+/// with the String is a reason ([`TextRefusal::Invalid`]), anything else -
+/// running out of memory included, which is not about the String - is passed
+/// on as raised. The check's own refusal comes back as `Err` for the caller
+/// to word. With no cap `TooLong` cannot come back.
+fn refusal<P>(r: ReadError<P>, not_utf8: &'static str) -> Result<TextRefusal, P> {
+    Ok(match r {
+        ReadError::Refused(p) => return Err(p),
+        ReadError::NotUtf8 => TextRefusal::Invalid(not_utf8),
+        ReadError::TooLong => TextRefusal::Invalid(TOO_LONG),
+        ReadError::NoUtf8Form => TextRefusal::Invalid(NOT_UTF8_CONVERTIBLE),
+        ReadError::Oom => TextRefusal::Raised(oom_reading()),
+        ReadError::Raised(e) => TextRefusal::Raised(e),
+    })
+}
+
+/// The error for a checked view `nupur::string::read_utf8` refused: its
+/// check's refusal worded by `refused`, a problem with the String as "<what>
+/// <problem>", the rest as [`refusal`] passes it on.
 fn read_error<P>(
     r: ReadError<P>,
     what: &str,
     refused: impl FnOnce(P) -> Error,
-    not_utf8: &str,
+    not_utf8: &'static str,
 ) -> Error {
-    match r {
-        ReadError::Refused(p) => refused(p),
-        ReadError::NotUtf8 => text_error(what, not_utf8),
-        ReadError::TooLong => text_error(what, TOO_LONG),
-        ReadError::NoUtf8Form => text_error(what, NOT_UTF8_CONVERTIBLE),
-        ReadError::Oom => oom_reading(),
-        ReadError::Raised(e) => e,
+    match refusal(r, not_utf8) {
+        Ok(t) => t.into_error(|problem| text_error(what, problem)),
+        Err(p) => refused(p),
     }
 }
 
@@ -278,14 +272,8 @@ pub fn ruby_try_verified_text(
         b.contains(&0)
             .then(|| TextVerdict::HasNul.reason().unwrap_or_default())
     })
-    .map_err(|r| match r {
-        ReadError::Refused(reason) => TextRefusal::Invalid(reason),
-        ReadError::TooLong => TextRefusal::Invalid(TOO_LONG),
-        ReadError::NotUtf8 => {
-            TextRefusal::Invalid(TextVerdict::InvalidUtf8.reason().unwrap_or_default())
-        }
-        ReadError::NoUtf8Form => TextRefusal::Invalid(NOT_UTF8_CONVERTIBLE),
-        ReadError::Oom => TextRefusal::Invalid("could not be copied (out of memory)"),
-        ReadError::Raised(e) => TextRefusal::Raised(e),
+    .map_err(|r| {
+        refusal(r, TextVerdict::InvalidUtf8.reason().unwrap_or_default())
+            .unwrap_or_else(TextRefusal::Invalid)
     })
 }

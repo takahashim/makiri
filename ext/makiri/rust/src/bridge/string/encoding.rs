@@ -4,7 +4,7 @@
 
 use crate::bridge::rb::Ruby;
 
-use crate::bridge::rb::{Error, RString, Value};
+use crate::bridge::rb::Error;
 pub use crate::nupur::encoding::Encoding;
 
 /* ---- encoding ---- */
@@ -12,27 +12,28 @@ pub use crate::nupur::encoding::Encoding;
 /* Reading a String as UTF-8 is nupur's (`nupur::encoding`). */
 pub use crate::nupur::encoding::to_encoding;
 
-/// `v` as an encoding argument: the encoding, and the name to write for it -
-/// the String or Symbol as the caller wrote it, or an `Encoding`'s own name.
-pub fn encoding_arg(
-    ruby: &Ruby,
-    v: Value,
-) -> Result<(Encoding, crate::ceiling_buf::OwnedBuf), Error> {
-    let e = to_encoding(ruby, v)?;
-    let name = match RString::from_value(v) {
-        Some(s) => s,
-        None if crate::bridge::rb::Symbol::from_value(v).is_some() => {
-            crate::bridge::ruby::name_arg(v)?
-        }
-        None => {
-            return crate::ceiling_buf::OwnedBuf::copy_from(e.name())
-                .map(|b| (e, b))
-                .ok_or_else(|| {
-                    crate::bridge::ruby::makiri_error("out of memory reading an encoding name")
-                });
-        }
-    };
-    Ok((e, super::ruby_string_bytes(name)?))
+/// The encoding `encoding:` names, read the way the String's own encoding
+/// is read: by Ruby's name for it first, so `"US-ASCII"`, `"BINARY"` and
+/// `Encoding::UTF_32LE` mean what a String tagged with them means, and an
+/// Encoding Standard label Ruby does not know (`"latin1"`, `"unicode"`)
+/// second.
+#[derive(Clone, Copy)]
+pub enum GivenEncoding {
+    /// An encoding Ruby knows.
+    Ruby(Encoding),
+    /// An Encoding Standard label Ruby does not know.
+    Label(&'static crate::html::encoding::Encoding),
+}
+
+impl GivenEncoding {
+    /// The encoding `name` names, or None for a name neither Ruby nor the
+    /// Encoding Standard knows. May autoload a Ruby encoding - see
+    /// [`Encoding::find`], whose `Err` (not an unknown name) is passed on.
+    pub fn resolve(ruby: &Ruby, name: &[u8]) -> Result<Option<GivenEncoding>, Error> {
+        Ok(Encoding::find(ruby, name)?
+            .map(GivenEncoding::Ruby)
+            .or_else(|| crate::html::encoding::for_label(name).map(GivenEncoding::Label)))
+    }
 }
 
 /// Whether a String's own tag claims no encoding for the document it holds:
