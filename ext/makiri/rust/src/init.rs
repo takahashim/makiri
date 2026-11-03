@@ -273,7 +273,7 @@ fn xml_decode(ruby: &Ruby, str: Value) -> Result<Value, Error> {
     let s = crate::bridge::ruby::string_arg(str)?;
     /* decode-only: no arena, no budget */
     crate::bridge::xml::decode::xml_decode_input(ruby, s, None)
-        .and_then(|d| crate::bridge::string::utf8_str(ruby, d.as_slice()))
+        .and_then(|d| crate::bridge::string::utf8_str_trusting(ruby, d.as_slice()))
         .map(crate::bridge::rb::ReprValue::as_value)
 }
 
@@ -362,14 +362,11 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     // gem it was loaded by and the Ruby it was loaded into - a stale
     // `lib/makiri/makiri.bundle` in a checkout is read by whichever Ruby, and
     // whichever version of the Ruby code, requires it.
-    let native_version =
-        crate::bridge::string::utf8_str(ruby, env!("MAKIRI_GEM_VERSION").as_bytes())?;
+    let native_version = crate::bridge::string::utf8_str(ruby, env!("MAKIRI_GEM_VERSION"))?;
     crate::bridge::rb::freeze(native_version)?;
     makiri.const_set(ruby, "NATIVE_VERSION", native_version)?;
-    let native_ruby = crate::bridge::string::utf8_str(
-        ruby,
-        crate::nupur::abi::ruby_api_version().as_str().as_bytes(),
-    )?;
+    let native_ruby =
+        crate::bridge::string::utf8_str(ruby, crate::nupur::abi::ruby_api_version().as_str())?;
     crate::bridge::rb::freeze(native_ruby)?;
     makiri.const_set(ruby, "NATIVE_RUBY_API_VERSION", native_ruby)?;
 

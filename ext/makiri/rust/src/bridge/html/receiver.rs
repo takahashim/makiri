@@ -211,7 +211,7 @@ impl HtmlView<'_> {
         };
         let Some(raw) = target else {
             drop(self);
-            return utf8_str(ruby, b"").map(|s| s.as_value());
+            return utf8_str(ruby, "").map(|s| s.as_value());
         };
         let node = self.read.node(raw);
         if !matches!(
@@ -228,7 +228,7 @@ impl HtmlView<'_> {
             )?;
             return match text {
                 Some(text) => Ok(text),
-                None => utf8_str(ruby, b"").map(|s| s.as_value()),
+                None => utf8_str(ruby, "").map(|s| s.as_value()),
             };
         }
         let p = self.read.parsed();

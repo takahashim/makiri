@@ -11,7 +11,7 @@ use crate::bridge::rb::{prelude::*, Error, RArray, RClass, RHash, Ruby, Value};
 
 use super::XmlSelf;
 use crate::bridge::build::{ary, aset, hash, push};
-use crate::bridge::string::utf8_str;
+use crate::bridge::string::utf8_str_trusting;
 use crate::init::MOD_XML;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
@@ -40,7 +40,7 @@ fn new_ns(ruby: &Ruby, class: RClass, prefix: Value, href: Value) -> Result<Valu
 /// String.
 fn prefix_value(ruby: &Ruby, p: Option<&[u8]>) -> Result<Value, Error> {
     match p.filter(|p| !p.is_empty()) {
-        Some(p) => utf8_str(ruby, p).map(|s| s.as_value()),
+        Some(p) => utf8_str_trusting(ruby, p).map(|s| s.as_value()),
         None => Ok(ruby.qnil().as_value()),
     }
 }
@@ -68,7 +68,10 @@ pub fn namespace(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
             .name_parts(this.id)
             .and_then(|n| Some((n.prefix, n.ns_uri?)))
         {
-            Some((p, u)) => Some((prefix_value(ruby, p)?, utf8_str(ruby, u)?.as_value())),
+            Some((p, u)) => Some((
+                prefix_value(ruby, p)?,
+                utf8_str_trusting(ruby, u)?.as_value(),
+            )),
             None => None,
         }
     };
@@ -89,7 +92,7 @@ pub fn namespace_definitions(ruby: &Ruby, this: XmlSelf) -> Result<RArray, Error
         let pairs = ary(ruby, 0)?;
         for (_, p, u) in declarations(&d, this.id) {
             push(pairs, prefix_value(ruby, Some(p))?)?;
-            push(pairs, utf8_str(ruby, u)?)?;
+            push(pairs, utf8_str_trusting(ruby, u)?)?;
         }
         pairs
     };
@@ -111,9 +114,9 @@ pub fn namespaces(ruby: &Ruby, this: XmlSelf) -> Result<RHash, Error> {
     let h = hash(ruby)?;
     for id in core::iter::successors(Some(this.id), |&n| d.parent(n)) {
         for (at, _, u) in declarations(&d, id) {
-            let key = crate::bridge::string::utf8_str(ruby, d.qname(at))?;
+            let key = crate::bridge::string::utf8_str_trusting(ruby, d.qname(at))?;
             if h.get(key)?.is_none() {
-                aset(h, key.as_value(), utf8_str(ruby, u)?)?;
+                aset(h, key.as_value(), utf8_str_trusting(ruby, u)?)?;
             }
         }
     }
@@ -131,7 +134,11 @@ pub fn collect_namespaces(ruby: &Ruby, this: XmlSelf) -> Result<RHash, Error> {
     let h = hash(ruby)?;
     for id in core::iter::successors(Some(top), |&n| d.preorder_next(top, n)) {
         for (at, _, u) in declarations(&d, id) {
-            aset(h, utf8_str(ruby, d.qname(at))?, utf8_str(ruby, u)?)?;
+            aset(
+                h,
+                utf8_str_trusting(ruby, d.qname(at))?,
+                utf8_str_trusting(ruby, u)?,
+            )?;
         }
     }
     Ok(h)

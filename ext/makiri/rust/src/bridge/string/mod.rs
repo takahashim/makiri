@@ -20,11 +20,13 @@
 //! hot paths - a selector, an expression - allocate nothing); and the parser
 //! inputs own the raw bytes ([`ruby_string_bytes`]).
 //!
-//! Nothing here borrows a String's bytes: `nupur` reads a String only by
+//! Nothing here borrows a String's bytes: Makiri reads a String only by
 //! copying out of it (`RString::copy_to` into a caller's buffer, `append_to`
-//! into a `Vec`'s reserved room). The XML reader's encoding sniff reads a
-//! copy of the document's start ([`prefix`]); the decode copies the
-//! document once, and checks and parses that copy.
+//! into a `Vec`'s reserved room), and takes neither of the loans `nupur`
+//! also offers (`RString::with_bytes`, `with_locked_bytes`). The XML
+//! reader's encoding sniff reads a copy of the document's start
+//! ([`prefix`]); the decode copies the document once, and checks and parses
+//! that copy.
 
 mod build;
 mod encoding;

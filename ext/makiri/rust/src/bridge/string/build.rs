@@ -7,11 +7,12 @@ use crate::bridge::rb::{Error, ReprValue, Value};
 
 /* ---- assembling Ruby Strings ---- */
 
-/* The engine's text is UTF-8 by the engine's own invariant (every input
- * is decoded or checked on the way in), so its bytes are made a String
- * unchecked: Nupur's trusting constructor, under the name the bridge has
- * always used. */
-pub use crate::nupur::string::utf8_str_trusting as utf8_str;
+/* Nupur's two constructors, under Nupur's names. The engine's text is UTF-8
+ * by the engine's own invariant (every input is decoded or checked on the
+ * way in), so its bytes are made a String unchecked, by `utf8_str_trusting`,
+ * and Ruby scans one when it needs to know. A `&str` - a literal, a version -
+ * is `utf8_str`'s, which marks the String valid. */
+pub use crate::nupur::string::{utf8_str, utf8_str_trusting};
 
 /// Join the text index's document-order slices, totalling `total` bytes,
 /// into one UTF-8 String (`nupur::string::utf8_str_from_slices`). The joined
@@ -41,7 +42,7 @@ pub fn dom_name_str(ruby: &Ruby, bytes: &[u8]) -> Result<Value, Error> {
 
 /* ---- a String of bytes a document read lends ---- */
 
-/// How [`str_from_read`] makes its String: a fresh UTF-8 one ([`utf8_str`]),
+/// How [`str_from_read`] makes its String: a fresh UTF-8 one ([`utf8_str_trusting`]),
 /// or an interned DOM name ([`dom_name_str`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StrKind {
@@ -64,7 +65,7 @@ pub fn str_from_read<G>(
         return Ok(None);
     };
     match kind {
-        StrKind::Utf8 => utf8_str(ruby, b).map(|s| s.as_value()),
+        StrKind::Utf8 => utf8_str_trusting(ruby, b).map(|s| s.as_value()),
         StrKind::DomName => dom_name_str(ruby, b),
     }
     .map(Some)

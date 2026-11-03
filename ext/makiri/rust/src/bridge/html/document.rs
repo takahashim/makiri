@@ -152,7 +152,7 @@ pub fn document_title(ruby: &Ruby, rb_doc: Value) -> Result<RString, Error> {
     let read = html_read(&doc)?;
     let title = read.doc().title();
     let bytes = title.as_deref().unwrap_or(&[]);
-    crate::bridge::string::utf8_str(ruby, bytes)
+    crate::bridge::string::utf8_str_trusting(ruby, bytes)
 }
 
 /// `Document#encoding`: the character encoding the document was read in, by

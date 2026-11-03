@@ -227,7 +227,9 @@ fn val_to_ruby(ruby: &Ruby, v: ValRef<'_>, document: Value) -> Result<Value, Err
         }
         /* The bytes are the value's own, and valid UTF-8 - the engine builds
          * a Text only from input the text contract has passed. */
-        ValRef::String(t) => crate::bridge::string::utf8_str(ruby, t.as_slice())?.as_value(),
+        ValRef::String(t) => {
+            crate::bridge::string::utf8_str_trusting(ruby, t.as_slice())?.as_value()
+        }
         ValRef::Number(d) => crate::bridge::build::float(ruby, d)?.as_value(),
         ValRef::Boolean(b) => ruby.boolean(b),
     })
