@@ -113,7 +113,7 @@ pub use crate::utf8_decode::TextVerdict;
 /// scans and never allocates.
 pub fn text_check(coderange_str: RString, bytes: &[u8]) -> TextVerdict {
     /* The cached coderange reads flags; it never scans and never allocates. */
-    crate::utf8_decode::text_verdict(bytes, coderange_str.known_utf8())
+    crate::utf8_decode::text_verdict(bytes, coderange_str.cached_utf8())
 }
 
 /// Why a String in another encoding was refused ([`ReadError::NoUtf8Form`]).

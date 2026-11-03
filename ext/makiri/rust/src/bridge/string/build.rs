@@ -34,9 +34,9 @@ pub fn utf8_str_from_slices<'a>(
 /// Character data - text, attribute values - is never interned.
 ///
 /// Every caller passes a document's name, which is UTF-8 by the text-input
-/// contract (`nupur::string::interned_utf8`).
+/// contract (`nupur::string::interned_utf8_trusting`).
 pub fn dom_name_str(ruby: &Ruby, bytes: &[u8]) -> Result<Value, Error> {
-    crate::nupur::string::interned_utf8(ruby, bytes).map(|s| s.as_value())
+    crate::nupur::string::interned_utf8_trusting(ruby, bytes).map(|s| s.as_value())
 }
 
 /* ---- a String of bytes a document read lends ---- */
