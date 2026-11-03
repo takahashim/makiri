@@ -206,11 +206,9 @@ and `Guard::for_fragment` (below the synthetic `<html>`) from
 
 `ParseLimits` carries both, and a negative keyword lifts either.
 
-The size bound exists because "reconstruct the active formatting elements"
-re-creates every unclosed formatting element before each character: ~390
-`<b>`s with distinct attributes then `<div>x</div>` repeated built a 62 KB
-input into a 344 MB document, where ordinary documents build 10-46 times
-their input (`spec/html_amplification_spec.rb`). The check reads
+The size bound exists because some inputs make the tree builder build a
+document thousands of times larger than the input, where ordinary documents
+build 10-46 times their input (`spec/html_amplification_spec.rb`). The check reads
 `Document::approx_bytes`, O(1) per token. A refused parse fails closed
 (`Makiri::Error`, "document size limit exceeded"); the tree of an accepted
 one is the Standard's. The check is per token, not per insertion, so a void

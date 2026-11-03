@@ -4,16 +4,12 @@ require "spec_helper"
 
 # The HTML parse guard's amplification limit (html/tree/guard.rs, which says
 # why): a document may build at most `max_amplification` times its input,
-# never less than 64 MiB. "Reconstruct the active formatting elements"
-# re-creates every unclosed formatting element before each character, so a
-# few hundred <b>s with distinct attributes, then `<div>x</div>` repeated,
-# built a document thousands of times the input (62 KB -> 344 MB).
+# never less than 64 MiB.
 RSpec.describe "HTML amplification limit" do
   let(:message) { /\Adocument size limit exceeded \(256 times the input; see max_amplification:\)\z/ }
 
-  # ~390 formatting elements the stack loses at `</div>`, then `reps`
-  # characters that each have them all re-created. Past the 64 MiB floor at a
-  # few thousand reps.
+  # An input that builds far past its size: past the 64 MiB floor at a few
+  # thousand reps.
   def reconstruct(reps)
     fmt = (1..390).map { |i| "<b x=#{i}>" }.join
     "<div>#{fmt}</div>" + "<div>x</div>" * reps

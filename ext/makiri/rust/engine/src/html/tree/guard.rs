@@ -15,14 +15,11 @@
 //!
 //! The second check bounds what a parse BUILDS against what it read: the
 //! document may grow to [`ParseLimits::max_bytes`] - its input times the
-//! amplification limit, or [`AMPLIFICATION_FLOOR`], whichever is more. The
-//! HTML Standard's "reconstruct the active formatting elements" re-creates
-//! every formatting element the stack lost, with its attributes, before each
-//! character: ~390 `<b>`s with distinct attributes (Noah's Ark keeps only
-//! identical ones to three) followed by `<div>x</div>` repeated built 30
-//! nodes a byte - a 62 KB input became a 344 MB document. Ordinary documents
-//! build 10-46 times their input, the default limit is 256, and the check is
-//! O(1) per token ([`Document::approx_bytes`](crate::html::dom::Document)).
+//! amplification limit, or [`AMPLIFICATION_FLOOR`], whichever is more. Some
+//! inputs make the tree builder build a document thousands of times larger
+//! than the input; ordinary documents build 10-46 times theirs, the default
+//! limit is 256, and the check is O(1) per token
+//! ([`Document::approx_bytes`](crate::html::dom::Document)).
 //! The tree of a parse it lets through is the Standard's, unchanged; one it
 //! stops fails closed.
 
