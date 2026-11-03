@@ -39,7 +39,7 @@ use super::{Error, Id, ReprValue, Ruby, Value};
 /// protected one is `NoMethodError`, as `public_send` answers - which is
 /// what a library calling an object's conversion (`to_json`, `to_s`) means.
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         runs_callers_ruby,
         reason = "the one way to call a public method; each caller's own allow says why"
@@ -53,7 +53,7 @@ pub fn public_method(recv: impl ReprValue, id: Id, args: &[Value]) -> Result<Val
 /// a class may redefine (so the caller's Ruby too), and which a
 /// `respond_to_missing?` answers for a method `method_missing` handles.
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         runs_callers_ruby,
         reason = "respond_to? may be redefined; each caller's own allow says why"

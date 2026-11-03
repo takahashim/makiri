@@ -52,6 +52,70 @@ pub fn without_gvl<F: FnOnce() -> R + Send, R>(
     ruby: &crate::rb::Ruby,
     f: F,
 ) -> Result<R, crate::rb::Error> {
+    // SAFETY: no unblock function: Ruby's default.
+    unsafe { release(ruby, f, None, core::ptr::null_mut()) }
+}
+
+/// What a body run by [`without_gvl_cancellable`] asks to learn whether
+/// Ruby wants the thread back: `Thread#kill`, `Thread#raise`, a `Timeout`,
+/// a signal, the process exiting.
+pub struct Cancel(core::sync::atomic::AtomicBool);
+
+impl Cancel {
+    /// Whether Ruby has asked the body to stop. A load of one atomic, cheap
+    /// enough for a loop to ask every few thousand steps.
+    #[inline]
+    pub fn requested(&self) -> bool {
+        self.0.load(core::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+/// [`without_gvl`] for a body that can stop part-way: Ruby's request to
+/// have the thread back sets the [`Cancel`] the body is lent, and the body
+/// asks it as it goes and returns early when it is set - with whatever
+/// answer it gives for "stopped" (an `Err` of its own, say). Without one,
+/// [`without_gvl`]'s body runs to its end before an interrupt takes effect,
+/// however long that is.
+///
+/// Once the body has returned, a request that came is delivered here, as
+/// [`without_gvl`] delivers one that came first: the exception is the
+/// `Err`. Should delivering it raise nothing (a trap handler that
+/// returned), the body's own answer is returned.
+pub fn without_gvl_cancellable<F: FnOnce(&Cancel) -> R + Send, R>(
+    ruby: &crate::rb::Ruby,
+    f: F,
+) -> Result<R, crate::rb::Error> {
+    unsafe extern "C" fn unblock(p: *mut c_void) {
+        crate::no_unwind::must_not_unwind::<crate::no_unwind::GvlUnblock, _>(|| {
+            // SAFETY: `p` is the `Cancel` on `without_gvl_cancellable`'s frame,
+            // which outlives the blocking region Ruby calls this inside.
+            let cancel = unsafe { &*(p as *const Cancel) };
+            cancel.0.store(true, core::sync::atomic::Ordering::Relaxed);
+        });
+    }
+    let cancel = Cancel(core::sync::atomic::AtomicBool::new(false));
+    let data = &cancel as *const Cancel as *mut c_void;
+    // SAFETY: `unblock` only stores to the atomic behind `data`, the `Cancel`
+    // on this frame, which lives past the call; it runs nothing else.
+    let out = unsafe { release(ruby, || f(&cancel), Some(unblock), data) }?;
+    if cancel.requested() {
+        crate::raw::thread_check_ints(ruby)?;
+    }
+    Ok(out)
+}
+
+/// [`without_gvl`] with `ubf` as the unblock function, given `ubf_data`.
+///
+/// # Safety
+///
+/// `ubf` (when given) is safe to call from another thread, with `ubf_data`,
+/// at any time while the body runs, and unwinds into no C frame.
+unsafe fn release<F: FnOnce() -> R + Send, R>(
+    ruby: &crate::rb::Ruby,
+    f: F,
+    ubf: Option<unsafe extern "C" fn(*mut c_void)>,
+    ubf_data: *mut c_void,
+) -> Result<R, crate::rb::Error> {
     if let Some(exit) = crate::raw::pending_exit() {
         return Err(exit);
     }
@@ -88,15 +152,16 @@ pub fn without_gvl<F: FnOnce() -> R + Send, R>(
     };
     loop {
         // SAFETY: the trampoline runs `f` at most once and returns; the unblock
-        // function is Ruby's default (`None`), as in the C call this replaces.
-        // This variant raises nothing (see above), so no Rust frame is jumped.
+        // function is the caller's, by this function's contract, or Ruby's
+        // default (`None`). This variant raises nothing (see above), so no
+        // Rust frame is jumped.
         unsafe {
             nupur_sys::non_raising::rb_thread_call_without_gvl2(
                 ruby.sys(),
                 Some(run::<F, R>),
                 &mut slot as *mut Slot<F, R> as *mut c_void,
-                None,
-                core::ptr::null_mut(),
+                ubf,
+                ubf_data,
             );
         }
         /* Back under the GVL and out of the C frame: safe to unwind from here. */

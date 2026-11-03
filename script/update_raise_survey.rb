@@ -16,7 +16,7 @@ require "net/http"
 require "uri"
 
 SOURCE = ARGV[0] || "https://takahashim.github.io/ruby-c-apis/data.json"
-OUT = File.expand_path("../ext/makiri/rust/lints/makiri_lints/raise_survey.json", __dir__)
+OUT = File.expand_path("../ext/makiri/rust/lints/nupur_lints/raise_survey.json", __dir__)
 
 raw = if SOURCE.start_with?("http")
         res = Net::HTTP.get_response(URI(SOURCE))

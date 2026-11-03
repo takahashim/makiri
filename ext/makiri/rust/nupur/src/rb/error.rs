@@ -48,6 +48,12 @@ pub enum Builtin {
     NoMemoryError,
     EncodingError,
     LoadError,
+    KeyError,
+    IndexError,
+    FrozenError,
+    ThreadError,
+    StopIteration,
+    ZeroDivisionError,
 }
 
 impl ErrorClass {
@@ -64,6 +70,12 @@ impl ErrorClass {
                 Builtin::NoMemoryError => ruby.exception_no_mem_error(),
                 Builtin::EncodingError => ruby.exception_encoding_error(),
                 Builtin::LoadError => ruby.exception_load_error(),
+                Builtin::KeyError => ruby.exception_key_error(),
+                Builtin::IndexError => ruby.exception_index_error(),
+                Builtin::FrozenError => ruby.exception_frozen_error(),
+                Builtin::ThreadError => ruby.exception_thread_error(),
+                Builtin::StopIteration => ruby.exception_stop_iteration(),
+                Builtin::ZeroDivisionError => ruby.exception_zero_div_error(),
             },
             ErrorClass::Registered(c) => c.exception(ruby),
             ErrorClass::Value(c) => c,

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 # `rake dylint`'s audit of the tables of Ruby's C functions that cannot raise
-# (`NON_RAISING` and `REVIEWED`, ext/makiri/rust/lints/makiri_lints/src/raising.rs).
+# (`NON_RAISING` and `REVIEWED`, ext/makiri/rust/lints/nupur_lints/src/raising.rs).
 #
 # Against the C API raise survey (https://takahashim.github.io/ruby-c-apis/:
 # the call graph of the compiled C, over the first and the latest patch release
@@ -33,9 +33,9 @@ require "json"
 require "open3"
 
 RUST = File.expand_path("../ext/makiri/rust", __dir__)
-TABLE = File.join(RUST, "lints/makiri_lints/src/raising.rs")
+TABLE = File.join(RUST, "lints/nupur_lints/src/raising.rs")
 
-SURVEY = File.join(RUST, "lints/makiri_lints/raise_survey.json")
+SURVEY = File.join(RUST, "lints/nupur_lints/raise_survey.json")
 
 def tables
   src = File.read(TABLE)

@@ -4,7 +4,7 @@
 //! (`rb_obj_hide`, `rb_gc_adjust_memory_usage`, `ruby_xfree`) or releases the
 //! GVL (`rb_thread_call_without_gvl2`); what they share is that none can
 //! raise. Here are the C functions the lints' table finds no raise in
-//! (`makiri_lints`' `NON_RAISING`, and the one `REVIEWED` for any caller),
+//! (`nupur_lints`' `NON_RAISING`, and the one `REVIEWED` for any caller),
 //! the inline reads of rb-sys's stable API, and the C globals that hold a
 //! class.
 //!
@@ -74,7 +74,7 @@ reads! {
 /// `enc` is one of Ruby's encodings, which live for the process.
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         ffi_without_gvl_proof,
         reason = "reads a field of an encoding, which lives for the process and is never written"
@@ -90,7 +90,7 @@ pub unsafe fn rb_enc_to_index(enc: *const rb_encoding) -> c_int {
 /// and is safe from any thread.
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         ffi_without_gvl_proof,
         reason = "asks whether this is a Ruby thread at all, which any thread may ask"
@@ -109,7 +109,7 @@ pub fn ruby_native_thread_p() -> bool {
 /// thread, so it takes no proof.
 #[inline]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         ffi_without_gvl_proof,
         reason = "reads the stack only on a thread Ruby made, with the GVL or without it, as `ruby_native_thread_p` answers first"
@@ -173,6 +173,34 @@ pub unsafe fn rbasic_flags(v: Value) -> usize {
 pub unsafe fn rbasic_klass(v: Value) -> Value {
     // SAFETY: the contract; the class lives as long as its instance.
     unsafe { Value::from_raw((*(v.as_raw() as *const rb_sys::RBasic)).klass) }
+}
+
+/// Marks a String's bytes known valid in its encoding - all ASCII
+/// (`7BIT`) when `ascii`, else `VALID` - so Ruby never scans them for it:
+/// `RB_ENC_CODERANGE_SET`, an inline function of Ruby's headers, which
+/// replaces the bits under `RUBY_ENC_CODERANGE_MASK` in the header flags.
+///
+/// # Safety
+///
+/// `v` is a String that no other thread can see yet, and its bytes are
+/// valid in its encoding (and all ASCII when `ascii`). Ruby's string
+/// functions take the mark on trust: a wrong one breaks an invariant they
+/// rely on.
+#[inline]
+pub unsafe fn str_mark_coderange(v: Value, ascii: bool) {
+    use rb_sys::ruby_coderange_type as cr;
+    let mark = if ascii {
+        cr::RUBY_ENC_CODERANGE_7BIT
+    } else {
+        cr::RUBY_ENC_CODERANGE_VALID
+    } as VALUE;
+    let mask = cr::RUBY_ENC_CODERANGE_MASK as VALUE;
+    // SAFETY: the contract: a heap object (a String), seen by this thread
+    // alone, whose header is `RBasic`.
+    unsafe {
+        let basic = v.as_raw() as *mut rb_sys::RBasic;
+        (*basic).flags = ((*basic).flags & !mask) | mark;
+    }
 }
 
 /* ---- the stable API's inline reads ---- */
@@ -319,13 +347,19 @@ globals! {
     rb_eArgError,
     rb_eEncodingError,
     rb_eException,
+    rb_eFrozenError,
+    rb_eIndexError,
+    rb_eKeyError,
     rb_eLoadError,
     rb_eNoMemError,
     rb_eNotImpError,
     rb_eRangeError,
     rb_eRuntimeError,
     rb_eStandardError,
+    rb_eStopIteration,
+    rb_eThreadError,
     rb_eTypeError,
+    rb_eZeroDivError,
 }
 
 /* ---- the C calls that raise, but not under their precondition ---- */
@@ -346,7 +380,7 @@ globals! {
 /// it has not been unlocked since).
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         raising_call_outside_protect,
         reason = "rb_str_unlocktmp raises only for a String that is not locked; the contract is one that is"
@@ -367,7 +401,7 @@ pub unsafe fn str_unlocktmp_of_locked(str: Value) {
 /// a Symbol, whose is a String made).
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         raising_call_outside_protect,
         reason = "rb_enc_get raises for a File (a method call) or a Symbol (a String made); the contract is a String, whose tag it reads"
@@ -386,7 +420,7 @@ pub unsafe fn enc_get_of_string(str: Value) -> *mut rb_encoding {
 /// `str` is a String.
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         raising_call_outside_protect,
         reason = "rb_enc_get_index raises for a File or a Symbol, as rb_enc_get; the contract is a String, whose index is an ivar read when it is not inline"
@@ -404,7 +438,7 @@ pub unsafe fn enc_get_index_of_string(str: Value) -> c_int {
 /// `id` is a name without `@` (`rb_is_instance_id` is false for it).
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         raising_call_outside_protect,
         reason = "rb_attr_get raises only RactorIsolationError, and only for an @ name (rb_is_instance_id) of a class, a module or a shareable object read from another Ractor; the contract is a name without @"
@@ -423,7 +457,7 @@ pub unsafe fn attr_get_hidden(obj: Value, id: ID) -> Value {
 /// `module` is a class or module.
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         raising_call_outside_protect,
         reason = "its one raise, a non-class, is ruled out by the contract"
@@ -442,7 +476,7 @@ pub unsafe fn obj_is_kind_of_module(v: Value, module: Value) -> bool {
 /// `sub` and `sup` are classes or modules.
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         raising_call_outside_protect,
         reason = "its one raise, a non-class, is ruled out by the contract"
@@ -461,7 +495,7 @@ pub unsafe fn class_inherited_p_of_modules(sub: Value, sup: Value) -> bool {
 /// `v` is an Integer.
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         raising_call_outside_protect,
         reason = "its raise is for a non-Integer, converted by `#to_int`; the contract is an Integer"
@@ -479,7 +513,7 @@ pub unsafe fn absint_size_of_integer(v: Value) -> size_t {
 /// `str` is an unfrozen String.
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         raising_call_outside_protect,
         reason = "rb_str_set_len raises for a frozen String or a length past its room; the contract is unfrozen, and 0 is within any"
@@ -499,7 +533,7 @@ pub unsafe fn str_empty_unfrozen(str: Value) {
 /// nothing on the frames above it that a `longjmp` would leak.
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         raising_call_outside_protect,
         reason = "rb_gc_mark raises NoMemoryError only when the mark stack cannot grow, a longjmp the contract's frame loses nothing to and every C extension's dmark is exposed to alike"
@@ -521,7 +555,7 @@ pub unsafe fn gc_mark_in_dmark(root: Root) {
 /// holding the GVL.
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(ffi_without_gvl_proof, reason = "the dfree contract is the proof")
 )]
 pub unsafe fn gc_give_back_in_dfree(n: ssize_t) {
@@ -538,7 +572,7 @@ pub unsafe fn gc_give_back_in_dfree(n: ssize_t) {
 /// object's data, once.
 #[inline(always)]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(ffi_without_gvl_proof, reason = "the dfree contract is the proof")
 )]
 pub unsafe fn xfree_in_dfree(ptr: *mut c_void) {

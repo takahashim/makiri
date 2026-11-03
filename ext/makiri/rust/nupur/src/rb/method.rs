@@ -376,7 +376,7 @@ pub fn block_given(ruby: &Ruby) -> bool {
 /// there.
 #[inline]
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         runs_callers_ruby,
         reason = "the one way a method yields to its block; each caller's own allow says why"

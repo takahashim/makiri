@@ -73,6 +73,12 @@ impl Ruby {
         exception_no_mem_error => rb_eNoMemError,
         exception_encoding_error => rb_eEncodingError,
         exception_load_error => rb_eLoadError,
+        exception_key_error => rb_eKeyError,
+        exception_index_error => rb_eIndexError,
+        exception_frozen_error => rb_eFrozenError,
+        exception_thread_error => rb_eThreadError,
+        exception_stop_iteration => rb_eStopIteration,
+        exception_zero_div_error => rb_eZeroDivError,
     }
 
     globals! { RClass:

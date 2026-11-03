@@ -110,12 +110,31 @@ fn read_error<P>(e: ReadError<P>) -> Error {
     }
 }
 
+/// Raises Ruby's own class `n` of the builtins past the first ten.
+fn raise_builtin(_: &Ruby, n: Value) -> Result<Value, Error> {
+    let class = match integer_arg(n)?.to_u64()? {
+        0 => Builtin::KeyError,
+        1 => Builtin::IndexError,
+        2 => Builtin::FrozenError,
+        3 => Builtin::ThreadError,
+        4 => Builtin::StopIteration,
+        _ => Builtin::ZeroDivisionError,
+    };
+    Err(Error::new(class, "nupur: raised by name"))
+}
+
 /// `s` read as checked UTF-8 with no NUL, and made a new String.
 fn read_text(ruby: &Ruby, s: Value) -> Result<Value, Error> {
     let s = string_arg(s)?;
     let copy =
         nupur::string::read_utf8(ruby, s, |b| b.contains(&0).then_some(())).map_err(read_error)?;
-    Ok(nupur::string::utf8_str(ruby, copy.as_str().as_bytes())?.as_value())
+    Ok(nupur::string::utf8_str(ruby, copy.as_str())?.as_value())
+}
+
+/// `s`'s bytes, whatever they are, made a UTF-8 String unchecked.
+fn trusting_str(ruby: &Ruby, s: Value) -> Result<Value, Error> {
+    let bytes = nupur::string::read_bytes(string_arg(s)?)?;
+    Ok(nupur::string::utf8_str_trusting(ruby, &bytes)?.as_value())
 }
 
 /// `s` read under a cap of `max` bytes of UTF-8.
@@ -175,6 +194,13 @@ fn kw(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
         .unwrap_or_else(|| ruby.qnil()))
 }
 
+/// `kw_only(a:, b:)`: refuses any other keyword, then answers `a`.
+fn kw_only(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
+    let kw = Kwargs::scan(ruby, args)?;
+    kw.only(&["a", "b"])?;
+    Ok(kw.value(ruby, "a")?.unwrap_or_else(|| ruby.qnil()))
+}
+
 /// One required argument and one optional: how many were given.
 fn shape(ruby: &Ruby, args: &[Value]) -> Result<i64, Error> {
     let a = nupur::args::scan(ruby, args, Shape::positional(1, 1))?;
@@ -195,6 +221,23 @@ fn pairs(ruby: &Ruby, h: Value) -> Result<Value, Error> {
 }
 
 /// `0 + 1 + ... + (n - 1)`, summed with the GVL released.
+/// Spins with the GVL released for up to `ms` milliseconds, asking its
+/// `Cancel` as it goes: `true` when it ran the whole time, `false` when it
+/// was asked to stop and Ruby then raised nothing.
+fn spin_cancellable(ruby: &Ruby, ms: Value) -> Result<bool, Error> {
+    let ms = integer_arg(ms)?.to_u64()?;
+    nupur::gvl::without_gvl_cancellable(ruby, move |cancel| {
+        let until = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+        while std::time::Instant::now() < until {
+            if cancel.requested() {
+                return false;
+            }
+            std::hint::spin_loop();
+        }
+        true
+    })
+}
+
 fn sum_without_gvl(ruby: &Ruby, n: Value) -> Result<u64, Error> {
     let n = integer_arg(n)?.to_u64()?;
     nupur::gvl::without_gvl(ruby, move || (0..n).sum::<u64>())
@@ -445,15 +488,19 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     m.define_module_function("yield_each", function!(yield_each, 1))?;
     m.define_module_function("drop_exit", function!(drop_exit, 0))?;
     m.define_module_function("read_text", function!(read_text, 1))?;
+    m.define_module_function("raise_builtin", function!(raise_builtin, 1))?;
+    m.define_module_function("trusting_str", function!(trusting_str, 1))?;
     m.define_module_function("read_capped", function!(read_capped, 2))?;
     m.define_module_function("transcode_kind", function!(transcode_kind, 1))?;
     m.define_module_function("filled", function!(filled, 1))?;
     m.define_module_function("slices", function!(slices, 1))?;
     m.define_module_function("binary_copy", function!(binary_copy, 1))?;
     m.define_module_function("kw", function!(kw, -1))?;
+    m.define_module_function("kw_only", function!(kw_only, -1))?;
     m.define_module_function("shape", function!(shape, -1))?;
     m.define_module_function("pairs", function!(pairs, 1))?;
     m.define_module_function("sum_without_gvl", function!(sum_without_gvl, 1))?;
+    m.define_module_function("spin_cancellable", function!(spin_cancellable, 1))?;
     m.define_module_function("frozen_check", function!(frozen_check, 1))?;
     m.define_module_function("booleans", function!(booleans, 0))?;
     m.define_module_function("usize_of", function!(usize_of, 1))?;

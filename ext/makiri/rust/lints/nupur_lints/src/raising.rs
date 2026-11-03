@@ -187,7 +187,7 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
             None,
             "a raise is a longjmp over every Rust frame up to the nearest rb_protect; make it \
              a nupur::raw wrapper that runs it inside call(|| ...) - or, for a function that \
-             cannot raise, add it to makiri_lints' NON_RAISING (the survey finds no path) or REVIEWED (with the reason)",
+             cannot raise, add it to nupur_lints' NON_RAISING (the survey finds no path) or REVIEWED (with the reason)",
         );
     }
     if in_raw(&module) && !inside {
@@ -214,7 +214,7 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
             format!("`{name}` cannot raise, and is wrapped to take the protection's token"),
             None,
             "nupur_sys::raising holds the C calls that can raise; one that cannot needs no \
-             rb_protect - or it is missing from makiri_lints' tables the other way (NON_RAISING \
+             rb_protect - or it is missing from nupur_lints' tables the other way (NON_RAISING \
              or REVIEWED lists it)",
         );
     }
@@ -252,7 +252,7 @@ fn check_protected_closure<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>)
             "a protected call of nothing that can raise",
             None,
             "a C call that cannot raise needs no rb_protect; if this one can, it is missing \
-             from makiri_lints' tables the other way (NON_RAISING or REVIEWED lists it)",
+             from nupur_lints' tables the other way (NON_RAISING or REVIEWED lists it)",
         );
     }
 }

@@ -88,7 +88,7 @@ When a rule here changes, change its reasoning there in the same commit.
   `nupur_sys::raising`'s, which takes the `&Protected` only `call` lends.
   A raise must never
   `longjmp` over a Rust frame. Which calls raise is classified in
-  `lints/makiri_lints/src/raising.rs` (`NON_RAISING`, `REVIEWED`), held to
+  `lints/nupur_lints/src/raising.rs` (`NON_RAISING`, `REVIEWED`), held to
   the vendored C API raise survey and Ruby's headers; an unclassified
   function is refused. A call that can raise but not under a precondition
   is never a crate-wide entry: it is a `nupur_sys::non_raising` wrapper named for
@@ -182,7 +182,7 @@ bundle exec rake spec
 bundle exec rake rust:test         # engine (bare and as shipped), falloc, nupur, reference
 bundle exec rake nupur:spec        # nupur alone, through its own test extension
 bundle exec rake lint              # clippy -D warnings over every crate and config + fmt
-bundle exec rake dylint            # the crate's own lints (lints/makiri_lints) + self-test
+bundle exec rake dylint            # the crate's own lints (lints/nupur_lints) + self-test
 bundle exec rake unsafe:boundaries # each file's unsafe count and the forbid files
 bundle exec rake symbols           # the export gate
 bundle exec rake no_unwind         # the unwind-freedom proof
@@ -205,7 +205,7 @@ bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'   # smoke load
 
 Requires CRuby >= 3.3 and a Rust toolchain; `cmake` only for the reference
 Lexbor. `rake sanitize`, `miri` and `fuzz:libfuzzer` need a nightly
-toolchain; `rake dylint` needs the one `lints/makiri_lints/rust-toolchain.toml`
+toolchain; `rake dylint` needs the one `lints/nupur_lints/rust-toolchain.toml`
 pins, with cargo-dylint and dylint-link. `rb_sys` is a RUNTIME gemspec
 dependency, since a source install runs `extconf.rb`.
 
@@ -252,7 +252,7 @@ ext/makiri/rust/         the extension crate (makiri_rs, lib `makiri`) and its w
     src/css_match/       the CSS matcher, over either DOM
     src/selectors/       the ported CSS selector and stylesheet parser
   reference/             makiri_lexbor: Lexbor via bindgen, for the tests only
-  fuzz/  lints/  verus/  cargo-fuzz harnesses, makiri_lints, Verus proofs
+  fuzz/  lints/  verus/  cargo-fuzz harnesses, nupur_lints, Verus proofs
 vendor/lexbor/           git submodule, pinned, never patched
 spec/                    rspec; fuzz/, invariants/, differential/ beside it
 bench/                   the Nokogiri comparison

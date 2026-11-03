@@ -40,7 +40,7 @@
 //!
 //! Where Makiri draws its own lines - its engine, its glue and bridge, its
 //! allocation policy - in [`boundaries`], which another extension running
-//! these lints (`MAKIRI_LINTS_EXTENSION`) is not held to
+//! these lints (`NUPUR_LINTS_EXTENSION`) is not held to
 //! ([`paths::makiri_policy_applies`]): `ruby_layer_in_engine`,
 //! `infallible_allocation`, `raw_node_crossing`, `ruby_surface_in_bridge`. The
 //! engine is a crate of its own (`makiri_engine`, [`paths::ENGINE`]) that

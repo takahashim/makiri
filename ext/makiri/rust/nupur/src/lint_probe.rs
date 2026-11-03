@@ -1,4 +1,4 @@
-//! What the extension's lints (`lints/makiri_lints`) must report in the
+//! What the extension's lints (`lints/nupur_lints`) must report in the
 //! binding layer, the cases only code that names `nupur_sys` can write - the
 //! extension cannot, since it does not depend on it. A call of rb-sys's own
 //! C cannot be written here at all (`nupur_sys` re-exports no function): its

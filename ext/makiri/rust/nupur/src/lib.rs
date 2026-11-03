@@ -89,9 +89,9 @@
 //!   ([`rb::method::declare_ractor_safe`]).
 //!
 //! Most of these are types and dependencies. What they cannot state rests on
-//! checks of the code: in Makiri `rake dylint` (`lints/makiri_lints`, whose
+//! checks of the code: in Makiri `rake dylint` (`lints/nupur_lints`, whose
 //! first group is the layer's and names only `nupur::` and `nupur_sys::`
-//! paths, so another extension sets `MAKIRI_LINTS_EXTENSION` to its crate name and runs them), `rake no_unwind`
+//! paths, so another extension sets `NUPUR_LINTS_EXTENSION` to its crate name and runs them), `rake no_unwind`
 //! and `rake unsafe:boundaries`. A copy of this layer elsewhere needs its
 //! own:
 //!
@@ -192,12 +192,12 @@
 /* `rake dylint` sets `dylint_lib` for the whole build, the extension's run
  * compiling this crate as a plain dependency: there the extension's lints,
  * which the `allow`s here name, are unknown. */
-#![cfg_attr(dylint_lib = "makiri_lints", allow(unknown_lints))]
+#![cfg_attr(dylint_lib = "nupur_lints", allow(unknown_lints))]
 /* An `Err` of a Ruby error is never dropped: `Error::rescue` handles the
  * classes it names and hands every exit back. `deny` here, not `forbid` as
  * in the extension: the layer's one drop is `describe::for_message`, a
  * message's lookup, allowed there with its reason. */
-#![cfg_attr(dylint_lib = "makiri_lints", deny(discarded_ruby_error))]
+#![cfg_attr(dylint_lib = "nupur_lints", deny(discarded_ruby_error))]
 
 // The lints' self-test for this crate (`rake dylint`).
 #[cfg(nupur_lint_probe)]

@@ -1,4 +1,4 @@
-//! What the crate's own lints (`lints/makiri_lints`) must report, and what
+//! What the crate's own lints (`lints/nupur_lints`) must report, and what
 //! they must leave alone. Compiled only under `--cfg makiri_lint_probe`, by
 //! `rake dylint`, which fails unless the lints report exactly the lines that
 //! end in `//~`, each by the lints named after it - so a lint that has
@@ -63,7 +63,7 @@ thread_local! {
     static COUNT: Cell<u32> = const { Cell::new(0) };
 }
 
-/* ---- the boundary lints (`lints/makiri_lints/src/boundaries.rs`) ---- */
+/* ---- the boundary lints (`lints/nupur_lints/src/boundaries.rs`) ---- */
 
 /// Stands in for an engine module: `ruby_layer_in_engine` treats
 /// `lint_probe::engine` as one.
@@ -98,9 +98,12 @@ impl Drop for GuardedDrop {
     }
 }
 
+#[rustfmt::skip] // keeps each marker on the line reported
 fn gvl_released(ruby: &crate::bridge::rb::Ruby) -> Result<(), crate::bridge::rb::Error> {
     let _ = crate::bridge::gvl::without_gvl(ruby, || crate::bridge::ruby::type_error("x")); //~ discarded_ruby_error ruby_in_gvl_released_body
     crate::bridge::gvl::without_gvl(ruby, || engine::names_only_the_engine(b"x"))?;
+    let _ = crate::bridge::gvl::without_gvl_cancellable(ruby, |_| crate::bridge::ruby::type_error("x")); //~ discarded_ruby_error ruby_in_gvl_released_body
+    crate::bridge::gvl::without_gvl_cancellable(ruby, |_| engine::names_only_the_engine(b"x"))?;
     Ok(())
 }
 

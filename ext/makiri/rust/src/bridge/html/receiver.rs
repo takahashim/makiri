@@ -96,7 +96,7 @@ impl HtmlSelf {
     /// [`node_set_from_read`](crate::bridge::node_set::node_set_from_read)).
     #[inline]
     #[cfg_attr(
-        dylint_lib = "makiri_lints",
+        dylint_lib = "nupur_lints",
         allow(
             raw_node_crossing,
             reason = "the receiver's key, as the node its own read resolves"
@@ -113,7 +113,7 @@ impl HtmlSelf {
     /// The receiver's node as the boundary handle, for the mutators.
     #[inline]
     #[cfg_attr(
-        dylint_lib = "makiri_lints",
+        dylint_lib = "nupur_lints",
         allow(
             raw_node_crossing,
             reason = "the receiver's node, for a mutator to resolve inside its edit"
@@ -137,7 +137,7 @@ impl HtmlView<'_> {
     /// the wrap, which needs nothing of it: the found node leaves as a
     /// [`RawNode`], and the wrap mints its key in a read of its own.
     #[cfg_attr(
-        dylint_lib = "makiri_lints",
+        dylint_lib = "nupur_lints",
         allow(
             raw_node_crossing,
             reason = "the node a read finds, wrapped once the read is over"
@@ -161,7 +161,7 @@ impl HtmlView<'_> {
     /// ([`node_set_from_read`](crate::bridge::node_set::node_set_from_read)).
     /// `f` hands each node to the sink it is given.
     #[cfg_attr(
-        dylint_lib = "makiri_lints",
+        dylint_lib = "nupur_lints",
         allow(
             raw_node_crossing,
             reason = "the nodes a read lists, as the words a NodeSet holds, pushed with the read held"
@@ -194,7 +194,7 @@ impl HtmlView<'_> {
     /// serve (a fragment's, or before the index is due, or after a build OOM)
     /// is walked ([`subtree_text`]). The String is made with the read held.
     #[cfg_attr(
-        dylint_lib = "makiri_lints",
+        dylint_lib = "nupur_lints",
         allow(
             raw_node_crossing,
             reason = "the node whose text is read, resolved again in the same read"

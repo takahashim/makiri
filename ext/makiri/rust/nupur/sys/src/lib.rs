@@ -36,7 +36,7 @@
 )]
 /* Built as a dependency under `rake dylint`, the crate sees `dylint_lib` but
  * not the lints, so their `allow`s name lints it does not know. */
-#![cfg_attr(dylint_lib = "makiri_lints", allow(unknown_lints))]
+#![cfg_attr(dylint_lib = "nupur_lints", allow(unknown_lints))]
 
 /* The types and constants Nupur names, and nothing else of rb-sys's: no C
  * function is re-exported, so Nupur calls Ruby's C only through the

@@ -23,7 +23,7 @@ use crate::rb::{prelude::*, Error, RString, Ruby, Value};
 /// the method ends. Anything that runs Ruby goes through `?` or
 /// [`Error::rescue`] instead.
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         discarded_ruby_error,
         reason = "a message's lookup: an allocation failure is written as a fallback, and a pending exit is the trampoline's"

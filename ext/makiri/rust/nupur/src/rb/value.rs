@@ -435,7 +435,10 @@ impl Integer {
         if non_raising::fixnum_p(self.0 .0) {
             let mut buf = [0u8; 24];
             let n = write_i64(non_raising::fix2long(self.0 .0), &mut buf);
-            return crate::string::utf8_str(ruby, buf.get(..n).unwrap_or_default());
+            /* Digits and a sign: ASCII, which `from_utf8` confirms in a step. */
+            let digits = core::str::from_utf8(buf.get(..n).unwrap_or_default())
+                .map_err(|_| crate::rb::error::internal_error("a Fixnum's digits are not ASCII"))?;
+            return crate::string::utf8_str(ruby, digits);
         }
         crate::raw::big2str(self)
     }

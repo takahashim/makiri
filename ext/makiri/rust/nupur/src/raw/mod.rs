@@ -27,7 +27,7 @@
 //! `unsafe`, with their contracts stated.
 //!
 //! What is here is checked, not kept by hand: which C functions raise is
-//! one table in the lints (`makiri_lints`' `NON_RAISING`, every function
+//! one table in the lints (`nupur_lints`' `NON_RAISING`, every function
 //! not in it taken to raise), and `rake dylint` fails on a call of Ruby's C
 //! in this module outside [`call`] - a read that raises nothing belongs with
 //! the values (`rb::value`, `rb::object` for an object's ivars and class,

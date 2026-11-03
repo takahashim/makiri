@@ -68,7 +68,7 @@ fn aref(ruby: &Ruby, s: NodeSetSelf, args: &[Value]) -> Result<Option<Value>, Er
 /// Iterates by index, each node read under a short borrow released before the
 /// yield, so the block can call back into this set.
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         runs_callers_ruby,
         reason = "the block is the point of the method; no guard or copy is held across it"
@@ -172,7 +172,7 @@ pub fn init_node_set(ruby: &Ruby) -> Result<(), Error> {
 /// Yield `node` to `#each`'s block: the caller's Ruby, run with no document
 /// read held (the set is read by index, one node at a time).
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         runs_callers_ruby,
         reason = "NodeSet#each's block, the point of the method; no document read is held across it"
