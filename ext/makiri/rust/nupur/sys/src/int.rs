@@ -100,30 +100,49 @@ fn fixnum_bits(l: c_long) -> rb_sys::VALUE {
 
 /// The flonum `f` is - Ruby's immediate Float, the bits
 /// `rb_float_new_inline` builds - or `None` where Ruby makes a heap Float
-/// instead: an exponent outside the immediate range, `-0.0`, a NaN, an
-/// infinity, the one value whose bits collide with a tag. Only where a
-/// `VALUE` is 64 bits, as Ruby uses flonums only there. The spec of Nupur's
-/// test extension holds it to `rb_float_new` value by value.
+/// instead. Only where a `VALUE` is 64 bits, as Ruby uses flonums only
+/// there. [`flonum_bits`] is the work, over the double's bits.
 #[inline]
 pub(crate) fn flonum(f: f64) -> Option<rb_sys::VALUE> {
     #[cfg(target_pointer_width = "64")]
     {
-        let t = f.to_bits();
-        let exp = (t >> 60) & 0x7;
-        if t != 0x3000_0000_0000_0000 && (exp.wrapping_sub(3) & !0x1) == 0 {
-            return Some(((t.rotate_left(3) & !0x1) | 0x2) as rb_sys::VALUE);
-        }
-        if t == 0 {
-            /* +0.0 */
-            return Some(0x8000_0000_0000_0002_u64 as rb_sys::VALUE);
-        }
-        None
+        flonum_bits(f.to_bits())
     }
     #[cfg(not(target_pointer_width = "64"))]
     {
         let _ = f;
         None
     }
+}
+
+/// [`flonum`] over a double's bits `t`: `Some` for an exponent in the
+/// immediate range (its top three bits 011 or 100) but the one value whose
+/// bits collide with a tag, and for +0.0; `None` for the rest (-0.0, a NaN,
+/// an infinity, an exponent out of range), which Ruby makes a heap Float.
+///
+/// `verus/int.rs` proves, for every `t`: a `Some` carries the flonum tag
+/// (its low two bits `10`), so Ruby never reads it as a pointer, a Fixnum
+/// or a special constant; and Ruby's own decoding (`rb_float_flonum_value`)
+/// gives `t` back, bit for bit. The spec of Nupur's test extension holds it
+/// to `rb_float_new` value by value.
+#[cfg(target_pointer_width = "64")]
+#[inline]
+pub(crate) fn flonum_bits(t: u64) -> Option<rb_sys::VALUE> {
+    let exp = (t >> 60) & 0x7;
+    if t != 0x3000_0000_0000_0000 && (exp == 3 || exp == 4) {
+        /* Rotated left by three, the low bit cleared and the next set. */
+        #[allow(
+            clippy::manual_rotate,
+            reason = "Verus has no specification of rotate_left; the shifts are what verus/int.rs proves"
+        )]
+        let v = (((t << 3) | (t >> 61)) & !0x1) | 0x2;
+        return Some(v as rb_sys::VALUE);
+    }
+    if t == 0 {
+        /* +0.0 */
+        return Some(0x8000_0000_0000_0002_u64 as rb_sys::VALUE);
+    }
+    None
 }
 
 /// A non-negative `long` the C API answered as a length (`RSTRING_LEN`,
