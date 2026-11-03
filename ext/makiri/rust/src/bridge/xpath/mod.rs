@@ -17,7 +17,7 @@ use crate::bridge::html::{html_node_key, with_html_node};
 use crate::bridge::node_wrap::wrap_doc_node;
 use crate::bridge::string::ruby_verified_text;
 use crate::bridge::wrapper::{doc_known, html_read, xml_read, DocKind, NodeWord, DOC_TYPE};
-use crate::bridge::xml::xml_node_unwrap;
+use crate::bridge::xml::xml_node_ref;
 use crate::engine_error::{Error as XPathError, ErrorKind};
 use crate::html_dom::xpath::HtmlDom;
 pub use crate::init::{CLASS_XPATH_CONTEXT, EXC_XPATH_LIMIT_EXCEEDED, EXC_XPATH_SYNTAX_ERROR};
@@ -149,15 +149,15 @@ pub fn context_for(ruby: &Ruby, rb_node: Value, document: Value) -> Result<Cx, E
          * a node of another document would be evaluated against this one's
          * arena. Every caller passes the node's own keepalive, so a mismatch
          * is a broken invariant. */
-        let own = crate::bridge::wrapper::keepalive_document(ruby, rb_node)?;
+        /* The context NODE and its Document in one read: `xml_node_ref`
+         * resolves a Document receiver to its arena's document node, and any
+         * other node to itself. */
+        let (node, own) = xml_node_ref(ruby, rb_node)?;
         if !crate::bridge::ruby::same_value(own, document) {
             return Err(crate::bridge::ruby::internal_error(
                 "an XPath context node of another document",
             ));
         }
-        /* The context NODE: `xml_node_unwrap` resolves a Document receiver to
-         * its arena's document node, and any other node to itself. */
-        let node = xml_node_unwrap(ruby, rb_node)?;
         return Ok(Cx {
             session: Session::new(Some(Token::xml(node.to_token()))),
         });

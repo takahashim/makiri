@@ -118,14 +118,13 @@ pub fn valid(s: &[u8]) -> bool {
 /// The strict-text verdict the name/engine boundary enforces over already-
 /// resolved bytes: NUL, then well-formed UTF-8.
 ///
-/// The ONE implementation of the contract, so the two surfaces cannot drift:
-/// `bridge::string::text_check` uses it for the Ruby string arguments, and
-/// [`crate::text::VerifiedText`]'s constructors use it for the engine's own
-/// byte slices. Lifted here (Ruby-free, Lexbor-free) so the logic is a plain
-/// function rather than an `unsafe` one and is testable under the
+/// Its users: [`crate::text::VerifiedText`]'s constructors, for the engine's
+/// own byte slices, and an XML parse's input check
+/// (`bridge::xml::decode::xml_input_verdict`), which resolves the String's
+/// cached coderange into the second argument. Lifted here (Ruby-free,
+/// Lexbor-free) so the logic is a plain function and is testable under the
 /// always-compiled core - the `cargo test --no-default-features` set. The
-/// bridge keeps a thin `unsafe` wrapper that resolves the raw pointer and the
-/// String's cached coderange into the two ordinary arguments:
+/// two arguments:
 ///
 ///   * `bytes`: the byte range to validate.
 ///   * `known_valid_utf8`: whether the bytes are ALREADY known valid UTF-8

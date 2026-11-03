@@ -122,6 +122,12 @@ fn static_id(slots: &[u16], names: &[&[u8]], name: &[u8], h: u32) -> Option<usiz
     }
 }
 
+/// The built-in tag id for `name`, ASCII case folded: the static table
+/// alone, whatever names a document has appended.
+pub fn static_tag_id(name: &[u8]) -> Option<usize> {
+    static_id(&TAG_SLOTS, &res::TAG_NAMES, name, hash_lower(name))
+}
+
 /// One table: names appended past the static ones.
 ///
 /// An entry is stored lower-cased (Lexbor's `lexbor_hash_insert_lower`) or

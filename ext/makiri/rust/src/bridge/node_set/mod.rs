@@ -181,7 +181,7 @@ impl NodeSet {
 
 /// A set borrowed where nothing can borrow it: a broken invariant.
 fn busy() -> Error {
-    crate::bridge::ruby::internal_error("a node set borrowed twice")
+    PushError::Busy.into()
 }
 
 /* ------------------------------------------------------------------ */

@@ -259,11 +259,30 @@ pub fn node_word_in(
     rb_node: Value,
     document: Value,
 ) -> Result<NodeWord, NotInDocument> {
-    let node_document = keepalive_document(ruby, rb_node).map_err(NotInDocument::Unusable)?;
-    if !crate::bridge::ruby::same_value(node_document, document) {
+    if crate::bridge::ruby::is_kind_of(ruby, rb_node, &CLASS_DOCUMENT) {
+        if !crate::bridge::ruby::same_value(rb_node, document) {
+            return Err(NotInDocument::Foreign);
+        }
+        return node_raw(ruby, rb_node).map_err(NotInDocument::Unusable);
+    }
+    /* One read of the wrapper gives both its Document and its node. */
+    let nd = read_node(&NODE_DATA_TYPE, rb_node).map_err(NotInDocument::Unusable)?;
+    if !crate::bridge::ruby::same_value(nd.document, document) {
         return Err(NotInDocument::Foreign);
     }
-    node_raw(ruby, rb_node).map_err(NotInDocument::Unusable)
+    Ok(handle_word(nd.node))
+}
+
+/// The word a wrapper's handle names.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(raw_node_crossing, reason = "a node's word, for identity alone")
+)]
+fn handle_word(node: NodeHandle) -> NodeWord {
+    match node {
+        NodeHandle::Html(key) => NodeWord::from(key.raw_node()),
+        NodeHandle::Xml(id) => NodeWord::from(id),
+    }
 }
 
 /// The kind-AGNOSTIC node word (the base type, so HTML or XML). Only for the
@@ -286,10 +305,7 @@ pub fn node_raw(ruby: &Ruby, rb_node: Value) -> Result<NodeWord, Error> {
         });
     }
     /* TypeError for a non-node, as TypedData_Get_Struct raised. */
-    Ok(match read_node(&NODE_DATA_TYPE, rb_node)?.node {
-        NodeHandle::Html(key) => NodeWord::from(key.raw_node()),
-        NodeHandle::Xml(id) => NodeWord::from(id),
-    })
+    Ok(handle_word(read_node(&NODE_DATA_TYPE, rb_node)?.node))
 }
 
 /// Which representation `v` wraps ([`NodeRepr`]).

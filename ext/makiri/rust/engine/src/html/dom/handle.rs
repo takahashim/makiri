@@ -113,6 +113,15 @@ impl TagId {
         let v = self.0.get();
         (v < TAG_LAST_ENTRY).then_some(v)
     }
+
+    /// The built-in tag `name` names (ASCII case folded), whatever any
+    /// document holds; `None` for an empty name or any other.
+    pub fn builtin(name: &[u8]) -> Option<TagId> {
+        if name.is_empty() {
+            return None;
+        }
+        crate::html::names::static_tag_id(name).and_then(TagId::from_index)
+    }
 }
 
 /// The end of the static tag ids.

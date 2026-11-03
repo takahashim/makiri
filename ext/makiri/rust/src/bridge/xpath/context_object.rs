@@ -75,8 +75,8 @@ pub struct XPathCtx {
     ctx: Cx,
 }
 
-/// No slots: the Document and the context node are hidden ivars of the
-/// context object, which the GC marks and moves itself.
+/// No slots: the Document is a hidden ivar of the context object, which the
+/// GC marks and moves itself, and the context node is a token into it.
 impl Payload for XPathCtx {
     fn memsize(&self) -> usize {
         core::mem::size_of::<Self>().saturating_add(self.cache_bytes.reported())

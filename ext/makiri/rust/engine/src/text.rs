@@ -2,11 +2,11 @@
 //! selector, a namespace prefix or URI, a variable name or value.
 //!
 //! The one contract is **valid UTF-8 with no NUL**. The UTF-8 half is the type
-//! (`&str`); the NUL half is [`crate::utf8_decode::text_verdict`], the one check this
-//! type and the Ruby bridge's `text_check` both run. Made by checking the bytes
-//! ([`VerifiedText::from_bytes`], [`VerifiedText::new`]) or at the Ruby boundary,
-//! where the bridge has already run the same check
-//! ([`VerifiedText::from_checked`]).
+//! (`&str`); the NUL half is [`crate::utf8_decode::text_verdict`]. Made by
+//! checking the bytes ([`VerifiedText::from_bytes`], [`VerifiedText::new`]) or
+//! at the Ruby boundary, where the bridge's checked view
+//! (`bridge::string::ruby_verified_text`) has already held the String to the
+//! same contract ([`VerifiedText::from_checked`]).
 //!
 //! No NUL is a LOGICAL contract, not a memory-safety one: every consumer reads
 //! the text as a slice - the XPath lexer, the selector parser, and Lexbor's
@@ -32,9 +32,8 @@ pub struct VerifiedText<'a>(&'a str);
 impl<'a> VerifiedText<'a> {
     /// `s`, unless it holds a NUL.
     ///
-    /// The NUL half of the contract is [`utf8_decode::text_verdict`], the one check
-    /// the bridge's [`text_check`](crate::bridge::string::text_check) also runs;
-    /// `true` because `s` is already UTF-8 by type.
+    /// The NUL half of the contract is [`utf8_decode::text_verdict`]; `true`
+    /// because `s` is already UTF-8 by type.
     pub fn new(s: &'a str) -> Option<Self> {
         matches!(text_verdict(s.as_bytes(), true), TextVerdict::Ok).then_some(Self(s))
     }
@@ -45,7 +44,7 @@ impl<'a> VerifiedText<'a> {
     }
 
     /// Adopt text the Ruby bridge has already checked against the same
-    /// contract (`bridge::string::text_check`).
+    /// contract (`bridge::string::ruby_verified_text`).
     pub fn from_checked(s: &'a str) -> Self {
         debug_assert!(!s.as_bytes().contains(&0), "a checked text holds a NUL");
         Self(s)
