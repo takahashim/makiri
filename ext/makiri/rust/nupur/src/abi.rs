@@ -57,6 +57,63 @@ pub fn check_running_api(name: &str, rebuild: &str) -> Result<(), crate::rb::Err
     ))
 }
 
+/// `Err(LoadError)` when the constant `path` names (`["Makiri", "Node"]`,
+/// read from `Object`) is already defined - an autoload counting, and
+/// nothing loaded: the extension's classes are there before its `Init_` has
+/// made them. A `require` an exit cut short leaves them (Ruby marks the
+/// feature loaded only when `Init_` returns, so the next `require` runs it
+/// again), and so does code that defined one first. Asked in `check`, before
+/// anything is defined, it is a `LoadError` the caller may rescue; met in
+/// `init`, where `Module::define_data_class` refuses such a name, it would
+/// be `fatal`. Name the class the extension's `init` defines first.
+pub fn check_undefined(ruby: &crate::rb::Ruby, path: &[&str]) -> Result<(), crate::rb::Error> {
+    use crate::rb::{RClass, RModule, ReprValue};
+    let Some((last, outer)) = path.split_last() else {
+        return Ok(());
+    };
+    let defined = |at: crate::rb::Value, name: &str| -> Result<bool, crate::rb::Error> {
+        let id = crate::rb::Id::intern(ruby, &crate::rb::class::c_name(name)?)?;
+        crate::raw::const_defined_at(at, id)
+    };
+    let mut at = ruby.class_object().as_value();
+    for name in outer {
+        if !defined(at, name)? {
+            return Ok(());
+        }
+        let v = crate::raw::const_get(ruby, at, &crate::rb::class::c_name(name)?)?;
+        if RModule::from_value(v).is_none() && RClass::from_value(v).is_none() {
+            /* Not a namespace: `init`'s definition under it refuses it. */
+            return Ok(());
+        }
+        at = v;
+    }
+    if !defined(at, last)? {
+        return Ok(());
+    }
+    Err(crate::rb::Error::new(
+        crate::rb::Builtin::LoadError,
+        format_args!(
+            "{} is already defined: the extension was loaded before, or other code defined its classes",
+            Path(path)
+        ),
+    ))
+}
+
+/// A constant's path, written `A::B`.
+struct Path<'a>(&'a [&'a str]);
+
+impl core::fmt::Display for Path<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for (i, name) in self.0.iter().enumerate() {
+            if i > 0 {
+                f.write_str("::")?;
+            }
+            f.write_str(name)?;
+        }
+        Ok(())
+    }
+}
+
 /// After [`check_running_api`]: `Err(LoadError)` unless a raise made under
 /// the layer's protection comes back as an exception, not as some other exit
 /// (`raw::raise_is_recognised`, which says why that is not a given) - the

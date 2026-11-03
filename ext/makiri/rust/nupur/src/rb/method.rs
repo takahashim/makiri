@@ -391,7 +391,10 @@ pub fn declare_ractor_safe(ruby: &Ruby) {
 /// `Err` or a panic - is Ruby's `fatal`: an extension that stopped half-way
 /// through defining itself must not be used (its classes lack methods, and
 /// the internal error may not be registered yet), and a second `require`
-/// would only run `Init_` again over the half it left.
+/// would only run `Init_` again over the half it left. A non-local exit (a
+/// `throw`, a thread kill) is the exception: it is resumed, as a method's
+/// is, and the half-defined extension is left for `check` to refuse when a
+/// second `require` runs `Init_` again ([`crate::abi::check_undefined`]).
 ///
 /// # Safety
 /// Called only from the extension's `Init_` function, which Ruby calls on its
@@ -412,13 +415,18 @@ pub unsafe fn run_init(
                 crate::encoding::init(&ruby);
                 init(&ruby)
             })) {
-                /* An exit `init` dropped is resumed, as `finish` resumes a
-                 * method's: a `throw`'s catcher waits, a killed thread must
-                 * end - and the next method's start would forget it. */
+                /* An exit that stopped `init`, or that it dropped, is
+                 * resumed, as `finish` resumes a method's: a `throw`'s
+                 * catcher waits, a killed thread must end, and the next
+                 * method's start would forget it. Not `fatal`: the exit is
+                 * the thread's, not a broken extension's. The `require` is
+                 * left unfinished, so another runs `Init_` again, which the
+                 * extension's `check` refuses (`abi::check_undefined`). */
                 Ok(Ok(())) => match crate::raw::pending_exit() {
                     None => return,
                     Some(exit) => exit.raise(&ruby),
                 },
+                Ok(Err(e)) if e.is_jump() || crate::raw::pending_exit().is_some() => e.raise(&ruby),
                 /* `quietly`: formatting is what the compiler cannot show
                  * unwind-free (`rake no_unwind`). */
                 Ok(Err(e)) => crate::caught::quietly(

@@ -20,7 +20,7 @@ use nupur_sys::ruby_value_type;
 use super::error::Error;
 use super::object::{class_inherits, obj_is_kind_of};
 
-// What a String's header says of it: its coderange, encoding index, class.
+// What a String's header says of it: its coderange and encoding index.
 mod header;
 pub(crate) use header::Coderange;
 // An Integer as a Rust number or as decimal digits.
@@ -43,17 +43,6 @@ impl Value {
     pub(crate) const fn from_sys(v: nupur_sys::value::Value) -> Value {
         Value(v)
     }
-}
-
-/// `Object`, the default superclass (`rb_cObject`, a C global Ruby sets once
-/// at boot), for a definition that names none; `of` is the proof of the GVL.
-/// `Ruby::class_object` answers the same, for a caller holding the token:
-/// this is for `Module::define_data_class`, whose callers hand it none.
-#[inline]
-pub(crate) fn object_class<V: ReprValue>(of: &V) -> RClass {
-    RClass::from_known(Value::from_sys(non_raising::rb_cObject(
-        of.as_value().0.ruby(),
-    )))
 }
 
 /// What every Ruby value type is: a `Value` underneath.
@@ -326,8 +315,10 @@ impl RHash {
 
     /// The value at `key`, or `None` when there is none. A key is a Symbol
     /// or a String ([`HashKey`]), which Ruby hashes and compares in C; a key
-    /// of the Hash's own that collides with it is compared by its `eql?`,
-    /// which can raise - `Err`, passed on (`raw::hash_lookup`).
+    /// of the Hash's own of another kind that collides with it is compared
+    /// by calling `key.eql?` - Symbol's or String's own, Ruby code only
+    /// where a program has redefined it - which can raise: `Err`, passed on
+    /// (`raw::hash_lookup`).
     #[inline]
     pub fn get(self, key: impl HashKey) -> Result<Option<Value>, Error> {
         crate::raw::hash_lookup(self, key.as_value())
@@ -339,8 +330,8 @@ impl RHash {
 /// (`plain_key`): Ruby takes the C path for two Strings only then, and
 /// calls `eql?` - the caller's Ruby - for a subclass's instance, so the
 /// lookup refuses one. A stored key of another kind whose hash collides is
-/// still compared through `eql?` ([`RHash::get`]), which is why the lookup
-/// returns `Result`.
+/// still compared by calling the lookup key's `eql?` ([`RHash::get`]), which
+/// is why the lookup returns `Result`.
 pub trait HashKey: ReprValue {}
 impl HashKey for Symbol {}
 impl HashKey for RString {}
@@ -352,7 +343,8 @@ pub(crate) fn plain_key(k: Value) -> bool {
     if Symbol::from_value(k).is_some() {
         return true;
     }
-    RString::from_value(k).is_some_and(RString::has_string_class)
+    let string = RClass::from_known(Value::from_sys(non_raising::rb_cString(k.0.ruby())));
+    RString::from_value(k).is_some_and(|s| s.has_class(string))
 }
 
 impl Range {

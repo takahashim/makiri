@@ -391,6 +391,20 @@ RSpec.describe "nupur" do
       Object.send(:remove_const, :NupurPredefined)
     end
 
+    it "tells a load whether its first class is already there, as a LoadError" do
+      expect(NupurTest.check_undefined("NupurNoSuchOuter", "X")).to be_nil
+      expect(NupurTest.check_undefined("NupurTest", "NoSuchClassHere")).to be_nil
+      expect(NupurTest.check_undefined("RUBY_VERSION", "X")).to be_nil
+      expect { NupurTest.check_undefined("NupurTest", "Holder") }
+        .to raise_error(LoadError, /NupurTest::Holder is already defined/)
+      NupurTest.autoload(:NupurLazy, "/nonexistent/nupur_lazy")
+      expect { NupurTest.check_undefined("NupurTest", "NupurLazy") }
+        .to raise_error(LoadError, /NupurTest::NupurLazy is already defined/)
+      expect(NupurTest.autoload?(:NupurLazy)).to eq("/nonexistent/nupur_lazy")
+    ensure
+      NupurTest.send(:remove_const, :NupurLazy) if NupurTest.const_defined?(:NupurLazy, false)
+    end
+
     it "refuses an autoload under the name, loading nothing" do
       Object.autoload(:NupurAutoloaded, "/nonexistent/nupur_autoloaded")
       expect { NupurTest.object_data_class("NupurAutoloaded") }

@@ -59,4 +59,28 @@ RSpec.describe "native extension build check" do
     expect(out).to include("built as makiri #{Makiri::VERSION}, but")
     expect(out).to include("loaded by makiri 0.0.0-stale")
   end
+
+  # A class of wrapped objects is the extension's own: one defined first is
+  # refused before anything is defined, so the load can be rescued and the
+  # process goes on - the same check that refuses a second `Init_` after a
+  # `require` an exit cut short.
+  it "raises LoadError when Makiri::Node is defined before the extension" do
+    lib = File.expand_path("../lib", __dir__)
+    code = <<~RUBY
+      module Makiri; class Node; end; end
+      begin
+        require "makiri"
+        puts "loaded"
+      rescue LoadError => e
+        puts "LoadError: \#{e.message}"
+      end
+      puts Makiri.const_defined?(:Element, false) ? "defined" : "nothing defined"
+    RUBY
+    out, err, status = Open3.capture3(
+      { "RUBY_FREE_AT_EXIT" => nil }, RbConfig.ruby, "-I#{lib}", "-e", code
+    )
+    expect(status).to be_success, err
+    expect(out).to include("LoadError: Makiri::Node is already defined")
+    expect(out).to include("nothing defined")
+  end
 end

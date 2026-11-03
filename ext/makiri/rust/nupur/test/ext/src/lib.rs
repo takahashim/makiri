@@ -365,6 +365,16 @@ fn object_data_class(ruby: &Ruby, name: Value) -> Result<Value, Error> {
     Ok(class.as_value())
 }
 
+/// `abi::check_undefined` over the path `outer::name`.
+fn check_undefined(ruby: &Ruby, outer: Value, name: Value) -> Result<Value, Error> {
+    let outer =
+        nupur::string::read_utf8(ruby, string_arg(outer)?, |_| None::<()>).map_err(read_error)?;
+    let name =
+        nupur::string::read_utf8(ruby, string_arg(name)?, |_| None::<()>).map_err(read_error)?;
+    nupur::abi::check_undefined(ruby, &[outer.as_str(), name.as_str()])?;
+    Ok(ruby.qnil())
+}
+
 /* ---- numbers and collections built without a call each ---- */
 
 /// The Float of the bits `bits`, through `build::float` - a flonum built
@@ -560,6 +570,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     m.define_module_function("responds_to_s", function!(responds_to_s, 1))?;
     m.define_module_function("object_const_defined", function!(object_const_defined, 1))?;
     m.define_module_function("object_data_class", function!(object_data_class, 1))?;
+    m.define_module_function("check_undefined", function!(check_undefined, 2))?;
     Ok(())
 }
 
