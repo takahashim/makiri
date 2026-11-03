@@ -110,6 +110,7 @@ fn allocations() {
     let _ = core::format_args!("{}", 1);
 }
 
+#[rustfmt::skip] // keeps each marker on the line reported
 fn callers_ruby(ruby: &crate::bridge::rb::Ruby, m: crate::bridge::rb::RModule) {
     let _ = crate::bridge::rb::Module::call_method(m, ruby, "new", &[]); //~ discarded_ruby_error runs_callers_ruby
     let _ = crate::bridge::rb::method::yield_value(ruby, ruby.qnil()); //~ discarded_ruby_error runs_callers_ruby
