@@ -22,8 +22,7 @@ pub(crate) unsafe fn typed_object_zalloc(
 ) -> Result<nupur_sys::value::Value, Error> {
     let size = nupur_sys::size_t::try_from(size)
         .map_err(|_| crate::rb::error::internal_error("a wrapped object too large"))?;
-    call(|inside| unsafe {
-        injected_raise(inside);
+    call_allocating(|inside| unsafe {
         nupur_sys::raising::rb_data_typed_object_zalloc(inside, klass, size, ty)
     })
 }

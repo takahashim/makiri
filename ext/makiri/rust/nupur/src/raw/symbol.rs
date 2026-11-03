@@ -5,10 +5,12 @@ use super::*;
 /// `rb_intern3` of a UTF-8 name: raises `NoMemoryError` when the symbol table
 /// cannot grow (interning valid UTF-8 raises nothing else).
 #[inline]
-pub fn intern(_: &Ruby, name: &str) -> Result<Id, Error> {
-    let (p, n) = (name.as_ptr() as *const c_char, c_len(name.len())?);
-    call(|inside| unsafe {
-        injected_raise(inside);
+pub(crate) fn intern(_: &Ruby, name: &str) -> Result<Id, Error> {
+    let (p, n) = (
+        name.as_ptr() as *const c_char,
+        c_len(name.len(), "a name too long for the C API")?,
+    );
+    call_allocating(|inside| unsafe {
         nupur_sys::raising::rb_intern3(
             inside,
             p,
@@ -21,13 +23,9 @@ pub fn intern(_: &Ruby, name: &str) -> Result<Id, Error> {
 
 /// `rb_intern` of a NUL-terminated name: as [`intern`].
 #[inline]
-pub fn intern_cstr(_: &Ruby, name: &core::ffi::CStr) -> Result<Id, Error> {
+pub(crate) fn intern_cstr(_: &Ruby, name: &core::ffi::CStr) -> Result<Id, Error> {
     let p = name.as_ptr();
-    call(|inside| unsafe {
-        injected_raise(inside);
-        nupur_sys::raising::rb_intern(inside, p)
-    })
-    .map(Id::from_raw)
+    call_allocating(|inside| unsafe { nupur_sys::raising::rb_intern(inside, p) }).map(Id::from_raw)
 }
 
 /// The Symbol of the UTF-8 `name`: [`intern`] and `rb_id2sym`, which raises
@@ -35,9 +33,6 @@ pub fn intern_cstr(_: &Ruby, name: &core::ffi::CStr) -> Result<Id, Error> {
 #[inline]
 pub(crate) fn sym(ruby: &Ruby, name: &str) -> Result<Symbol, Error> {
     let id = intern(ruby, name)?.as_raw();
-    let v = call(|inside| unsafe {
-        injected_raise(inside);
-        nupur_sys::raising::rb_id2sym(inside, id)
-    })?;
+    let v = call_allocating(|inside| unsafe { nupur_sys::raising::rb_id2sym(inside, id) })?;
     typed(v, Symbol::from_value, "a C call made no Symbol")
 }

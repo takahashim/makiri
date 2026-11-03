@@ -30,7 +30,7 @@ pub(crate) unsafe fn reset_pending_exit() {
     unsafe { nupur_sys::protect::reset_pending_exit() }
 }
 
-pub(super) use nupur_sys::protect::injected_raise;
+use nupur_sys::protect::injected_raise;
 #[cfg(feature = "alloc-inject")]
 pub(crate) use nupur_sys::protect::set_raise_injector;
 
@@ -77,6 +77,27 @@ pub(super) fn call<T: Copy, F: FnOnce(&Protected) -> T + Copy>(f: F) -> Result<T
         Ok(out) => Ok(out),
         Err(caught) => Err(error_of(caught)),
     }
+}
+
+/// [`call`] for a C call that allocates, and so can raise `NoMemoryError`:
+/// `rake oom`'s raise sweep may make it raise before the C call
+/// (`injected_raise`), so the path that handles that `Err` is run. A call
+/// that cannot raise for want of memory is [`call`]'s.
+#[inline]
+#[cfg_attr(
+    dylint_lib = "nupur_lints",
+    expect(
+        unraising_call_in_raw,
+        reason = "the C call is `f`'s, which the lint checks where `call_allocating` is called"
+    )
+)]
+pub(super) fn call_allocating<T: Copy, F: FnOnce(&Protected) -> T + Copy>(
+    f: F,
+) -> Result<T, Error> {
+    call(move |inside| {
+        injected_raise(inside);
+        f(inside)
+    })
 }
 
 /// The `Err` a protected call's [`Caught`] stands for.

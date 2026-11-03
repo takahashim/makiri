@@ -5,36 +5,41 @@ use super::*;
 /// `rb_define_class_under`, its superclass `sup`: raises `TypeError` when
 /// `name` is bound to something else, or to a class with another
 /// superclass.
-pub fn define_class_under(
+pub(crate) fn define_class_under(
     outer: Value,
     name: &core::ffi::CStr,
     sup: RClass,
-) -> Result<Value, Error> {
+) -> Result<RClass, Error> {
     let (outer, name, sup) = (outer.as_sys(), name.as_ptr(), sup.as_sys());
     let v = call(|inside| unsafe {
         nupur_sys::raising::rb_define_class_under(inside, outer, name, sup)
     })?;
-    Ok(Value::from_sys(v))
+    typed(v, RClass::from_value, "a C call made no Class")
 }
 
 /// `rb_define_module_under`: raises `TypeError` when `name` is bound to
 /// something that is not a module.
-pub fn define_module_under(outer: Value, name: &core::ffi::CStr) -> Result<Value, Error> {
+pub(crate) fn define_module_under(outer: Value, name: &core::ffi::CStr) -> Result<RModule, Error> {
     let (outer, name) = (outer.as_sys(), name.as_ptr());
     let v =
         call(|inside| unsafe { nupur_sys::raising::rb_define_module_under(inside, outer, name) })?;
-    Ok(Value::from_sys(v))
+    typed(v, RModule::from_value, "a C call made no Module")
 }
 
 /// `rb_define_module`: a top-level module; raises as `define_module_under`.
-pub fn define_module(_: &Ruby, name: &core::ffi::CStr) -> Result<Value, Error> {
+pub(crate) fn define_module(_: &Ruby, name: &core::ffi::CStr) -> Result<RModule, Error> {
     let name = name.as_ptr();
     let v = call(|inside| unsafe { nupur_sys::raising::rb_define_module(inside, name) })?;
-    Ok(Value::from_sys(v))
+    typed(v, RModule::from_value, "a C call made no Module")
 }
 
 /// `rb_const_set`: raises `FrozenError` on a frozen namespace.
-pub fn const_set(ruby: &Ruby, outer: Value, name: &core::ffi::CStr, v: Value) -> Result<(), Error> {
+pub(crate) fn const_set(
+    ruby: &Ruby,
+    outer: Value,
+    name: &core::ffi::CStr,
+    v: Value,
+) -> Result<(), Error> {
     let id = intern_cstr(ruby, name)?.as_raw();
     let (outer, v) = (outer.as_sys(), v.as_sys());
     call(|inside| unsafe { nupur_sys::raising::rb_const_set(inside, outer, id, v) })
@@ -42,27 +47,23 @@ pub fn const_set(ruby: &Ruby, outer: Value, name: &core::ffi::CStr, v: Value) ->
 
 /// `rb_include_module`: raises `ArgumentError` for a cyclic include,
 /// `FrozenError` on a frozen class.
-pub fn include_module(klass: Value, module: Value) -> Result<(), Error> {
+pub(crate) fn include_module(klass: Value, module: Value) -> Result<(), Error> {
     let (klass, module) = (klass.as_sys(), module.as_sys());
     call(|inside| unsafe { nupur_sys::raising::rb_include_module(inside, klass, module) })
 }
 
 /// `rb_undef_alloc_func`: raises `TypeError` for a singleton class, which
 /// may not have an allocator of its own taken.
-pub fn undef_alloc_func(klass: RClass) -> Result<(), Error> {
+pub(crate) fn undef_alloc_func(klass: RClass) -> Result<(), Error> {
     let k = klass.as_sys();
     call(|inside| unsafe { nupur_sys::raising::rb_undef_alloc_func(inside, k) })
 }
 
 /// `rb_obj_freeze`: raises `NoMemoryError` - freezing moves an object with
 /// instance variables to a frozen shape, which may allocate.
-pub fn obj_freeze(v: Value) -> Result<(), Error> {
+pub(crate) fn obj_freeze(v: Value) -> Result<(), Error> {
     let v = v.as_sys();
-    call(|inside| unsafe {
-        injected_raise(inside);
-        nupur_sys::raising::rb_obj_freeze(inside, v)
-    })
-    .map(|_| ())
+    call_allocating(|inside| unsafe { nupur_sys::raising::rb_obj_freeze(inside, v) }).map(|_| ())
 }
 
 /// `rb_obj_reveal`: show `obj`, hidden by `rb_obj_hide`, as an instance of
@@ -70,13 +71,9 @@ pub fn obj_freeze(v: Value) -> Result<(), Error> {
 /// barrier, which may grow the remembered set (found by the C API raise
 /// survey, takahashim.github.io/ruby-c-apis - Ruby's header says nothing of
 /// it). On `Err` the object stays hidden.
-pub fn obj_reveal(obj: Value, klass: Value) -> Result<(), Error> {
+pub(crate) fn obj_reveal(obj: Value, klass: Value) -> Result<(), Error> {
     let (o, k) = (obj.as_sys(), klass.as_sys());
-    call(|inside| unsafe {
-        injected_raise(inside);
-        nupur_sys::raising::rb_obj_reveal(inside, o, k)
-    })
-    .map(|_| ())
+    call_allocating(|inside| unsafe { nupur_sys::raising::rb_obj_reveal(inside, o, k) }).map(|_| ())
 }
 
 /// `rb_define_method` / `_private_method` / `_singleton_method`: raise
@@ -107,18 +104,15 @@ pub(crate) fn define_method(
 
 /// `rb_gc_register_mark_object`: raises `NoMemoryError` when the root table
 /// cannot grow.
-pub fn gc_register_mark_object(v: Value) -> Result<(), Error> {
+pub(crate) fn gc_register_mark_object(v: Value) -> Result<(), Error> {
     let v = v.as_sys();
-    call(|inside| unsafe {
-        injected_raise(inside);
-        nupur_sys::raising::rb_gc_register_mark_object(inside, v)
-    })
+    call_allocating(|inside| unsafe { nupur_sys::raising::rb_gc_register_mark_object(inside, v) })
 }
 
 /// The constant `name` of `outer` (`rb_const_get`): raises `NameError` for
 /// none, and an autoload runs Ruby code - for a class the extension's own
 /// Ruby defines.
-pub fn const_get(ruby: &Ruby, outer: Value, name: &core::ffi::CStr) -> Result<Value, Error> {
+pub(crate) fn const_get(ruby: &Ruby, outer: Value, name: &core::ffi::CStr) -> Result<Value, Error> {
     let id = intern_cstr(ruby, name)?.as_raw();
     let outer = outer.as_sys();
     let v = call(|inside| unsafe { nupur_sys::raising::rb_const_get(inside, outer, id) })?;
@@ -128,7 +122,7 @@ pub fn const_get(ruby: &Ruby, outer: Value, name: &core::ffi::CStr) -> Result<Va
 /// Whether `outer` itself holds a constant `id` (`rb_const_defined_at`),
 /// an autoload counting as one; nothing is loaded. Raises nothing in
 /// practice; protected as every C call that is not classified.
-pub fn const_defined_at(outer: Value, id: crate::rb::Id) -> Result<bool, Error> {
+pub(crate) fn const_defined_at(outer: Value, id: crate::rb::Id) -> Result<bool, Error> {
     let (outer, id) = (outer.as_sys(), id.as_raw());
     let r = call(|inside| unsafe { nupur_sys::raising::rb_const_defined_at(inside, outer, id) })?;
     Ok(r != 0)
@@ -144,14 +138,12 @@ pub fn const_defined_at(outer: Value, id: crate::rb::Id) -> Result<bool, Error> 
         reason = "rb_funcallv_public: the wrapper `rb::call::public_method` is, and its callers allow it"
     )
 )]
-pub fn call_public(recv: Value, id: crate::rb::Id, args: &[Value]) -> Result<Value, Error> {
-    let argc = c_int::try_from(args.len())
-        .map_err(|_| crate::rb::error::arg_error("too many arguments"))?;
+pub(crate) fn call_public(recv: Value, id: crate::rb::Id, args: &[Value]) -> Result<Value, Error> {
+    let argc = c_len(args.len(), "too many arguments")?;
     let (recv, id) = (recv.as_sys(), id.as_raw());
     /* `Value` is transparent over `VALUE`, so the slice is the C array. */
     let argv = args.as_ptr().cast::<nupur_sys::value::Value>();
-    let v = call(|inside| unsafe {
-        injected_raise(inside);
+    let v = call_allocating(|inside| unsafe {
         nupur_sys::raising::rb_funcallv_public(inside, recv, id, argc, argv)
     })?;
     Ok(Value::from_sys(v))
@@ -166,7 +158,7 @@ pub fn call_public(recv: Value, id: crate::rb::Id, args: &[Value]) -> Result<Val
         reason = "rb_respond_to: the wrapper `rb::call::responds_to` is, and its callers allow it"
     )
 )]
-pub fn respond_to(recv: Value, id: crate::rb::Id) -> Result<bool, Error> {
+pub(crate) fn respond_to(recv: Value, id: crate::rb::Id) -> Result<bool, Error> {
     let (recv, id) = (recv.as_sys(), id.as_raw());
     let r = call(|inside| unsafe { nupur_sys::raising::rb_respond_to(inside, recv, id) })?;
     Ok(r != 0)
@@ -175,13 +167,10 @@ pub fn respond_to(recv: Value, id: crate::rb::Id) -> Result<bool, Error> {
 /// `rb_ractor_make_shareable`: `v` and everything it reaches frozen and
 /// marked shareable between Ractors. Raises for a value that cannot be
 /// (a Proc with a non-shareable self, an unshareable wrapped object).
-pub fn ractor_make_shareable(v: Value) -> Result<(), Error> {
+pub(crate) fn ractor_make_shareable(v: Value) -> Result<(), Error> {
     let v = v.as_sys();
-    call(|inside| unsafe {
-        injected_raise(inside);
-        nupur_sys::raising::rb_ractor_make_shareable(inside, v)
-    })
-    .map(|_| ())
+    call_allocating(|inside| unsafe { nupur_sys::raising::rb_ractor_make_shareable(inside, v) })
+        .map(|_| ())
 }
 
 /// `recv.name(*args)` (`rb_funcallv`): the caller's Ruby, which is why each
@@ -194,15 +183,14 @@ pub fn ractor_make_shareable(v: Value) -> Result<(), Error> {
         reason = "rb_funcallv: the wrapper `Module::call_method` is, and its callers allow it"
     )
 )]
-pub fn call_method(
+pub(crate) fn call_method(
     ruby: &Ruby,
     recv: Value,
     name: &core::ffi::CStr,
     args: &[Value],
 ) -> Result<Value, Error> {
     let id = intern_cstr(ruby, name)?.as_raw();
-    let argc = c_int::try_from(args.len())
-        .map_err(|_| crate::rb::error::arg_error("too many arguments"))?;
+    let argc = c_len(args.len(), "too many arguments")?;
     let recv = recv.as_sys();
     /* `Value` is transparent over `VALUE`, so the slice is the C array. */
     let argv = args.as_ptr().cast::<nupur_sys::value::Value>();
@@ -212,10 +200,7 @@ pub fn call_method(
 }
 
 /// `rb_module_new`: an anonymous module. Raises `NoMemoryError`.
-pub fn module_new(_: &Ruby) -> Result<RModule, Error> {
-    let v = call(|inside| unsafe {
-        injected_raise(inside);
-        nupur_sys::raising::rb_module_new(inside)
-    })?;
+pub(crate) fn module_new(_: &Ruby) -> Result<RModule, Error> {
+    let v = call_allocating(|inside| unsafe { nupur_sys::raising::rb_module_new(inside) })?;
     typed(v, RModule::from_value, "a C call made no Module")
 }

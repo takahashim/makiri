@@ -99,10 +99,7 @@ impl Ruby {
 impl Ruby {
     /// A top-level module.
     pub fn define_module(&self, name: &str) -> Result<RModule, Error> {
-        Ok(RModule::from_known(crate::raw::define_module(
-            self,
-            &super::class::c_name(name)?,
-        )?))
+        crate::raw::define_module(self, &super::class::c_name(name)?)
     }
 
     /// An anonymous module.

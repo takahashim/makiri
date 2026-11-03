@@ -118,9 +118,11 @@ const WRAPPER_HOMES: &[&str] = &["nupur_sys::raising", "nupur_sys::lint_probe::r
 /// self-test's stand-in.
 const RAW: &[&str] = &["nupur::raw", "nupur::lint_probe::raw"];
 
-/// The protected call, and the self-test's stand-in.
+/// The protected call (and its allocating face, which lets `rake oom`
+/// inject a raise first), and the self-test's stand-in.
 const CALL: &[&str] = &[
     "nupur::raw::protect::call",
+    "nupur::raw::protect::call_allocating",
     "nupur::lint_probe::raw::call",
     "nupur::lint_probe::raw::call_protected",
 ];

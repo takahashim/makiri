@@ -6,13 +6,15 @@ use super::*;
 /// An exception of `class` with the UTF-8 message `msg`: `rb_exc_new_str`,
 /// which allocates and runs the class's `initialize`, and so raises.
 #[inline]
-pub fn exception_new(ruby: &Ruby, class: ExceptionClass, msg: &[u8]) -> Result<Value, Error> {
+pub(crate) fn exception_new(
+    ruby: &Ruby,
+    class: ExceptionClass,
+    msg: &[u8],
+) -> Result<Value, Error> {
     let s = utf8_str_new(ruby, msg)?.as_sys();
     let class = class.as_sys();
-    let exc = call(|inside| unsafe {
-        injected_raise(inside);
-        nupur_sys::raising::rb_exc_new_str(inside, class, s)
-    })?;
+    let exc =
+        call_allocating(|inside| unsafe { nupur_sys::raising::rb_exc_new_str(inside, class, s) })?;
     Ok(Value::from_sys(exc))
 }
 
@@ -22,7 +24,7 @@ pub fn exception_new(ruby: &Ruby, class: ExceptionClass, msg: &[u8]) -> Result<V
 /// made under `call` and must come back as an exception. `Ok(false)` is a Ruby
 /// whose numbering this was not written for - the exit it left pending is
 /// forgotten here, and the caller refuses to load.
-pub fn raise_is_recognised(ruby: &Ruby) -> Result<bool, Error> {
+pub(crate) fn raise_is_recognised(ruby: &Ruby) -> Result<bool, Error> {
     let exc = exception_new(ruby, ruby.exception_runtime_error(), b"raise self-check")?.as_sys();
     let outcome = call::<(), _>(|inside| unsafe { nupur_sys::raising::rb_exc_raise(inside, exc) });
     let recognised = matches!(
@@ -45,12 +47,9 @@ const CLASSNAME_MAX: usize = 128;
 /// `NoMemoryError`: an anonymous class's name (`#<Class:0x...>`) is a String
 /// made on each call, referenced by nothing once the call returns - so `f`
 /// is handed a copy, up to [`CLASSNAME_MAX`] bytes, and may do anything.
-pub fn with_classname<R>(v: Value, f: impl FnOnce(&[u8]) -> R) -> Result<R, Error> {
+pub(crate) fn with_classname<R>(v: Value, f: impl FnOnce(&[u8]) -> R) -> Result<R, Error> {
     let v = v.as_sys();
-    let p = call(|inside| unsafe {
-        injected_raise(inside);
-        nupur_sys::raising::rb_obj_classname(inside, v)
-    })?;
+    let p = call_allocating(|inside| unsafe { nupur_sys::raising::rb_obj_classname(inside, v) })?;
     if p.is_null() {
         return Ok(f(b"Object"));
     }

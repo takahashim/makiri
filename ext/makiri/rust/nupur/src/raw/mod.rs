@@ -36,6 +36,9 @@
 //! that raise on purpose are [`protect`]'s, the one part held to neither.
 
 #![allow(unsafe_code)]
+/* `raw` is the crate's alone (`pub(crate) mod raw`): every item says so
+ * itself, and a `pub` that only reads as wider is refused. */
+#![deny(unreachable_pub)]
 /* Every wrapper's contract is the module's, stated once above. */
 #![allow(clippy::missing_safety_doc)]
 
@@ -52,7 +55,7 @@ use crate::encoding::Encoding;
 mod protect;
 #[cfg(feature = "alloc-inject")]
 pub(crate) use protect::set_raise_injector;
-use protect::{call, injected_raise};
+use protect::{call, call_allocating};
 pub(crate) use protect::{
     exc_fatal, exc_raise, forget_errinfo, keeping_errinfo, pending_exit, reset_pending_exit, resume,
 };
@@ -73,11 +76,13 @@ fn typed<T>(
     of(Value::from_sys(v)).ok_or_else(|| crate::rb::error::internal_error(what))
 }
 
-/// A length for the C API's `long` (whichever width the call's parameter
-/// has); `ArgumentError` for one it cannot hold - past 2^31 on Windows.
+/// A length or count for the C API's `long` or `int` (whichever the call's
+/// parameter is); `ArgumentError` with `what` for one it cannot hold - a
+/// `long` past 2^31 on Windows. `what` is the whole message, a literal, as
+/// [`typed`]'s is.
 #[inline]
-fn c_len<L: TryFrom<usize>>(n: usize) -> Result<L, Error> {
-    L::try_from(n).map_err(|_| crate::rb::error::arg_error("string too large"))
+fn c_len<L: TryFrom<usize>>(n: usize, what: &'static str) -> Result<L, Error> {
+    L::try_from(n).map_err(|_| crate::rb::error::arg_error(what))
 }
 
 /* ---- the rest, by what it wraps ---- */
@@ -90,11 +95,11 @@ mod iterate;
 mod string;
 mod symbol;
 mod values;
-pub use check::*;
+pub(crate) use check::*;
 pub(crate) use data::*;
-pub use define::*;
-pub use exception::*;
-pub use iterate::*;
-pub use string::*;
-pub use symbol::*;
-pub use values::*;
+pub(crate) use define::*;
+pub(crate) use exception::*;
+pub(crate) use iterate::*;
+pub(crate) use string::*;
+pub(crate) use symbol::*;
+pub(crate) use values::*;

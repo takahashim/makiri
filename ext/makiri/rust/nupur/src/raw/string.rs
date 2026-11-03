@@ -7,11 +7,11 @@ use super::*;
 /// never a memory error.
 #[inline]
 pub(crate) fn utf8_str_new(_: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
-    let (p, n) = (bytes.as_ptr() as *const c_char, c_len(bytes.len())?);
-    let v = call(|inside| unsafe {
-        injected_raise(inside);
-        nupur_sys::raising::rb_utf8_str_new(inside, p, n)
-    })?;
+    let (p, n) = (
+        bytes.as_ptr() as *const c_char,
+        c_len(bytes.len(), "string too large")?,
+    );
+    let v = call_allocating(|inside| unsafe { nupur_sys::raising::rb_utf8_str_new(inside, p, n) })?;
     typed(v, RString::from_value, "a C call made no String")
 }
 
@@ -19,11 +19,11 @@ pub(crate) fn utf8_str_new(_: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
 /// Raises `NoMemoryError`.
 #[inline]
 pub(crate) fn binary_str_new(_: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
-    let (p, n) = (bytes.as_ptr() as *const c_char, c_len(bytes.len())?);
-    let v = call(|inside| unsafe {
-        injected_raise(inside);
-        nupur_sys::raising::rb_str_new(inside, p, n)
-    })?;
+    let (p, n) = (
+        bytes.as_ptr() as *const c_char,
+        c_len(bytes.len(), "string too large")?,
+    );
+    let v = call_allocating(|inside| unsafe { nupur_sys::raising::rb_str_new(inside, p, n) })?;
     typed(v, RString::from_value, "a C call made no String")
 }
 
@@ -37,9 +37,8 @@ pub(crate) fn binary_str_new(_: &Ruby, bytes: &[u8]) -> Result<RString, Error> {
 /// held.
 #[inline]
 pub(crate) unsafe fn utf8_str_unwritten(_: &Ruby, len: usize) -> Result<RString, Error> {
-    let n = c_len(len)?;
-    let v = call(|inside| unsafe {
-        injected_raise(inside);
+    let n = c_len(len, "string too large")?;
+    let v = call_allocating(|inside| unsafe {
         nupur_sys::raising::rb_utf8_str_new(inside, core::ptr::null(), n)
     })?;
     typed(v, RString::from_value, "a C call made no String")
@@ -47,14 +46,13 @@ pub(crate) unsafe fn utf8_str_unwritten(_: &Ruby, len: usize) -> Result<RString,
 
 /// `rb_enc_interned_str` of `bytes` in `enc`: raises `NoMemoryError`.
 #[inline]
-pub fn enc_interned_str(bytes: &[u8], enc: Encoding) -> Result<RString, Error> {
+pub(crate) fn enc_interned_str(bytes: &[u8], enc: Encoding) -> Result<RString, Error> {
     let (p, n, e) = (
         bytes.as_ptr() as *const c_char,
-        c_len(bytes.len())?,
+        c_len(bytes.len(), "string too large")?,
         enc.as_raw(),
     );
-    let v = call(|inside| unsafe {
-        injected_raise(inside);
+    let v = call_allocating(|inside| unsafe {
         nupur_sys::raising::rb_enc_interned_str(inside, p, n, e)
     })?;
     typed(v, RString::from_value, "a C call made no String")
@@ -62,12 +60,9 @@ pub fn enc_interned_str(bytes: &[u8], enc: Encoding) -> Result<RString, Error> {
 
 /// `rb_str_dup`: raises `NoMemoryError`.
 #[inline]
-pub fn str_dup(s: RString) -> Result<RString, Error> {
+pub(crate) fn str_dup(s: RString) -> Result<RString, Error> {
     let v = s.as_sys();
-    let d = call(|inside| unsafe {
-        injected_raise(inside);
-        nupur_sys::raising::rb_str_dup(inside, v)
-    })?;
+    let d = call_allocating(|inside| unsafe { nupur_sys::raising::rb_str_dup(inside, v) })?;
     typed(d, RString::from_value, "a C call made no String")
 }
 
@@ -91,7 +86,7 @@ pub(crate) fn str_locktmp(s: RString) -> Result<(), Error> {
 /// `rb_enc_associate`: `s` itself, tagged `enc`. Raises `FrozenError` for a
 /// frozen String, and `ArgumentError` for an encoding its bytes cannot carry.
 #[inline]
-pub fn enc_associate(s: RString, enc: Encoding) -> Result<RString, Error> {
+pub(crate) fn enc_associate(s: RString, enc: Encoding) -> Result<RString, Error> {
     let (v, e) = (s.as_sys(), enc.as_raw());
     let r = call(|inside| unsafe { nupur_sys::raising::rb_enc_associate(inside, v, e) })?;
     typed(r, RString::from_value, "a C call made no String")
@@ -102,10 +97,9 @@ pub fn enc_associate(s: RString, enc: Encoding) -> Result<RString, Error> {
 /// `Encoding::InvalidByteSequenceError` / `UndefinedConversionError`; the new
 /// String's allocation raises `NoMemoryError`.
 #[inline]
-pub fn str_encode(s: RString, enc: Encoding, flags: c_int) -> Result<RString, Error> {
+pub(crate) fn str_encode(s: RString, enc: Encoding, flags: c_int) -> Result<RString, Error> {
     let (v, e) = (s.as_sys(), enc.as_raw());
-    let r = call(|inside| unsafe {
-        injected_raise(inside);
+    let r = call_allocating(|inside| unsafe {
         nupur_sys::raising::rb_str_encode(
             inside,
             v,
@@ -121,7 +115,7 @@ pub fn str_encode(s: RString, enc: Encoding, flags: c_int) -> Result<RString, Er
 /// an unknown name. Any other value is a `TypeError` here, before the call,
 /// which would convert it with its `to_str`.
 #[inline]
-pub fn to_encoding(ruby: &Ruby, v: Value) -> Result<Encoding, Error> {
+pub(crate) fn to_encoding(ruby: &Ruby, v: Value) -> Result<Encoding, Error> {
     use crate::rb::ReprValue;
     if !v.is_kind_of(ruby.class_encoding()) && RString::from_value(v).is_none() {
         return Err(crate::rb::error::type_error(
@@ -138,7 +132,7 @@ pub fn to_encoding(ruby: &Ruby, v: Value) -> Result<Encoding, Error> {
 /// which can raise (`LoadError`) and is a GC point; `None` for a name Ruby
 /// does not know. Not `rb_enc_find`, which answers ASCII-8BIT for one.
 #[inline]
-pub fn enc_find(_: &Ruby, name: &core::ffi::CStr) -> Result<Option<Encoding>, Error> {
+pub(crate) fn enc_find(_: &Ruby, name: &core::ffi::CStr) -> Result<Option<Encoding>, Error> {
     let p = name.as_ptr();
     let e = call(|inside| unsafe {
         let index = nupur_sys::raising::rb_enc_find_index(inside, p);

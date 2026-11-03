@@ -13,7 +13,7 @@ use super::*;
         reason = "rb_yield: the wrapper `rb::method::yield_value` is, and its callers allow it"
     )
 )]
-pub fn yield_value(_: &Ruby, v: Value) -> Result<Value, Error> {
+pub(crate) fn yield_value(_: &Ruby, v: Value) -> Result<Value, Error> {
     let v = v.as_sys();
     let out = call(|inside| unsafe { nupur_sys::raising::rb_yield(inside, v) })?;
     Ok(Value::from_sys(out))
@@ -36,7 +36,7 @@ pub fn yield_value(_: &Ruby, v: Value) -> Result<Value, Error> {
         reason = "dropping the block's exit is what the test hook is for"
     )
 )]
-pub fn yield_dropping_error_for_test(ruby: &Ruby) {
+pub(crate) fn yield_dropping_error_for_test(ruby: &Ruby) {
     let _ = yield_value(ruby, crate::rb::value::nil(ruby));
 }
 
@@ -48,7 +48,10 @@ pub fn yield_dropping_error_for_test(ruby: &Ruby) {
 /// panic in it must not unwind into them: it is latched here - the walk
 /// stops - and resumed once the C frames are gone. It never raises either:
 /// it answers `false` and the caller keeps its own error.
-pub fn hash_foreach(h: RHash, visit: &mut dyn FnMut(Value, Value) -> bool) -> Result<(), Error> {
+pub(crate) fn hash_foreach(
+    h: RHash,
+    visit: &mut dyn FnMut(Value, Value) -> bool,
+) -> Result<(), Error> {
     struct Walk<'a> {
         visit: &'a mut dyn FnMut(Value, Value) -> bool,
         latch: crate::caught::PanicLatch,
