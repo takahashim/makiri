@@ -8,7 +8,7 @@ use super::*;
 /// at the method's return, so it reaches the block's caller as it left.
 #[cfg_attr(
     dylint_lib = "nupur_lints",
-    allow(
+    expect(
         runs_callers_ruby,
         reason = "rb_yield: the wrapper `rb::method::yield_value` is, and its callers allow it"
     )
@@ -24,7 +24,7 @@ pub fn yield_value(_: &Ruby, v: Value) -> Result<Value, Error> {
 #[doc(hidden)]
 #[cfg_attr(
     dylint_lib = "nupur_lints",
-    allow(
+    expect(
         runs_callers_ruby,
         reason = "the test hook's block, which is the point of it"
     )

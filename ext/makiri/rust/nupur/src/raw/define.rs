@@ -139,7 +139,7 @@ pub fn const_defined_at(outer: Value, id: crate::rb::Id) -> Result<bool, Error> 
 /// Ruby, as [`call_method`] is.
 #[cfg_attr(
     dylint_lib = "nupur_lints",
-    allow(
+    expect(
         runs_callers_ruby,
         reason = "rb_funcallv_public: the wrapper `rb::call::public_method` is, and its callers allow it"
     )
@@ -161,7 +161,7 @@ pub fn call_public(recv: Value, id: crate::rb::Id, args: &[Value]) -> Result<Val
 /// `respond_to?`, which a class may redefine - the caller's Ruby.
 #[cfg_attr(
     dylint_lib = "nupur_lints",
-    allow(
+    expect(
         runs_callers_ruby,
         reason = "rb_respond_to: the wrapper `rb::call::responds_to` is, and its callers allow it"
     )
@@ -189,7 +189,7 @@ pub fn ractor_make_shareable(v: Value) -> Result<(), Error> {
 /// `runs_callers_ruby`), with the reason it may run there.
 #[cfg_attr(
     dylint_lib = "nupur_lints",
-    allow(
+    expect(
         runs_callers_ruby,
         reason = "rb_funcallv: the wrapper `Module::call_method` is, and its callers allow it"
     )

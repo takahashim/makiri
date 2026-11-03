@@ -24,7 +24,7 @@
  * sanctioned call of it is an `allow` where Nupur makes it. */
 #![cfg_attr(
     dylint_lib = "nupur_lints",
-    allow(
+    expect(
         runs_callers_ruby,
         reason = "the wrappers pass each call on; its caller is checked"
     )

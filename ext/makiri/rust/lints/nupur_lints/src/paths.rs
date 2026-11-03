@@ -51,6 +51,43 @@ pub fn extension() -> &'static str {
     })
 }
 
+/* ---- the layer's functions the lints know by name ---- */
+/*
+ * Each table names functions by the path they are DEFINED at (`path_of`),
+ * not one they are re-exported under. A function the layer adds that
+ * belongs in one must be added here, or the lint does not see it; `rake
+ * dylint` fails unless its self-test reports every entry (each probe line
+ * names one, and the reports name the function), so an entry that stops
+ * matching - renamed, moved - fails the task rather than going quiet.
+ */
+
+/// The layer's functions that run the caller's Ruby code - a method of the
+/// caller's object, a block - reported at each call (`runs_callers_ruby`):
+/// the raw wrappers of Ruby's C, and the API over them.
+pub const CALLERS_RUBY_RUNNERS: &[&str] = &[
+    "nupur::raw::define::call_method",
+    "nupur::raw::define::call_public",
+    "nupur::raw::define::respond_to",
+    "nupur::raw::iterate::yield_value",
+    "nupur::rb::call::public_method",
+    "nupur::rb::call::responds_to",
+    "nupur::rb::class::Module::call_method",
+    "nupur::rb::method::yield_value",
+];
+
+/// The layer's functions that run their last argument, a closure, with the
+/// GVL released (`without_gvl(ruby, body)`): it must touch no Ruby
+/// (`ruby_in_gvl_released_body`).
+pub const GVL_RELEASED_CALLS: &[&str] = &[
+    "nupur::gvl::without_gvl",
+    "nupur::gvl::without_gvl_cancellable",
+];
+
+/// The layer's methods that lend a String's bytes to their one argument, a
+/// closure, held as a GVL-released body is: nothing in it may touch Ruby
+/// while the slice is out.
+pub const BYTES_LENDING_METHODS: &[&str] = &["nupur::string::read::with_bytes"];
+
 /// The engine's crate name: Ruby-free by its dependencies, so the code a
 /// GVL-released body and an edit's closure may call.
 pub const ENGINE: &str = "makiri_engine";
