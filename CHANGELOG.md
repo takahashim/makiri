@@ -44,7 +44,9 @@
   value is kept where the GC cannot see it.
 * An exception message is at most 256 bytes; one quoting a longer selector,
   expression or name ends in `...`.
-* `XPathContext#node=` on a frozen context raises `FrozenError`.
+* `XPathContext#node=`, `#register_namespace(s)` and `#register_variable(s)`
+  on a frozen context raise `FrozenError`: a frozen context keeps its node,
+  its namespaces and its variables.
 * A keywords-only call of `#xpath` / `#at_xpath` (`doc.xpath(s: uri)`, no
   expression) raises Ruby's arity error, `ArgumentError`, rather than a
   `TypeError` about the Hash, as a call with no arguments does.

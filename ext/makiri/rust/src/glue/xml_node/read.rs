@@ -210,7 +210,7 @@ fn children_of(d: &XmlDoc, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
 /// `#children`: every child node.
 pub fn children(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     this.read()?
-        .set(ruby, |d, id, out| children_of(d, id).for_each(out))
+        .set(ruby, |d, id, out| children_of(d, id).try_for_each(out))
 }
 
 /// `#_traverse_order`: this node and its descendants in post-order, as
@@ -226,7 +226,7 @@ pub fn ancestors(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     this.read()?.set(ruby, |d, id, out| {
         core::iter::successors(d.parent(id), |&p| d.parent(p))
             .filter(|&n| is_element(d, n))
-            .for_each(out)
+            .try_for_each(out)
     })
 }
 
@@ -235,7 +235,7 @@ pub fn element_children(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     this.read()?.set(ruby, |d, id, out| {
         children_of(d, id)
             .filter(|&n| is_element(d, n))
-            .for_each(out)
+            .try_for_each(out)
     })
 }
 
@@ -302,7 +302,7 @@ pub fn attribute_by_qualified_name(
 
 pub fn attribute_nodes(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     this.read()?
-        .set(ruby, |d, id, out| attrs_of(d, id).for_each(out))
+        .set(ruby, |d, id, out| attrs_of(d, id).try_for_each(out))
 }
 
 /// `#keys` -> the attribute names, in document order.

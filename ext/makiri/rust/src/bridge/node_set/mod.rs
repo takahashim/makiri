@@ -39,6 +39,7 @@
 
 #![forbid(unsafe_code)]
 
+use core::ops::ControlFlow;
 use std::cell::RefCell;
 
 use crate::bridge::rb::{prelude::*, Error, Ruby, Value};
@@ -194,10 +195,13 @@ fn busy() -> Error {
 /// XML, an HTML arena node for HTML - so it is checked here rather than taken on
 /// trust: one class test per set, never per node.
 fn node_set_new(ruby: &Ruby, document: Value) -> Result<Typed<NodeSet, 1>, Error> {
-    assert!(
-        is_kind_of(ruby, document, &CLASS_DOCUMENT),
-        "a NodeSet needs the Document its nodes belong to"
-    );
+    /* Every caller passes a Document it read or checked, so anything else
+     * is a broken invariant - raised, not panicked. */
+    if !is_kind_of(ruby, document, &CLASS_DOCUMENT) {
+        return Err(crate::bridge::ruby::internal_error(
+            "a NodeSet needs the Document its nodes belong to",
+        ));
+    }
     let kind = DocKind::of(document);
     NODE_SET_TYPE.wrap(
         ruby,
@@ -307,20 +311,26 @@ pub fn node_set_from(
 /// A NodeSet over `document` of the nodes `each` lists from `read`, a document
 /// read guard, built while the read is held. A failed allocation is `Err`
 /// (`nupur::raw`), so the guard drops either way.
+///
+/// `each` hands every node to the sink it is given, and stops when the sink
+/// answers `Break` - which it does at the first push the set refuses (its
+/// cap, a failed growth), so a walk of a large tree is not run to its end
+/// for an answer that is already an error.
 pub fn node_set_from_read<G>(
     ruby: &Ruby,
     read: G,
     document: Value,
-    each: impl Fn(&G, &mut dyn FnMut(NodeWord)),
+    each: impl Fn(&G, &mut dyn FnMut(NodeWord) -> ControlFlow<()>) -> ControlFlow<()>,
 ) -> Result<Value, Error> {
     let mut refused = None;
     let set = FreshSet::new(ruby, document)?;
     let fill = set.fill(ruby);
-    each(&read, &mut |w| {
-        if refused.is_none() {
-            if let Err(e) = fill.push(w) {
-                refused = Some(e);
-            }
+    /* Stopped or not, the answer is what `refused` holds. */
+    let _: ControlFlow<()> = each(&read, &mut |w| match fill.push(w) {
+        Ok(()) => ControlFlow::Continue(()),
+        Err(e) => {
+            refused = Some(e);
+            ControlFlow::Break(())
         }
     });
     drop(read);

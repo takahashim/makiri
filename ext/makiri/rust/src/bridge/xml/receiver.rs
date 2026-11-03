@@ -124,15 +124,16 @@ impl XmlView<'_> {
 
     /// The nodes `f` lists from the receiver's, as a NodeSet built with the
     /// read held ([`node_set_from_read`](crate::bridge::node_set::node_set_from_read)).
-    /// `f` hands each node to the sink it is given.
+    /// `f` hands each node to the sink it is given, and stops when the sink
+    /// answers `Break` (the set refused a node).
     pub fn set(
         self,
         ruby: &Ruby,
-        f: impl Fn(&XmlDoc, NodeId, &mut dyn FnMut(NodeId)),
+        f: impl Fn(&XmlDoc, NodeId, &mut dyn FnMut(NodeId) -> ControlFlow<()>) -> ControlFlow<()>,
     ) -> Result<Value, Error> {
         let document = self.document;
         crate::bridge::node_set::node_set_from_read(ruby, self, document, |view, out| {
-            f(view, view.id, &mut |n| out(n.into()));
+            f(view, view.id, &mut |n| out(n.into()))
         })
     }
 }
