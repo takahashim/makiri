@@ -224,9 +224,9 @@ doc.at_css("p").instance_variable_get(:@wrapper)   # => the same MyElement
 ```
 
 A node created by `clone_node` or `import_node` is a new node with no state.
-`pointer_id` is unique only among live nodes: once a document is freed, a node
-of another document may reuse its value. So key a pointer-based cache per
-document, not across documents.
+`pointer_id` tells the nodes of one document apart, not documents: a node of
+another document may have the same value, an HTML node and an XML node
+especially. So key a pointer-based cache per document, not across documents.
 
 ## Non-goals (v1.0)
 

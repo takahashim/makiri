@@ -113,6 +113,51 @@ RSpec.describe "Makiri::XML#to_xml" do
       expect(Makiri::XML(out).root.text).to eq("é")
     end
 
+    # A character reference stands for a character only in text and in an
+    # attribute value: in a name it is ill-formed, and in a comment, a CDATA
+    # section or a processing instruction it reads back as its own characters.
+    it "refuses a name, comment, CDATA section or PI the encoding cannot hold" do
+      {
+        "<r><é/></r>" => /an element or attribute name in US-ASCII/,
+        "<r aé=\"x\"/>" => /an element or attribute name in US-ASCII/,
+        "<r><!--é--></r>" => /a comment in US-ASCII/,
+        "<r><![CDATA[é]]></r>" => /a CDATA section in US-ASCII/,
+        "<r><?pi é?></r>" => /a processing instruction in US-ASCII/,
+      }.each do |xml, message|
+        expect { Makiri::XML(xml).to_xml(encoding: "US-ASCII") }.to raise_error(Makiri::Error, message), xml
+      end
+      expect { Makiri::XML("<日/>").to_xml(encoding: "ISO-8859-1") }
+        .to raise_error(Makiri::Error, /name in ISO-8859-1/)
+    end
+
+    it "writes markup the encoding can hold, and refers to the rest only in text and values" do
+      out = Makiri::XML("<é a=\"日\"><!--ü-->日</é>").to_xml(encoding: "ISO-8859-1")
+      back = Makiri::XML(out)
+      expect(back.root.name).to eq("é")
+      expect(back.root["a"]).to eq("日")
+      expect(back.root.children.first.content).to eq("ü")
+      expect(Makiri::XML("<r><![CDATA[あ]]></r>").to_xml(encoding: "Shift_JIS").encode("UTF-8"))
+        .to include("<![CDATA[あ]]>")
+    end
+
+    it "writes UTF-16 and UTF-32 output that parses back" do
+      %w[UTF-16 UTF-16LE UTF-32 UTF-32BE].each do |enc|
+        out = Makiri::XML("<r>é日</r>").to_xml(encoding: enc)
+        expect(Makiri::XML(out).root.text).to eq("é日"), enc
+      end
+    end
+
+    it "declares only an encoding name Makiri::XML reads back" do
+      # BINARY names no charset: refused, as the parser refuses the declaration.
+      ["BINARY", "ASCII-8BIT", Encoding::BINARY].each do |enc|
+        expect { Makiri::XML("<r/>").to_xml(encoding: enc) }.to raise_error(ArgumentError, /ASCII-8BIT/)
+      end
+      # Ruby's names for the process's encodings declare the encoding's own name.
+      out = Makiri::XML("<r>é</r>").to_xml(encoding: "locale")
+      expect(out.encode("UTF-8")).to include(%(encoding="#{Encoding.find("locale").name}"))
+      expect(Makiri::XML(out).root.text).to eq("é")
+    end
+
     it "accepts an Encoding object and rejects an unknown name" do
       expect(Makiri::XML("<r/>").to_xml(encoding: Encoding::UTF_8)).to include("UTF-8")
       expect { Makiri::XML("<r/>").to_xml(encoding: "no-such-encoding") }.to raise_error(ArgumentError)

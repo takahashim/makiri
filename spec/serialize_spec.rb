@@ -26,6 +26,20 @@ RSpec.describe "Makiri serialization" do
       expect(div.to_html.encoding).to eq(Encoding::UTF_8)
     end
 
+    # Code written for Nokogiri passes encoding:, most often "UTF-8": taken
+    # when it names UTF-8, and refused rather than ignored when it does not.
+    it "takes encoding: naming UTF-8, and refuses any other" do
+      [{encoding: "UTF-8"}, {encoding: "utf-8"}, {encoding: Encoding::UTF_8}, {encoding: :"UTF-8"}].each do |kw|
+        expect(div.to_html(**kw)).to eq(div.to_html), kw.inspect
+        expect(div.to_s(**kw)).to eq(div.to_s)
+        expect(div.inner_html(**kw)).to eq(div.inner_html)
+      end
+      expect(doc.css("p").to_html(encoding: "UTF-8")).to eq("<p>a</p>")
+      expect { div.to_html(encoding: "ISO-8859-1") }
+        .to raise_error(ArgumentError, /serialized as UTF-8 alone, not ISO-8859-1/)
+      expect { div.to_html(encoding: "no-such-encoding") }.to raise_error(ArgumentError)
+    end
+
     it "escapes text content on output" do
       d = Makiri::HTML("<p>a &amp; b &lt;c&gt;</p>")
       expect(d.at_css("p").inner_html).to eq("a &amp; b &lt;c&gt;")

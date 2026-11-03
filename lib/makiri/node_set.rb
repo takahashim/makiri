@@ -35,10 +35,11 @@ module Makiri
       self[index]
     end
 
-    # Concatenated outer HTML of every node in the set.
+    # Concatenated outer HTML of every node in the set. Keywords
+    # (+pretty:+, +encoding:+) are each node's {Node#to_html}'s.
     # @return [String]
-    def to_html
-      map(&:to_html).join
+    def to_html(**opts)
+      map { |node| node.to_html(**opts) }.join
     end
     alias to_s to_html
 

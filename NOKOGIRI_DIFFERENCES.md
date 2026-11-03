@@ -65,10 +65,12 @@ what browsers do - rather than libxml2. Detailed, test-backed notes live in
 
 * `Node#search` / `#at` send more strings to XPath
   * Both treat a string that starts with `/`, `./` or `..`, or is `.` alone,
-    as XPath. Makiri also treats one that starts with `(` or `@`, or contains
-    `::`, as XPath (`(//a)[1]`, `@href`, `child::p`). Nokogiri sends those to
-    its CSS translator, which raises `CSS::SyntaxError` for `(//a)[1]` and
-    `child::p`; `@href` happens to come out as the same attribute search.
+    as XPath. Makiri also treats one that starts with `(` or `@`, or names an
+    axis outside a quoted string, as XPath (`(//a)[1]`, `@href`, `child::p`);
+    a CSS pseudo-element (`p::before`) or a `::` in an attribute value stays
+    CSS. Nokogiri sends those to its CSS translator, which raises
+    `CSS::SyntaxError` for `(//a)[1]` and `child::p`; `@href` happens to come
+    out as the same attribute search.
 
 * There are no custom XPath functions
   * Nokogiri answers a function XPath does not define by calling a method of

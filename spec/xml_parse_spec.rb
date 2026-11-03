@@ -409,6 +409,17 @@ RSpec.describe "Makiri::XML minimal parse" do
         .to raise_error(Makiri::XML::SyntaxError)
     end
 
+    it "reads a UTF-16 or UTF-32 byte-order mark as agreeing with a declaration of that name" do
+      # XML 1.0 4.3.3: a UTF-16 document begins with its BOM and declares "UTF-16".
+      %w[UTF-16LE UTF-16BE].each do |order|
+        doc = "\uFEFF<?xml version='1.0' encoding='UTF-16'?><r>é</r>".encode(order).b
+        expect(Makiri::XML(doc).root.text).to eq("é")
+      end
+      # A byte order the declaration names otherwise still conflicts.
+      wrong = "\uFEFF<?xml version='1.0' encoding='UTF-16BE'?><r/>".encode("UTF-16LE").b
+      expect { Makiri::XML(wrong) }.to raise_error(Makiri::XML::SyntaxError, /disagree/)
+    end
+
     it "rejects a declaration that disagrees with a concrete String encoding" do
       # Shift_JIS String but the declaration claims UTF-8 -> self-inconsistent.
       expect { Makiri::XML("<?xml version='1.0' encoding='UTF-8'?><r>x</r>".encode("Shift_JIS")) }

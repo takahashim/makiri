@@ -25,16 +25,10 @@ module Makiri
     # Nokogiri-compatible name for {#register_namespace}.
     alias register_ns register_namespace
 
-    # Register several prefix => URI namespace bindings at once. A key may be
-    # written as a declaration, "xmlns:p", which binds "p" - the form
-    # Node#namespaces returns. Keys and values are not converted: each pair is
-    # read as {#register_namespace} reads it.
-    # @param bindings [Hash{String, Symbol => String}]
-    # @return [self]
-    def register_namespaces(bindings)
-      bindings.each { |prefix, uri| register_namespace(declared_prefix(prefix), uri) }
-      self
-    end
+    # +#register_namespaces(bindings)+ is defined in the extension: several
+    # prefix => URI bindings at once, read as every namespace Hash is (a
+    # +#xpath+ query's, +#css+'s). A key may be written as a declaration,
+    # "xmlns:p", which binds "p" - the form Node#namespaces returns.
 
     # Register several name => value variable bindings at once. Names are not
     # converted: each pair is read as {#register_variable} reads it.
@@ -43,16 +37,6 @@ module Makiri
     def register_variables(bindings)
       bindings.each { |name, value| register_variable(name, value) }
       self
-    end
-
-    private
-
-    # "xmlns:p" as "p"; any other key as it is.
-    def declared_prefix(key)
-      return key unless key.is_a?(String) || key.is_a?(Symbol)
-
-      name = key.to_s
-      name.start_with?("xmlns:") && name.length > 6 ? name.delete_prefix("xmlns:") : key
     end
   end
 end

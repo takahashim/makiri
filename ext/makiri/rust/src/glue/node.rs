@@ -33,11 +33,13 @@ pub fn node_equals(
     same_node(ruby, rb_self, other)
 }
 
-/// Nokogiri-compatible identity: the underlying node pointer as an Integer.
-/// Stable for the node's lifetime and unique among currently-live nodes; a
-/// freed-then-reallocated node may reuse an address (the same caveat as
-/// `Nokogiri::XML::Node#pointer_id`). `a.pointer_id == b.pointer_id` iff
-/// `a.eql?(b)`.
+/// Nokogiri-compatible identity as an Integer: the node's id packed with its
+/// document's stamp, not an address. Stable for the node's lifetime, and no
+/// two nodes of one document share it. It does not tell documents apart:
+/// HTML and XML documents number their stamps separately and the stamps
+/// wrap, so nodes of two documents may share a value (as a reused address
+/// may under Nokogiri). `a.eql?(b)` implies equal values, not the converse;
+/// `same_node` compares the Document too.
 pub fn node_pointer_id(ruby: &Ruby, rb_self: Value) -> Result<Value, crate::bridge::rb::Error> {
     crate::bridge::rb::IntoValue::into_value(node_identity(ruby, rb_self)?, ruby)
 }

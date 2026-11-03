@@ -6,7 +6,7 @@ require "spec_helper"
 # why): a document may build at most `max_amplification` times its input,
 # never less than 64 MiB.
 RSpec.describe "HTML amplification limit" do
-  let(:message) { /\Adocument size limit exceeded \(256 times the input; see max_amplification:\)\z/ }
+  let(:message) { /\Adocument size limit exceeded \(256 times the input\)\z/ }
 
   # An input that builds far past its size: past the 64 MiB floor at a few
   # thousand reps.

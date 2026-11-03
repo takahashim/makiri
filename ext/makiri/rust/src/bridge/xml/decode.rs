@@ -25,10 +25,24 @@ use crate::ceiling_buf::OwnedBuf;
 use crate::init::{EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 use crate::xml::encoding_sniff::{sniff, SNIFF_WINDOW};
 
-/// Two encodings agree, for conflict purposes, when identical or when either is
-/// US-ASCII (a subset of UTF-8 and of the single-byte encodings).
+/// Two encodings agree, for conflict purposes, when identical, when either is
+/// US-ASCII (a subset of UTF-8 and of the single-byte encodings), or when one
+/// is `UTF-16` or `UTF-32` with no byte order named and the other one of its
+/// two byte orders ([`byte_order_of`]).
 fn compatible(a: Encoding, b: Encoding) -> bool {
-    a == b || a.is_usascii() || b.is_usascii()
+    a == b || a.is_usascii() || b.is_usascii() || byte_order_of(a, b) || byte_order_of(b, a)
+}
+
+/// Whether `marked` is `unmarked` - Ruby's `UTF-16` or `UTF-32`, which names
+/// no byte order - in one byte order: `UTF-16LE` or `UTF-16BE` for `UTF-16`.
+/// §4.3.3 has a UTF-16 document begin with its byte-order mark and declare
+/// `encoding="UTF-16"`, so the mark (`UTF-16LE`) and the declaration
+/// (`UTF-16`) name one encoding; so does a String tagged `UTF-16`.
+fn byte_order_of(unmarked: Encoding, marked: Encoding) -> bool {
+    let (u, m) = (unmarked.name(), marked.name());
+    (u == b"UTF-16" || u == b"UTF-32")
+        && m.strip_prefix(u)
+            .is_some_and(|order| order == b"LE" || order == b"BE")
 }
 
 /// Phase 1: the input's single effective byte encoding (XML 1.0 Appendix F).
