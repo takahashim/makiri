@@ -354,6 +354,17 @@ fn object_const_defined(ruby: &Ruby, name: Value) -> Result<bool, Error> {
     ruby.class_object().const_defined(ruby, name.as_str())
 }
 
+/// A wrapped objects' class `name` under `Object`, through
+/// `Module::define_data_class`: refused for a name already defined.
+fn object_data_class(ruby: &Ruby, name: Value) -> Result<Value, Error> {
+    let name =
+        nupur::string::read_utf8(ruby, string_arg(name)?, |_| None::<()>).map_err(read_error)?;
+    let class = ruby
+        .class_object()
+        .define_data_class(ruby, name.as_str(), None)?;
+    Ok(class.as_value())
+}
+
 /* ---- numbers and collections built without a call each ---- */
 
 /// The Float of the bits `bits`, through `build::float` - a flonum built
@@ -495,16 +506,16 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     INTERNAL.set(internal)?;
     nupur::rb::error::INTERNAL_ERROR.set(internal)?;
 
-    let shared = m.define_data_class("Shared", None)?;
+    let shared = m.define_data_class(ruby, "Shared", None)?;
     SHARED_CLASS.set(shared)?;
     shared.define_singleton_method("new", function!(shared_new, 2))?;
     shared.define_method("n", method!(shared_n, 0))?;
     shared.define_method("held", method!(shared_held, 0))?;
-    let shared_derived = m.define_data_class("SharedDerived", Some(shared))?;
+    let shared_derived = m.define_data_class(ruby, "SharedDerived", Some(shared))?;
     SHARED_DERIVED_CLASS.set(shared_derived)?;
     shared_derived.define_singleton_method("new", function!(shared_derived_new, 2))?;
 
-    let holder = m.define_data_class("Holder", None)?;
+    let holder = m.define_data_class(ruby, "Holder", None)?;
     HOLDER_CLASS.set(holder)?;
     holder.define_singleton_method("new", function!(holder_new, 1))?;
     holder.define_method("held", method!(holder_held, 0))?;
@@ -548,6 +559,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     m.define_module_function("hash_bulk", function!(hash_bulk, -1))?;
     m.define_module_function("responds_to_s", function!(responds_to_s, 1))?;
     m.define_module_function("object_const_defined", function!(object_const_defined, 1))?;
+    m.define_module_function("object_data_class", function!(object_data_class, 1))?;
     Ok(())
 }
 

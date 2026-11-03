@@ -412,7 +412,13 @@ pub unsafe fn run_init(
                 crate::encoding::init(&ruby);
                 init(&ruby)
             })) {
-                Ok(Ok(())) => return,
+                /* An exit `init` dropped is resumed, as `finish` resumes a
+                 * method's: a `throw`'s catcher waits, a killed thread must
+                 * end - and the next method's start would forget it. */
+                Ok(Ok(())) => match crate::raw::pending_exit() {
+                    None => return,
+                    Some(exit) => exit.raise(&ruby),
+                },
                 /* `quietly`: formatting is what the compiler cannot show
                  * unwind-free (`rake no_unwind`). */
                 Ok(Err(e)) => crate::caught::quietly(

@@ -373,6 +373,32 @@ RSpec.describe "nupur" do
       expect(NupurTest.object_const_defined("String")).to be(true)
       expect(NupurTest.object_const_defined("NoSuchConstantHere")).to be(false)
     end
+
+    it "makes a class of wrapped objects of its own, with no allocator" do
+      klass = NupurTest.object_data_class("NupurFreshDataClass")
+      expect(klass.superclass).to be(Object)
+      expect { klass.new }.to raise_error(TypeError, /allocator undefined/)
+    ensure
+      Object.send(:remove_const, :NupurFreshDataClass) if Object.const_defined?(:NupurFreshDataClass, false)
+    end
+
+    it "refuses to take over a class Ruby code defined first" do
+      Object.const_set(:NupurPredefined, Class.new { def marshal_dump = [] })
+      expect { NupurTest.object_data_class("NupurPredefined") }
+        .to raise_error(TypeError, /NupurPredefined is already defined/)
+      expect(NupurPredefined.instance_methods(false)).to eq([:marshal_dump])
+    ensure
+      Object.send(:remove_const, :NupurPredefined)
+    end
+
+    it "refuses an autoload under the name, loading nothing" do
+      Object.autoload(:NupurAutoloaded, "/nonexistent/nupur_autoloaded")
+      expect { NupurTest.object_data_class("NupurAutoloaded") }
+        .to raise_error(TypeError, /NupurAutoloaded is already defined/)
+      expect(Object.autoload?(:NupurAutoloaded)).to eq("/nonexistent/nupur_autoloaded")
+    ensure
+      Object.send(:remove_const, :NupurAutoloaded)
+    end
   end
 
   describe "a method's arguments" do
