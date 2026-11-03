@@ -100,10 +100,12 @@ pub fn resolve_fragment_context(
     if !crate::xml::dom_name::valid_element_local_name(name) {
         return Err(unknown_context(name));
     }
-    if name == b"svg" {
+    /* ASCII case folded, as the built-in tag lookup below folds: `"SVG"`
+     * is the SVG root too, never an HTML element of that name. */
+    if name.eq_ignore_ascii_case(b"svg") {
         return Ok(ContextArg::Tag(FragmentTag::SVG));
     }
-    if name == b"math" {
+    if name.eq_ignore_ascii_case(b"math") {
         return Ok(ContextArg::Tag(FragmentTag::MATH));
     }
     html_doc_check(document)?;

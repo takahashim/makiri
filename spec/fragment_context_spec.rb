@@ -54,5 +54,14 @@ RSpec.describe "fragment parsing in an API-made context" do
     it "still takes a built-in tag in any case" do
       expect(doc.fragment("<td>x", context: "TR").children.map(&:name)).to eq(["td"])
     end
+
+    it "takes \"svg\" and \"math\" in any case as the foreign roots" do
+      %w[svg SVG Svg].each do |name|
+        expect(doc.fragment("<circle/><p>", context: name).children.map(&:name)).to eq(%w[circle p])
+      end
+      %w[math MATH].each do |name|
+        expect(doc.fragment("<mi/><p>", context: name).children.map(&:name)).to eq(%w[mi p])
+      end
+    end
   end
 end

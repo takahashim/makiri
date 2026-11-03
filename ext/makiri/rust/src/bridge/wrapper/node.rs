@@ -263,7 +263,7 @@ pub fn node_word_in(
         if !crate::bridge::ruby::same_value(rb_node, document) {
             return Err(NotInDocument::Foreign);
         }
-        return node_raw(ruby, rb_node).map_err(NotInDocument::Unusable);
+        return document_word(rb_node).map_err(NotInDocument::Unusable);
     }
     /* One read of the wrapper gives both its Document and its node. */
     let nd = read_node(&NODE_DATA_TYPE, rb_node).map_err(NotInDocument::Unusable)?;
@@ -298,14 +298,24 @@ fn handle_word(node: NodeHandle) -> NodeWord {
 )]
 pub fn node_raw(ruby: &Ruby, rb_node: Value) -> Result<NodeWord, Error> {
     if crate::bridge::ruby::is_kind_of(ruby, rb_node, &CLASS_DOCUMENT) {
-        let doc = DOC_TYPE.check(rb_node)?; /* TypeError for a non-Document */
-        return Ok(match DocKind::of(rb_node) {
-            DocKind::Xml => xml_read(&doc)?.doc_node().into(),
-            DocKind::Html => RawNode::from(html_read(&doc)?.doc().as_node()).into(),
-        });
+        return document_word(rb_node);
     }
     /* TypeError for a non-node, as TypedData_Get_Struct raised. */
     Ok(handle_word(read_node(&NODE_DATA_TYPE, rb_node)?.node))
+}
+
+/// The word of a Document's own document node, `rb_doc` being of the
+/// Document class: kind-aware, as [`node_raw`]'s Document branch.
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(raw_node_crossing, reason = "a node's word, for identity alone")
+)]
+fn document_word(rb_doc: Value) -> Result<NodeWord, Error> {
+    let doc = DOC_TYPE.check(rb_doc)?; /* TypeError for a non-Document */
+    Ok(match DocKind::of(rb_doc) {
+        DocKind::Xml => xml_read(&doc)?.doc_node().into(),
+        DocKind::Html => RawNode::from(html_read(&doc)?.doc().as_node()).into(),
+    })
 }
 
 /// Which representation `v` wraps ([`NodeRepr`]).
@@ -335,9 +345,20 @@ pub fn node_identity(ruby: &Ruby, rb_node: Value) -> Result<usize, Error> {
 /// objects, here and now (`same_value`) - settles both. Each node is read
 /// whole before the two are compared.
 pub fn same_node(ruby: &Ruby, a: Value, b: Value) -> Result<bool, Error> {
-    let (doc_a, id_a) = (keepalive_document(ruby, a)?, node_identity(ruby, a)?);
-    let (doc_b, id_b) = (keepalive_document(ruby, b)?, node_identity(ruby, b)?);
+    let (doc_a, id_a) = document_and_identity(ruby, a)?;
+    let (doc_b, id_b) = document_and_identity(ruby, b)?;
     Ok(crate::bridge::ruby::same_value(doc_a, doc_b) && id_a == id_b)
+}
+
+/// `rb_node`'s keepalive Document and its node identity, a wrapper read
+/// once for both ([`keepalive_document`], [`node_identity`]).
+fn document_and_identity(ruby: &Ruby, rb_node: Value) -> Result<(Value, usize), Error> {
+    if crate::bridge::ruby::is_kind_of(ruby, rb_node, &CLASS_DOCUMENT) {
+        return Ok((rb_node, document_word(rb_node)?.identity()));
+    }
+    /* TypeError for a non-node, as `node_raw`'s. */
+    let nd = read_node(&NODE_DATA_TYPE, rb_node)?;
+    Ok((nd.document, handle_word(nd.node).identity()))
 }
 
 /// The keepalive Document of any node, or the Document itself.

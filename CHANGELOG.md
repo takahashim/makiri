@@ -87,6 +87,12 @@
 * A broken internal invariant met by an XPath evaluation or an XML edit
   raises `Makiri::InternalError`, which a bare `rescue` lets through. It
   raised `Makiri::Error`.
+* XML `to_xml(encoding: "US-ASCII")` writes a character past ASCII as a
+  character reference, in a US-ASCII String. It wrote the UTF-8 bytes
+  under the US-ASCII declaration, which `Makiri::XML` then refused.
+* A fragment's String `context:` takes `"SVG"` or `"MATH"` in any case as
+  the SVG or MathML root, as it takes an HTML tag in any case. Only the
+  lower-case names were; another case named an HTML element.
 
 ## [0.17.0.rc2] - 2026-10-24
 

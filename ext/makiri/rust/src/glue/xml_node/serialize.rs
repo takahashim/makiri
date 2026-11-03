@@ -129,9 +129,11 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
     drop(buf);
 
     if let Some(enc) = to_enc {
-        /* Text already UTF-8 or US-ASCII needs no transcode; anything else
-         * writes what it has no form for as a character reference. */
-        if !enc.is_utf8_or_ascii() {
+        /* Only UTF-8 output is the serializer's own bytes. Anything else -
+         * US-ASCII included, which cannot hold a character past ASCII and
+         * whose declaration Makiri's own parser holds to ASCII - writes what
+         * it has no form for as a character reference. */
+        if !enc.is_utf8_or_ascii() || enc.is_usascii() {
             str = enc.encode(str, crate::nupur::encoding::Unconvertible::HexCharRef)?;
         }
     }

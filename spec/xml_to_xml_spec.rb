@@ -105,6 +105,14 @@ RSpec.describe "Makiri::XML#to_xml" do
       expect(out.encode("UTF-8")).to eq("<r>&#x65E5;&#x672C;</r>")
     end
 
+    it "writes US-ASCII output as ASCII alone, which parses back" do
+      doc = Makiri::XML("<r>é</r>")
+      out = doc.to_xml(encoding: "US-ASCII")
+      expect(out.encoding).to eq(Encoding::US_ASCII)
+      expect(out).to include("<r>&#xE9;</r>")
+      expect(Makiri::XML(out).root.text).to eq("é")
+    end
+
     it "accepts an Encoding object and rejects an unknown name" do
       expect(Makiri::XML("<r/>").to_xml(encoding: Encoding::UTF_8)).to include("UTF-8")
       expect { Makiri::XML("<r/>").to_xml(encoding: "no-such-encoding") }.to raise_error(ArgumentError)
