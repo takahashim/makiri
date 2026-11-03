@@ -105,6 +105,11 @@ RSpec.describe "argument shapes and block exits" do
         .to raise_error(ArgumentError, "unknown keyword: :max_amplificaton")
       expect { doc.fragment("<td>x</td>", contxt: "table") }
         .to raise_error(ArgumentError, "unknown keyword: :contxt")
+      # A String key is worded as Ruby words it, as the XML parse words it.
+      expect { doc.fragment("<td>x</td>", **{ "context" => "table" }) }
+        .to raise_error(ArgumentError, 'unknown keyword: "context"')
+      expect { Makiri::XML::Document.parse("<r/>", **{ "max_bytes" => 1 }) }
+        .to raise_error(ArgumentError, 'unknown keyword: "max_bytes"')
       frag = Makiri::HTML::DocumentFragment.parse("<td>x</td>", context: "table", max_tree_depth: 10,
                                                                     max_amplification: 100)
       expect(frag.to_html).to include("<td>x</td>")

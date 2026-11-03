@@ -21,7 +21,7 @@ use crate::init::MOD_HTML_NODE_METHODS;
 /// misspelt one is not quietly the default.
 fn layout_opt(ruby: &Ruby, args: &[Value]) -> Result<Layout, Error> {
     let kw = Kwargs::scan(ruby, args)?;
-    let kw = kw.only(&["pretty"])?;
+    let kw = kw.only(ruby, &["pretty"])?;
     Ok(if kw.flag(ruby, "pretty")? {
         Layout::Pretty
     } else {

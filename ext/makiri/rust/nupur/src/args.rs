@@ -232,28 +232,27 @@ impl Kwargs {
     }
 
     /// The keywords, held to `names`: any other is `ArgumentError`, worded as
-    /// Ruby words it (`unknown keyword: :prety`, the first one found), and
-    /// a key given as a String (`**{"name" => v}`) is unknown whatever it
-    /// says, since a method's keywords are Symbols.
-    pub fn only(self, names: &'static [&'static str]) -> Result<Known, Error> {
+    /// Ruby words it - `unknown keyword: :prety`, or `unknown keyword:
+    /// "context"` for a key given as a String (`**{"context" => v}`), which
+    /// a method's keywords never are. The first one found is named.
+    ///
+    /// Each key is compared with the names' Symbols by identity, so the
+    /// check copies nothing and calls none of the key's methods (`eql?`).
+    pub fn only(self, ruby: &Ruby, names: &'static [&'static str]) -> Result<Known, Error> {
         let Some(h) = self.0.filter(|h| !h.is_empty()) else {
             return Ok(Known { h: None, names });
         };
         crate::hash::hash_foreach(h, |k, _| {
-            let Some(sym) = crate::rb::Symbol::from_value(k) else {
-                return Err(crate::rb::error::arg_error(format_args!(
-                    "unknown keyword: {} key",
-                    ClassName(k)
-                )));
-            };
-            let name = crate::string::read_bytes(sym.name()?)?;
-            if names.iter().any(|n| n.as_bytes() == name.as_slice()) {
-                return Ok(());
+            for name in names {
+                let sym = crate::build::symbol(ruby, name)?;
+                if crate::rb::value::same_value(k, sym.as_value()) {
+                    return Ok(());
+                }
             }
-            Err(match core::str::from_utf8(&name) {
-                Ok(n) => crate::rb::error::arg_error(format_args!("unknown keyword: :{n}")),
-                Err(_) => crate::rb::error::arg_error("unknown keyword"),
-            })
+            Err(crate::rb::error::arg_error(format_args!(
+                "unknown keyword: {}",
+                crate::describe::Describe(k)
+            )))
         })?;
         Ok(Known { h: Some(h), names })
     }

@@ -190,7 +190,7 @@ fn slices(ruby: &Ruby, short: bool) -> Result<Value, Error> {
 /// `kw(a: x)`: keyword `a`, or nil.
 fn kw(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     Ok(Kwargs::scan(ruby, args)?
-        .only(&["a"])?
+        .only(ruby, &["a"])?
         .value(ruby, "a")?
         .unwrap_or_else(|| ruby.qnil()))
 }
@@ -198,14 +198,14 @@ fn kw(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
 /// `kw_only(a:, b:)`: refuses any other keyword, then answers `a`.
 fn kw_only(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     let kw = Kwargs::scan(ruby, args)?;
-    let kw = kw.only(&["a", "b"])?;
+    let kw = kw.only(ruby, &["a", "b"])?;
     Ok(kw.value(ruby, "a")?.unwrap_or_else(|| ruby.qnil()))
 }
 
 /// `kw_undeclared(a:)`: declares `a`, then reads `b` - the method's own
 /// mistake, which Nupur answers with an internal error.
 fn kw_undeclared(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
-    let kw = Kwargs::scan(ruby, args)?.only(&["a"])?;
+    let kw = Kwargs::scan(ruby, args)?.only(ruby, &["a"])?;
     Ok(kw.value(ruby, "b")?.unwrap_or_else(|| ruby.qnil()))
 }
 
