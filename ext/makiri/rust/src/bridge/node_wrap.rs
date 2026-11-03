@@ -32,11 +32,11 @@ pub(in crate::bridge) fn wrap_doc_node(
     match kind {
         DocKind::Xml => {
             let id = node.xml().ok_or_else(null)?;
-            crate::bridge::xml::wrap_xml_node_checked(ruby, id, document)
+            crate::bridge::wrapper::wrap_dom_node(ruby, id, document)
         }
         DocKind::Html => {
             let n = node.html().ok_or_else(null)?;
-            crate::bridge::html::wrap_html_node_checked(ruby, n, document)
+            crate::bridge::wrapper::wrap_dom_node(ruby, n, document)
         }
     }
 }

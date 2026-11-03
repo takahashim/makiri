@@ -14,7 +14,6 @@ use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, ReprValue, Value};
 
 use crate::bridge::html::{html_node_key, with_html_node};
-use crate::bridge::node_set::FreshSet;
 use crate::bridge::node_wrap::wrap_doc_node;
 use crate::bridge::string::ruby_verified_text;
 use crate::bridge::wrapper::{doc_known, html_read, xml_read, DocKind, NodeWord, DOC_TYPE};
@@ -230,12 +229,11 @@ impl QueryAst<'_> {
 /// same wrap a set's read-back uses, and never builds the set.
 fn val_to_ruby(ruby: &Ruby, v: ValRef<'_>, document: Value) -> Result<Value, Error> {
     Ok(match v {
-        ValRef::NodeSet(set) => {
-            let rb = FreshSet::new(ruby, document)?;
-            rb.fill(ruby)
-                .extend(set.as_slice().iter().map(|&n| NodeWord::of_token(n)))?;
-            rb.value()
-        }
+        ValRef::NodeSet(set) => crate::bridge::node_set::node_set_from(
+            ruby,
+            document,
+            set.as_slice().iter().map(|&n| NodeWord::of_token(n)),
+        )?,
         /* The bytes are the value's own, and valid UTF-8 - the engine builds
          * a Text only from input the text contract has passed. */
         ValRef::String(t) => {
@@ -278,12 +276,10 @@ pub fn evaluate_query(
     document: Value,
     answer: Answer,
 ) -> Result<XPathValue, Error> {
-    let had_order = crate::bridge::wrapper::has_kept_order(document)?;
-    let result = ctx.run(document, ast, answer);
     /* A document-order index the evaluate built is the document's now. */
-    let accounted = crate::bridge::wrapper::account_kept_order(ruby, document, had_order);
-    let value = result?;
-    accounted?;
+    let value = crate::bridge::wrapper::with_kept_order_accounted(ruby, document, || {
+        ctx.run(document, ast, answer)
+    })?;
     value.map_err(|error| xpath_error(&error))
 }
 

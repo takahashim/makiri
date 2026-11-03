@@ -416,6 +416,34 @@ impl<'d> HtmlDocMut<'d> {
         }
     }
 
+    /// DOM `removeAttributeNS(ns, local)` on the element `el` (`ns`: `None`
+    /// for no namespace); whether there was one. The namespace is looked up,
+    /// not interned: one the document never interned is one no attribute
+    /// here carries, so there is nothing to remove - and a lookup can neither
+    /// fail nor grow the table.
+    pub fn remove_attribute_ns(&mut self, el: RawNode, ns: Option<&[u8]>, local: &[u8]) -> bool {
+        let want_ns = match ns {
+            Some(uri) => match self.read().lookup_ns(uri) {
+                Some(id) => Some(id),
+                None => return false,
+            },
+            None => None,
+        };
+        let found = self
+            .read()
+            .node(el)
+            .element()
+            .and_then(|e| e.attr_by_ns(want_ns, local))
+            .map(|a| a.node().id());
+        match found {
+            Some(a) => {
+                self.d.attr_remove(a);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// DOM `removeAttribute(name)` on the element `el`.
     pub fn remove_attribute(&mut self, el: RawNode, name: &[u8]) {
         let found = self

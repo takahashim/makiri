@@ -8,16 +8,18 @@ use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, Value};
 use crate::bridge::ruby::internal_error;
 use crate::bridge::typed::Birth;
+use crate::node_type::NodeType;
 
 use super::*;
 
-/// The one wrapper of class `klass` (a `ty` object) for a node under
-/// `document`: the cached one, or a fresh one built from `source` and then
-/// cached. The shared half of the two `wrap_*_node` functions.
+/// The one wrapper for `node`, a node of `document`: the cached one, or a
+/// fresh one of its leaf class, then cached. A DOCUMENT node maps back onto
+/// the Ruby Document rather than getting a second wrapper. The one wrap of
+/// both representations ([`NodeHandleSource`] supplies what differs).
 ///
-/// The candidate supplies both its cache identity and, on a miss, its stored
-/// handle. HTML key minting is therefore skipped on a cache hit, while the
-/// token and handle cannot come from different nodes.
+/// The table is asked first, so a node wrapped before costs no read of the
+/// document. A node `document` does not have - another document's, or a
+/// stale word - is `InternalError`, never a wrapper.
 ///
 /// One wrapper per node: navigating to a node twice must give the SAME object,
 /// or everything that lives on a Ruby object is silently lost - `equal?`, an
@@ -26,29 +28,54 @@ use super::*;
 /// only once it is in the table: `Err` (`NoMemoryError`) when the entry
 /// cannot be made, and the fresh wrapper, which nothing refers to, is left
 /// for the GC - never an object outside the table.
-///
-/// The caller vouches that the node is a node of `document` of the
-/// representation `ty` wraps, and `klass` a class of it: only the two
-/// `wrap_*_node` functions call this, each for its own kind.
-pub(in crate::bridge) fn wrap_cached(
+pub(in crate::bridge) fn wrap_dom_node<N: NodeHandleSource>(
     ruby: &Ruby,
-    ty: &'static NodeWrapperType,
-    klass: crate::bridge::rb::DataClass,
-    source: impl NodeHandleSource,
+    node: N,
     document: Value,
 ) -> Result<Value, Error> {
-    let Some((table, key)) = table_and_key(document, &source)? else {
+    wrap_dom_node_typed(ruby, node, None, document)
+}
+
+/// [`wrap_dom_node`] for a caller that read the node's type already, in the read
+/// it found the node in - one read the fewer on a miss.
+pub(in crate::bridge) fn wrap_dom_node_of_type<N: NodeHandleSource>(
+    ruby: &Ruby,
+    node: N,
+    node_type: NodeType,
+    document: Value,
+) -> Result<Value, Error> {
+    wrap_dom_node_typed(ruby, node, Some(node_type), document)
+}
+
+fn wrap_dom_node_typed<N: NodeHandleSource>(
+    ruby: &Ruby,
+    node: N,
+    known: Option<NodeType>,
+    document: Value,
+) -> Result<Value, Error> {
+    let Some((table, key)) = table_and_key(document, &node)? else {
         return Err(internal_error("a node of another document"));
     };
     if let Some(cached) = table.get(key)? {
         return Ok(cached);
     }
-    let node = source.into_handle(document);
-    let fresh = ty.wrap(
+    let node_type = match known {
+        Some(t) => t,
+        None => node
+            .node_type(document)?
+            .ok_or_else(|| internal_error("a node its document does not have"))?,
+    };
+    if node_type == NodeType::Document {
+        return Ok(document);
+    }
+    let klass = N::classes().class_for(ruby, node_type)?;
+    let fresh = N::wrapper_type().wrap(
         ruby,
         Birth {
             klass,
-            data: NodeData { node },
+            data: NodeData {
+                node: node.into_handle(document),
+            },
             roots: [document],
         },
     )?;

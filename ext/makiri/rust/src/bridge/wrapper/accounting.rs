@@ -84,7 +84,7 @@ pub fn account_growth_of(ruby: &crate::bridge::rb::Ruby, doc: &DocHandle) {
 /// built - read before an evaluate, for [`account_kept_order`] after it. A
 /// document that cannot be read now (an edit holds it) is the `Err` the
 /// evaluate would meet too, passed on rather than read as "no index".
-pub fn has_kept_order(rb_doc: Value) -> Result<bool, crate::bridge::rb::Error> {
+fn has_kept_order(rb_doc: Value) -> Result<bool, crate::bridge::rb::Error> {
     Ok(with_html_parsed_if(rb_doc, |p| p.has_doc_order())? == Some(true))
 }
 
@@ -96,7 +96,7 @@ pub fn has_kept_order(rb_doc: Value) -> Result<bool, crate::bridge::rb::Error> {
 /// Called once the evaluate's walk is over, since
 /// the report may run a collection: like [`account_document`], with `rb_doc`
 /// on the caller's stack and no borrowed Ruby String held.
-pub fn account_kept_order(
+fn account_kept_order(
     ruby: &crate::bridge::rb::Ruby,
     rb_doc: Value,
     had: bool,
@@ -105,4 +105,22 @@ pub fn account_kept_order(
         account_document(ruby, rb_doc);
     }
     Ok(())
+}
+
+/// Run `read`, a read of `rb_doc` that may build its document-order index
+/// (an XPath evaluate), and tell the GC of an index it built
+/// ([`account_kept_order`]) once it is over. Whatever reads the document may
+/// build it, and each such reader is bracketed here rather than knowing the
+/// index exists. `read`'s own error comes first.
+pub fn with_kept_order_accounted<R>(
+    ruby: &crate::bridge::rb::Ruby,
+    rb_doc: Value,
+    read: impl FnOnce() -> Result<R, crate::bridge::rb::Error>,
+) -> Result<R, crate::bridge::rb::Error> {
+    let had = has_kept_order(rb_doc)?;
+    let out = read();
+    let accounted = account_kept_order(ruby, rb_doc, had);
+    let out = out?;
+    accounted?;
+    Ok(out)
 }

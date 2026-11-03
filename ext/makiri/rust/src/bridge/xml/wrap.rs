@@ -23,35 +23,13 @@ static XML_NODE_CLASSES: NodeClasses = NodeClasses {
     fragment: &CLASS_XML_DOCUMENT_FRAGMENT,
 };
 
-/// Wrap an arena node into its `Makiri::XML::*` leaf.
-///
-/// The DOCUMENT node maps back onto the Ruby Document rather than getting a
-/// second wrapper, so the arena has exactly one owner. The id resolves through
-/// `document`'s arena; a caller with no node holds an `Option` and maps `None`
-/// to nil itself.
+/// Wrap an XML node into its `Makiri::XML::*` leaf
+/// ([`wrap_dom_node`](crate::bridge::wrapper::wrap_dom_node)): the Document node maps
+/// back onto the Ruby Document, so the arena has exactly one owner, and an id
+/// `document`'s arena does not have is `InternalError`. A caller with no node
+/// holds an `Option` and maps `None` to nil itself.
 pub fn wrap_xml_node(ruby: &Ruby, id: NodeId, document: Value) -> Result<Value, Error> {
-    let ty = xml_read(&doc_known(document))?.type_(id);
-    wrap_xml_node_of_type(ruby, id, ty, document)
-}
-
-/// [`wrap_xml_node`] for a node that must be one of `document`'s: an
-/// `InternalError` when the arena has no node by that id.
-pub(in crate::bridge) fn wrap_xml_node_checked(
-    ruby: &Ruby,
-    id: NodeId,
-    document: Value,
-) -> Result<Value, Error> {
-    /* A hit was checked when it was made, as `wrap_html_node_checked`'s. */
-    if let Some(cached) = crate::bridge::wrapper::cached_node(document, &id)? {
-        return Ok(cached);
-    }
-    let ty = xml_read(&doc_known(document))?.type_(id);
-    if ty.is_none() {
-        return Err(crate::bridge::ruby::internal_error(
-            "a stored node of another document",
-        ));
-    }
-    wrap_xml_node_of_type(ruby, id, ty, document)
+    crate::bridge::wrapper::wrap_dom_node(ruby, id, document)
 }
 
 /// [`wrap_xml_node`] for a caller that read the node's type already, in the
@@ -63,15 +41,10 @@ pub(super) fn wrap_xml_node_of_type(
     document: Value,
 ) -> Result<Value, Error> {
     /* A node the arena does not have is a broken invariant, refused rather
-     * than wrapped as a plain node (HTML's `mint_html_key` refuses it too). */
+     * than wrapped as a plain node. */
     let ty =
         ty.ok_or_else(|| crate::bridge::ruby::internal_error("a node its document does not have"))?;
-    if ty == ArenaKind::Document {
-        return Ok(document);
-    }
-    let klass = XML_NODE_CLASSES.class_for(ruby, ty.into())?;
-
-    crate::bridge::wrapper::wrap_cached(ruby, &XML_NODE_TYPE, klass, id, document)
+    crate::bridge::wrapper::wrap_dom_node_of_type(ruby, id, ty.into(), document)
 }
 
 impl crate::bridge::wrapper::NodeHandleSource for NodeId {
@@ -81,6 +54,18 @@ impl crate::bridge::wrapper::NodeHandleSource for NodeId {
 
     fn into_handle(self, _document: Value) -> NodeHandle {
         NodeHandle::Xml(self)
+    }
+
+    fn wrapper_type() -> &'static crate::bridge::wrapper::NodeWrapperType {
+        &XML_NODE_TYPE
+    }
+
+    fn classes() -> &'static crate::bridge::wrapper::NodeClasses {
+        &XML_NODE_CLASSES
+    }
+
+    fn node_type(self, document: Value) -> Result<Option<crate::node_type::NodeType>, Error> {
+        Ok(xml_read(&doc_known(document))?.type_(self).map(Into::into))
     }
 }
 
