@@ -406,3 +406,28 @@ fn a_count_remembers_the_last_child() {
         list.steps.get() - steps
     );
 }
+
+#[test]
+fn post_order_visits_children_then_the_root_and_stops_on_break() {
+    let list = List::new(PARENT, &[true, false, true]);
+    let mut seen = Vec::new();
+    let all = post_order(&list, PARENT, &mut |n| {
+        seen.push(n);
+        ControlFlow::Continue(())
+    });
+    assert_eq!(all, ControlFlow::Continue(()));
+    assert_eq!(seen, [0, 1, 2, PARENT]);
+
+    /* A sink that answers `Break` ends the walk there. */
+    let mut seen = Vec::new();
+    let stopped = post_order(&list, PARENT, &mut |n| {
+        seen.push(n);
+        if n == 1 {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    });
+    assert_eq!(stopped, ControlFlow::Break(()));
+    assert_eq!(seen, [0, 1]);
+}

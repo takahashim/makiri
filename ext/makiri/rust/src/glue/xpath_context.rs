@@ -70,6 +70,8 @@ fn register_namespace(
     prefix: Value,
     uri: Value,
 ) -> Result<Value, Error> {
+    /* A frozen context keeps its bindings, as it keeps its node (`#node=`). */
+    crate::bridge::rb::ReprValue::check_frozen(ctx.value())?;
     let cap = ctx.limits().max_string_bytes;
     crate::glue::namespaces::bind_pair(ruby, prefix, uri, cap, |p, u| ctx.bind_namespace(p, u))?;
     Ok(ctx.value())
@@ -82,6 +84,8 @@ fn register_variable(
     name: Value,
     value: Value,
 ) -> Result<Value, Error> {
+    /* A frozen context keeps its variables, as it keeps its node. */
+    crate::bridge::rb::ReprValue::check_frozen(ctx.value())?;
     let value = crate::bridge::ruby::string_arg(value)?;
     ctx.register_variable(ruby, name, value)?;
     Ok(ctx.value())

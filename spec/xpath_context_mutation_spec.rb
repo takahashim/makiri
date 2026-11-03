@@ -34,3 +34,30 @@ RSpec.describe "Makiri::XPathContext across document mutations" do
     expect(owners.first.name).to eq("div")
   end
 end
+
+# A frozen context keeps what it binds: its node, its namespaces and its
+# variables. `#node=` refused; the two registrations changed it all the same.
+RSpec.describe "a frozen Makiri::XPathContext" do
+  let(:doc) { Makiri::HTML("<html><body><p>a</p></body></html>") }
+  let(:ctx) { Makiri::XPathContext.new(doc).tap { |c| c.register_variable("v", "x") }.freeze }
+
+  it "keeps its node" do
+    expect { ctx.node = doc.at_css("p") }.to raise_error(FrozenError)
+  end
+
+  it "keeps its variables" do
+    expect { ctx.register_variable("v", "y") }.to raise_error(FrozenError)
+    expect { ctx.register_variables("w" => "z") }.to raise_error(FrozenError)
+    expect(ctx.evaluate("string($v)")).to eq("x")
+  end
+
+  it "keeps its namespaces" do
+    expect { ctx.register_namespace("p", "urn:p") }.to raise_error(FrozenError)
+    expect { ctx.register_namespaces("q" => "urn:q") }.to raise_error(FrozenError)
+    expect { ctx.evaluate("//p:x") }.to raise_error(Makiri::Error, /unknown namespace prefix/)
+  end
+
+  it "still evaluates" do
+    expect(ctx.evaluate("count(//p)")).to eq(1.0)
+  end
+end

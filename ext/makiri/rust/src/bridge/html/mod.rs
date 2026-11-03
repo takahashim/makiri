@@ -7,6 +7,8 @@
 
 #![forbid(unsafe_code)]
 
+use core::ops::ControlFlow;
+
 use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, ReprValue, Value};
 use crate::bridge::ruby::makiri_error;

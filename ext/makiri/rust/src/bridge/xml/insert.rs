@@ -113,13 +113,27 @@ pub fn insert(
             }),
         )
     };
-    xml_mut_result(edit.with_insertion(node, |d, target| {
+    let placed = edit.with_insertion(node, |d, target| {
         let placed = crate::xml::mutate::place(d, target, node, at);
         if let (Err(_), Some(a)) = (&placed, &adoption) {
             a.undo_copy(d);
         }
         placed
-    })?)?;
+    });
+    let placed = match placed {
+        Ok(placed) => placed,
+        /* Refused before the placement ran (a frozen check, a read still
+         * held): the copy is in the target arena all the same, so it is
+         * taken back out as a refused placement's is. A target that cannot
+         * be written for that either is the error passed on. */
+        Err(e) => {
+            if let Some(a) = &adoption {
+                a.undo_copy(&mut *xml_write(target)?);
+            }
+            return Err(e);
+        }
+    };
+    xml_mut_result(placed)?;
     if let Some(a) = adoption {
         a.finish(); /* the source's write ends with it */
         /* The receiver's document grew by the copy. */

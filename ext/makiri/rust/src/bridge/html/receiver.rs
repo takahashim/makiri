@@ -159,7 +159,8 @@ impl HtmlView<'_> {
     /// The nodes `f` lists from the receiver's (the element ones alone when
     /// `elements_only`), as a NodeSet built with the read held
     /// ([`node_set_from_read`](crate::bridge::node_set::node_set_from_read)).
-    /// `f` hands each node to the sink it is given.
+    /// `f` hands each node to the sink it is given, and stops when the sink
+    /// answers `Break` (the set refused a node).
     #[cfg_attr(
         dylint_lib = "makiri_lints",
         allow(
@@ -171,15 +172,20 @@ impl HtmlView<'_> {
         self,
         ruby: &Ruby,
         elements_only: bool,
-        f: impl for<'n> Fn(HtmlNode<'n>, &mut dyn FnMut(HtmlNode<'n>)),
+        f: impl for<'n> Fn(
+            HtmlNode<'n>,
+            &mut dyn FnMut(HtmlNode<'n>) -> ControlFlow<()>,
+        ) -> ControlFlow<()>,
     ) -> Result<Value, Error> {
         let document = self.document;
         crate::bridge::node_set::node_set_from_read(ruby, self, document, |view, out| {
             f(view.node(), &mut |n| {
                 if !elements_only || n.element().is_some() {
-                    out(RawNode::from(n).into());
+                    out(RawNode::from(n).into())
+                } else {
+                    ControlFlow::Continue(())
                 }
-            });
+            })
         })
     }
 
