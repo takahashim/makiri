@@ -12,7 +12,6 @@ use crate::function;
 
 use crate::bridge::build::{ary, aset, hash, int, push, symbol as sym};
 use crate::bridge::rb::Symbol;
-use crate::bridge::ruby::boolean;
 use crate::bridge::string::{ruby_verified_text, utf8_str};
 use crate::init::MOD_LEXBOR;
 use crate::selectors::stylesheet::{parse, Decl, Fail, Rule, MAX_DEPTH};
@@ -71,7 +70,7 @@ fn decls_to_ruby(ruby: &Ruby, k: &Keys, ds: &[Decl]) -> Result<RArray, Error> {
         let h = hash(ruby)?;
         aset(h, k.name, utf8_str(ruby, &d.name)?)?;
         aset(h, k.value, utf8_str(ruby, &d.value)?)?;
-        aset(h, k.important, boolean(ruby, d.important))?;
+        aset(h, k.important, ruby.boolean(d.important))?;
         push(a, h.as_value())?;
     }
     Ok(a)

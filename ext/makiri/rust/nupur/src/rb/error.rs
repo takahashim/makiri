@@ -37,23 +37,55 @@ pub enum ErrorClass {
     Value(ExceptionClass),
 }
 
-/// Ruby's own exception classes an [`Error`] can name without a token.
-#[derive(Clone, Copy)]
-pub enum Builtin {
-    RuntimeError,
-    ArgumentError,
-    TypeError,
-    RangeError,
-    NotImplementedError,
-    NoMemoryError,
-    EncodingError,
-    LoadError,
-    KeyError,
-    IndexError,
-    FrozenError,
-    ThreadError,
-    StopIteration,
-    ZeroDivisionError,
+/// Ruby's own exception classes: each one's [`Builtin`] variant, its
+/// accessor on [`Ruby`] and the C global it reads, written once here.
+macro_rules! builtins {
+    ($($variant:ident => $method:ident => $global:ident),* $(,)?) => {
+        /// Ruby's own exception classes an [`Error`] can name without a token.
+        #[derive(Clone, Copy)]
+        pub enum Builtin {
+            $($variant,)*
+        }
+
+        impl Builtin {
+            /// The class, read with the GVL held.
+            #[inline]
+            fn class(self, ruby: &Ruby) -> ExceptionClass {
+                match self {
+                    $(Builtin::$variant => ruby.$method(),)*
+                }
+            }
+        }
+
+        impl Ruby {
+            $(
+                #[doc = concat!("`", stringify!($global), "`.")]
+                #[inline]
+                pub fn $method(&self) -> ExceptionClass {
+                    ExceptionClass::from_known(Value::from_sys(
+                        nupur_sys::non_raising::$global(self.sys()),
+                    ))
+                }
+            )*
+        }
+    };
+}
+
+builtins! {
+    RuntimeError => exception_runtime_error => rb_eRuntimeError,
+    ArgumentError => exception_arg_error => rb_eArgError,
+    TypeError => exception_type_error => rb_eTypeError,
+    RangeError => exception_range_error => rb_eRangeError,
+    NotImplementedError => exception_not_imp_error => rb_eNotImpError,
+    NoMemoryError => exception_no_mem_error => rb_eNoMemError,
+    EncodingError => exception_encoding_error => rb_eEncodingError,
+    LoadError => exception_load_error => rb_eLoadError,
+    KeyError => exception_key_error => rb_eKeyError,
+    IndexError => exception_index_error => rb_eIndexError,
+    FrozenError => exception_frozen_error => rb_eFrozenError,
+    ThreadError => exception_thread_error => rb_eThreadError,
+    StopIteration => exception_stop_iteration => rb_eStopIteration,
+    ZeroDivisionError => exception_zero_div_error => rb_eZeroDivError,
 }
 
 impl ErrorClass {
@@ -61,22 +93,7 @@ impl ErrorClass {
     #[inline]
     pub fn resolve(self, ruby: &Ruby) -> ExceptionClass {
         match self {
-            ErrorClass::Builtin(b) => match b {
-                Builtin::RuntimeError => ruby.exception_runtime_error(),
-                Builtin::ArgumentError => ruby.exception_arg_error(),
-                Builtin::TypeError => ruby.exception_type_error(),
-                Builtin::RangeError => ruby.exception_range_error(),
-                Builtin::NotImplementedError => ruby.exception_not_imp_error(),
-                Builtin::NoMemoryError => ruby.exception_no_mem_error(),
-                Builtin::EncodingError => ruby.exception_encoding_error(),
-                Builtin::LoadError => ruby.exception_load_error(),
-                Builtin::KeyError => ruby.exception_key_error(),
-                Builtin::IndexError => ruby.exception_index_error(),
-                Builtin::FrozenError => ruby.exception_frozen_error(),
-                Builtin::ThreadError => ruby.exception_thread_error(),
-                Builtin::StopIteration => ruby.exception_stop_iteration(),
-                Builtin::ZeroDivisionError => ruby.exception_zero_div_error(),
-            },
+            ErrorClass::Builtin(b) => b.class(ruby),
             ErrorClass::Registered(c) => c.exception(ruby),
             ErrorClass::Value(c) => c,
         }

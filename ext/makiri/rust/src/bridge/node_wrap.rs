@@ -29,11 +29,11 @@ pub(in crate::bridge) fn wrap_doc_node(
     match kind {
         DocKind::Xml => match node.xml() {
             Some(id) => crate::bridge::xml::wrap_xml_node_checked(ruby, id, document),
-            None => Ok(crate::bridge::ruby::nil(ruby)),
+            None => Ok(ruby.qnil()),
         },
         DocKind::Html => match node.html() {
             Some(n) => crate::bridge::html::wrap_html_node_checked(ruby, n, document),
-            None => Ok(crate::bridge::ruby::nil(ruby)),
+            None => Ok(ruby.qnil()),
         },
     }
 }

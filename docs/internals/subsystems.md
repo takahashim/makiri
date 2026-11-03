@@ -158,7 +158,7 @@ the way an allow with its reason:
 
 - `NodeSet#each`'s `yield` (through `rb::method::yield_value`, over
   `rb_yield`);
-- `XML::Namespace.new` (`Module::call_method`, over `rb_funcallv`).
+- `XML::Namespace.new` (`rb::call::call_method`, over `rb_funcallv`).
 
 A registered method's parameters are held to the rule by type:
 `bridge::rb::TryConvert` exists only for `Value`, `bool` and Makiri's

@@ -71,8 +71,8 @@ pub const CALLERS_RUBY_RUNNERS: &[&str] = &[
     "nupur::raw::iterate::yield_value",
     "nupur::rb::call::public_method",
     "nupur::rb::call::responds_to",
-    "nupur::rb::class::Module::call_method",
-    "nupur::rb::method::yield_value",
+    "nupur::rb::call::call_method",
+    "nupur::rb::method::frame::yield_value",
 ];
 
 /// The layer's functions that run their last argument, a closure, with the

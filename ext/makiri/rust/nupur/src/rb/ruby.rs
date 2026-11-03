@@ -62,23 +62,21 @@ impl Ruby {
         Value::from_sys(self.0.qfalse())
     }
 
+    /// `true` or `false`, as `b` is.
+    #[inline]
+    pub fn boolean(&self, b: bool) -> Value {
+        if b {
+            self.qtrue()
+        } else {
+            self.qfalse()
+        }
+    }
+
+    /* The classes an `Error` can name are `error`'s (`builtins!`), which
+     * makes their accessors; these two are ancestors no error is made of. */
     globals! { ExceptionClass:
         exception_exception => rb_eException,
         exception_standard_error => rb_eStandardError,
-        exception_runtime_error => rb_eRuntimeError,
-        exception_arg_error => rb_eArgError,
-        exception_type_error => rb_eTypeError,
-        exception_range_error => rb_eRangeError,
-        exception_not_imp_error => rb_eNotImpError,
-        exception_no_mem_error => rb_eNoMemError,
-        exception_encoding_error => rb_eEncodingError,
-        exception_load_error => rb_eLoadError,
-        exception_key_error => rb_eKeyError,
-        exception_index_error => rb_eIndexError,
-        exception_frozen_error => rb_eFrozenError,
-        exception_thread_error => rb_eThreadError,
-        exception_stop_iteration => rb_eStopIteration,
-        exception_zero_div_error => rb_eZeroDivError,
     }
 
     globals! { RClass:

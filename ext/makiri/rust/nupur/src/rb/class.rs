@@ -47,7 +47,10 @@ pub trait Module: ReprValue {
     fn define_error(self, name: &str, superclass: ExceptionClass) -> Result<ExceptionClass, Error> {
         let sup = RClass::from_known(superclass.as_value());
         let class = crate::raw::define_class_under(self.as_value(), &c_name(name)?, sup)?;
-        Ok(ExceptionClass::from_known(class.as_value()))
+        /* A class under an exception class is one; checked all the same. */
+        ExceptionClass::from_value(class.as_value()).ok_or_else(|| {
+            crate::rb::error::internal_error("a class under an exception class is not one")
+        })
     }
 
     /// `module name` under this module.
@@ -91,18 +94,6 @@ pub trait Module: ReprValue {
     fn const_defined(self, ruby: &Ruby, name: &str) -> Result<bool, Error> {
         let id = crate::rb::Id::intern(ruby, &c_name(name)?)?;
         crate::raw::const_defined_at(self.as_value(), id)
-    }
-
-    /// `self.name(*args)`: the caller's Ruby - see `raw::call_method`.
-    #[cfg_attr(
-        dylint_lib = "nupur_lints",
-        expect(
-            runs_callers_ruby,
-            reason = "the one way to call a method; each caller's own allow says why"
-        )
-    )]
-    fn call_method(self, ruby: &Ruby, name: &str, args: &[Value]) -> Result<Value, Error> {
-        crate::raw::call_method(ruby, self.as_value(), &c_name(name)?, args)
     }
 
     /// Include `module`.
