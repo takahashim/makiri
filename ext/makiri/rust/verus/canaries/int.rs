@@ -48,6 +48,18 @@ fn canary_capacity(n: usize) {
     assert(false);
 }
 
+fn canary_flonum(t: u64) {
+    if flonum64::flonum_bits(t).is_some() {
+        assert(false);
+    }
+}
+
+fn canary_heap_float(t: u64) {
+    if flonum64::flonum_bits(t).is_none() {
+        assert(false);
+    }
+}
+
 // Not canaries: the specs used as a caller would. These must verify.
 
 fn uses_int() {

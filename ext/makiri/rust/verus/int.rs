@@ -16,7 +16,13 @@
 //!   32-bit `long`, and a 64-bit one in `FIXMIN..=FIXMAX` - past it `2 l + 1`
 //!   loses its top bit, which is why `fixnum` asks `fixable` first;
 //! - `len(n)` is `n`, or 0 for a negative `n`;
-//! - `capacity(n)` is `min(n, LONG_MAX)`.
+//! - `capacity(n)` is `min(n, LONG_MAX)`;
+//! - `flonum_bits(t)`, where a `VALUE` is 64 bits, answers `Some` exactly
+//!   where `rb_float_new_inline` makes a flonum (an exponent whose top three
+//!   bits are 011 or 100, but the one colliding value, and +0.0); a `Some`
+//!   carries the flonum tag (low bits `10`), so Ruby never reads it as a
+//!   pointer, a Fixnum or a special constant; and Ruby's own decoding
+//!   (`rb_float_flonum_value`, `flonum_value` below) gives `t` back.
 //!
 //! `fixable`, `posfixable`, `fixnum` and `posfixnum` are these at this
 //! target's `c_long`. `usize` is 64 bits here, as on every target Makiri
@@ -216,6 +222,80 @@ proof fn bits64(l: i64, r: u64)
         r & 1 == 1,
         -0x4000_0000_0000_0000i64 <= l <= 0x3fff_ffff_ffff_ffffi64
             ==> (#[verifier::truncate] (r as i64)) >> 1u64 == l,
+{
+}
+
+/// Ruby's `rb_float_flonum_value` (its `ruby/internal/special_consts.h`),
+/// over bits: the double the flonum `v` stands for. Ruby writes the bits it
+/// restores as `2 - b63`, for `b63` the top bit, 0 or 1; that is written
+/// here as the choice it makes.
+pub open spec fn flonum_value(v: u64) -> u64 {
+    if v != 0x8000_0000_0000_0002u64 {
+        let x = (if v >> 63u64 == 0u64 { 2u64 } else { 1u64 }) | (v & !3u64);
+        (x >> 3u64) | (x << 61u64)
+    } else {
+        0u64
+    }
+}
+
+/// The flonum of a double, where a `VALUE` is 64 bits (Ruby makes flonums
+/// only there): the copy of `flonum_bits`.
+pub mod flonum64 {
+    use vstd::prelude::*;
+    use crate::rb_sys;
+
+    pub fn flonum_bits(t: u64) -> (r: Option<rb_sys::VALUE>)
+        ensures // [verus]
+            r.is_some() <==> (t == 0 || (t != 0x3000_0000_0000_0000 // [verus]
+                && ((t >> 60) & 0x7 == 3 || (t >> 60) & 0x7 == 4))), // [verus]
+            r.is_some() ==> r.unwrap() & 3 == 2, // [verus]
+            r.is_some() ==> crate::flonum_value(r.unwrap()) == t, // [verus]
+    {
+        let exp = (t >> 60) & 0x7;
+        if t != 0x3000_0000_0000_0000 && (exp == 3 || exp == 4) {
+            // [canary]
+            #[allow(
+                clippy::manual_rotate,
+                reason = "Verus has no specification of rotate_left; the shifts are what verus/int.rs proves"
+            )]
+            let v = (((t << 3) | (t >> 61)) & !0x1) | 0x2;
+            proof { crate::flonum_round_trip(t, v); } // [verus]
+            return Some(v as rb_sys::VALUE);
+        }
+        if t == 0 {
+            // [canary]
+            proof { crate::flonum_zero(); } // [verus]
+            return Some(0x8000_0000_0000_0002_u64 as rb_sys::VALUE);
+        }
+        // [canary]
+        None
+    }
+}
+
+/// An immediate-range double's flonum: the low two bits are the flonum
+/// tag `10` - not a pointer (`00`), not a Fixnum (`x1`) - it is not +0.0's
+/// own value, and Ruby's decoding turns it back into `t`: the two bits the
+/// rotation dropped (62, 61) are 01 for exponent 011 and 10 for 100, which
+/// bit 60 - now the top bit - tells apart.
+proof fn flonum_round_trip(t: u64, v: u64)
+    by (bit_vector)
+    requires
+        t != 0x3000_0000_0000_0000u64,
+        (t >> 60u64) & 7u64 == 3u64 || (t >> 60u64) & 7u64 == 4u64,
+        v == ((((t << 3u64) | (t >> 61u64)) & !1u64) | 2u64),
+    ensures
+        v & 3u64 == 2u64,
+        v != 0x8000_0000_0000_0002u64,
+        ((((if v >> 63u64 == 0u64 { 2u64 } else { 1u64 }) | (v & !3u64)) >> 3u64)
+            | (((if v >> 63u64 == 0u64 { 2u64 } else { 1u64 }) | (v & !3u64)) << 61u64)) == t,
+{
+}
+
+/// +0.0's flonum carries the tag too.
+proof fn flonum_zero()
+    by (bit_vector)
+    ensures
+        0x8000_0000_0000_0002u64 & 3u64 == 2u64,
 {
 }
 

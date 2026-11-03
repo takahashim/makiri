@@ -48,7 +48,7 @@ VERUS_COPIES = [
   # nupur's copy of it, which writes a String in place (`utf8_str_filled`).
   ["ext/makiri/rust/nupur/src/string/make.rs", "ext/makiri/rust/verus/ceiling_buf.rs", "copy_small"],
   # Nupur's C-integer conversions, one copy per width of a C `long`.
-  *%w[fixable_in posfixable_in fixnum_bits len capacity].map do |name|
+  *%w[fixable_in posfixable_in fixnum_bits len capacity flonum_bits].map do |name|
     ["ext/makiri/rust/nupur/sys/src/int.rs", "ext/makiri/rust/verus/int.rs", name]
   end,
   *%w[as_slice append append_growing raise_limit reserve steal content_limit
