@@ -271,6 +271,9 @@ P で始まる項目は HTML パーサの振る舞いである。
 
 ### 入力と資源の制限
 
+- HTML の parse は、木の深さ（`max_tree_depth:`、既定 400、Nokogiri::HTML5 と同じ）と、作る文書の大きさを入力と比べた比（`max_amplification:`、既定 256、ただし 64 MiB までは許す）に上限を持つ。超えると parse 全体を `Makiri::Error` で失敗にする（`html/tree/guard.rs`）。負の値でそれぞれの上限を外せる。
+- 仕様の tree construction は、木の深さにも作る文書の大きさにも上限を置かない。ただしその節の注記は、実装が現実的な理由で入れ子の深さを制限することになるだろうと述べており、注記が参照する Infra Standard の 3.2（Avoid limits on algorithm inputs）は、サービス拒否攻撃やメモリ不足を防ぐための実装独自の上限を許す。上限に達しなかった parse の木は仕様どおりで、WPT の tree construction は全件通る。
+- 深さの上限の扱いはブラウザと異なる。Blink、WebKit、Gecko はいずれも深さだけに上限（512 相当）を持ち、超えても parse を失敗にせず、挿入先の親を遡って木の形を変えて受け入れる（ソースで確認。実機では未確認）。移植版は木の形を変えず失敗にする。作る文書の大きさの上限は、この三つにはない。
 - NUL を含む名前や不正な UTF-8 を、API の境界で例外にする（`docs/internals/subsystems.md` の text-input contract）。HTML の入力そのものは置き換えて読む。
 - stylesheet の at-rule の入れ子が 64 を超えると例外にする（`selectors/stylesheet.rs` の `MAX_DEPTH`）。
 - メモリ不足では stylesheet の解析全体を失敗にする（S3 と同じ方針）。
