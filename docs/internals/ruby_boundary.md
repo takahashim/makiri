@@ -30,7 +30,10 @@ dynamic table.
 `Makiri::InternalError` in its place, running every `Drop` of the method's
 frames on the way out. `abort` did none of that: no destructor, no cleanup,
 and SIGABRT for the whole process. So **do not set it back**.
-`spec/panic_spec.rb` is what would catch that, through the
+The build refuses it: `nupur` holds a `compile_error!` under
+`cfg(not(panic = "unwind"))`, since the setting is the extension's profile
+(a dependency's is ignored) while the guarantee is Nupur's. At run time
+`spec/panic_spec.rb` is what would catch it, through the
 `Makiri.__panic(kind)` hook, which exists for no other purpose.
 
 Two rules follow, and anything new has to keep both.

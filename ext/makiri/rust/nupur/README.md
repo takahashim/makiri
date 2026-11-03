@@ -155,7 +155,8 @@ Three things an extension's own build needs to know:
   extension's `clippy.toml`, as Makiri does.
 - The profile builds with `panic = "unwind"`, as Nupur's test extension
   does; with `abort`, a panic in a method would kill the host instead of
-  reaching Ruby as the internal error.
+  reaching Ruby as the internal error. A dependency's profile does not
+  apply, so Nupur cannot set it: it refuses to compile without it.
 - An `allow` of one of Nupur's lints sits under
   `cfg_attr(dylint_lib = "nupur_lints", ...)`, so register the cfg in the
   extension's `Cargo.toml`, or every such allow warns:

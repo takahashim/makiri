@@ -199,6 +199,16 @@
  * message's lookup, allowed there with its reason. */
 #![cfg_attr(dylint_lib = "nupur_lints", deny(discarded_ruby_error))]
 
+/* "No panic reaches C" rests on the host's profile, not this crate's: a
+ * dependency's `[profile]` is ignored, so `panic = "abort"` in the
+ * extension's would leave every trampoline's catch dead and a panic killing
+ * the host. Refused here, where the guarantee is made. */
+#[cfg(not(panic = "unwind"))]
+compile_error!(
+    "nupur needs `panic = \"unwind\"`: set it in the extension's [profile.*] - \
+     with `abort`, a panic in a method kills the host instead of raising"
+);
+
 // The lints' self-test for this crate (`rake dylint`).
 #[cfg(nupur_lint_probe)]
 mod lint_probe;
