@@ -40,7 +40,7 @@ use super::{Error, Id, ReprValue, Ruby, Value};
 /// what a library calling an object's conversion (`to_json`, `to_s`) means.
 #[cfg_attr(
     dylint_lib = "nupur_lints",
-    allow(
+    expect(
         runs_callers_ruby,
         reason = "the one way to call a public method; each caller's own allow says why"
     )
@@ -54,7 +54,7 @@ pub fn public_method(recv: impl ReprValue, id: Id, args: &[Value]) -> Result<Val
 /// `respond_to_missing?` answers for a method `method_missing` handles.
 #[cfg_attr(
     dylint_lib = "nupur_lints",
-    allow(
+    expect(
         runs_callers_ruby,
         reason = "respond_to? may be redefined; each caller's own allow says why"
     )

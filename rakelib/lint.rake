@@ -103,7 +103,10 @@ task :dylint do
     [["src/lib.rs", DYLINT], ["engine/src/lib.rs", DYLINT_ENGINE],
      ["nupur/src/lib.rs", DYLINT_NUPUR], ["nupur/sys/src/lib.rs", DYLINT_NUPUR_SYS]].each do |root, cmd|
       FileUtils.touch(root)
-      sh(*cmd)
+      # An `expect` of a lint that no longer fires (`runs_callers_ruby` in
+      # the layer's wrappers) is an error: the entry it rests on stopped
+      # matching.
+      sh({ "RUSTFLAGS" => "-D unfulfilled_lint_expectations" }, *cmd)
     end
     # The self-test, once per crate: the extension's probe, and the binding
     # layer's, which holds the cases only code naming rb-sys can write. Each
@@ -114,17 +117,28 @@ task :dylint do
     probes = [[DYLINT, "src/lint_probe.rs", "makiri_lint_probe"],
               [DYLINT_NUPUR, "nupur/src/lint_probe.rs", "nupur_lint_probe"],
               [DYLINT_NUPUR_SYS, "nupur/sys/src/lint_probe.rs", "nupur_sys_lint_probe"]]
+    # Every function the lints know by name (`paths.rs`' tables) must be
+    # reported by the self-test - its path is in the message - so an entry
+    # that stopped matching (renamed, moved) fails here rather than going
+    # quiet; and one added must come with its probe line.
+    tables = File.read("lints/nupur_lints/src/paths.rs")
+                 .scan(/pub const (CALLERS_RUBY_RUNNERS|GVL_RELEASED_CALLS|BYTES_LENDING_METHODS): &\[&str\] = &\[(.*?)\];/m)
+    abort "nupur_lints' self-test: paths.rs' tables not found" unless tables.size == 3
+    named = tables.flat_map { |_, body| body.scan(/"([^"]+)"/).flatten }
+    seen = []
     total = probes.sum do |cmd, probe, cfg|
       expected = File.readlines(probe).each_with_index.flat_map do |line, i|
         names = line[%r{//~((?: [a-z_]+)*)\s*\z}, 1] or next []
         abort "nupur_lints' self-test: #{probe}:#{i + 1}'s //~ names no lint" if names.strip.empty?
         names.split.map { |lint| [i + 1, lint] }
       end.sort
-      out, = Open3.capture2e({ "RUSTFLAGS" => "--cfg #{cfg}" }, *cmd, "--message-format=json")
+      out, = Open3.capture2e({ "RUSTFLAGS" => "--cfg #{cfg} -D unfulfilled_lint_expectations" }, *cmd,
+                             "--message-format=json")
       messages = out.lines.filter_map do |l|
         m = JSON.parse(l) if l.start_with?("{")
         m["message"] if m && m["reason"] == "compiler-message"
       end
+      seen.concat(messages.flat_map { |m| m["message"].scan(/`([a-z_:A-Z]+)`/).flatten })
       reported = messages.filter_map do |m|
         at = m["spans"].find { |sp| sp["is_primary"] }
         [at["line_start"], m.dig("code", "code")] if at && at["file_name"] == probe && m["code"]
@@ -136,7 +150,9 @@ task :dylint do
       end
       expected.size
     end
-    puts "nupur_lints: self-test reported all #{total} cases"
+    unprobed = named - seen
+    abort "nupur_lints' self-test: no probe reports #{unprobed.inspect} (paths.rs' tables)" unless unprobed.empty?
+    puts "nupur_lints: self-test reported all #{total} cases, and every one of the #{named.size} named functions"
   end
   # The table the raising lints read (`NON_RAISING`) against Ruby's own
   # headers, as rb-sys's bindings carry them: an entry documented to raise,

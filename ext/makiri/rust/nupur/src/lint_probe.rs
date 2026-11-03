@@ -110,3 +110,19 @@ mod raw {
         let _ = call_protected(|inside| unsafe { nupur_sys::raising::rb_hash_new(inside) });
     }
 }
+
+/// The raw wrappers that run the caller's Ruby, at their own level
+/// (`runs_callers_ruby`): written here because the extension cannot name
+/// them, and the layer's functions over them `expect` the lint.
+#[rustfmt::skip] // keeps each marker on the line reported
+fn callers_ruby(
+    ruby: &crate::rb::Ruby,
+    v: crate::rb::Value,
+    id: crate::rb::Id,
+) -> Result<(), crate::rb::Error> {
+    crate::raw::call_method(ruby, v, c"to_s", &[])?; //~ runs_callers_ruby
+    crate::raw::call_public(v, id, &[])?; //~ runs_callers_ruby
+    crate::raw::respond_to(v, id)?; //~ runs_callers_ruby
+    crate::raw::yield_value(ruby, v)?; //~ runs_callers_ruby
+    Ok(())
+}

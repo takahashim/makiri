@@ -27,8 +27,9 @@ use rustc_lint::LateContext;
 use rustc_span::Span;
 
 use crate::paths::{
-    NUPUR, NUPUR_SYS, callee, in_engine_crate, in_layer, is_extension, makiri_policy_applies,
-    module_of, ours, path_of, within,
+    BYTES_LENDING_METHODS, CALLERS_RUBY_RUNNERS, GVL_RELEASED_CALLS, NUPUR, NUPUR_SYS, callee,
+    in_engine_crate, in_layer, is_extension, makiri_policy_applies, module_of, ours, path_of,
+    within,
 };
 use crate::{
     INFALLIBLE_ALLOCATION, RAW_NODE_CROSSING, RUBY_IN_GVL_RELEASED_BODY, RUBY_LAYER_IN_ENGINE,
@@ -120,10 +121,54 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
     if !is_extension(cx) {
         return;
     }
-    let makiri = makiri_policy_applies(cx);
-    if makiri {
-        check_raw_node_crossing(cx, expr);
+    if makiri_policy_applies(cx) {
+        check_makiri_policy(cx, expr);
     }
+    check_layer_calls(cx, expr);
+}
+
+/// The layer's guarantees, in any extension on Nupur and in the layer
+/// itself: what runs the caller's Ruby, and what a closure the layer runs
+/// with the GVL released (or with a String's bytes lent) may call.
+fn check_layer_calls<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
+    let Some(did) = callee(cx, expr) else {
+        return;
+    };
+    let path = path_of(cx, did);
+
+    if runs_callers_ruby(&path) {
+        span_lint_and_help(
+            cx,
+            RUNS_CALLERS_RUBY,
+            expr.span.source_callsite(),
+            format!("`{path}` runs the caller's Ruby code"),
+            None,
+            "an extension on Nupur runs none of its caller's Ruby: no argument is converted, \
+             no method of a caller's object called; a call that must is allowed where it is \
+             made, with its reason, holding no guard or copy across it",
+        );
+    }
+
+    /* The body is the last argument (`without_gvl(ruby, body)`): matched
+     * as `[body]` alone, this saw nothing once the token joined it. */
+    if GVL_RELEASED_CALLS.contains(&path.as_str())
+        && let ExprKind::Call(_, [.., body]) = expr.kind
+    {
+        check_gvl_released(cx, body, &path);
+    }
+    if BYTES_LENDING_METHODS.contains(&path.as_str())
+        && let ExprKind::MethodCall(_, _, [body], _) = expr.kind
+    {
+        check_gvl_released(cx, body, &path);
+    }
+}
+
+/// Makiri's own policy: the engine and the layers' layout, and allocation
+/// that must fail closed. The paths it names are Makiri's (`bridge`,
+/// `glue`, the engine), so it applies to Makiri alone
+/// ([`makiri_policy_applies`]).
+fn check_makiri_policy<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
+    check_raw_node_crossing(cx, expr);
     if let ExprKind::MethodCall(..) = expr.kind
         && let Some(did) = callee(cx, expr)
     {
@@ -134,15 +179,13 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
     };
     let path = path_of(cx, did);
 
-    if makiri
-        && INFALLIBLE.iter().any(|p| {
-            if p.starts_with("::") {
-                path.ends_with(p)
-            } else {
-                path == *p
-            }
-        })
-        && !ours(&path)
+    if INFALLIBLE.iter().any(|p| {
+        if p.starts_with("::") {
+            path.ends_with(p)
+        } else {
+            path == *p
+        }
+    }) && !ours(&path)
     {
         span_lint_and_help(
             cx,
@@ -154,19 +197,6 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
             None,
             "allocate through falloc (or, for an exception message, format_args! into \
              crate::msg::Msg); an allocation that can fail must fail closed",
-        );
-    }
-
-    if runs_callers_ruby(&path) {
-        span_lint_and_help(
-            cx,
-            RUNS_CALLERS_RUBY,
-            expr.span.source_callsite(),
-            format!("`{path}` runs the caller's Ruby code"),
-            None,
-            "Makiri runs none of its caller's Ruby: no argument is converted, no method \
-             of a caller's object called; a call that must is allowed where it is made, \
-             with its reason, holding no guard or copy across it",
         );
     }
 
@@ -197,27 +227,12 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
             );
         }
     }
-
-    /* The body is the last argument (`without_gvl(ruby, body)`): matched
-     * as `[body]` alone, this saw nothing once the token joined it. */
-    if (path == "nupur::gvl::without_gvl" || path == "nupur::gvl::without_gvl_cancellable")
-        && let ExprKind::Call(_, [.., body]) = expr.kind
-    {
-        check_gvl_released(cx, body);
-    }
-    /* A String's bytes lent to a closure: held as a GVL-released body is,
-     * since nothing in it may touch Ruby while the slice is out. */
-    if path == "nupur::string::read::with_bytes"
-        && let ExprKind::MethodCall(_, _, [body], _) = expr.kind
-    {
-        check_gvl_released(cx, body);
-    }
 }
 
 /// The calls that run the caller's Ruby code: Ruby's C API that converts or
 /// calls (`to_s`, `to_str`, a method, a block) - rb-sys's own, or
-/// `nupur_sys::raising`'s wrapper of it, named the same - and the bridge's
-/// wrappers over it.
+/// `nupur_sys::raising`'s wrapper of it, named the same - and the layer's
+/// functions over it ([`CALLERS_RUBY_RUNNERS`]).
 fn runs_callers_ruby(path: &str) -> bool {
     if let Some(name) = path
         .strip_prefix("rb_sys::")
@@ -244,19 +259,7 @@ fn runs_callers_ruby(path: &str) -> bool {
         .iter()
         .any(|p| name.starts_with(p));
     }
-    /* By the path each is defined at (`path_of`), not the one it is
-     * re-exported under: the raw wrappers are in `raw`'s submodules. */
-    matches!(
-        path,
-        "nupur::raw::define::call_method"
-            | "nupur::raw::iterate::yield_value"
-            | "nupur::raw::define::call_public"
-            | "nupur::raw::define::respond_to"
-            | "nupur::rb::call::public_method"
-            | "nupur::rb::call::responds_to"
-            | "nupur::rb::class::Module::call_method"
-            | "nupur::rb::method::yield_value"
-    )
+    CALLERS_RUBY_RUNNERS.contains(&path)
 }
 
 /// A function that defines a Ruby method: `define_method`,
@@ -322,13 +325,13 @@ fn check_raw_node_crossing<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>)
 /// A GVL-released body: everything it calls must be the engine's or a
 /// library's - never the Ruby layer, Ruby's C API, or a function value whose
 /// target no one can see.
-fn check_gvl_released<'tcx>(cx: &LateContext<'tcx>, body: &'tcx Expr<'tcx>) {
+fn check_gvl_released<'tcx>(cx: &LateContext<'tcx>, body: &'tcx Expr<'tcx>, holder: &str) {
     let ExprKind::Closure(closure) = body.kind else {
         span_lint_and_help(
             cx,
             RUBY_IN_GVL_RELEASED_BODY,
             body.span,
-            "a GVL-released body that is not a closure written here",
+            format!("a GVL-released body (`{holder}`'s) that is not a closure written here"),
             None,
             "pass a closure, so what it calls can be checked",
         );
@@ -355,7 +358,7 @@ fn check_gvl_released<'tcx>(cx: &LateContext<'tcx>, body: &'tcx Expr<'tcx>) {
                     cx,
                     RUBY_IN_GVL_RELEASED_BODY,
                     e.span.source_callsite(),
-                    "a GVL-released body calls what is not the engine's",
+                    format!("a GVL-released body (`{holder}`'s) calls what is not the engine's"),
                     None,
                     "with the GVL released no Ruby may run, and only the engine is known \
                      Ruby-free; hoist this call out of the closure",

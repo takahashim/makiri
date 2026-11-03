@@ -21,6 +21,16 @@ re-exports no `VALUE`.
 `src/lib.rs` states each lint and the module that holds it; that module says
 exactly what it reports and what it cannot see.
 
+The layer's functions the lints know by name - those that run the caller's
+Ruby, those that run a closure with the GVL released, those that lend a
+String's bytes - are three tables in `src/paths.rs`, by the path each is
+defined at. A function the layer adds that belongs in one must be added
+there, with a probe line; `rake dylint` fails unless the self-test reports
+every entry, so one that stops matching cannot go quiet. Inside the layer,
+the wrappers over those functions `expect` the lint rather than `allow` it,
+and the runs deny an unfulfilled expectation: a wrapper whose call stopped
+being reported fails the task too.
+
 Run them with `bundle exec rake dylint` from the repository root. It needs
 the nightly `rust-toolchain.toml` pins (with `rustc-dev`) and
 `cargo install cargo-dylint dylint-link`. The task then runs the self-test:
