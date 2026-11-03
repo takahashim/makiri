@@ -106,8 +106,9 @@ When a rule here changes, change its reasoning there in the same commit.
   `node_set_from_read`); no raise can cross a guard.
 - **`InternalError` descends from `Exception`, not `StandardError`**, so a
   bare `rescue` passes it through. In `Init_makiri` a failure after
-  definition has begun is `fatal`; only the first, Ruby API check is a
-  `LoadError` (`run_init`).
+  definition has begun is `fatal`, but a `throw` or kill is resumed; only
+  the first checks (Ruby API, raise state, `Makiri::Node` not yet defined)
+  are a `LoadError` (`run_init`).
 - **A C integer is converted only in `nupur_sys::int`** (Nupur's
   `crate::int`). No integer `as` cast and
   no `c_long` / `c_ulong` in Nupur, `bridge`, `glue` or `init`

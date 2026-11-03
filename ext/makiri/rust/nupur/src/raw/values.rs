@@ -194,9 +194,10 @@ pub(crate) fn enumeratorize(obj: Value, meth: Symbol) -> Result<Value, Error> {
 /// `rb_hash_lookup2` at `key`, `Ok(None)` for no entry. The key must be a
 /// Symbol or a plain String, hashed and compared in C - any other is a
 /// `TypeError` here, as [`hash_aset`]'s, since its own `#hash` would run - but
-/// a key already IN the Hash may
-/// be any object, and one whose hash collides is compared with its `eql?`,
-/// the caller's Ruby, which can raise or `throw`. That comes back as `Err`,
+/// a key already IN the Hash may be any object, and one whose hash collides
+/// is compared by calling `key.eql?(stored)` (`rb_any_cmp`, then `rb_eql`):
+/// Symbol's or String's own, the caller's Ruby where a program redefined it,
+/// which can raise or `throw`. That comes back as `Err`,
 /// to be passed on: read as "no entry", the exception would be lost and the
 /// keyword taken as absent. In the raise sweep's set (`call_allocating`), so
 /// that path is run.

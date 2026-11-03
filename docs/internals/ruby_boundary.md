@@ -516,11 +516,19 @@ Outside a registered method a panic does not become `InternalError`:
 - The GC callbacks abort (see "Panics and unwinding").
 - In `Init_makiri`, a panic - or an `Err` - once the extension has begun to
   define itself is `fatal`, since `InternalError` may not exist yet and a
-  half-defined extension must not be used. Only the checks that come first
-  raise an ordinary `LoadError`: the Ruby API one
-  (`nupur::abi::check_running_api`) and that `rb_protect`'s raise state is
-  the one Nupur knows (`nupur::abi::check_raise_state`)
-  (`bridge::rb::method::run_init(check, init)`).
+  half-defined extension must not be used. A non-local exit is the
+  exception: a `throw` or a thread kill that stops `init` is resumed, as
+  `finish` resumes a method's, because it belongs to the thread, not to a
+  broken extension. Only the checks that come first raise an ordinary
+  `LoadError`: the Ruby API one (`nupur::abi::check_running_api`), that
+  `rb_protect`'s raise state is the one Nupur knows
+  (`nupur::abi::check_raise_state`), and that `Makiri::Node`, the first
+  class `init` defines, is not already there (`nupur::abi::check_undefined`)
+  (`bridge::rb::method::run_init(check, init)`). The last check refuses a
+  class that other code defined first, which `define_data_class` would
+  otherwise meet as `fatal`. It also refuses a second `Init_` after an exit
+  cut a `require` short: Ruby marks the feature loaded only when `Init_`
+  returns.
 
 ## C integers
 

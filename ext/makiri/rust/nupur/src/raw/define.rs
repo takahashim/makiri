@@ -128,6 +128,15 @@ pub(crate) fn const_defined_at(outer: Value, id: crate::rb::Id) -> Result<bool, 
     Ok(r != 0)
 }
 
+/// Whether `outer`'s constant `id` is an autoload not yet loaded
+/// (`rb_autoload_p`, whose answer is the feature to require or `nil`);
+/// nothing is loaded. Protected as every C call that is not classified.
+pub(crate) fn autoload_pending(outer: Value, id: crate::rb::Id) -> Result<bool, Error> {
+    let (outer, id) = (outer.as_sys(), id.as_raw());
+    let v = call(|inside| unsafe { nupur_sys::raising::rb_autoload_p(inside, outer, id) })?;
+    Ok(!crate::rb::ReprValue::is_nil(Value::from_sys(v)))
+}
+
 /// `recv.public_send(id, *args)` (`rb_funcallv_public`): only a public
 /// method, a private or protected one being `NoMethodError`. The caller's
 /// Ruby, as [`call_method`] is.

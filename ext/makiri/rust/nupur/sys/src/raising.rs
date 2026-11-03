@@ -160,6 +160,7 @@ raising! {
     fn rb_big2str(x: Value, base: core::ffi::c_int) -> Value;
     fn rb_big2ull(arg1: Value) -> core::ffi::c_ulonglong;
     fn rb_check_frozen(obj: Value);
+    fn rb_autoload_p(space: Value, name: ID) -> Value;
     fn rb_check_typeddata(obj: Value, data_type: &DataType) -> *mut c_void;
     fn rb_const_defined_at(space: Value, name: ID) -> core::ffi::c_int;
     fn rb_const_get(space: Value, name: ID) -> Value;

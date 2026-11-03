@@ -47,6 +47,7 @@ spec/conformance/data/
 # Rust build output (the Lexbor reference is a workspace of its own)
 ext/makiri/rust/target/
 ext/makiri/rust/reference/target/
+ext/makiri/rust/lints/nupur_lints/target/
 
 # cargo-fuzz: build output, the accumulated corpus (kept in CI cache, not here)
 # and any crash reproducers it saves.

@@ -1,14 +1,14 @@
 //! What a String's object header says of it, read straight from the header:
-//! its cached coderange, its encoding index and whether its class is String
-//! itself. The one place the layer reads `RBasic`'s flags for a String, so
-//! what rests on Ruby's object layout is read here and nowhere else; what a
-//! reader makes of the answers (`string::read`, `encoding`) is theirs.
+//! its cached coderange and its encoding index. The one place the layer
+//! reads `RBasic`'s flags for a String, so what rests on Ruby's object
+//! layout is read here and nowhere else; what a reader makes of the answers
+//! (`string::read`, `encoding`) is theirs.
 
 #![allow(unsafe_code)]
 
 use core::ffi::c_int;
 
-use super::{AsSys, RClass, RString, ReprValue, Value};
+use super::{AsSys, RString};
 
 /// A String's coderange, as Ruby caches it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -61,13 +61,5 @@ impl RString {
         } else {
             inline
         }
-    }
-
-    /// Whether the String's class is String itself, not a subclass: the
-    /// header's `klass`, compared with `rb_cString` ([`ReprValue::has_class`]).
-    #[inline]
-    pub(crate) fn has_string_class(self) -> bool {
-        let string = nupur_sys::non_raising::rb_cString(self.as_sys().ruby());
-        self.has_class(RClass::from_known(Value::from_sys(string)))
     }
 }

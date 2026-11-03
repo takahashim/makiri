@@ -333,7 +333,11 @@ fn check(ruby: &Ruby) -> Result<(), Error> {
         "makiri",
         "`bundle exec rake clean compile` in a checkout, or reinstall the gem",
     )?;
-    crate::nupur::abi::check_raise_state(ruby)
+    crate::nupur::abi::check_raise_state(ruby)?;
+    /* `Makiri::Node`, the first class `init` defines: there before it, it is
+     * a `require` an exit cut short, or another's class, and a `LoadError`
+     * here rather than `fatal` there. */
+    crate::nupur::abi::check_undefined(ruby, &["Makiri", "Node"])
 }
 
 fn init(ruby: &Ruby) -> Result<(), Error> {
