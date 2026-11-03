@@ -398,7 +398,8 @@ rule. A new raising call is a new wrapper with its raise stated.
 
 The glue builds every Ruby value over those wrappers: Arrays, Hashes,
 numbers and Symbols through `bridge::build`, Strings through
-`bridge::string::utf8_str`, and every wrapped object, a NodeSet included,
+`bridge::string` (`utf8_str_trusting` for the engine's bytes, `utf8_str` for
+a `&str`), and every wrapped object, a NodeSet included,
 through `typed::TypedType::wrap`.
 
 Each protected call costs a `setjmp`, ~8 ns. A light reader that allocates

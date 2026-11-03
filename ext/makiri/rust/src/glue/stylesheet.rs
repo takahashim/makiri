@@ -12,7 +12,7 @@ use crate::function;
 
 use crate::bridge::build::{ary, aset, hash, int, push, symbol as sym};
 use crate::bridge::rb::Symbol;
-use crate::bridge::string::{ruby_verified_text, utf8_str};
+use crate::bridge::string::{ruby_verified_text, utf8_str_trusting};
 use crate::init::MOD_LEXBOR;
 use crate::selectors::stylesheet::{parse, Decl, Fail, Rule, MAX_DEPTH};
 
@@ -68,8 +68,8 @@ fn decls_to_ruby(ruby: &Ruby, k: &Keys, ds: &[Decl]) -> Result<RArray, Error> {
     let a = ary(ruby, ds.len())?;
     for d in ds {
         let h = hash(ruby)?;
-        aset(h, k.name, utf8_str(ruby, &d.name)?)?;
-        aset(h, k.value, utf8_str(ruby, &d.value)?)?;
+        aset(h, k.name, utf8_str_trusting(ruby, &d.name)?)?;
+        aset(h, k.value, utf8_str_trusting(ruby, &d.value)?)?;
         aset(h, k.important, ruby.boolean(d.important))?;
         push(a, h.as_value())?;
     }
@@ -89,7 +89,7 @@ fn rules_to_ruby(ruby: &Ruby, k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
                 let sa = ary(ruby, selectors.len())?;
                 for s in selectors {
                     let sh = hash(ruby)?;
-                    aset(sh, k.text, utf8_str(ruby, &s.text)?)?;
+                    aset(sh, k.text, utf8_str_trusting(ruby, &s.text)?)?;
                     let sp = ary(ruby, 3)?;
                     for v in s.specificity {
                         push(sp, int(ruby, i64::from(v))?)?;
@@ -109,7 +109,7 @@ fn rules_to_ruby(ruby: &Ruby, k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
                 declarations,
             } => {
                 aset(h, k.type_, k.sym_bad_style)?;
-                aset(h, k.selector_text, utf8_str(ruby, selector_text)?)?;
+                aset(h, k.selector_text, utf8_str_trusting(ruby, selector_text)?)?;
                 aset(
                     h,
                     k.declarations,
@@ -123,8 +123,8 @@ fn rules_to_ruby(ruby: &Ruby, k: &Keys, rs: &[Rule]) -> Result<RArray, Error> {
                 declarations,
             } => {
                 aset(h, k.type_, k.sym_at_rule)?;
-                aset(h, k.name, utf8_str(ruby, name)?)?;
-                aset(h, k.prelude, utf8_str(ruby, prelude)?)?;
+                aset(h, k.name, utf8_str_trusting(ruby, name)?)?;
+                aset(h, k.prelude, utf8_str_trusting(ruby, prelude)?)?;
                 aset(h, k.rules, rules_to_ruby(ruby, k, rules)?.as_value())?;
                 aset(
                     h,

@@ -22,7 +22,7 @@
 use crate::bridge::rb::{prelude::*, Error, Ruby, Value};
 
 use super::{wrap, XmlSelf};
-use crate::bridge::string::{str_from_read, utf8_str, StrKind};
+use crate::bridge::string::{str_from_read, utf8_str, utf8_str_trusting, StrKind};
 use crate::child_index;
 use crate::xml::model::{ArenaKind, Document as XmlDoc, NodeId};
 
@@ -55,7 +55,7 @@ pub fn name(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     })?;
     match name {
         Some(name) => Ok(name),
-        None => utf8_str(ruby, b"").map(|s| s.as_value()),
+        None => utf8_str(ruby, "").map(|s| s.as_value()),
     }
 }
 
@@ -143,7 +143,7 @@ pub fn content(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
         let value = str_from_read(ruby, d, StrKind::Utf8, |d| Some(d.value(d.id)))?;
         return match value {
             Some(value) => Ok(value),
-            None => utf8_str(ruby, b"").map(|s| s.as_value()),
+            None => utf8_str(ruby, "").map(|s| s.as_value()),
         };
     }
 
@@ -310,7 +310,7 @@ pub fn keys(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     let d = this.read()?;
     let ary = crate::bridge::build::ary(ruby, 0)?;
     for at in attrs_of(&d, this.id) {
-        crate::bridge::build::push(ary, utf8_str(ruby, d.qname(at))?)?;
+        crate::bridge::build::push(ary, utf8_str_trusting(ruby, d.qname(at))?)?;
     }
     Ok(ary.as_value())
 }
@@ -320,7 +320,7 @@ pub fn values(ruby: &Ruby, this: XmlSelf) -> Result<Value, Error> {
     let d = this.read()?;
     let ary = crate::bridge::build::ary(ruby, 0)?;
     for at in attrs_of(&d, this.id) {
-        crate::bridge::build::push(ary, utf8_str(ruby, d.value(at))?)?;
+        crate::bridge::build::push(ary, utf8_str_trusting(ruby, d.value(at))?)?;
     }
     Ok(ary.as_value())
 }

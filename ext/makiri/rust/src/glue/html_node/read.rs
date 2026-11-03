@@ -23,7 +23,9 @@ use crate::bridge::rb::{prelude::*, Error, Ruby, Value};
 use super::with_arg_node;
 use crate::bridge::html::{wrap_html_node, HtmlView};
 use crate::bridge::ruby::is_kind_of;
-use crate::bridge::string::{ruby_verified_text, str_from_read, utf8_str, RubyText, StrKind};
+use crate::bridge::string::{
+    ruby_verified_text, str_from_read, utf8_str_trusting, RubyText, StrKind,
+};
 use crate::child_index;
 use crate::html_dom::html::{HtmlAttr, HtmlNode, HtmlTree, NodeType, RawNode};
 use crate::init::{CLASS_NODE, CLASS_XML_DOCUMENT};
@@ -95,7 +97,7 @@ pub fn name(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     })?;
     match name {
         Some(name) => Ok(name),
-        None => crate::bridge::string::utf8_str(ruby, b"").map(|s| s.as_value()),
+        None => crate::bridge::string::utf8_str(ruby, "").map(|s| s.as_value()),
     }
 }
 
@@ -344,7 +346,7 @@ pub fn keys(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     let ary = crate::bridge::build::ary(ruby, 0)?;
     if let Some(el) = view.node().element() {
         for at in el.attrs() {
-            crate::bridge::build::push(ary, utf8_str(ruby, at.qualified_name())?)?;
+            crate::bridge::build::push(ary, utf8_str_trusting(ruby, at.qualified_name())?)?;
         }
     }
     Ok(ary.as_value())
@@ -356,7 +358,7 @@ pub fn values(ruby: &Ruby, this: super::HtmlSelf) -> Result<Value, Error> {
     let ary = crate::bridge::build::ary(ruby, 0)?;
     if let Some(el) = view.node().element() {
         for at in el.attrs() {
-            crate::bridge::build::push(ary, utf8_str(ruby, at.value())?)?;
+            crate::bridge::build::push(ary, utf8_str_trusting(ruby, at.value())?)?;
         }
     }
     Ok(ary.as_value())
