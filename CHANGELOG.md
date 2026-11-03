@@ -15,6 +15,13 @@
   by `Makiri::HTML`, `Document#fragment` and `DocumentFragment.parse`, and a
   negative value lifts the limit. `inner_html=` and `outer_html=` use the
   default.
+* An unknown keyword is `ArgumentError` in `DocumentFragment.parse`,
+  `Document#fragment`, `to_html`, `inner_html`, `outer_html`, `to_xml` and
+  `canonicalize`, as it already was in `Makiri::HTML` and `Makiri::XML`.
+  They used to ignore one, so a misspelt `max_amplification:` left the
+  parse under the default limit, and a misspelt `encoding:` wrote UTF-8.
+  `#xpath`, `#at_xpath` and `XPathContext.new` read their other keywords as
+  namespace bindings, as before.
 * A selector, an XPath expression, a name or text is checked to be UTF-8 by
   Makiri itself, on its own copy of the bytes, rather than trusted on the
   String's cached coderange, which another C extension could leave wrong.

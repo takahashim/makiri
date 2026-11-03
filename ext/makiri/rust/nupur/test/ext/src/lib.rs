@@ -190,6 +190,7 @@ fn slices(ruby: &Ruby, short: bool) -> Result<Value, Error> {
 /// `kw(a: x)`: keyword `a`, or nil.
 fn kw(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     Ok(Kwargs::scan(ruby, args)?
+        .only(ruby, &["a"])?
         .value(ruby, "a")?
         .unwrap_or_else(|| ruby.qnil()))
 }
@@ -197,8 +198,15 @@ fn kw(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
 /// `kw_only(a:, b:)`: refuses any other keyword, then answers `a`.
 fn kw_only(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
     let kw = Kwargs::scan(ruby, args)?;
-    kw.only(&["a", "b"])?;
+    let kw = kw.only(ruby, &["a", "b"])?;
     Ok(kw.value(ruby, "a")?.unwrap_or_else(|| ruby.qnil()))
+}
+
+/// `kw_undeclared(a:)`: declares `a`, then reads `b` - the method's own
+/// mistake, which Nupur answers with an internal error.
+fn kw_undeclared(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
+    let kw = Kwargs::scan(ruby, args)?.only(ruby, &["a"])?;
+    Ok(kw.value(ruby, "b")?.unwrap_or_else(|| ruby.qnil()))
 }
 
 /// One required argument and one optional: how many were given.
@@ -497,6 +505,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     m.define_module_function("binary_copy", function!(binary_copy, 1))?;
     m.define_module_function("kw", function!(kw, -1))?;
     m.define_module_function("kw_only", function!(kw_only, -1))?;
+    m.define_module_function("kw_undeclared", function!(kw_undeclared, -1))?;
     m.define_module_function("shape", function!(shape, -1))?;
     m.define_module_function("pairs", function!(pairs, 1))?;
     m.define_module_function("sum_without_gvl", function!(sum_without_gvl, 1))?;

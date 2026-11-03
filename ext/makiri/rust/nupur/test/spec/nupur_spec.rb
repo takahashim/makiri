@@ -373,13 +373,19 @@ RSpec.describe "nupur" do
       expect(NupurTest.kw_only(a: 1, b: 2)).to eq(1)
       expect(NupurTest.kw_only).to be_nil
       expect { NupurTest.kw_only(a: 1, c: 2) }.to raise_error(ArgumentError, "unknown keyword: :c")
-      expect { NupurTest.kw_only(**{ "a" => 1 }) }.to raise_error(ArgumentError, "unknown keyword: String key")
+      # Worded as Ruby words it: a String key is quoted, and never one of a method's keywords.
+      expect { NupurTest.kw_only(**{ "a" => 1 }) }.to raise_error(ArgumentError, 'unknown keyword: "a"')
     end
 
     it "reads a keyword, nil when absent; a braced Hash is positional" do
       expect(NupurTest.kw(a: 1)).to eq(1)
       expect(NupurTest.kw).to be_nil
       expect { NupurTest.kw({ a: 1 }) }.to raise_error(ArgumentError, /given 1, expected 0/)
+      expect { NupurTest.kw(b: 1) }.to raise_error(ArgumentError, "unknown keyword: :b")
+    end
+
+    it "answers a read of a keyword the method did not declare with an internal error" do
+      expect { NupurTest.kw_undeclared(a: 1) }.to raise_error(NupurTest::InternalError, /keyword b was read but not declared/)
     end
 
     it "words an arity error as Ruby does" do

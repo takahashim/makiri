@@ -30,27 +30,11 @@ use crate::xml::model::ParseLimits;
 /// bypass the budget entirely.
 fn parse_limits(ruby: &Ruby, h: Option<RHash>) -> Result<ParseLimits, Error> {
     let mut limits = ParseLimits { max_bytes: None };
-    let Some(h) = h.filter(|h| !h.is_empty()) else {
-        return Ok(limits);
-    };
-
-    let key = crate::bridge::build::symbol(ruby, "max_bytes")?;
-    /* The keys are read from the Hash itself (`hash::each_pair`), not
-     * through a `keys` a subclass can redefine. */
-    crate::bridge::hash::each_pair(ruby, h, |k, _| {
-        /* By identity: `eql?` would be the caller's key's method. */
-        if crate::bridge::ruby::same_value(k, key.as_value()) {
-            return Ok(());
-        }
-        Err(Error::new(
-            crate::bridge::rb::Builtin::ArgumentError,
-            format_args!("unknown keyword: {}", crate::bridge::ruby::Describe(k)),
-        ))
-    })?;
-
-    /* `nil` is the default, as the documented `max_bytes: nil` says - and as
+    /* Any other keyword is `ArgumentError`, as every method's is. `nil` is
+     * the default, as the documented `max_bytes: nil` says - and as
      * `max_tree_depth: nil` is on the HTML side. */
-    let Some(v) = h.get(key)?.filter(|v: &Value| !v.is_nil()) else {
+    let kw = crate::bridge::args::Kwargs::from_scan(h).only(ruby, &["max_bytes"])?;
+    let Some(v) = kw.value(ruby, "max_bytes")? else {
         return Ok(limits);
     };
     /* An actual Integer, not merely something convertible: a Float (1.5) is a
