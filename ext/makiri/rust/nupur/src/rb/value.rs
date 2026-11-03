@@ -501,6 +501,51 @@ impl Float {
     }
 }
 
+/* ---- a value's kind, read once ---- */
+
+/// What a value is, for a reader that dispatches on it: one read of its
+/// type (`rb_type`), and the handle for it, rather than a type test per
+/// kind. A Bignum and a heap Float are told from a Fixnum and a flonum by
+/// [`Kind::Bignum`] and [`Kind::Float`] alike - both are the handle.
+#[derive(Clone, Copy)]
+pub enum Kind {
+    Nil,
+    True,
+    False,
+    /// An Integer that is an immediate.
+    Fixnum(Integer),
+    /// An Integer on the heap.
+    Bignum(Integer),
+    Float(Float),
+    String(RString),
+    Symbol(Symbol),
+    Array(RArray),
+    Hash(RHash),
+    /// Anything else: an object, a class, a Range, a Struct, ...
+    Other,
+}
+
+impl Value {
+    /// This value's [`Kind`]: one read of its type, no call.
+    #[inline]
+    pub fn kind(self) -> Kind {
+        use ruby_value_type as T;
+        match non_raising::rb_type(self.0) {
+            T::RUBY_T_NIL => Kind::Nil,
+            T::RUBY_T_TRUE => Kind::True,
+            T::RUBY_T_FALSE => Kind::False,
+            T::RUBY_T_FIXNUM => Kind::Fixnum(Integer(self)),
+            T::RUBY_T_BIGNUM => Kind::Bignum(Integer(self)),
+            T::RUBY_T_FLOAT => Kind::Float(Float(self)),
+            T::RUBY_T_STRING => Kind::String(RString(self)),
+            T::RUBY_T_SYMBOL => Kind::Symbol(Symbol(self)),
+            T::RUBY_T_ARRAY => Kind::Array(RArray(self)),
+            T::RUBY_T_HASH => Kind::Hash(RHash(self)),
+            _ => Kind::Other,
+        }
+    }
+}
+
 /* ---- immediates and identity ---- */
 
 /// `nil`, as a `Value`.

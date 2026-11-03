@@ -337,6 +337,28 @@ globals! {
  * one call of the C function, here.
  */
 
+/// `rb_str_unlocktmp` of a String locked with `rb_str_locktmp`: clears the
+/// lock flag, and allocates nothing.
+///
+/// # Safety
+///
+/// `str` is a String that is locked (`rb_str_locktmp` succeeded on it and
+/// it has not been unlocked since).
+#[inline(always)]
+#[cfg_attr(
+    dylint_lib = "makiri_lints",
+    allow(
+        raising_call_outside_protect,
+        reason = "rb_str_unlocktmp raises only for a String that is not locked; the contract is one that is"
+    )
+)]
+pub unsafe fn str_unlocktmp_of_locked(str: Value) {
+    // SAFETY: the contract.
+    unsafe {
+        rb_sys::rb_str_unlocktmp(str.as_raw());
+    }
+}
+
 /// `rb_enc_get` of a String: the encoding it is tagged with.
 ///
 /// # Safety

@@ -71,6 +71,23 @@ pub fn str_dup(s: RString) -> Result<RString, Error> {
     typed(d, RString::from_value, "a C call made no String")
 }
 
+/// `rb_enc_str_coderange`: Ruby's scan of `s` for its coderange, cached in
+/// the String's flags, so the next read of them answers without a scan.
+/// Protected, as the survey finds a path to a raise.
+#[inline]
+pub(crate) fn enc_str_coderange(s: RString) -> Result<(), Error> {
+    let v = s.as_sys();
+    call(|inside| unsafe { nupur_sys::raising::rb_enc_str_coderange(inside, v) }).map(|_| ())
+}
+
+/// `rb_str_locktmp`: Ruby refuses every change to `s` until it is
+/// unlocked, raising a `RuntimeError` for one already locked.
+#[inline]
+pub(crate) fn str_locktmp(s: RString) -> Result<(), Error> {
+    let v = s.as_sys();
+    call(|inside| unsafe { nupur_sys::raising::rb_str_locktmp(inside, v) }).map(|_| ())
+}
+
 /// `rb_enc_associate`: `s` itself, tagged `enc`. Raises `FrozenError` for a
 /// frozen String, and `ArgumentError` for an encoding its bytes cannot carry.
 #[inline]

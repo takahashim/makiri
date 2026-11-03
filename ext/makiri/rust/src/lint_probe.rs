@@ -104,6 +104,12 @@ fn gvl_released(ruby: &crate::bridge::rb::Ruby) -> Result<(), crate::bridge::rb:
     Ok(())
 }
 
+/// A String's bytes lent to a closure are held as a GVL-released body is.
+fn lent_bytes(s: crate::bridge::rb::RString) -> bool {
+    let _ = s.with_bytes(|_| crate::bridge::ruby::type_error("x")); //~ discarded_ruby_error ruby_in_gvl_released_body
+    s.with_bytes(|b| engine::names_only_the_engine(b))
+}
+
 fn allocations() {
     let _ = "x".to_owned(); //~ infallible_allocation
     let _ = format!("{}", 1); //~ infallible_allocation

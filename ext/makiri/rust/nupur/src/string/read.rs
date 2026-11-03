@@ -6,6 +6,7 @@
 #![allow(unsafe_code)]
 
 use crate::encoding::{Encoding, Unconvertible};
+use crate::rb::value::AsSys;
 use crate::rb::{Error, RString, Ruby};
 
 /// [`RString::append_to`]'s refusal: the buffer had too little spare room.
@@ -55,15 +56,25 @@ impl RString {
 
     /// Whether this String's text is read as UTF-8 bytes with no transcode -
     /// its encoding UTF-8, US-ASCII or ASCII-8BIT
-    /// ([`Encoding::is_utf8_ascii_or_binary`]) - asked of the String itself, by
+    /// (`Encoding::is_utf8_ascii_or_binary`) - asked of the String itself, by
     /// index and with no call on the common path: the index is read from the String's
     /// flags, where Ruby keeps it inline for every encoding below
     /// `RUBY_ENCODING_INLINE_MAX` (the builtin three are 0-2), and compared
     /// with the builtin indices (`encoding`'s one table of them). Every strict read asks, so it
     /// is on the hot path: `rb_enc_get` + `rb_utf8_encoding` cost Makiri's
     /// `Node#[]` ~13%.
-    pub(crate) fn reads_as_utf8_bytes(self) -> bool {
+    #[inline]
+    pub fn reads_as_utf8_bytes(self) -> bool {
         crate::encoding::reads_as_utf8_index(self.encoding_index())
+    }
+
+    /// Whether this String is ASCII-8BIT, asked as
+    /// [`reads_as_utf8_bytes`](Self::reads_as_utf8_bytes) asks: from its
+    /// flags, with no call. A reader that takes UTF-8 and US-ASCII as text
+    /// but binary only when it is ASCII tells the two apart with it.
+    #[inline]
+    pub fn is_binary(self) -> bool {
+        crate::encoding::is_ascii8bit_index(self.encoding_index())
     }
 
     /// Whether Ruby already knows this String to be valid UTF-8, from its
@@ -72,6 +83,7 @@ impl RString {
     /// reader that would otherwise repair or check the bytes itself). A wrong
     /// coderange (another C extension's, a Ruby bug) must never decide what a
     /// `&str` holds: that is [`crate::utf8_copy::Utf8Copy`]'s own check.
+    #[inline]
     pub fn known_utf8(self) -> bool {
         match self.enc_coderange() {
             /* Every byte < 0x80 in an ASCII-compatible encoding. */
@@ -83,6 +95,112 @@ impl RString {
             }
             _ => false,
         }
+    }
+}
+
+impl RString {
+    /// The String's bytes, lent to `f` for the length of the call: the one
+    /// way the layer hands out a slice of a String, for a reader that must
+    /// not pay for a copy (a JSON generator escaping as it reads).
+    ///
+    /// `f` is `Send`, so it can hold no Ruby value and no GVL token - neither
+    /// is `Send` - and so it can run no Ruby code, make no Ruby object and
+    /// reach no Ruby value, this String included: nothing can grow, shrink,
+    /// move or free the buffer while it is lent. The String itself is kept
+    /// alive, and in place, by this frame, which holds it until `f` returns.
+    /// What `f` answers cannot borrow the slice. `rake dylint` holds `f`'s
+    /// body as it holds a GVL-released one (`ruby_in_gvl_released_body`).
+    #[inline]
+    pub fn with_bytes<R>(self, f: impl FnOnce(&[u8]) -> R + Send) -> R {
+        // SAFETY: the slice lives for `f`'s call alone, and nothing that runs
+        // meanwhile can touch Ruby (above); `self` is a live String.
+        let r = f(unsafe { self.as_slice() });
+        nupur_sys::value::keep_alive(self.as_sys());
+        r
+    }
+}
+
+impl RString {
+    /// The String's bytes, lent to `f` while the String cannot change: for
+    /// a reader that makes Ruby objects as it goes (a JSON parser), and so
+    /// cannot take [`with_bytes`](Self::with_bytes), whose closure may not
+    /// touch Ruby.
+    ///
+    /// A frozen String cannot change: Ruby refuses every change to it, so
+    /// it is lent as it is. That is also the only kind another Ractor can
+    /// hold - a String shareable between Ractors is frozen - and so the
+    /// only kind two Ractors may read at once; nothing is written to it,
+    /// so they race on nothing. An unfrozen String, which only its own
+    /// Ractor can reach, is locked (`rb_str_locktmp`) for the loan: Ruby
+    /// then refuses every change to it (`String#<<`, `replace`, `clear`, ...
+    /// raise), whoever asks. Either way the String is kept alive, and in
+    /// place, by this frame, which the GC's stack scan sees, until `f`
+    /// returns; a lock is released on every way out, a panic included. An
+    /// unfrozen String already locked - by another reader, or by `f`
+    /// reading it again - is Ruby's `RuntimeError`, returned.
+    pub fn with_locked_bytes<R>(self, f: impl FnOnce(&[u8]) -> R) -> Result<R, Error> {
+        use crate::rb::ReprValue;
+        if self.is_frozen() {
+            // SAFETY: a frozen String's bytes never change, and this frame
+            // keeps it alive and in place until `f` returns.
+            let r = f(unsafe { self.as_slice() });
+            nupur_sys::value::keep_alive(self.as_sys());
+            return Ok(r);
+        }
+        crate::raw::str_locktmp(self)?;
+        let unlock = Unlock(self);
+        // SAFETY: the String is locked until `unlock` drops, after `f`, and
+        // live and in place on this frame meanwhile (above).
+        let r = f(unsafe { unlock.0.as_slice() });
+        drop(unlock);
+        Ok(r)
+    }
+}
+
+/// Unlocks a String [`RString::with_locked_bytes`] locked, when dropped.
+struct Unlock(RString);
+
+impl Drop for Unlock {
+    #[cfg_attr(
+        dylint_lib = "makiri_lints",
+        allow(
+            ffi_without_gvl_proof,
+            reason = "it guards the String `with_locked_bytes` locked, with the String as its proof, and lives only in that frame"
+        )
+    )]
+    fn drop(&mut self) {
+        /* Run while a panic unwinds, too, where a second panic aborts. Not
+         * a protected call, which refuses to run while an exit is pending
+         * and would leave the String locked: unlocking a String that is
+         * locked raises nothing (`str_unlocktmp_of_locked`). */
+        crate::no_unwind::must_not_unwind::<crate::no_unwind::DropUnlock, _>(|| {
+            // SAFETY: `Unlock` is made only right after the lock succeeded,
+            // and only this drop unlocks.
+            unsafe { nupur_sys::non_raising::str_unlocktmp_of_locked(self.0.as_sys()) };
+            nupur_sys::value::keep_alive(self.0.as_sys());
+        })
+    }
+}
+
+impl RString {
+    /// Whether Ruby holds this String to be valid UTF-8 (or ASCII in an
+    /// ASCII-compatible encoding): its cached coderange, and where none is
+    /// cached yet, Ruby's own scan, whose answer Ruby then keeps in the
+    /// String - so a String is scanned once, however often it is asked
+    /// about. This trusts Ruby's validator and cache rather than checking
+    /// the bytes with std's: right for a writer whose output keeps the
+    /// String's bytes as they are (a JSON generator), never for making a
+    /// `&str`, which is `utf8_copy`'s.
+    #[inline]
+    pub fn ruby_knows_utf8(self) -> Result<bool, Error> {
+        if self.known_utf8() {
+            return Ok(true);
+        }
+        if !matches!(self.enc_coderange(), crate::rb::value::Coderange::Unknown) {
+            return Ok(false);
+        }
+        crate::raw::enc_str_coderange(self)?;
+        Ok(self.known_utf8())
     }
 }
 

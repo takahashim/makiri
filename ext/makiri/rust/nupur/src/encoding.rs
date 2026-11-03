@@ -67,6 +67,11 @@ pub(crate) fn reads_as_utf8_index(index: c_int) -> bool {
 
 /// Whether the encoding of index `index` is UTF-8.
 #[inline]
+/// Whether `index` is ASCII-8BIT's.
+pub(crate) fn is_ascii8bit_index(index: c_int) -> bool {
+    is_builtin(&ASCII8BIT, index)
+}
+
 pub(crate) fn is_utf8_index(index: c_int) -> bool {
     is_builtin(&UTF8, index)
 }

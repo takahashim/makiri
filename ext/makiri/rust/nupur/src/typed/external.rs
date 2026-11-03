@@ -11,17 +11,17 @@
 /// Memory Ruby does not allocate is otherwise invisible to it and never
 /// triggers a collection. A cell, so a payload read through `&T` reports.
 #[derive(Default)]
-pub struct External(core::cell::Cell<usize>);
+pub struct External(core::sync::atomic::AtomicUsize);
 
 impl External {
     pub const fn new() -> External {
-        External(core::cell::Cell::new(0))
+        External(core::sync::atomic::AtomicUsize::new(0))
     }
 
     /// What has been reported and not given back.
     #[inline]
     pub fn reported(&self) -> usize {
-        self.0.get()
+        self.0.load(core::sync::atomic::Ordering::Relaxed)
     }
 
     /// The object holds `bytes` outside the heap now: the change since the
@@ -36,7 +36,7 @@ impl External {
     /// a String's bytes. The new figure is recorded first, for a collection
     /// that reads it.
     pub fn report(&self, ruby: &crate::rb::Ruby, bytes: usize) {
-        let then = self.0.get();
+        let then = self.0.load(core::sync::atomic::Ordering::Relaxed);
         let delta = if bytes >= then {
             nupur_sys::ssize_t::try_from(bytes - then)
         } else {
@@ -46,7 +46,7 @@ impl External {
         if delta == 0 {
             return;
         }
-        self.0.set(bytes);
+        self.0.store(bytes, core::sync::atomic::Ordering::Relaxed);
         // SAFETY: a plain counter adjustment, with the GVL held (`&Ruby`).
         unsafe { nupur_sys::non_raising::rb_gc_adjust_memory_usage(ruby.sys(), delta) };
     }
@@ -54,6 +54,11 @@ impl External {
     /// [`report`](Self::report) `more` bytes than were.
     #[inline]
     pub fn grow(&self, ruby: &crate::rb::Ruby, more: usize) {
-        self.report(ruby, self.0.get().saturating_add(more));
+        self.report(
+            ruby,
+            self.0
+                .load(core::sync::atomic::Ordering::Relaxed)
+                .saturating_add(more),
+        );
     }
 }

@@ -193,6 +193,117 @@ RSpec.describe "nupur" do
     end
   end
 
+  describe "a wrapped object shared between Ractors" do
+    it "is frozen and shareable from birth, with what its slot holds" do
+      held = +"slot"
+      o = NupurTest::Shared.new(7, held)
+      expect(o).to be_frozen
+      expect(Ractor.shareable?(o)).to be(true)
+      expect(held).to be_frozen
+      expect(o.held).to equal(held)
+    end
+
+    it "is read from other Ractors without a copy" do
+      skip "no Ractor" unless defined?(Ractor)
+      o = NupurTest::Shared.new(42, "x")
+      rs = 3.times.map { Ractor.new(o) { |shared| [shared.n, shared.object_id] } }
+      results = rs.map { |r| r.respond_to?(:value) ? r.value : r.take }
+      expect(results).to all(eq([42, o.object_id]))
+    end
+
+    it "refuses a slot value that cannot be made shareable" do
+      not_shareable = Object.new.instance_eval { proc { self } }
+      expect { NupurTest::Shared.new(1, not_shareable) }.to raise_error(Ractor::Error)
+    end
+
+    it "is not shareable when its type does not ask to be" do
+      expect(Ractor.shareable?(NupurTest::Holder.new(1))).to be(false)
+      expect { Ractor.make_shareable(NupurTest::Holder.new(1)) }.to raise_error(Ractor::Error)
+    end
+  end
+
+  describe "a String read in place" do
+    it "lends its bytes to a closure that cannot touch Ruby" do
+      expect(NupurTest.lent_sum("abc")).to eq(97 + 98 + 99)
+      expect(NupurTest.lent_sum("")).to eq(0)
+      expect(NupurTest.lent_sum("x" * 10_000)).to eq(120 * 10_000)
+    end
+
+    it "is locked while lent to a reader that may run Ruby, and unlocked after" do
+      s = +"hello"
+      expect(NupurTest.locked_len(s) { |str| str.length }.first).to eq(5)
+      expect { NupurTest.locked_len(s) { |str| str << "!" } }.to raise_error(RuntimeError, /locked/)
+      expect { s << "!" }.not_to raise_error
+      expect(s).to eq("hello!")
+    end
+
+    it "lends a frozen String unlocked, so Ractors may read one shared String at once" do
+      frozen = "shared".freeze
+      expect(NupurTest.locked_len(frozen) { |str| str.length }.first).to eq(6)
+      skip "no Ractor" unless defined?(Ractor)
+      s = Ractor.make_shareable(("x" * 1_000).freeze)
+      rs = 4.times.map { Ractor.new(s) { |str| 2_000.times.sum { NupurTest.locked_len(str) { |x| x.length }.first } } }
+      expect(rs.map { |r| r.respond_to?(:value) ? r.value : r.take }).to all(eq(1_000 * 2_000))
+      expect { s.dup << "y" }.not_to raise_error
+    end
+
+    it "leaves the String unlocked when the reader's Ruby raises" do
+      s = +"x"
+      expect { NupurTest.locked_len(s) { raise IOError, "inside" } }.to raise_error(IOError, "inside")
+      expect { s << "y" }.not_to raise_error
+    end
+
+    it "answers whether Ruby holds a String to be UTF-8, scanning once and keeping it" do
+      expect(NupurTest.knows_utf8(+"abc")).to be(true)
+      expect(NupurTest.knows_utf8(+"é")).to be(true)
+      expect(NupurTest.knows_utf8("\xFF".dup.force_encoding("UTF-8"))).to be(false)
+      expect(NupurTest.knows_utf8("\xC3\xA9".b)).to be(false)
+      expect(NupurTest.knows_utf8("ab".b)).to be(true)
+    end
+  end
+
+  describe "a value's kind" do
+    it "is read once, with the handle" do
+      expect([nil, true, false, 1, 2**70, 1.5, 1e300, "s", :s, [], {}, Object.new, 1r].map { NupurTest.kind_of(_1) })
+        .to eq(%i[nil true false fixnum bignum float float string symbol array hash other other])
+    end
+  end
+
+  describe "values built without a call each" do
+    def bits(x) = [x].pack("D").unpack1("Q")
+
+    it "makes the same Float Ruby makes, a flonum where Ruby's is one" do
+      edge = [0.0, -0.0, 1.0, -1.0, 0.1, 1.5, 1e-77, 1.72723e-77, 1e77, 1e78, 1e-78, 5e-324,
+              Float::MAX, Float::MIN, Float::INFINITY, -Float::INFINITY, Float::EPSILON,
+              2.0**255, 2.0**256, 2.0**-255, 2.0**-256]
+      rng = Random.new(7)
+      randoms = Array.new(20_000) { [rng.rand(2**64)].pack("Q").unpack1("D") }.reject(&:nan?)
+      (edge + randoms).each do |x|
+        made = NupurTest.float_of_bits(bits(x))
+        expect(bits(made)).to eq(bits(x))
+        # An immediate is the same object as Ruby's own; a heap Float never is.
+        expect(made.equal?(x)).to eq(x.equal?(x + 0.0))
+      end
+      expect(NupurTest.float_of_bits(bits(Float::NAN))).to be_nan
+    end
+
+    it "makes an Array of several values, and appends several, in one call each" do
+      expect(NupurTest.ary_bulk(1, "b", :c, nil, 2.5)).to eq([1, "b", :c, nil, 2.5])
+      expect(NupurTest.ary_bulk).to eq([])
+    end
+
+    it "inserts several pairs in one call, a later key winning" do
+      expect(NupurTest.hash_bulk("a", 1, :b, 2, "a", 3)).to eq({ "a" => 3, b: 2 })
+      expect(NupurTest.hash_bulk).to eq({})
+    end
+
+    it "refuses a key Ruby would hash with a method call, and an odd count" do
+      expect { NupurTest.hash_bulk([1], 2) }.to raise_error(TypeError)
+      expect { NupurTest.hash_bulk(Class.new(String).new("k"), 2) }.to raise_error(TypeError)
+      expect { NupurTest.hash_bulk("a", 1, "b") }.to raise_error(ArgumentError, /odd/)
+    end
+  end
+
   describe "a method called" do
     it "calls a public method with its arguments and answers its value" do
       expect(NupurTest.send_public([3, 1, 2], "sort")).to eq([1, 2, 3])

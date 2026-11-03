@@ -19,9 +19,11 @@
 //!   it borrows is only ever changed through a `Cell`; and no
 //!   `RefCell` guard - a call back into the extension would panic on it.
 //! - No guard of the extension's own (Makiri's document guard is one).
-//! - No walk of a Ruby collection in place: copy a Hash's pairs first
-//!   (`hash::each_pair`), and read an Array by index, its length again at
-//!   each step.
+//! - No slice of a Ruby collection: read an Array by index, its length
+//!   again at each step. A Hash may be walked in place (`hash::hash_foreach`
+//!   is `rb_hash_foreach`, the walk `Hash#each` is), and Ruby guards it as
+//!   it guards a block: a key added during the walk raises. Copy its pairs
+//!   first (`hash::each_pair`) only where a walk must not raise.
 //!
 //! A Fiber switched away from inside the call and never resumed leaves the
 //! Rust frames under it unfinished: their values are leaked, never freed

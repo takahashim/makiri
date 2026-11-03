@@ -303,6 +303,112 @@ fn object_const_defined(ruby: &Ruby, name: Value) -> Result<bool, Error> {
     ruby.class_object().const_defined(ruby, name.as_str())
 }
 
+/* ---- numbers and collections built without a call each ---- */
+
+/// The Float of the bits `bits`, through `build::float` - a flonum built
+/// from its bits, a heap Float otherwise.
+fn float_of_bits(ruby: &Ruby, bits: Value) -> Result<Value, Error> {
+    let bits = integer_arg(bits)?.to_u64()?;
+    Ok(nupur::build::float(ruby, f64::from_bits(bits))?.as_value())
+}
+
+/// `[a, b, c]` through `build::ary_from`, then `d, e` through `ary_cat`.
+fn ary_bulk(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
+    let a = nupur::build::ary_from(ruby, args.get(..3).unwrap_or_default())?;
+    nupur::build::ary_cat(a, args.get(3..).unwrap_or_default())?;
+    Ok(a.as_value())
+}
+
+/// A Hash of `pairs` (key, value, ...) through `build::hash_insert_pairs`.
+fn hash_bulk(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
+    let h = nupur::build::hash(ruby)?;
+    nupur::build::hash_insert_pairs(h, args)?;
+    Ok(h.as_value())
+}
+
+/* ---- reading a String in place, and a value's kind ---- */
+
+/// The byte sum of `s`, read through `with_bytes`.
+fn lent_sum(_: &Ruby, s: Value) -> Result<u64, Error> {
+    let s = string_arg(s)?;
+    Ok(s.with_bytes(|b| b.iter().map(|&x| u64::from(x)).sum()))
+}
+
+/// `[length, appended]`: the length read under `with_locked_bytes`, and
+/// whether `block`, run with the lock held, could append to `s` - it must
+/// not, so the spec's block raises and this answers the error.
+fn locked_len(ruby: &Ruby, s: Value) -> Result<Value, Error> {
+    let s = string_arg(s)?;
+    let n = s.with_locked_bytes(|b| b.len())?;
+    let inner = s.with_locked_bytes(|_| nupur::rb::method::yield_value(ruby, s.as_value()))?;
+    let out = nupur::build::ary(ruby, 2)?;
+    nupur::build::push(out, nupur::build::int(ruby, i64::try_from(n).unwrap_or(0))?)?;
+    nupur::build::push(out, inner?)?;
+    Ok(out.as_value())
+}
+
+/// Whether Ruby holds `s` to be UTF-8, through `ruby_knows_utf8`.
+fn knows_utf8(_: &Ruby, s: Value) -> Result<bool, Error> {
+    string_arg(s)?.ruby_knows_utf8()
+}
+
+/// `v`'s kind, through `Value::kind`, as a Symbol.
+fn kind_of(ruby: &Ruby, v: Value) -> Result<Value, Error> {
+    use nupur::rb::Kind;
+    let k = match v.kind() {
+        Kind::Nil => "nil",
+        Kind::True => "true",
+        Kind::False => "false",
+        Kind::Fixnum(_) => "fixnum",
+        Kind::Bignum(_) => "bignum",
+        Kind::Float(_) => "float",
+        Kind::String(_) => "string",
+        Kind::Symbol(_) => "symbol",
+        Kind::Array(_) => "array",
+        Kind::Hash(_) => "hash",
+        Kind::Other => "other",
+    };
+    Ok(nupur::build::symbol(ruby, k)?.as_value())
+}
+
+/* ---- a wrapped object shared between Ractors ---- */
+
+/// A payload read from several Ractors at once: plain data, `Sync`.
+struct Shared {
+    n: i64,
+}
+
+impl Payload for Shared {}
+
+static SHARED: TypedType<Shared, 1> = TypedType::shareable(c"NupurTest::Shared");
+static SHARED_CLASS: RbConst<DataClass> = RbConst::new();
+
+/// `Shared.new(n, v)`: an object holding `n`, keeping `v` in its slot, made
+/// shareable as it is made.
+fn shared_new(ruby: &Ruby, n: Value, v: Value) -> Result<Value, Error> {
+    let class = SHARED_CLASS.defined(ruby)?;
+    let made = SHARED.wrap(
+        ruby,
+        Birth {
+            klass: class,
+            data: Shared {
+                n: integer_arg(n)?.to_i64()?,
+            },
+            roots: [v],
+        },
+    )?;
+    Ok(made.value())
+}
+
+/// `#n` and `#held`.
+fn shared_n(_: &Ruby, this: Value) -> Result<i64, Error> {
+    Ok(SHARED.check(this)?.data().n)
+}
+
+fn shared_held(_: &Ruby, this: Value) -> Result<Value, Error> {
+    Ok(SHARED.check(this)?.root::<0>())
+}
+
 /* ---- Init ---- */
 
 static INTERNAL: RbConst<ExceptionClass> = RbConst::new();
@@ -320,6 +426,12 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     let internal = m.define_error("InternalError", ruby.exception_exception())?;
     INTERNAL.set(internal)?;
     nupur::rb::error::INTERNAL_ERROR.set(internal)?;
+
+    let shared = m.define_data_class("Shared", None)?;
+    SHARED_CLASS.set(shared)?;
+    shared.define_singleton_method("new", function!(shared_new, 2))?;
+    shared.define_method("n", method!(shared_n, 0))?;
+    shared.define_method("held", method!(shared_held, 0))?;
 
     let holder = m.define_data_class("Holder", None)?;
     HOLDER_CLASS.set(holder)?;
@@ -351,6 +463,13 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     m.define_module_function("int_from_decimal", function!(int_from_decimal, 1))?;
     m.define_module_function("symbol_name", function!(symbol_name, 1))?;
     m.define_module_function("send_public", function!(send_public, -1))?;
+    m.define_module_function("float_of_bits", function!(float_of_bits, 1))?;
+    m.define_module_function("lent_sum", function!(lent_sum, 1))?;
+    m.define_module_function("locked_len", function!(locked_len, 1))?;
+    m.define_module_function("knows_utf8", function!(knows_utf8, 1))?;
+    m.define_module_function("kind_of", function!(kind_of, 1))?;
+    m.define_module_function("ary_bulk", function!(ary_bulk, -1))?;
+    m.define_module_function("hash_bulk", function!(hash_bulk, -1))?;
     m.define_module_function("responds_to_s", function!(responds_to_s, 1))?;
     m.define_module_function("object_const_defined", function!(object_const_defined, 1))?;
     Ok(())

@@ -95,6 +95,9 @@ sites! {
     DropUnfilled => "nupur_unwinds_drop_unfilled",
     /// `rb::kept::Kept`'s `Drop`, which hands its value to `keep_alive`.
     DropKept => "nupur_unwinds_drop_kept",
+    /// `RString::with_locked_bytes`'s guard, which unlocks the String - while
+    /// a panic unwinds, too.
+    DropUnlock => "nupur_unwinds_drop_unlock",
     /// The check's own control (`self_test`): a body that CAN unwind, so a
     /// check build that still works leaves exactly this symbol undefined.
     SelfTest => "nupur_unwinds_self_test",
