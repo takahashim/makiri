@@ -89,7 +89,7 @@ callback is latched (above) and raises nothing.
 ### Proving unwind-freedom
 
 **Nothing that must not unwind can, and the compiler proves it**
-(`nupur/sys/src/no_unwind.rs` for Nupur's sites, `engine/src/no_unwind.rs` for
+(`nupur/src/no_unwind.rs` for Nupur's sites, `engine/src/no_unwind.rs` for
 the engine's, `rake no_unwind`). An unwind out of an
 `extern "C"` function aborts, and so does a panic in a `Drop` that the GC
 runs or that runs while another panic unwinds. Each such body is a `Site`

@@ -67,7 +67,7 @@ pub trait ReprValue: Copy {
     /// `nil`?
     #[inline]
     fn is_nil(self) -> bool {
-        non_raising::nil_p(self.as_value().0)
+        self.as_value().0.is_nil()
     }
 
     /// Ruby's truthiness: anything but `nil` and `false`.

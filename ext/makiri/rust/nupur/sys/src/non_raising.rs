@@ -36,7 +36,7 @@ use crate::{rb_encoding, ruby_value_type, size_t, ssize_t, ID};
 use rb_sys::rb_unblock_function_t;
 use rb_sys::VALUE;
 
-macro_rules! reads {
+macro_rules! with_gvl {
     ($(fn $name:ident($($arg:ident: $ty:ty),*) $(-> $ret:ty)?;)*) => {$(
         #[doc = concat!("`", stringify!($name), "`, with the GVL; raises nothing.")]
         #[inline(always)]
@@ -48,7 +48,7 @@ macro_rules! reads {
     )*};
 }
 
-reads! {
+with_gvl! {
     fn rb_ascii8bit_encindex() -> c_int;
     fn rb_block_given_p() -> c_int;
     fn rb_enc_from_index(idx: c_int) -> *mut rb_encoding;
@@ -204,12 +204,6 @@ pub unsafe fn str_mark_coderange(v: Value, ascii: bool) {
 }
 
 /* ---- the stable API's inline reads ---- */
-
-/// `RB_NIL_P`.
-#[inline(always)]
-pub fn nil_p(v: Value) -> bool {
-    get_default().nil_p(v.as_raw())
-}
 
 /// `RB_TEST`: Ruby's truthiness.
 #[inline(always)]

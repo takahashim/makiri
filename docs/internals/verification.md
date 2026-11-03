@@ -150,7 +150,7 @@ advisory that does not apply is ignored in `deny.toml` with its reason.
 
 `rake symbols` is THE export gate. `rake no_unwind` is a release build
 proving that no `extern "C"` fn or GC-run `Drop` can unwind
-(`nupur/sys/src/no_unwind.rs` for Nupur's sites, `engine/src/no_unwind.rs` for
+(`nupur/src/no_unwind.rs` for Nupur's sites, `engine/src/no_unwind.rs` for
 the engine's). `ruby_boundary.md` explains both.
 
 ## `rake diff` and the C baseline
