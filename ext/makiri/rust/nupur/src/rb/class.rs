@@ -32,11 +32,23 @@ pub trait Module: ReprValue {
     /// wrapped objects ([`DataClass`]): its superclass is `superclass`, or
     /// `Object` for `None`, and its allocator is taken away, so `.new` makes
     /// none of a kind no payload backs.
+    ///
+    /// The class is made here, never taken over: a `name` this module
+    /// already holds - a class Ruby code defined first, or an autoload, which
+    /// `rb_define_class_under` would load and then reuse - is a `TypeError`.
+    /// A class someone else made could have modules or a Marshal hook that
+    /// [`DataClass`] promises its instances never have.
     fn define_data_class(
         self,
+        ruby: &Ruby,
         name: &str,
         superclass: Option<DataClass>,
     ) -> Result<DataClass, Error> {
+        if self.const_defined(ruby, name)? {
+            return Err(crate::rb::error::type_error(format_args!(
+                "{name} is already defined: a class of wrapped objects is made by the extension, not taken over"
+            )));
+        }
         let sup = superclass.map_or_else(|| crate::rb::value::object_class(&self), |d| d.0);
         let class = crate::raw::define_class_under(self.as_value(), &c_name(name)?, sup)?;
         crate::raw::undef_alloc_func(class)?;

@@ -288,12 +288,13 @@ fn xml_decode(ruby: &Ruby, str: Value) -> Result<Value, Error> {
 /// found only later as a "read before Init_makiri"; here the class cannot exist
 /// without its handle.
 fn define_into(
+    ruby: &Ruby,
     under: RModule,
     name: &str,
     super_: Option<DataClass>,
     slot: &RbConst<DataClass>,
 ) -> Result<DataClass, Error> {
-    let class = under.define_data_class(name, super_)?;
+    let class = under.define_data_class(ruby, name, super_)?;
     slot.set(class)?;
     Ok(class)
 }
@@ -375,23 +376,24 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     /* The abstract bases. Concrete nodes are the HTML::* / XML::* leaves
      * below; these exist so `is_a?(Makiri::Element)` holds across both. The
      * exported ones register as they are defined; the rest are local. */
-    let node = define_into(makiri, "Node", None, &CLASS_NODE)?;
-    let document = define_into(makiri, "Document", Some(node), &CLASS_DOCUMENT)?;
-    let element = makiri.define_data_class("Element", Some(node))?;
-    let attr = makiri.define_data_class("Attr", Some(node))?;
-    let text = makiri.define_data_class("Text", Some(node))?;
-    let comment = makiri.define_data_class("Comment", Some(node))?;
-    let cdata = makiri.define_data_class("CDATASection", Some(node))?;
-    let pi = makiri.define_data_class("ProcessingInstruction", Some(node))?;
-    let doctype = makiri.define_data_class("DocumentType", Some(node))?;
+    let node = define_into(ruby, makiri, "Node", None, &CLASS_NODE)?;
+    let document = define_into(ruby, makiri, "Document", Some(node), &CLASS_DOCUMENT)?;
+    let element = makiri.define_data_class(ruby, "Element", Some(node))?;
+    let attr = makiri.define_data_class(ruby, "Attr", Some(node))?;
+    let text = makiri.define_data_class(ruby, "Text", Some(node))?;
+    let comment = makiri.define_data_class(ruby, "Comment", Some(node))?;
+    let cdata = makiri.define_data_class(ruby, "CDATASection", Some(node))?;
+    let pi = makiri.define_data_class(ruby, "ProcessingInstruction", Some(node))?;
+    let doctype = makiri.define_data_class(ruby, "DocumentType", Some(node))?;
     let fragment = define_into(
+        ruby,
         makiri,
         "DocumentFragment",
         Some(node),
         &CLASS_DOCUMENT_FRAGMENT,
     )?;
-    define_into(makiri, "NodeSet", None, &CLASS_NODE_SET)?;
-    define_into(makiri, "XPathContext", None, &CLASS_XPATH_CONTEXT)?;
+    define_into(ruby, makiri, "NodeSet", None, &CLASS_NODE_SET)?;
+    define_into(ruby, makiri, "XPathContext", None, &CLASS_XPATH_CONTEXT)?;
 
     let m_xpath = makiri.define_module("XPath")?;
     let m_css = makiri.define_module("CSS")?;
@@ -405,31 +407,41 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     let html_methods = m_html.define_module("NodeMethods")?;
     MOD_HTML_NODE_METHODS.set(html_methods)?;
     let html_leaves = [
-        define_into(m_html, "Node", Some(node), &CLASS_HTML_NODE)?,
-        define_into(m_html, "Document", Some(document), &CLASS_HTML_DOCUMENT)?,
-        define_into(m_html, "Element", Some(element), &CLASS_HTML_ELEMENT)?,
-        define_into(m_html, "Attr", Some(attr), &CLASS_HTML_ATTR)?,
-        define_into(m_html, "Text", Some(text), &CLASS_HTML_TEXT)?,
-        define_into(m_html, "Comment", Some(comment), &CLASS_HTML_COMMENT)?,
+        define_into(ruby, m_html, "Node", Some(node), &CLASS_HTML_NODE)?,
         define_into(
+            ruby,
+            m_html,
+            "Document",
+            Some(document),
+            &CLASS_HTML_DOCUMENT,
+        )?,
+        define_into(ruby, m_html, "Element", Some(element), &CLASS_HTML_ELEMENT)?,
+        define_into(ruby, m_html, "Attr", Some(attr), &CLASS_HTML_ATTR)?,
+        define_into(ruby, m_html, "Text", Some(text), &CLASS_HTML_TEXT)?,
+        define_into(ruby, m_html, "Comment", Some(comment), &CLASS_HTML_COMMENT)?,
+        define_into(
+            ruby,
             m_html,
             "CDATASection",
             Some(cdata),
             &CLASS_HTML_CDATA_SECTION,
         )?,
         define_into(
+            ruby,
             m_html,
             "ProcessingInstruction",
             Some(pi),
             &CLASS_HTML_PROCESSING_INSTRUCTION,
         )?,
         define_into(
+            ruby,
             m_html,
             "DocumentType",
             Some(doctype),
             &CLASS_HTML_DOCUMENT_TYPE,
         )?,
         define_into(
+            ruby,
             m_html,
             "DocumentFragment",
             Some(fragment),
@@ -446,26 +458,35 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     let xml_methods = m_xml.define_module("NodeMethods")?;
     MOD_XML_NODE_METHODS.set(xml_methods)?;
     let xml_leaves = [
-        define_into(m_xml, "Node", Some(node), &CLASS_XML_NODE)?,
-        define_into(m_xml, "Document", Some(document), &CLASS_XML_DOCUMENT)?,
-        define_into(m_xml, "Element", Some(element), &CLASS_XML_ELEMENT)?,
-        define_into(m_xml, "Attr", Some(attr), &CLASS_XML_ATTR)?,
-        define_into(m_xml, "Text", Some(text), &CLASS_XML_TEXT)?,
-        define_into(m_xml, "Comment", Some(comment), &CLASS_XML_COMMENT)?,
-        define_into(m_xml, "CDATASection", Some(cdata), &CLASS_XML_CDATA_SECTION)?,
+        define_into(ruby, m_xml, "Node", Some(node), &CLASS_XML_NODE)?,
+        define_into(ruby, m_xml, "Document", Some(document), &CLASS_XML_DOCUMENT)?,
+        define_into(ruby, m_xml, "Element", Some(element), &CLASS_XML_ELEMENT)?,
+        define_into(ruby, m_xml, "Attr", Some(attr), &CLASS_XML_ATTR)?,
+        define_into(ruby, m_xml, "Text", Some(text), &CLASS_XML_TEXT)?,
+        define_into(ruby, m_xml, "Comment", Some(comment), &CLASS_XML_COMMENT)?,
         define_into(
+            ruby,
+            m_xml,
+            "CDATASection",
+            Some(cdata),
+            &CLASS_XML_CDATA_SECTION,
+        )?,
+        define_into(
+            ruby,
             m_xml,
             "ProcessingInstruction",
             Some(pi),
             &CLASS_XML_PROCESSING_INSTRUCTION,
         )?,
         define_into(
+            ruby,
             m_xml,
             "DocumentType",
             Some(doctype),
             &CLASS_XML_DOCUMENT_TYPE,
         )?,
         define_into(
+            ruby,
             m_xml,
             "DocumentFragment",
             Some(fragment),
