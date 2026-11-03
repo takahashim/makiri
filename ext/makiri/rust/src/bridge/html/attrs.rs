@@ -44,7 +44,7 @@ pub fn set_attribute_ns(
 /// element `el`; whether there was one. `ns` comes from
 /// `string::namespace_arg`.
 #[cfg_attr(
-    dylint_lib = "nupur_lints",
+    dylint_lib = "makiri_lints",
     allow(
         raw_node_crossing,
         reason = "the attribute found, removed in the same edit"

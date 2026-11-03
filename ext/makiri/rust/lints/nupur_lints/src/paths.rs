@@ -3,23 +3,22 @@
 //! a macro expansion cannot hide a reference, and a comment or a string
 //! cannot fake one.
 //!
-//! Four crates are linted: the binding layer, `nupur`, whose items are
+//! The crates linted are the binding layer, `nupur`, whose items are
 //! spelled `nupur::...` whichever crate names them, and the crate under it
 //! that alone depends on rb-sys ([`NUPUR_SYS`], `nupur_sys::...`); the
-//! extension built on it
-//! ([`extension`]), whose items are `makiri::...`; and the engine the
-//! extension is the Ruby surface of ([`ENGINE`]), whose items are
-//! `makiri_engine::...`. The layer's lints name only `nupur::` paths (and
-//! rb-sys's), so a copy of the layer under another extension changes
-//! [`extension`] alone (`NUPUR_LINTS_EXTENSION`); the extension's own lints name its modules, and the
-//! engine's, by their path inside the crate (`bridge`, `glue`,
-//! `html::dom::...`) - the extension re-exports the engine's at its root, so
-//! the two read alike.
+//! extension built on it ([`extension`]); and any crate of the extension's
+//! it declares Ruby-free ([`ruby_free`]). The lints name only the layer's
+//! paths and rb-sys's: what they know of an extension is its
+//! [`Config`], read from the `[nupur_lints]` table of the `dylint.toml` at
+//! the root of the workspace being linted.
 
 use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::DefId;
 use rustc_hir::{Expr, ExprKind, HirId};
 use rustc_lint::LateContext;
+use rustc_session::Session;
+use serde::Deserialize;
+use std::sync::OnceLock;
 
 /// The binding layer's crate name.
 pub const NUPUR: &str = "nupur";
@@ -29,26 +28,99 @@ pub const NUPUR: &str = "nupur";
 /// it. Held to the layer's rules, as part of the layer.
 pub const NUPUR_SYS: &str = "nupur_sys";
 
-/// The extension's crate name: `makiri`, unless `NUPUR_LINTS_EXTENSION`
-/// names another - an extension written on Nupur outside Makiri runs these
-/// lints over itself by setting it (`NUPUR_LINTS_EXTENSION=nupur_json cargo
-/// dylint --path .../nupur_lints`). The layer's lints then hold it to the
-/// layer's rules; the extension's own lints name Makiri's modules (`bridge`,
-/// `glue`), which another crate does not have, so they find nothing there.
-/// A name that is not a crate name (`[a-z0-9_]+`) is ignored, so a stray
-/// value cannot widen what counts as ours.
-pub fn extension() -> &'static str {
-    static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    NAME.get_or_init(|| {
-        std::env::var("NUPUR_LINTS_EXTENSION")
-            .ok()
-            .filter(|n| {
-                !n.is_empty()
-                    && n.bytes()
-                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-            })
-            .unwrap_or_else(|| "makiri".to_owned())
+/// What an extension tells the lints of itself, in its workspace's
+/// `dylint.toml`; every key may be left out:
+///
+/// ```toml
+/// [nupur_lints]
+/// extension = "my_ext"
+/// ruby_free = ["my_ext_core"]
+/// no_unwind_guards = ["my_ext_core::no_unwind::must_not_unwind"]
+/// ```
+///
+/// An unknown key, or a name that is not a crate name, fails the build
+/// rather than being ignored: a stray value must not narrow what is checked.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Config {
+    /// The crate built on the layer. Left out, it is the crate being linted
+    /// (unless that is the layer itself, or a build script).
+    extension: Option<String>,
+    /// The extension's crates that depend on no Ruby. They are linted too,
+    /// for what any code must keep (an `extern "C"` function or a `Drop`
+    /// under a no-unwind guard), and a body run with the GVL released may
+    /// call them.
+    #[serde(default)]
+    ruby_free: Vec<String>,
+    /// Functions of the extension's that put a body under a no-unwind proof
+    /// of its own, beside the layer's (`unguarded_no_unwind_site`). Each is
+    /// a path as [`path_of`] spells it, and the extension's build must
+    /// prove the bodies it guards, as `rake no_unwind` does the layer's.
+    #[serde(default)]
+    no_unwind_guards: Vec<String>,
+}
+
+/// The configuration, with the extension resolved.
+struct Resolved {
+    extension: Option<String>,
+    ruby_free: Vec<String>,
+    no_unwind_guards: Vec<String>,
+}
+
+static CONFIG: OnceLock<Resolved> = OnceLock::new();
+
+fn is_crate_name(n: &str) -> bool {
+    !n.is_empty()
+        && n.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+
+/// Reads the configuration once per compilation, from `register_lints`
+/// (after `dylint_linting::init_config`).
+pub(crate) fn init(sess: &Session) {
+    let config: Config = dylint_linting::config_or_default("nupur_lints");
+    for n in config.extension.iter().chain(&config.ruby_free) {
+        assert!(
+            is_crate_name(n),
+            "nupur_lints: `{n}` in dylint.toml is not a crate name"
+        );
+    }
+    let extension = config.extension.or_else(|| {
+        sess.opts.crate_name.clone().filter(|n| {
+            is_crate_name(n)
+                && ![NUPUR, NUPUR_SYS].contains(&n.as_str())
+                && !n.starts_with("build_script_")
+        })
+    });
+    let _ = CONFIG.set(Resolved {
+        extension,
+        ruby_free: config.ruby_free,
+        no_unwind_guards: config.no_unwind_guards,
+    });
+}
+
+fn config() -> &'static Resolved {
+    CONFIG.get_or_init(|| Resolved {
+        extension: None,
+        ruby_free: Vec::new(),
+        no_unwind_guards: Vec::new(),
     })
+}
+
+/// The extension's crate name, if there is one: [`Config`]'s `extension`,
+/// or the crate being linted.
+pub fn extension() -> Option<&'static str> {
+    config().extension.as_deref()
+}
+
+/// The extension's Ruby-free crates ([`Config`]'s `ruby_free`).
+pub fn ruby_free() -> &'static [String] {
+    &config().ruby_free
+}
+
+/// The extension's own no-unwind guards ([`Config`]'s `no_unwind_guards`).
+pub fn no_unwind_guards() -> &'static [String] {
+    &config().no_unwind_guards
 }
 
 /* ---- the layer's functions the lints know by name ---- */
@@ -88,11 +160,7 @@ pub const GVL_RELEASED_CALLS: &[&str] = &[
 /// while the slice is out.
 pub const BYTES_LENDING_METHODS: &[&str] = &["nupur::string::read::with_bytes"];
 
-/// The engine's crate name: Ruby-free by its dependencies, so the code a
-/// GVL-released body and an edit's closure may call.
-pub const ENGINE: &str = "makiri_engine";
-
-/// `did`'s path, its crate's name first: `makiri::html::tree::parse_html`,
+/// `did`'s path, its crate's name first: `my_ext::glue::parse`,
 /// `nupur::raw::define::call_method`, `rb_sys::rb_str_new`,
 /// `alloc::borrow::ToOwned::to_owned`. Unnamed parts (an `impl` block, a
 /// closure) are left out.
@@ -106,21 +174,14 @@ pub fn path_of(cx: &LateContext<'_>, did: DefId) -> String {
     parts.join("::")
 }
 
-/// Whether the crate being linted is the extension, its engine or its binding
-/// layer, not a build script or a test target.
+/// Whether the crate being linted is the layer's, the extension's or one
+/// of its Ruby-free crates - not a build script or a test target.
 pub(crate) fn is_extension(cx: &LateContext<'_>) -> bool {
     let krate = cx.tcx.crate_name(rustc_span::def_id::LOCAL_CRATE);
-    [extension(), ENGINE, NUPUR, NUPUR_SYS].contains(&krate.as_str())
-}
-
-/// Whether Makiri's own policy lints (the extension's layout and its
-/// allocation rule, not the layer's guarantees) apply to the crate being
-/// linted: everywhere in Makiri, and nowhere in another extension that set
-/// [`extension`] to itself - its allocation policy is its own, and it has no
-/// `falloc` to allocate through.
-pub(crate) fn makiri_policy_applies(cx: &LateContext<'_>) -> bool {
-    let krate = cx.tcx.crate_name(rustc_span::def_id::LOCAL_CRATE);
-    extension() == "makiri" || krate.as_str() != extension()
+    let krate = krate.as_str();
+    [NUPUR, NUPUR_SYS].contains(&krate)
+        || extension() == Some(krate)
+        || ruby_free().iter().any(|r| r == krate)
 }
 
 /// The path of the module the code at `hir_id` is in, crate first.
@@ -128,35 +189,45 @@ pub(crate) fn module_of(cx: &LateContext<'_>, hir_id: HirId) -> String {
     path_of(cx, cx.tcx.parent_module(hir_id).to_def_id())
 }
 
-/// `path` relative to the extension's crate or the engine's
-/// (`makiri::bridge::x` is `bridge::x`, `makiri_engine::xml::y` is
-/// `xml::y`); a path of any other crate - the layer's `nupur::...` included -
-/// as it is.
-pub(crate) fn in_extension_or_as_is(path: &str) -> &str {
-    path.strip_prefix(ENGINE)
-        .or_else(|| path.strip_prefix(extension()))
+/// Whether `path` is the crate `krate`'s own.
+fn in_crate(path: &str, krate: &str) -> bool {
+    path.strip_prefix(krate)
+        .is_some_and(|tail| tail.is_empty() || tail.starts_with("::"))
+}
+
+/// Whether `path` is the extension's crate's own.
+pub(crate) fn in_extension(path: &str) -> bool {
+    extension().is_some_and(|e| in_crate(path, e))
+}
+
+/// Whether `path` is one of the extension's Ruby-free crates' own.
+pub(crate) fn in_ruby_free_crate(path: &str) -> bool {
+    ruby_free().iter().any(|r| in_crate(path, r))
+}
+
+/// `path` relative to the extension's crate (`ext::lint_probe::x` is
+/// `lint_probe::x`); a path of any other crate - the layer's `nupur::...`
+/// included - as it is.
+fn in_extension_or_as_is(path: &str) -> &str {
+    extension()
+        .and_then(|e| path.strip_prefix(e))
         .and_then(|r| r.strip_prefix("::"))
         .unwrap_or(path)
 }
 
-/// Whether `path` is the engine crate's own.
-pub(crate) fn in_engine_crate(path: &str) -> bool {
-    path == ENGINE || path.starts_with(&format!("{ENGINE}::"))
-}
-
 /// Whether `path` is the module (or item) `m` or inside it: `m` an
-/// extension module by its path inside the extension (`bridge`,
-/// `lint_probe::engine`), or a layer one by its full path (`nupur::raw`).
+/// extension module by its path inside the extension (`lint_probe`), or a
+/// layer one by its full path (`nupur::raw`).
 pub(crate) fn within(path: &str, m: &str) -> bool {
     in_extension_or_as_is(path)
         .strip_prefix(m)
         .is_some_and(|tail| tail.is_empty() || tail.starts_with("::"))
 }
 
-/// Whether `path` is one of the three crates' own - the extension's, the
-/// engine's or the layer's - rather than a library's.
+/// Whether `path` is the layer's, the extension's or one of its Ruby-free
+/// crates' own, rather than a library's.
 pub(crate) fn ours(path: &str) -> bool {
-    in_layer(path) || path.starts_with(&format!("{}::", extension())) || in_engine_crate(path)
+    in_layer(path) || in_extension(path) || in_ruby_free_crate(path)
 }
 
 /// The function an expression calls, when it can be named: a path call or
@@ -177,5 +248,5 @@ pub(crate) fn callee(cx: &LateContext<'_>, expr: &Expr<'_>) -> Option<DefId> {
 
 /// Whether `path` is the binding layer's: `nupur`'s or `nupur_sys`'s.
 pub(crate) fn in_layer(path: &str) -> bool {
-    within(path, NUPUR) || within(path, NUPUR_SYS)
+    in_crate(path, NUPUR) || in_crate(path, NUPUR_SYS)
 }

@@ -1,22 +1,19 @@
 #![feature(rustc_private)]
 #![warn(unused_extern_crates)]
 
-//! The lints over the binding layer and the extension built on it, in two
-//! groups. Paths are named as [`paths`] spells them: the layer's items by
-//! its own crate name (`nupur::...`), the extension's by its path inside
-//! [`paths::extension`].
-//!
-//! # The layer's guarantees (nupur)
-//!
-//! What `nupur/src/lib.rs` promises an extension, and what a copy of the
-//! layer under another extension takes with it - these name only `nupur::`
-//! and rb-sys paths:
+//! The lints over the binding layer and an extension built on it: what
+//! `nupur/src/lib.rs` promises an extension, and what a copy of the layer
+//! under another extension takes with it. They name only `nupur::`,
+//! `nupur_sys::` and rb-sys paths; what they know of the extension is what
+//! its workspace's `dylint.toml` says ([`paths::Config`]), and its crate
+//! name, which is the crate being linted unless that says otherwise.
 //!
 //! - `raising_call_outside_protect` and `unraising_call_in_raw`
 //!   ([`raising`]): one table of the C functions that cannot raise, every
 //!   other taken to, and what `nupur::raw` holds checked against it.
 //! - `unguarded_no_unwind_site` ([`no_unwind_site`]): every `extern "C"`
-//!   function and `Drop` runs under `no_unwind::must_not_unwind`.
+//!   function and `Drop` runs under `no_unwind::must_not_unwind`, or a guard
+//!   the extension names.
 //! - `ffi_without_gvl_proof` ([`gvl_proof`]): a call into Ruby's C API from a
 //!   layer function with no proof of the GVL in its signature.
 //! - `gvl_token_outside_entry` ([`entry`]): the GVL's token made anywhere but
@@ -29,33 +26,26 @@
 //!   GC cannot see it.
 //! - `c_integer_outside_int` ([`c_integer`]): an integer `as` cast, or a C
 //!   `long` named, at the Ruby boundary outside `nupur_sys::int`.
-//! - From [`boundaries`]: `runs_callers_ruby` and
-//!   `ruby_in_gvl_released_body`.
+//! - From [`boundaries`]: `runs_callers_ruby`, `ruby_in_gvl_released_body`
+//!   and `ruby_in_ruby_free_module`.
 //!
 //! Where a raw `VALUE` and rb-sys may be named is no lint's: only
 //! `nupur_sys` depends on rb-sys, and it re-exports no `VALUE`, so Nupur
 //! holds a Ruby value only as `nupur_sys`'s `Value` (or a slot's `Root`).
 //!
-//! # The extension's own layout (Makiri)
+//! An extension's own policy is its own lints'. Makiri's - its allocation
+//! rule and the lines between its glue and bridge - are `makiri_lints`,
+//! beside this crate, which `rake dylint` loads with this one.
 //!
-//! Where Makiri draws its own lines - its engine, its glue and bridge, its
-//! allocation policy - in [`boundaries`], which another extension running
-//! these lints (`NUPUR_LINTS_EXTENSION`) is not held to
-//! ([`paths::makiri_policy_applies`]): `ruby_layer_in_engine`,
-//! `infallible_allocation`, `raw_node_crossing`, `ruby_surface_in_bridge`. The
-//! engine is a crate of its own (`makiri_engine`, [`paths::ENGINE`]) that
-//! depends on no Ruby, so `ruby_layer_in_engine` has nothing to find there;
-//! it holds nupur's one Ruby-free module, `utf8_copy`, which shares a crate
-//! with the Ruby layer.
+//! (A lint, `converted_argument`, once checked that no registered method
+//! took a type magnus would convert with the caller's Ruby. Since Nupur
+//! replaced magnus, its `TryConvert` exists only for `Value`, `bool` and
+//! the extension's receiver types, so such a method does not compile.)
 //!
-//! (A second lint, `converted_argument`, checked that no registered method
-//! took a type magnus would convert with the caller's Ruby. Since
-//! `bridge::rb` replaced magnus, its `TryConvert` exists only for `Value`,
-//! `bool` and Makiri's receiver types, so such a method does not compile.)
-//!
-//! `rake dylint` runs them all, then their self-test (`src/lint_probe.rs`
-//! in the extension crate, `nupur/src/lint_probe.rs` in the layer: each
-//! line ending in `//~` reported by exactly the lints named after it).
+//! Their self-test is a probe in each crate linted (in Makiri,
+//! `src/lint_probe.rs`, `nupur/src/lint_probe.rs` and
+//! `nupur/sys/src/lint_probe.rs`): each line ending in `//~` must be
+//! reported by exactly the lints named after it.
 
 extern crate rustc_hir;
 extern crate rustc_lint;
@@ -88,16 +78,14 @@ dylint_linting::dylint_library!();
 #[unsafe(no_mangle)]
 pub fn register_lints(sess: &Session, lint_store: &mut LintStore) {
     dylint_linting::init_config(sess);
+    paths::init(sess);
     lint_store.register_lints(&[
         RUBY_VALUE_ON_HEAP,
-        RUBY_LAYER_IN_ENGINE,
+        RUBY_IN_RUBY_FREE_MODULE,
         UNGUARDED_NO_UNWIND_SITE,
         RUBY_IN_GVL_RELEASED_BODY,
-        INFALLIBLE_ALLOCATION,
         RAISING_CALL_OUTSIDE_PROTECT,
         RUNS_CALLERS_RUBY,
-        RAW_NODE_CROSSING,
-        RUBY_SURFACE_IN_BRIDGE,
         DISCARDED_RUBY_ERROR,
         FFI_WITHOUT_GVL_PROOF,
         C_INTEGER_OUTSIDE_INT,
@@ -105,17 +93,17 @@ pub fn register_lints(sess: &Session, lint_store: &mut LintStore) {
         GVL_TOKEN_OUTSIDE_ENTRY,
         FORGOTTEN_HANDLE,
     ]);
-    lint_store.register_late_lint_pass(Box::new(|_| Box::new(MakiriLints)));
+    lint_store.register_late_lint_pass(Box::new(|_| Box::new(NupurLints)));
 }
 
 declare_lint! {
     /// ### What it does
-    /// Reports a Ruby value (a type implementing Makiri's `ReprValue`) inside
+    /// Reports a Ruby value (a type implementing Nupur's `ReprValue`) inside
     /// a heap container (`Box`, `Vec`, `VecDeque`, `HashMap`, `HashSet`,
     /// `BTreeMap`, `BTreeSet`, `Rc`, `Arc`, ...) - kept in a binding, a
     /// parameter, a return value, a field or a temporary no binding names
     /// (`f(vec![v])`) - in a `static` or `thread_local!`, or directly in the
-    /// data of a wrapped Ruby object (a Makiri `Payload` type). A closure
+    /// data of a wrapped Ruby object (a Nupur `Payload` type). A closure
     /// holds what it captures by value.
     ///
     /// ### Why is this bad?
@@ -136,16 +124,16 @@ declare_lint! {
 
 declare_lint! {
     /// ### What it does
-    /// Reports the engine (`html`, `xml`, `xpath`, ... - Ruby-free modules)
-    /// naming anything of the Ruby layer: `bridge`, `glue`, `init`, `rb_sys`.
+    /// Reports the layer's Ruby-free module (`nupur::utf8_copy`) naming
+    /// anything of the Ruby layer: the layer's other modules, the
+    /// extension, `rb_sys`.
     ///
     /// ### Why is this bad?
-    /// An edit's closure and a GVL-released body run engine code, and neither
-    /// may reach Ruby: the one leaves the document's indexes dropped, the
-    /// other has no GVL.
-    pub RUBY_LAYER_IN_ENGINE,
+    /// Miri runs the module without a Ruby, and a GVL-released body may call
+    /// it: neither may reach Ruby.
+    pub RUBY_IN_RUBY_FREE_MODULE,
     Deny,
-    "the engine names something of the Ruby layer"
+    "a Ruby-free module names something of the Ruby layer"
 }
 
 declare_lint! {
@@ -164,30 +152,16 @@ declare_lint! {
 
 declare_lint! {
     /// ### What it does
-    /// Reports a call, inside the closure given to `bridge::gvl::without_gvl`,
-    /// to anything but the engine or a library.
+    /// Reports a call, inside the closure given to `gvl::without_gvl`, to
+    /// anything but a library or code known Ruby-free (the layer's
+    /// `utf8_copy`, the extension's Ruby-free crates).
     ///
     /// ### Why is this bad?
-    /// With the GVL released no Ruby may run, and only the engine is known
-    /// Ruby-free.
+    /// With the GVL released no Ruby may run, and only code that names no
+    /// Ruby is known not to.
     pub RUBY_IN_GVL_RELEASED_BODY,
     Deny,
     "a GVL-released body calls what may reach Ruby"
-}
-
-declare_lint! {
-    /// ### What it does
-    /// Reports an allocation that aborts on OOM: `to_owned`, `to_vec`,
-    /// `to_string`, `format!`, `from_utf8_lossy`, `into_owned`, `vec!`,
-    /// `CString::new`.
-    ///
-    /// ### Why is this bad?
-    /// An allocation failure must fail closed - an error, not the host
-    /// process gone - so every allocation goes through `falloc`, and an
-    /// exception message through `crate::msg::Msg`.
-    pub INFALLIBLE_ALLOCATION,
-    Deny,
-    "an allocation that aborts on OOM"
 }
 
 declare_lint! {
@@ -225,18 +199,6 @@ declare_lint! {
 }
 
 declare_lint! {
-    pub RAW_NODE_CROSSING,
-    Deny,
-    "a node handle made a lifetime-free RawNode in bridge/"
-}
-
-declare_lint! {
-    pub RUBY_SURFACE_IN_BRIDGE,
-    Deny,
-    "a Ruby method defined, or an argument list split, in bridge/"
-}
-
-declare_lint! {
     /// ### What it does
     /// Reports a call into Ruby's C API (`rb_sys::`) from a function of the
     /// binding layer whose signature holds no proof it runs with the GVL: a
@@ -252,9 +214,9 @@ declare_lint! {
 
 declare_lint! {
     /// ### What it does
-    /// Reports, in the binding layer and the extension's Ruby boundary
-    /// (`bridge`, `glue`, `init`) outside `nupur_sys::int`, an `as` cast between
-    /// integer types and any naming of `c_long` / `c_ulong`.
+    /// Reports, in the binding layer and the extension's crate outside
+    /// `nupur_sys::int`, an `as` cast between integer types and any naming
+    /// of `c_long` / `c_ulong`.
     ///
     /// ### Why is this bad?
     /// A C `long` is 32 bits on Windows and 64 where the code is linted, where
@@ -301,16 +263,13 @@ declare_lint! {
     "a Result of a Ruby error whose Err is thrown away"
 }
 
-declare_lint_pass!(MakiriLints => [
+declare_lint_pass!(NupurLints => [
     RUBY_VALUE_ON_HEAP,
-    RUBY_LAYER_IN_ENGINE,
+    RUBY_IN_RUBY_FREE_MODULE,
     UNGUARDED_NO_UNWIND_SITE,
     RUBY_IN_GVL_RELEASED_BODY,
-    INFALLIBLE_ALLOCATION,
     RAISING_CALL_OUTSIDE_PROTECT,
     RUNS_CALLERS_RUBY,
-    RAW_NODE_CROSSING,
-    RUBY_SURFACE_IN_BRIDGE,
     DISCARDED_RUBY_ERROR,
     FFI_WITHOUT_GVL_PROOF,
     C_INTEGER_OUTSIDE_INT,
@@ -319,7 +278,7 @@ declare_lint_pass!(MakiriLints => [
     FORGOTTEN_HANDLE,
 ]);
 
-impl<'tcx> LateLintPass<'tcx> for MakiriLints {
+impl<'tcx> LateLintPass<'tcx> for NupurLints {
     fn check_item(&mut self, cx: &LateContext<'tcx>, item: &'tcx Item<'tcx>) {
         value_on_heap::check_item(cx, item);
     }
@@ -359,10 +318,8 @@ impl<'tcx> LateLintPass<'tcx> for MakiriLints {
     }
 }
 
-/// The traits the lint asks about, looked up once per crate: the crate's
-/// own, since `bridge::rb` is the crate's.
-/// Whether `did` is the extension's or its binding layer's (the crate
-/// `nupur`, where `ReprValue`, `Payload` and `Opaque` are defined).
+/// Whether `did` is the crate being linted's or the binding layer's (the
+/// crate `nupur`, where `ReprValue`, `Payload` and `Opaque` are defined).
 pub fn ours(cx: &LateContext<'_>, did: DefId) -> bool {
     did.is_local()
         || [paths::NUPUR, paths::NUPUR_SYS].contains(&cx.tcx.crate_name(did.krate).as_str())
@@ -378,8 +335,9 @@ thread_local! {
     static TRAITS: OnceCell<Traits> = const { OnceCell::new() };
 }
 
-/// `bridge::rb::ReprValue`, and the wrapped-object data trait,
-/// `bridge::typed::Payload`.
+/// The traits the lint asks about, looked up once per crate:
+/// `nupur::rb::ReprValue`, and the wrapped-object data trait,
+/// `nupur::typed::Payload`.
 pub(crate) fn traits<'tcx>(cx: &LateContext<'tcx>) -> (Option<DefId>, Vec<DefId>) {
     TRAITS.with(|cell| {
         let t = cell.get_or_init(|| {

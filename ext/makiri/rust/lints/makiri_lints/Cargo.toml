@@ -1,0 +1,16 @@
+[package]
+name = "makiri_lints"
+version = "0.1.0"
+description = "Makiri's own lints: its allocation policy and the lines between its layers"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+clippy_utils = { workspace = true }
+dylint_linting = { workspace = true }
+
+[package.metadata.rust-analyzer]
+rustc_private = true

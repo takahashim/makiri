@@ -89,9 +89,9 @@
 //!   ([`rb::method::declare_ractor_safe`]).
 //!
 //! Most of these are types and dependencies. What they cannot state rests on
-//! checks of the code: in Makiri `rake dylint` (`lints/nupur_lints`, whose
-//! first group is the layer's and names only `nupur::` and `nupur_sys::`
-//! paths, so another extension sets `NUPUR_LINTS_EXTENSION` to its crate name and runs them), `rake no_unwind`
+//! checks of the code: in Makiri `rake dylint` (`lints/nupur_lints`, which
+//! names only `nupur::` and `nupur_sys::` paths, so another extension runs
+//! them over itself, telling them of itself in its `dylint.toml`), `rake no_unwind`
 //! and `rake unsafe:boundaries`. A copy of this layer elsewhere needs its
 //! own:
 //!

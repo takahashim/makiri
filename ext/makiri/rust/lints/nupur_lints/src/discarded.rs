@@ -1,4 +1,4 @@
-//! `discarded_ruby_error`: a `Result<_, bridge::rb::Error>` whose `Err` is
+//! `discarded_ruby_error`: a `Result<_, nupur::rb::Error>` whose `Err` is
 //! thrown away - `.ok()`, `.unwrap_or*`, `.is_ok()`, `.or(..)`, a
 //! `.map_err` / `.or_else` closure that ignores it, `let _ =` or
 //! `let _name =` (an `Error` itself too), a pattern
@@ -6,8 +6,8 @@
 //! arm `Err(_)` or `_`), or an `Error` handed to `drop` / `mem::forget`: a
 //! raise or a `throw` in it would be lost, and the call taken as having
 //! answered. An `Err` becomes "no answer" only through `Error::rescue`,
-//! which names what it handles and hands every exit back; the extension
-//! `forbid`s the lint, so no `allow` reopens it there.
+//! which names what it handles and hands every exit back; an extension may
+//! `forbid` the lint, so no `allow` reopens it there.
 
 use clippy_utils::diagnostics::span_lint_and_help;
 use rustc_hir::{Expr, ExprKind, LetStmt, PatKind, QPath};
@@ -89,7 +89,7 @@ fn report_discarded(cx: &LateContext<'_>, span: Span, how: &str) {
         span,
         format!("a Ruby error is thrown away ({how})"),
         None,
-        "an Err of bridge::rb::Error is a raise, a throw or a refusal: pass it on with `?`; \
+        "an Err of nupur::rb::Error is a raise, a throw or a refusal: pass it on with `?`; \
          where dropping it is the answer, allow this with the reason",
     );
 }

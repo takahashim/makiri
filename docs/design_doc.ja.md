@@ -619,7 +619,8 @@ HTML の名前テストと HTML の属性では ASCII case を畳み込み、SVG
   いた (消したモジュールが残り、新しいモジュールが入っていない)。クレートに
   すると境界は依存関係になり、一覧も、それを守る lint
   (`ruby_layer_in_engine`) がエンジンに対して見るものもなくなる (lint は
-  `nupur` の中の Ruby-free な一モジュール、`utf8_copy` のためだけに残る)。
+  `nupur` の中の Ruby-free な一モジュール、`utf8_copy` のためだけに残る。
+  いまは `nupur_lints` の `ruby_in_ruby_free_module`)。
   境界の層 (`nupur`) を分けたのと同じ考えであり、性能は `cdylib` 単体の
   ビルドの LTO で保つ。
 * parse は lenient、API は strict にする。HTML parse はブラウザと同じく

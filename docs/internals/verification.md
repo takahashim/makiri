@@ -78,22 +78,27 @@ extension, the fuzz crate), plus fmt and Nupur's rustdoc with `-D warnings`.
 
 ### `rake dylint`
 
-`rake dylint` runs the crate's own lints (`lints/nupur_lints`) on the
-compiled code, by resolved path: on the extension, the engine, Nupur and
-`nupur_sys`, one run each. Each crate's root is touched just before its run:
+`rake dylint` runs the crate's own lints on the compiled code, by resolved
+path: on the extension, the engine, Nupur and `nupur_sys`, one run each. They
+are two dylint libraries in the `lints/` workspace, loaded together on every
+run: `nupur_lints`, the layer's guarantees, which name only Nupur's paths and
+rb-sys's and learn what they need of Makiri from `ext/makiri/rust/dylint.toml`
+(the extension's crate name, the engine as a Ruby-free crate, and the
+engine's own no-unwind guard); and `makiri_lints`, Makiri's own policy. Each crate's root is touched just before its run:
 a run checks the crates it depends on without the lints, and cargo would
 count that as fresh, so the later runs would lint nothing. A sanctioned site is an allow with its
 reason. The lints:
 
 - `ruby_value_on_heap`: a Ruby value in a heap container, a static or a
   wrapped object's data.
-- `ruby_layer_in_engine`, `unguarded_no_unwind_site`,
-  `ruby_in_gvl_released_body`, `infallible_allocation`.
+- `ruby_in_ruby_free_module` (the layer's `utf8_copy` names no Ruby),
+  `unguarded_no_unwind_site`, `ruby_in_gvl_released_body`; and Makiri's
+  `infallible_allocation`.
 - `raising_call_outside_protect`: any rb-sys fn in neither `NON_RAISING` nor
   `REVIEWED`, outside `raw::call`. The tables are held to the C API raise
   survey, vendored, and to Ruby's headers as rb-sys's bindings carry them
   (`script/check_non_raising.rb`).
-- `unraising_call_in_raw`, `runs_callers_ruby`,
+- `unraising_call_in_raw`, `runs_callers_ruby`; and Makiri's
   `raw_node_crossing`, `ruby_surface_in_bridge`.
 - `discarded_ruby_error`: an `Err` of `bridge::rb::Error`, or of
   `nupur_sys::protect::Caught` before Nupur makes it one, thrown away by
@@ -122,16 +127,17 @@ The task then runs their self-test (`src/lint_probe.rs`,
 lints it names. It needs the nightly that `rust-toolchain.toml` pins, plus
 cargo-dylint and dylint-link.
 
-An extension written on Nupur outside Makiri runs the same lints over
-itself by naming its crate in `NUPUR_LINTS_EXTENSION`:
+An extension written on Nupur outside Makiri runs the layer's lints over
+itself from its own workspace, loading `nupur_lints` alone:
 
 ```bash
-NUPUR_LINTS_EXTENSION=nupur_json cargo dylint --path ../makiri/ext/makiri/rust/lints/nupur_lints --no-deps
+cargo dylint --path ../makiri/ext/makiri/rust/lints --pattern nupur_lints --no-deps
 ```
 
-The layer's lints then hold that crate to Nupur's rules. Makiri's own lints
-(`infallible_allocation`, `raw_node_crossing` and the module-layout ones)
-stay off there: the allocation policy and the module layout are Makiri's.
+The extension is the crate linted, unless a `[nupur_lints]` table in its
+workspace's `dylint.toml` names it (`lints/nupur_lints/README.md`). Makiri's
+own lints (`makiri_lints`) are not loaded there: the allocation policy and
+the module layout are Makiri's.
 
 ### `rake deny`
 

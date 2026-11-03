@@ -1,7 +1,7 @@
 [package]
 name = "nupur_lints"
 version = "0.1.0"
-description = "Nupur's lints over a Ruby extension's boundary, and Makiri's own over its layers"
+description = "Nupur's lints over a Ruby extension's boundary: the layer's guarantees, for the layer and any extension on it"
 edition = "2024"
 publish = false
 
@@ -9,12 +9,9 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-clippy_utils = { git = "https://github.com/rust-lang/rust-clippy", rev = "21baba9c10c5d179915cae82e6247bc2337872fb" }
-dylint_linting = "6.0"
+clippy_utils = { workspace = true }
+dylint_linting = { workspace = true }
+serde = { version = "1", features = ["derive"] }
 
 [package.metadata.rust-analyzer]
 rustc_private = true
-
-# A crate of its own, not a member of the extension's workspace (its own
-# toolchain, run from its own directory).
-[workspace]

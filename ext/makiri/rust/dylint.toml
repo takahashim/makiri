@@ -1,0 +1,14 @@
+# What `nupur_lints` (lints/nupur_lints) is told of Makiri, read by every
+# `rake dylint` run in this workspace, Nupur's own included. The lints name
+# nothing of Makiri's; these are Makiri's facts, stated here.
+[nupur_lints]
+# The extension: `makiri_rs`'s lib name. Without it the extension would be
+# whichever crate is linted - the engine, on the engine's run.
+extension = "makiri"
+# Linted for what any code must keep (an `extern "C"` function or a `Drop`
+# under a no-unwind guard), and callable from a GVL-released body: the
+# engine depends on no Ruby.
+ruby_free = ["makiri_engine"]
+# The engine's own no-unwind proof (`engine/src/no_unwind.rs`), which
+# `rake no_unwind` checks beside Nupur's.
+no_unwind_guards = ["makiri_engine::no_unwind::must_not_unwind"]

@@ -11,12 +11,13 @@ use rustc_span::Span;
 use rustc_span::def_id::LocalDefId;
 
 use crate::UNGUARDED_NO_UNWIND_SITE;
-use crate::paths::{callee, is_extension, path_of};
+use crate::paths::{callee, is_extension, no_unwind_guards, path_of};
 
-/// The calls that put a body under `must_not_unwind`: it, and the
-/// trampolines' and `Init_makiri`'s helpers, which do.
+/// The layer's calls that put a body under `must_not_unwind`: it, and the
+/// trampolines' and `Init_`'s helpers, which do. An extension with a proof
+/// of its own names its guards in its `dylint.toml`
+/// ([`no_unwind_guards`]).
 const GUARDS: &[&str] = &[
-    "makiri_engine::no_unwind::must_not_unwind",
     "nupur_sys::no_unwind::must_not_unwind",
     "nupur::rb::method::finish",
     "nupur::rb::method::finish_cary",
@@ -41,9 +42,7 @@ pub fn check_fn<'tcx>(
     };
     let guarded =
         clippy_utils::visitors::for_each_expr(cx.tcx, body.value, |e| match callee(cx, e) {
-            Some(d) if GUARDS.contains(&path_of(cx, d).as_str()) => {
-                core::ops::ControlFlow::Break(())
-            }
+            Some(d) if is_guard(&path_of(cx, d)) => core::ops::ControlFlow::Break(()),
             _ => core::ops::ControlFlow::Continue(()),
         })
         .is_some();
@@ -54,10 +53,14 @@ pub fn check_fn<'tcx>(
             span,
             format!("{site} whose body does not run under `must_not_unwind`"),
             None,
-            "an unwind out of it aborts the process; add a site to src/no_unwind.rs \
-             and run the body through must_not_unwind, so `rake no_unwind` proves it",
+            "an unwind out of it aborts the process; run the body through a \
+             must_not_unwind site, so the no-unwind build proves it",
         );
     }
+}
+
+fn is_guard(path: &str) -> bool {
+    GUARDS.contains(&path) || no_unwind_guards().iter().any(|g| g == path)
 }
 
 fn is_drop(cx: &LateContext<'_>, did: LocalDefId) -> bool {

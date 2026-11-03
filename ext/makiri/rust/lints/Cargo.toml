@@ -1,0 +1,12 @@
+# The two dylint libraries `rake dylint` loads together: `nupur_lints`, the
+# binding layer's guarantees, which name nothing of Makiri's; and
+# `makiri_lints`, Makiri's own policy over its crates. Not a member of the
+# extension's workspace: their own nightly (`rust-toolchain.toml`), run from
+# their own directory.
+[workspace]
+members = ["nupur_lints", "makiri_lints"]
+resolver = "3"
+
+[workspace.dependencies]
+clippy_utils = { git = "https://github.com/rust-lang/rust-clippy", rev = "21baba9c10c5d179915cae82e6247bc2337872fb" }
+dylint_linting = "6.0"

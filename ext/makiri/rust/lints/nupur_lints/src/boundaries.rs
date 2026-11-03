@@ -1,75 +1,53 @@
-//! The extension's layer boundaries, checked on the compiled code rather
-//! than its text: every path here is the RESOLVED definition, so a `use`
-//! alias, a re-export or a macro expansion cannot hide a reference, and a
-//! comment or a string cannot fake one. (`script/check_unsafe_boundaries.rb`
-//! checked these with regular expressions, and one of them - `RUBY_LAYER` -
+//! The layer's boundaries, checked on the compiled code rather than its
+//! text: every path here is the RESOLVED definition, so a `use` alias, a
+//! re-export or a macro expansion cannot hide a reference, and a comment or
+//! a string cannot fake one. (`script/check_unsafe_boundaries.rb` checked
+//! such lines with regular expressions, and one of them - `RUBY_LAYER` -
 //! held a backspace for months and matched nothing.)
 //!
-//! - `ruby_layer_in_engine`: the engine names nothing of the Ruby layer.
+//! - `ruby_in_ruby_free_module`: the layer's Ruby-free module names nothing
+//!   of the Ruby layer.
 //! - `ruby_in_gvl_released_body`: a GVL-released body calls nothing that
 //!   could reach Ruby.
-//! - `infallible_allocation`: no allocation that aborts on OOM.
-//! - `raising_call_outside_protect`: a C function that can raise is called
-//!   only inside `nupur::raw::call`'s closure (which is private to
-//!   `nupur::raw`, so that is also where every raising call is).
 //! - `runs_callers_ruby`: a call that would run the caller's Ruby code, each
 //!   one allowed where it is made, with its reason.
-//! - `raw_node_crossing`: a borrowed HTML node handle made a lifetime-free
-//!   `RawNode` in `bridge/`, each one allowed where it is made.
-//! - `ruby_surface_in_bridge`: a Ruby method defined, or an argument list
-//!   split, in `bridge/` - the glue's work.
 
 use clippy_utils::diagnostics::span_lint_and_help;
-use rustc_hir::def::{DefKind, Res};
+use rustc_hir::def::Res;
 use rustc_hir::def_id::DefId;
 use rustc_hir::{Expr, ExprKind, HirId, Path, QPath};
 use rustc_lint::LateContext;
 use rustc_span::Span;
 
 use crate::paths::{
-    BYTES_LENDING_METHODS, CALLERS_RUBY_RUNNERS, GVL_RELEASED_CALLS, NUPUR, NUPUR_SYS, callee,
-    in_engine_crate, in_layer, is_extension, makiri_policy_applies, module_of, ours, path_of,
-    within,
+    BYTES_LENDING_METHODS, CALLERS_RUBY_RUNNERS, GVL_RELEASED_CALLS, callee, in_ruby_free_crate,
+    is_extension, module_of, ours, path_of, within,
 };
-use crate::{
-    INFALLIBLE_ALLOCATION, RAW_NODE_CROSSING, RUBY_IN_GVL_RELEASED_BODY, RUBY_LAYER_IN_ENGINE,
-    RUBY_SURFACE_IN_BRIDGE, RUNS_CALLERS_RUBY,
-};
+use crate::{RUBY_IN_GVL_RELEASED_BODY, RUBY_IN_RUBY_FREE_MODULE, RUNS_CALLERS_RUBY};
 
-/// Whether `module` is the engine's: Ruby-free, Lexbor-free code that an
-/// edit's closure and a GVL-released body may run. That is the engine crate,
-/// which names no Ruby because it depends on none (so `ruby_layer_in_engine`
-/// can find nothing there), and nupur's one Ruby-free module, the checked
-/// copy Miri runs without a Ruby, which sits beside the Ruby layer in its
-/// crate and is held to it here. `lint_probe::engine` stands in for one in
-/// the lint's self-test.
-fn in_engine(module: &str) -> bool {
-    if !ours(module) {
-        return false;
-    }
-    in_engine_crate(module)
-        || within(module, "nupur::utf8_copy")
-        || within(module, "lint_probe::engine")
+/// The layer's Ruby-free modules: the checked copy, which Miri runs without
+/// a Ruby and which sits beside the Ruby layer in its crate.
+/// `lint_probe::ruby_free` stands in for one in the layer's self-test.
+const RUBY_FREE_MODULES: &[&str] = &["nupur::utf8_copy", "nupur::lint_probe::ruby_free"];
+
+fn in_ruby_free_module(path: &str) -> bool {
+    RUBY_FREE_MODULES.iter().any(|m| within(path, m))
 }
 
-/// Whether `module` is in `bridge/`; `lint_probe::bridge` stands in for one
-/// in the self-test.
-fn in_bridge(module: &str) -> bool {
-    within(module, "bridge") || in_layer(module) || within(module, "lint_probe::bridge")
+/// Whether code at `path` is known Ruby-free, so an edit's closure or a
+/// GVL-released body may call it: the layer's Ruby-free modules and the
+/// extension's Ruby-free crates.
+fn ruby_free(path: &str) -> bool {
+    in_ruby_free_module(path) || in_ruby_free_crate(path)
 }
 
-/// What the engine may not name: the Ruby layer (`bridge`, `glue`, `init`)
-/// and Ruby's C API.
+/// What a Ruby-free module may not name: the layer, the extension, and
+/// Ruby's C API.
 fn ruby_layer(path: &str) -> bool {
-    path.starts_with("rb_sys::")
-        || (ours(path)
-            && ["bridge", "glue", "init", NUPUR, NUPUR_SYS]
-                .iter()
-                .any(|m| within(path, m))
-            && !in_engine(path))
+    path.starts_with("rb_sys::") || (ours(path) && !ruby_free(path))
 }
 
-/* ---- ruby_layer_in_engine ---- */
+/* ---- ruby_in_ruby_free_module ---- */
 
 pub fn check_path(cx: &LateContext<'_>, path: &Path<'_>, hir_id: HirId) {
     if !is_extension(cx) {
@@ -82,47 +60,33 @@ pub fn check_path(cx: &LateContext<'_>, path: &Path<'_>, hir_id: HirId) {
 }
 
 fn report_ruby_layer(cx: &LateContext<'_>, did: DefId, span: Span, hir_id: HirId) {
-    if !in_engine(&module_of(cx, hir_id)) {
+    if !in_ruby_free_module(&module_of(cx, hir_id)) {
         return;
     }
     let target = path_of(cx, did);
     if ruby_layer(&target) {
         span_lint_and_help(
             cx,
-            RUBY_LAYER_IN_ENGINE,
+            RUBY_IN_RUBY_FREE_MODULE,
             span,
-            format!("the engine names `{target}`, of the Ruby layer"),
+            format!("a Ruby-free module names `{target}`, of the Ruby layer"),
             None,
-            "the engine is Ruby-free: an edit's closure and a GVL-released body run it, \
-             and neither may reach Ruby; move the Ruby half to bridge/ or glue/",
+            "the module runs without a Ruby (Miri runs it) and in a GVL-released body; \
+             move the Ruby half out of it",
         );
     }
 }
 
 /* ---- the expression checks ---- */
 
-/// What allocates and aborts on OOM, by the path it resolves to.
-const INFALLIBLE: &[&str] = &[
-    "::ToOwned::to_owned",
-    "::to_vec",
-    "::ToString::to_string",
-    "::fmt::format",
-    "::String::from_utf8_lossy",
-    "::Cow::into_owned",
-    "alloc::vec::from_elem",
-    "::into_vec",
-    /* `vec![...]` on this toolchain: an uninit box, made a Vec. */
-    "alloc::boxed::box_assume_init_into_vec_unsafe",
-    "alloc::boxed::new_uninit",
-    "::CString::new",
-];
-
 pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
     if !is_extension(cx) {
         return;
     }
-    if makiri_policy_applies(cx) {
-        check_makiri_policy(cx, expr);
+    if let ExprKind::MethodCall(..) = expr.kind
+        && let Some(did) = callee(cx, expr)
+    {
+        report_ruby_layer(cx, did, expr.span.source_callsite(), expr.hir_id);
     }
     check_layer_calls(cx, expr);
 }
@@ -163,72 +127,6 @@ fn check_layer_calls<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
     }
 }
 
-/// Makiri's own policy: the engine and the layers' layout, and allocation
-/// that must fail closed. The paths it names are Makiri's (`bridge`,
-/// `glue`, the engine), so it applies to Makiri alone
-/// ([`makiri_policy_applies`]).
-fn check_makiri_policy<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
-    check_raw_node_crossing(cx, expr);
-    if let ExprKind::MethodCall(..) = expr.kind
-        && let Some(did) = callee(cx, expr)
-    {
-        report_ruby_layer(cx, did, expr.span.source_callsite(), expr.hir_id);
-    }
-    let Some(did) = callee(cx, expr) else {
-        return;
-    };
-    let path = path_of(cx, did);
-
-    if INFALLIBLE.iter().any(|p| {
-        if p.starts_with("::") {
-            path.ends_with(p)
-        } else {
-            path == *p
-        }
-    }) && !ours(&path)
-    {
-        span_lint_and_help(
-            cx,
-            INFALLIBLE_ALLOCATION,
-            /* At the call site: `format!` and `vec!` are std's macros, and
-             * rustc keeps a lint quiet inside an external macro. */
-            expr.span.source_callsite(),
-            format!("`{path}` allocates and aborts the process on OOM"),
-            None,
-            "allocate through falloc (or, for an exception message, format_args! into \
-             crate::msg::Msg); an allocation that can fail must fail closed",
-        );
-    }
-
-    let defines = ours(&path)
-        && (within(&path, "bridge") || within(&path, NUPUR))
-        && path.rsplit("::").next().is_some_and(is_definition);
-    /* Splitting an argument list: `nupur::args`' scan, its `Scanned` and
-     * `Kwargs` - not its per-value type checks (`string_arg` and kin), which
-     * the bridge's conversions use. */
-    let splits_args = path
-        .strip_prefix("nupur::args::")
-        .is_some_and(|item| !item.ends_with("_arg"));
-    if defines || splits_args {
-        let module = module_of(cx, expr.hir_id);
-        if in_bridge(&module)
-            && !within(&module, "nupur::rb::class")
-            && !within(&module, "nupur::raw")
-            && !within(&module, "nupur::args")
-        {
-            span_lint_and_help(
-                cx,
-                RUBY_SURFACE_IN_BRIDGE,
-                expr.span.source_callsite(),
-                format!("`{path}` in bridge/: the Ruby surface is the glue's"),
-                None,
-                "define the method, or split its arguments, in glue/; a method defined \
-                 in bridge/ splits a feature's Ruby half by where it needed unsafe",
-            );
-        }
-    }
-}
-
 /// The calls that run the caller's Ruby code: Ruby's C API that converts or
 /// calls (`to_s`, `to_str`, a method, a block) - rb-sys's own, or
 /// `nupur_sys::raising`'s wrapper of it, named the same - and the layer's
@@ -262,69 +160,9 @@ fn runs_callers_ruby(path: &str) -> bool {
     CALLERS_RUBY_RUNNERS.contains(&path)
 }
 
-/// A function that defines a Ruby method: `define_method`,
-/// `define_singleton_method`, `define_module_function`, ...
-fn is_definition(name: &str) -> bool {
-    let Some(rest) = name.strip_prefix("define_") else {
-        return false;
-    };
-    let rest = ["singleton_", "private_", "module_"]
-        .iter()
-        .find_map(|p| rest.strip_prefix(p))
-        .unwrap_or(rest);
-    rest == "method" || rest == "function"
-}
-
-/* ---- raw_node_crossing ---- */
-
-const RAW_NODE: &str = "makiri_engine::html::dom::handle::RawNode";
-
-/// `RawNode::from(node)` (as a call or a path, `.map(RawNode::from)`), a
-/// `.into()` that makes one, and `HtmlNodeKey::raw_node`, in `bridge/`.
-fn check_raw_node_crossing<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
-    let did = match expr.kind {
-        ExprKind::Path(ref qpath) => match cx.qpath_res(qpath, expr.hir_id) {
-            Res::Def(DefKind::AssocFn, did) => did,
-            _ => return,
-        },
-        ExprKind::MethodCall(..) => match cx.typeck_results().type_dependent_def_id(expr.hir_id) {
-            Some(did) => did,
-            None => return,
-        },
-        _ => return,
-    };
-    let path = path_of(cx, did);
-    let made = |i: usize| {
-        cx.typeck_results()
-            .node_args(expr.hir_id)
-            .types()
-            .nth(i)
-            .and_then(|t| t.ty_adt_def())
-            .is_some_and(|a| path_of(cx, a.did()) == RAW_NODE)
-    };
-    let crossing = match path.as_str() {
-        "core::convert::From::from" => made(0),
-        "core::convert::Into::into" => made(1),
-        "makiri_engine::html::dom::parsed::raw_node" => true,
-        _ => false,
-    };
-    if crossing && in_bridge(&module_of(cx, expr.hir_id)) {
-        span_lint_and_help(
-            cx,
-            RAW_NODE_CROSSING,
-            expr.span.source_callsite(),
-            "a node handle made a lifetime-free `RawNode` in bridge/",
-            None,
-            "a RawNode outlives the read it came from; reach for with_html_node, \
-             HtmlParsed::mint_key or HtmlParsed::resolve, or allow this crossing here \
-             with its reason",
-        );
-    }
-}
-
-/// A GVL-released body: everything it calls must be the engine's or a
-/// library's - never the Ruby layer, Ruby's C API, or a function value whose
-/// target no one can see.
+/// A GVL-released body: everything it calls must be Ruby-free code
+/// ([`ruby_free`]) or a library's - never the layer, the extension, Ruby's C
+/// API, or a function value whose target no one can see.
 fn check_gvl_released<'tcx>(cx: &LateContext<'tcx>, body: &'tcx Expr<'tcx>, holder: &str) {
     let ExprKind::Closure(closure) = body.kind else {
         span_lint_and_help(
@@ -343,10 +181,7 @@ fn check_gvl_released<'tcx>(cx: &LateContext<'tcx>, body: &'tcx Expr<'tcx>, hold
             let bad = match callee(cx, e) {
                 Some(did) => {
                     let path = path_of(cx, did);
-                    path.starts_with("rb_sys::")
-                        || (ours(&path)
-                            && !in_engine(&path)
-                            && !within(&path, "lint_probe::engine"))
+                    path.starts_with("rb_sys::") || (ours(&path) && !ruby_free(&path))
                 }
                 /* A call through a local function value or a pointer. */
                 None => {
@@ -358,10 +193,10 @@ fn check_gvl_released<'tcx>(cx: &LateContext<'tcx>, body: &'tcx Expr<'tcx>, hold
                     cx,
                     RUBY_IN_GVL_RELEASED_BODY,
                     e.span.source_callsite(),
-                    format!("a GVL-released body (`{holder}`'s) calls what is not the engine's"),
+                    format!("a GVL-released body (`{holder}`'s) calls what is not known Ruby-free"),
                     None,
-                    "with the GVL released no Ruby may run, and only the engine is known \
-                     Ruby-free; hoist this call out of the closure",
+                    "with the GVL released no Ruby may run, and only a library or code \
+                     declared Ruby-free is known not to; hoist this call out of the closure",
                 );
             }
         }

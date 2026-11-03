@@ -161,8 +161,11 @@ Three things an extension's own build needs to know:
   `cfg_attr(dylint_lib = "nupur_lints", ...)`, so register the cfg in the
   extension's `Cargo.toml`, or every such allow warns:
   `[lints.rust] unexpected_cfgs = { level = "warn", check-cfg = ['cfg(dylint_lib, values(any()))'] }`.
-  The lints run over the extension with
-  `NUPUR_LINTS_EXTENSION=<its crate> cargo dylint --path <makiri>/ext/makiri/rust/lints/nupur_lints --no-deps`.
+  The lints run over the extension from its workspace with
+  `cargo dylint --path <makiri>/ext/makiri/rust/lints --pattern nupur_lints --no-deps`;
+  a `[nupur_lints]` table in the workspace's `dylint.toml` names the
+  extension's crate when others are linted too, its Ruby-free crates and
+  its own no-unwind guards (`lints/nupur_lints/README.md`).
 
 An extension that calls a method of an object it was handed (a JSON
 generator calling `to_json`) does it through `rb::call`, whose module doc

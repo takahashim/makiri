@@ -182,7 +182,7 @@ bundle exec rake spec
 bundle exec rake rust:test         # engine (bare and as shipped), falloc, nupur, reference
 bundle exec rake nupur:spec        # nupur alone, through its own test extension
 bundle exec rake lint              # clippy -D warnings over every crate and config + fmt
-bundle exec rake dylint            # the crate's own lints (lints/nupur_lints) + self-test
+bundle exec rake dylint            # the crate's own lints (lints/: nupur_lints, makiri_lints) + self-test
 bundle exec rake unsafe:boundaries # each file's unsafe count and the forbid files
 bundle exec rake symbols           # the export gate
 bundle exec rake no_unwind         # the unwind-freedom proof
@@ -205,12 +205,17 @@ bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'   # smoke load
 
 Requires CRuby >= 3.3 and a Rust toolchain; `cmake` only for the reference
 Lexbor. `rake sanitize`, `miri` and `fuzz:libfuzzer` need a nightly
-toolchain; `rake dylint` needs the one `lints/nupur_lints/rust-toolchain.toml`
+toolchain; `rake dylint` needs the one `lints/rust-toolchain.toml`
 pins, with cargo-dylint and dylint-link. `rb_sys` is a RUNTIME gemspec
 dependency, since a source install runs `extconf.rb`.
 
-**`rake dylint` lints are the rules above, checked.** A sanctioned exception
-is an `allow` with its reason at the site. In the extension
+**`rake dylint` lints are the rules above, checked.** Two libraries, loaded
+together: `nupur_lints`, the layer's guarantees, which names nothing of
+Makiri's (what it knows of Makiri is `ext/makiri/rust/dylint.toml`), and
+`makiri_lints`, Makiri's policy (`infallible_allocation`,
+`raw_node_crossing`, `ruby_surface_in_bridge`); an `allow` names the library
+its lint is in (`cfg_attr(dylint_lib = "makiri_lints", ...)`). A sanctioned
+exception is an `allow` with its reason at the site. In the extension
 `discarded_ruby_error` is forbidden outright: handle an `Err` with
 `Error::rescue`, never `.ok()` / `let _ =`.
 
