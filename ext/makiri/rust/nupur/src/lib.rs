@@ -245,10 +245,6 @@ pub mod string;
 // Owned bytes checked to be UTF-8 (`Utf8Copy`), std alone.
 pub mod utf8_copy;
 
-// The first byte of a set in a slice, sixteen bytes at a time: the layer's
-// one SIMD, Ruby-free.
-pub mod bytes;
-
 // The OOM sweep's hooks, installed together (`rake oom`).
 #[cfg(feature = "alloc-inject")]
 pub mod inject;

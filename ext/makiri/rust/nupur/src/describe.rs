@@ -84,7 +84,7 @@ impl core::fmt::Display for Describe {
         let v = self.0;
         if let Some(sym) = crate::rb::Symbol::from_value(v) {
             /* A name that cannot be made is written by the class instead. */
-            if let Some(s) = for_message(|| super::raw::sym2str(sym)) {
+            if let Some(s) = for_message(|| crate::raw::sym2str(sym)) {
                 let head = Head::of(s);
                 write!(f, ":{}", Lossy(head.bytes()))?;
                 return head.mark_cut(f);
@@ -115,7 +115,7 @@ impl core::fmt::Display for AsText {
          * build (and format) a whole TypeError for any other value, only for
          * it to be thrown away here. */
         let text = match crate::rb::Symbol::from_value(v) {
-            Some(sym) => for_message(|| super::raw::sym2str(sym)),
+            Some(sym) => for_message(|| crate::raw::sym2str(sym)),
             None => match RString::from_value(v) {
                 Some(s) => Some(s),
                 None => return Describe(v).fmt(f),
@@ -149,7 +149,7 @@ const EXCEPTION_MESSAGE_MAX: usize = 255;
 /// at most `EXCEPTION_MESSAGE_MAX` bytes, invalid UTF-8 replaced. "error"
 /// for a message that is not a String - this runs on error paths, so it must
 /// not raise itself.
-pub struct ExceptionText<'a>(pub &'a Ruby, pub Value);
+pub(crate) struct ExceptionText<'a>(pub &'a Ruby, pub Value);
 
 impl core::fmt::Display for ExceptionText<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

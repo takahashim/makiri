@@ -43,7 +43,7 @@ pub fn name_arg(v: Value) -> Result<RString, Error> {
         return Ok(s);
     }
     match crate::rb::Symbol::from_value(v) {
-        Some(sym) => super::raw::sym2str(sym),
+        Some(sym) => crate::raw::sym2str(sym),
         None => Err(wrong_type(v, "String or Symbol", TO_S_HINT)),
     }
 }
