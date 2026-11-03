@@ -202,14 +202,14 @@ jobs:
         shell: bash
         run: bundle exec ruby -Ilib -r makiri -e 'p Makiri::VERSION'
 
-  # The crate's own lint (ext/makiri/rust/lints/makiri_lints): a Ruby value
+  # The crate's own lint (ext/makiri/rust/lints/nupur_lints): a Ruby value
   # kept where the GC's stack scan does not see it. It is a rustc plugin, so
   # it runs on the nightly its rust-toolchain.toml pins (with
   # rustc-dev) rather than the stable the build uses; `rake dylint` runs it
   # over the extension, the engine and nupur, and then its self-test. No
   # Lexbor: none of the three reads it.
   dylint:
-    name: makiri_lints
+    name: nupur_lints
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -232,10 +232,10 @@ jobs:
       # The lints crate's formatting, on the nightly it builds with (its
       # rust-toolchain.toml); `rake lint` checks it locally.
       - name: Lints crate formatting
-        working-directory: ext/makiri/rust/lints/makiri_lints
+        working-directory: ext/makiri/rust/lints/nupur_lints
         run: cargo fmt -- --check
 
-      - name: makiri_lints
+      - name: nupur_lints
         run: bundle exec rake dylint
 
   # The suite over a dev-profile extension (`rake debug`), so the

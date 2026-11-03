@@ -131,6 +131,18 @@ RSpec.describe "nupur" do
   end
 
   describe "a String read as checked UTF-8" do
+    it "marks a String made of text valid, and leaves one made of trusted bytes for Ruby to scan" do
+      require "objspace"
+      coderange = ->(s) { ObjectSpace.dump(s)[/"coderange":"(\w+)"/, 1] || "unknown" }
+      expect(coderange.(NupurTest.read_text("abc"))).to eq("7bit")
+      expect(coderange.(NupurTest.read_text("café"))).to eq("valid")
+      expect(coderange.(NupurTest.trusting_str("abc".b))).to eq("unknown")
+      broken = NupurTest.trusting_str("\xFF".b)
+      expect(broken.encoding).to eq(Encoding::UTF_8)
+      expect(broken.valid_encoding?).to be(false)
+      expect(coderange.(broken)).to eq("broken")
+    end
+
     it "copies UTF-8, and transcodes another encoding first" do
       expect(NupurTest.read_text("café")).to eq("café")
       expect(NupurTest.read_text("café".encode("Shift_JIS", fallback: { "é" => "e" }))).to eq("cafe")
@@ -357,6 +369,13 @@ RSpec.describe "nupur" do
   end
 
   describe "a method's arguments" do
+    it "refuses an unknown keyword when asked to, as Ruby words it" do
+      expect(NupurTest.kw_only(a: 1, b: 2)).to eq(1)
+      expect(NupurTest.kw_only).to be_nil
+      expect { NupurTest.kw_only(a: 1, c: 2) }.to raise_error(ArgumentError, "unknown keyword: :c")
+      expect { NupurTest.kw_only(**{ "a" => 1 }) }.to raise_error(ArgumentError, "unknown keyword: String key")
+    end
+
     it "reads a keyword, nil when absent; a braced Hash is positional" do
       expect(NupurTest.kw(a: 1)).to eq(1)
       expect(NupurTest.kw).to be_nil
@@ -376,8 +395,31 @@ RSpec.describe "nupur" do
       expect(NupurTest.pairs({ a: 1, "b" => 2 })).to eq([[:a, 1], ["b", 2]])
     end
 
+    it "stops a cancellable body that a Timeout interrupts, and raises the Timeout" do
+      require "timeout"
+      expect(NupurTest.spin_cancellable(10)).to be(true)
+      t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      expect { Timeout.timeout(0.1) { NupurTest.spin_cancellable(20_000) } }.to raise_error(Timeout::Error)
+      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0).to be < 2
+    end
+
+    it "stops a cancellable body on Thread#kill" do
+      t = Thread.new { NupurTest.spin_cancellable(20_000) }
+      sleep 0.05
+      t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      t.kill
+      expect(t.join(2)).to eq(t)
+      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0).to be < 2
+    end
+
     it "runs a body with the GVL released and returns its answer" do
       expect(NupurTest.sum_without_gvl(1000)).to eq(499_500)
+    end
+
+    it "raises each builtin class by name, as Ruby's own" do
+      [KeyError, IndexError, FrozenError, ThreadError, StopIteration, ZeroDivisionError].each_with_index do |c, i|
+        expect { NupurTest.raise_builtin(i) }.to raise_error(c, "nupur: raised by name")
+      end
     end
 
     it "answers a frozen value with Ruby's own FrozenError" do

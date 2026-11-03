@@ -200,7 +200,7 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
 
     /* The body is the last argument (`without_gvl(ruby, body)`): matched
      * as `[body]` alone, this saw nothing once the token joined it. */
-    if path == "nupur::gvl::without_gvl"
+    if (path == "nupur::gvl::without_gvl" || path == "nupur::gvl::without_gvl_cancellable")
         && let ExprKind::Call(_, [.., body]) = expr.kind
     {
         check_gvl_released(cx, body);

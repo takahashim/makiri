@@ -138,7 +138,7 @@ pub fn const_defined_at(outer: Value, id: crate::rb::Id) -> Result<bool, Error> 
 /// method, a private or protected one being `NoMethodError`. The caller's
 /// Ruby, as [`call_method`] is.
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         runs_callers_ruby,
         reason = "rb_funcallv_public: the wrapper `rb::call::public_method` is, and its callers allow it"
@@ -160,7 +160,7 @@ pub fn call_public(recv: Value, id: crate::rb::Id, args: &[Value]) -> Result<Val
 /// Whether `recv` has a public method `id` (`rb_respond_to`): Ruby's own
 /// `respond_to?`, which a class may redefine - the caller's Ruby.
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         runs_callers_ruby,
         reason = "rb_respond_to: the wrapper `rb::call::responds_to` is, and its callers allow it"
@@ -188,7 +188,7 @@ pub fn ractor_make_shareable(v: Value) -> Result<(), Error> {
 /// call of it is allowed where it is made (`rake dylint`'s
 /// `runs_callers_ruby`), with the reason it may run there.
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         runs_callers_ruby,
         reason = "rb_funcallv: the wrapper `Module::call_method` is, and its callers allow it"

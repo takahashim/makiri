@@ -11,7 +11,7 @@
 //! extension is the Ruby surface of ([`ENGINE`]), whose items are
 //! `makiri_engine::...`. The layer's lints name only `nupur::` paths (and
 //! rb-sys's), so a copy of the layer under another extension changes
-//! [`extension`] alone (`MAKIRI_LINTS_EXTENSION`); the extension's own lints name its modules, and the
+//! [`extension`] alone (`NUPUR_LINTS_EXTENSION`); the extension's own lints name its modules, and the
 //! engine's, by their path inside the crate (`bridge`, `glue`,
 //! `html::dom::...`) - the extension re-exports the engine's at its root, so
 //! the two read alike.
@@ -29,10 +29,10 @@ pub const NUPUR: &str = "nupur";
 /// it. Held to the layer's rules, as part of the layer.
 pub const NUPUR_SYS: &str = "nupur_sys";
 
-/// The extension's crate name: `makiri`, unless `MAKIRI_LINTS_EXTENSION`
+/// The extension's crate name: `makiri`, unless `NUPUR_LINTS_EXTENSION`
 /// names another - an extension written on Nupur outside Makiri runs these
-/// lints over itself by setting it (`MAKIRI_LINTS_EXTENSION=nupur_json cargo
-/// dylint --path .../makiri_lints`). The layer's lints then hold it to the
+/// lints over itself by setting it (`NUPUR_LINTS_EXTENSION=nupur_json cargo
+/// dylint --path .../nupur_lints`). The layer's lints then hold it to the
 /// layer's rules; the extension's own lints name Makiri's modules (`bridge`,
 /// `glue`), which another crate does not have, so they find nothing there.
 /// A name that is not a crate name (`[a-z0-9_]+`) is ignored, so a stray
@@ -40,7 +40,7 @@ pub const NUPUR_SYS: &str = "nupur_sys";
 pub fn extension() -> &'static str {
     static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     NAME.get_or_init(|| {
-        std::env::var("MAKIRI_LINTS_EXTENSION")
+        std::env::var("NUPUR_LINTS_EXTENSION")
             .ok()
             .filter(|n| {
                 !n.is_empty()

@@ -1,7 +1,7 @@
 [package]
-name = "makiri_lints"
+name = "nupur_lints"
 version = "0.1.0"
-description = "Makiri's own lint over its Ruby boundary"
+description = "Nupur's lints over a Ruby extension's boundary, and Makiri's own over its layers"
 edition = "2024"
 publish = false
 

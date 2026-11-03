@@ -30,7 +30,7 @@ workspace = true
 # The extension, the engine and the fallible allocation it allocates through,
 # and the binding layer the extension is built on. `reference/` (the Lexbor
 # reference, with its vendored C library and bindgen), `fuzz/` (cargo-fuzz's
-# own nightly crate) and `lints/makiri_lints` (dylint's, on its own pinned
+# own nightly crate) and `lints/nupur_lints` (dylint's, on its own pinned
 # nightly) are workspaces of their own, run from their directories - so this
 # workspace's Cargo.lock, the one a source install builds from, holds nothing
 # of Lexbor's, and no build script here reads a Lexbor header.

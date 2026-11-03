@@ -79,7 +79,7 @@ that breaks one does not compile. `src/lib.rs` states each in full.
 ### What the types do not hold
 
 Some rules cannot be types. Makiri holds these with checks of the code
-(`rake dylint`'s lints in `lints/makiri_lints`, `rake no_unwind`,
+(`rake dylint`'s lints in `lints/nupur_lints`, `rake no_unwind`,
 `rake unsafe:boundaries`), so a copy of Nupur used elsewhere needs checks of
 its own:
 
@@ -157,11 +157,11 @@ Three things an extension's own build needs to know:
   does; with `abort`, a panic in a method would kill the host instead of
   reaching Ruby as the internal error.
 - An `allow` of one of Nupur's lints sits under
-  `cfg_attr(dylint_lib = "makiri_lints", ...)`, so register the cfg in the
+  `cfg_attr(dylint_lib = "nupur_lints", ...)`, so register the cfg in the
   extension's `Cargo.toml`, or every such allow warns:
   `[lints.rust] unexpected_cfgs = { level = "warn", check-cfg = ['cfg(dylint_lib, values(any()))'] }`.
   The lints run over the extension with
-  `MAKIRI_LINTS_EXTENSION=<its crate> cargo dylint --path <makiri>/ext/makiri/rust/lints/makiri_lints --no-deps`.
+  `NUPUR_LINTS_EXTENSION=<its crate> cargo dylint --path <makiri>/ext/makiri/rust/lints/nupur_lints --no-deps`.
 
 An extension that calls a method of an object it was handed (a JSON
 generator calling `to_json`) does it through `rb::call`, whose module doc
@@ -205,9 +205,9 @@ Nupur is not published, and is used only inside Makiri's workspace.
 | --- | --- |
 | `rb` | `Value` and the class-checked handles, `Error`, the `method!` / `function!` trampolines, class and module definitions; `rb::call`, calling a public method of any object |
 | `typed` | TypedData: wrapping a Rust payload as a Ruby object, its slots and GC callbacks, memory reported to the GC |
-| `gvl` | Running a body with the GVL released |
+| `gvl` | Running a body with the GVL released (`without_gvl`), or one that stops when Ruby asks for the thread back (`without_gvl_cancellable`, its body asking a `Cancel`) |
 | `build` | Building Arrays, Hashes, numbers, Symbols and UTF-8 Strings |
-| `string`, `encoding`, `utf8_copy` | Reading Strings by copying, as checked UTF-8 (`read_utf8`) or as bytes (`read_bytes`); making UTF-8 (`utf8_str`) and ASCII-8BIT (`binary_str`) Strings; encodings |
+| `string`, `encoding`, `utf8_copy` | Reading Strings by copying, as checked UTF-8 (`read_utf8`) or as bytes (`read_bytes`); making UTF-8 Strings, of text marked valid (`utf8_str`, which takes a `&str`) or of bytes the caller holds to be UTF-8 (`utf8_str_trusting`), and ASCII-8BIT ones (`binary_str`); encodings |
 | `args`, `hash` | Reading a method's arguments and keywords; walking a Hash |
 | `describe`, `msg` | Writing Ruby values into an exception message without a call or an allocation |
 | `abi` | What the binary assumes of the running Ruby, and the load-time checks of it |

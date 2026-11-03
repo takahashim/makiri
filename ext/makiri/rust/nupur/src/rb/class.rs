@@ -98,7 +98,7 @@ pub trait Module: ReprValue {
 
     /// `self.name(*args)`: the caller's Ruby - see `raw::call_method`.
     #[cfg_attr(
-        dylint_lib = "makiri_lints",
+        dylint_lib = "nupur_lints",
         allow(
             runs_callers_ruby,
             reason = "the one way to call a method; each caller's own allow says why"

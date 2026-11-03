@@ -85,6 +85,9 @@ sites! {
     HashEach => "nupur_unwinds_hash_each",
     /// `gvl::without_gvl`'s body, run with the GVL released.
     GvlBody => "nupur_unwinds_gvl_body",
+    /// `gvl::without_gvl_cancellable`'s unblock function, which Ruby calls
+    /// from another thread to ask the body to stop.
+    GvlUnblock => "nupur_unwinds_gvl_unblock",
     /// A method's trampoline (`rb::method::finish`, which `finish_cary` runs
     /// too).
     Method => "nupur_unwinds_method",

@@ -1,8 +1,8 @@
-# makiri_lints
+# nupur_lints
 
-The lints over Makiri's Ruby binding layer (`nupur`) and the extension built
-on it, checked on the compiled code by resolved path and by type, in two
-groups:
+The lints over the Ruby binding layer `nupur` and an extension built on it
+- Makiri, or another one named by `NUPUR_LINTS_EXTENSION` - checked on the
+compiled code by resolved path and by type, in two groups:
 
 - **The layer's guarantees** (they name only `nupur::` and rb-sys paths):
   `raising_call_outside_protect`, `unraising_call_in_raw`,
@@ -10,7 +10,8 @@ groups:
   `gvl_token_outside_entry`, `forgotten_handle`, `discarded_ruby_error`,
   `ruby_value_on_heap`, `c_integer_outside_int`, `runs_callers_ruby`,
   `ruby_in_gvl_released_body`.
-- **The extension's own layout**: `ruby_layer_in_engine`,
+- **Makiri's own layout**, which name Makiri's modules and engine and so
+  find nothing in another extension: `ruby_layer_in_engine`,
   `infallible_allocation`, `raw_node_crossing`, `ruby_surface_in_bridge`.
 
 Where rb-sys and a raw `VALUE` may be named is held by the crates'

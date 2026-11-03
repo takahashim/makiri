@@ -7,7 +7,7 @@
 //! Each is the C function's own signature with the token first, and does
 //! nothing but call it: what checks a value's kind or a bound before the call,
 //! and what makes the answer a typed value, is Nupur's (`nupur::raw`). Which
-//! functions raise is the lints' table (`makiri_lints`' `NON_RAISING`; every
+//! functions raise is the lints' table (`nupur_lints`' `NON_RAISING`; every
 //! function not in it is taken to raise), and each one Nupur calls is here.
 //!
 //! # Safety
@@ -23,7 +23,7 @@
  * the call on: the lint names each wrapper by the function it wraps, and the
  * sanctioned call of it is an `allow` where Nupur makes it. */
 #![cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         runs_callers_ruby,
         reason = "the wrappers pass each call on; its caller is checked"

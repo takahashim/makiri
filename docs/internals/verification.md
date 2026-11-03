@@ -78,7 +78,7 @@ extension, the fuzz crate), plus fmt and Nupur's rustdoc with `-D warnings`.
 
 ### `rake dylint`
 
-`rake dylint` runs the crate's own lints (`lints/makiri_lints`) on the
+`rake dylint` runs the crate's own lints (`lints/nupur_lints`) on the
 compiled code, by resolved path: on the extension, the engine, Nupur and
 `nupur_sys`, one run each. Each crate's root is touched just before its run:
 a run checks the crates it depends on without the lints, and cargo would
@@ -123,10 +123,10 @@ lints it names. It needs the nightly that `rust-toolchain.toml` pins, plus
 cargo-dylint and dylint-link.
 
 An extension written on Nupur outside Makiri runs the same lints over
-itself by naming its crate in `MAKIRI_LINTS_EXTENSION`:
+itself by naming its crate in `NUPUR_LINTS_EXTENSION`:
 
 ```bash
-MAKIRI_LINTS_EXTENSION=nupur_json cargo dylint --path ../makiri/ext/makiri/rust/lints/makiri_lints --no-deps
+NUPUR_LINTS_EXTENSION=nupur_json cargo dylint --path ../makiri/ext/makiri/rust/lints/nupur_lints --no-deps
 ```
 
 The layer's lints then hold that crate to Nupur's rules. Makiri's own lints

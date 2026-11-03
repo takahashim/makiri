@@ -18,7 +18,7 @@ pub fn stack_probe(_: &Ruby) -> fn() -> bool {
 }
 
 #[cfg_attr(
-    dylint_lib = "makiri_lints",
+    dylint_lib = "nupur_lints",
     allow(
         ffi_without_gvl_proof,
         reason = "private: handed out only by `stack_probe`, for a token"
