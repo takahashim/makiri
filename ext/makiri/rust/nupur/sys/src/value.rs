@@ -146,6 +146,14 @@ impl Ruby {
         crate::int::posfixnum(n).map(|v| unsafe { Value::from_raw(v) })
     }
 
+    /// The flonum `f` is, or `None` where Ruby would make a heap Float
+    /// (`int::flonum`, crate-private).
+    #[inline(always)]
+    pub fn flonum(&self, f: f64) -> Option<Value> {
+        // SAFETY: an immediate, built from its bits as Ruby builds it.
+        crate::int::flonum(f).map(|v| unsafe { Value::from_raw(v) })
+    }
+
     /// The token, lent for the protection's borrow (`Protected::ruby`).
     #[inline(always)]
     pub(crate) fn lent() -> &'static Ruby {

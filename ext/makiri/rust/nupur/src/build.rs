@@ -22,6 +22,24 @@ pub fn push(a: RArray, v: impl ReprValue) -> Result<(), Error> {
     raw::ary_push(a, v.as_value())
 }
 
+/// A new Array of `vals`, made in one protected call rather than a push
+/// each. `vals` is held on the caller's stack, where the GC sees it.
+pub fn ary_from(ruby: &Ruby, vals: &[Value]) -> Result<RArray, Error> {
+    raw::ary_from_values(ruby, vals)
+}
+
+/// Append `vals` to `a`, in one protected call.
+pub fn ary_cat(a: RArray, vals: &[Value]) -> Result<(), Error> {
+    raw::ary_cat(a, vals)
+}
+
+/// `pairs` - key, value, key, value - into `h`, in one protected call, a
+/// later key's value replacing an earlier one's. A key must be a String or
+/// a Symbol, as for [`aset`].
+pub fn hash_insert_pairs(h: RHash, pairs: &[Value]) -> Result<(), Error> {
+    raw::hash_bulk_insert(h, pairs)
+}
+
 /// An empty Hash.
 pub fn hash(ruby: &Ruby) -> Result<RHash, Error> {
     raw::hash_new(ruby)

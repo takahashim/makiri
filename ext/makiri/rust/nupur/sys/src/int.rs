@@ -98,6 +98,34 @@ fn fixnum_bits(l: c_long) -> rb_sys::VALUE {
     ((l as rb_sys::VALUE) << 1) | rb_sys::FIXNUM_FLAG as rb_sys::VALUE
 }
 
+/// The flonum `f` is - Ruby's immediate Float, the bits
+/// `rb_float_new_inline` builds - or `None` where Ruby makes a heap Float
+/// instead: an exponent outside the immediate range, `-0.0`, a NaN, an
+/// infinity, the one value whose bits collide with a tag. Only where a
+/// `VALUE` is 64 bits, as Ruby uses flonums only there. The spec of Nupur's
+/// test extension holds it to `rb_float_new` value by value.
+#[inline]
+pub(crate) fn flonum(f: f64) -> Option<rb_sys::VALUE> {
+    #[cfg(target_pointer_width = "64")]
+    {
+        let t = f.to_bits();
+        let exp = (t >> 60) & 0x7;
+        if t != 0x3000_0000_0000_0000 && (exp.wrapping_sub(3) & !0x1) == 0 {
+            return Some(((t.rotate_left(3) & !0x1) | 0x2) as rb_sys::VALUE);
+        }
+        if t == 0 {
+            /* +0.0 */
+            return Some(0x8000_0000_0000_0002_u64 as rb_sys::VALUE);
+        }
+        None
+    }
+    #[cfg(not(target_pointer_width = "64"))]
+    {
+        let _ = f;
+        None
+    }
+}
+
 /// A non-negative `long` the C API answered as a length (`RSTRING_LEN`,
 /// `RARRAY_LEN`): a `usize`, and 0 for a negative one, which no length is.
 #[inline]

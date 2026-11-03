@@ -152,7 +152,9 @@ macro_rules! raising {
 }
 
 raising! {
+    fn rb_ary_cat(ary: Value, train: *const Value, len: core::ffi::c_long) -> Value;
     fn rb_ary_new_capa(capa: core::ffi::c_long) -> Value;
+    fn rb_ary_new_from_values(n: core::ffi::c_long, elts: *const Value) -> Value;
     fn rb_ary_push(ary: Value, elem: Value) -> Value;
     fn rb_big2ll(arg1: Value) -> core::ffi::c_longlong;
     fn rb_big2str(x: Value, base: core::ffi::c_int) -> Value;
@@ -171,6 +173,7 @@ raising! {
     fn rb_define_private_method(klass: Value, mid: *const core::ffi::c_char, func: Option<unsafe extern "C" fn() -> Value>, arity: core::ffi::c_int);
     fn rb_define_singleton_method(obj: Value, mid: *const core::ffi::c_char, func: Option<unsafe extern "C" fn() -> Value>, arity: core::ffi::c_int);
     fn rb_enc_associate(obj: Value, enc: *const rb_encoding) -> Value;
+    fn rb_enc_str_coderange(str_: Value) -> core::ffi::c_int;
     fn rb_enc_find_index(name: *const core::ffi::c_char) -> core::ffi::c_int;
     fn rb_enc_from_encoding(enc: *const rb_encoding) -> Value;
     fn rb_enc_interned_str(ptr: *const core::ffi::c_char, len: core::ffi::c_long, enc: *const rb_encoding) -> Value;
@@ -181,6 +184,7 @@ raising! {
     fn rb_funcallv_public(recv: Value, mid: ID, argc: core::ffi::c_int, argv: *const Value) -> Value;
     fn rb_gc_register_mark_object(object: Value);
     fn rb_hash_aset(hash: Value, key: Value, val: Value) -> Value;
+    fn rb_hash_bulk_insert(argc: core::ffi::c_long, argv: *const Value, hash: Value);
     fn rb_hash_lookup2(hash: Value, key: Value, def: Value) -> Value;
     fn rb_hash_new() -> Value;
     fn rb_id2sym(id: ID) -> Value;
@@ -195,9 +199,11 @@ raising! {
     fn rb_obj_reveal(obj: Value, klass: Value) -> Value;
     fn rb_range_beg_len(range: Value, begp: *mut core::ffi::c_long, lenp: *mut core::ffi::c_long, len: core::ffi::c_long, err: core::ffi::c_int) -> Value;
     fn rb_respond_to(obj: Value, mid: ID) -> core::ffi::c_int;
+    fn rb_ractor_make_shareable(obj: Value) -> Value;
     fn rb_range_values(range: Value, begp: *mut Value, endp: *mut Value, exclp: *mut core::ffi::c_int) -> core::ffi::c_int;
     fn rb_str_dup(str_: Value) -> Value;
     fn rb_str_encode(str_: Value, to: Value, ecflags: core::ffi::c_int, ecopts: Value) -> Value;
+    fn rb_str_locktmp(str_: Value) -> Value;
     fn rb_str_new(ptr: *const core::ffi::c_char, len: core::ffi::c_long) -> Value;
     fn rb_str_to_inum(str_: Value, base: core::ffi::c_int, badcheck: core::ffi::c_int) -> Value;
     fn rb_sym2str(symbol: Value) -> Value;

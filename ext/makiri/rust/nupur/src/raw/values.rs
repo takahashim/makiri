@@ -106,6 +106,56 @@ pub(crate) fn hidden_hash_new(ruby: &Ruby) -> Result<RHash, Error> {
     Ok(h)
 }
 
+/// `rb_ary_new_from_values`: a new Array of `vals`, in one call. Raises
+/// `NoMemoryError`.
+#[inline]
+pub(crate) fn ary_from_values(_: &Ruby, vals: &[Value]) -> Result<RArray, Error> {
+    let n = c_len(vals.len())?;
+    /* `Value` is transparent over `VALUE`, so the slice is the C array. */
+    let p = vals.as_ptr().cast::<nupur_sys::value::Value>();
+    let v = call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_ary_new_from_values(inside, n, p)
+    })?;
+    typed(v, RArray::from_value, "a C call made no Array")
+}
+
+/// `rb_ary_cat`: append `vals` to `a`, in one call. Raises `NoMemoryError`,
+/// and `FrozenError` for a frozen Array.
+#[inline]
+pub(crate) fn ary_cat(a: RArray, vals: &[Value]) -> Result<(), Error> {
+    let n = c_len(vals.len())?;
+    let (a, p) = (a.as_sys(), vals.as_ptr().cast::<nupur_sys::value::Value>());
+    call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_ary_cat(inside, a, p, n)
+    })
+    .map(|_| ())
+}
+
+/// `rb_hash_bulk_insert`: `pairs` (key, value, key, value, ...) into `h`,
+/// in one call, a later key's value replacing an earlier one's. Every key
+/// must be one Ruby hashes in C, as [`hash_aset`] requires - anything else,
+/// or an odd count, is refused before the call. Raises `NoMemoryError`, and
+/// `FrozenError` for a frozen Hash.
+#[inline]
+pub(crate) fn hash_bulk_insert(h: RHash, pairs: &[Value]) -> Result<(), Error> {
+    if !pairs.len().is_multiple_of(2) {
+        return Err(crate::rb::error::arg_error(
+            "an odd number of keys and values",
+        ));
+    }
+    for k in pairs.iter().step_by(2) {
+        plain_key_or_refuse(*k)?;
+    }
+    let n = c_len(pairs.len())?;
+    let (h, p) = (h.as_sys(), pairs.as_ptr().cast::<nupur_sys::value::Value>());
+    call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_hash_bulk_insert(inside, n, p, h)
+    })
+}
+
 /// `rb_hash_aset` for a Symbol or String key, whose hash Ruby computes
 /// itself ([`crate::rb::value::plain_key`]): any other key - an instance of a
 /// String subclass included - would have its `#hash` and `#eql?` called, so
@@ -153,7 +203,12 @@ pub(crate) fn int_from_u64(ruby: &Ruby, n: u64) -> Result<Integer, Error> {
 
 /// `rb_float_new`: raises `NoMemoryError` for a value that is not a flonum.
 #[inline]
-pub(crate) fn float_new(_: &Ruby, f: f64) -> Result<Float, Error> {
+pub(crate) fn float_new(ruby: &Ruby, f: f64) -> Result<Float, Error> {
+    /* A flonum is the value's own bits, as a Fixnum is: no allocation,
+     * nothing to raise, no protected call. */
+    if let Some(v) = ruby.sys().flonum(f) {
+        return Ok(Float::from_known(Value::from_sys(v)));
+    }
     let v = call(|inside| unsafe {
         injected_raise(inside);
         nupur_sys::raising::rb_float_new(inside, f)

@@ -172,6 +172,18 @@ pub fn respond_to(recv: Value, id: crate::rb::Id) -> Result<bool, Error> {
     Ok(r != 0)
 }
 
+/// `rb_ractor_make_shareable`: `v` and everything it reaches frozen and
+/// marked shareable between Ractors. Raises for a value that cannot be
+/// (a Proc with a non-shareable self, an unshareable wrapped object).
+pub fn ractor_make_shareable(v: Value) -> Result<(), Error> {
+    let v = v.as_sys();
+    call(|inside| unsafe {
+        injected_raise(inside);
+        nupur_sys::raising::rb_ractor_make_shareable(inside, v)
+    })
+    .map(|_| ())
+}
+
 /// `recv.name(*args)` (`rb_funcallv`): the caller's Ruby, which is why each
 /// call of it is allowed where it is made (`rake dylint`'s
 /// `runs_callers_ruby`), with the reason it may run there.

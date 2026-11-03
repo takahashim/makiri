@@ -71,7 +71,10 @@ that breaks one does not compile. `src/lib.rs` states each in full.
   width, tested at both and proved at both (`verus/int.rs`).
 - **Two Ractors may run the layer at once**, once the extension declares
   itself Ractor-safe (`rb::method::declare_ractor_safe`). Nothing of
-  Nupur's is shared between them but what any Ractor may read.
+  Nupur's is shared between them but what any Ractor may read. A wrapped
+  object stays in its Ractor unless its type is declared shareable
+  (`TypedType::shareable`), which requires a `Sync` payload and makes each
+  object frozen and shareable as it is made.
 
 ### What the types do not hold
 

@@ -140,6 +140,9 @@ pub struct Birth<T, R, const N: usize> {
 /// `const`, so a module keeps it in a `static`, as the C did.
 pub struct TypedType<T: Payload, const N: usize = 0> {
     raw: DataType,
+    /// Whether its objects are made shareable between Ractors at birth
+    /// ([`TypedType::shareable`]).
+    shareable: bool,
     _t: PhantomData<fn() -> T>,
 }
 
@@ -149,7 +152,27 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
         parent: Option<&'static DataType>,
         embedded: bool,
     ) -> TypedType<T, N> {
+        Self::with_flags(name, parent, embedded, false)
+    }
+
+    const fn with_flags(
+        name: &'static CStr,
+        parent: Option<&'static DataType>,
+        embedded: bool,
+        shareable: bool,
+    ) -> TypedType<T, N> {
+        let flags = if embedded {
+            DataFlags::EMBEDDABLE
+        } else {
+            DataFlags::SEPARATE
+        };
+        let flags = if shareable {
+            flags.frozen_shareable()
+        } else {
+            flags
+        };
         TypedType {
+            shareable,
             raw: DataType::new(
                 name,
                 parent,
@@ -164,11 +187,7 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
                 } else {
                     memsize_cb::<T, N, false>
                 }),
-                if embedded {
-                    DataFlags::EMBEDDABLE
-                } else {
-                    DataFlags::SEPARATE
-                },
+                flags,
             ),
             _t: PhantomData,
         }
@@ -179,6 +198,19 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
     /// `'static` one, NUL-terminated by type.
     pub const fn base(name: &'static CStr) -> TypedType<T, N> {
         Self::with_parent(name, None, false)
+    }
+
+    /// A base type whose objects are shared between Ractors: each is frozen
+    /// and made shareable as it is made ([`wrap`](Self::wrap)), together
+    /// with everything its slots reach, which `rb_ractor_make_shareable`
+    /// freezes too - so put in a slot only what may be frozen, or is
+    /// already. Two Ractors may then read the payload at once, which its
+    /// `Sync` bound makes sound; nothing else of the layer mutates it.
+    pub const fn shareable(name: &'static CStr) -> TypedType<T, N>
+    where
+        T: Sync,
+    {
+        Self::with_flags(name, None, false, true)
     }
 
     /// A type deriving from `parent`, which holds the same payload and
@@ -271,7 +303,11 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
                 roots.map(|v| Slot::of(sealed::Root::root_value(v).as_sys())),
             )
         }?;
-        Ok(Value::from_sys(obj))
+        let obj = Value::from_sys(obj);
+        if self.shareable {
+            crate::raw::ractor_make_shareable(obj)?;
+        }
+        Ok(obj)
     }
 }
 
@@ -452,6 +488,17 @@ impl<T: Payload + Copy, const N: usize> EmbeddedType<T, N> {
     /// A base type.
     pub const fn base(name: &'static CStr) -> EmbeddedType<T, N> {
         Self::with_parent(name, None)
+    }
+
+    /// A base type whose objects are shared between Ractors, as
+    /// [`TypedType::shareable`]'s are.
+    pub const fn shareable(name: &'static CStr) -> EmbeddedType<T, N>
+    where
+        T: Sync,
+    {
+        const { assert!(core::mem::size_of::<Envelope<T, N>>() <= EMBED_MAX) };
+        const { assert!(core::mem::align_of::<Envelope<T, N>>() <= EMBED_ALIGN) };
+        EmbeddedType(TypedType::with_flags(name, None, true, true))
     }
 
     /// A type deriving from `parent`, which holds the same payload and slots.

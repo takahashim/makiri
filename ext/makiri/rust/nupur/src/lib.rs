@@ -80,9 +80,12 @@
 //!   its own GVL, so nothing of the layer's is shared but what any Ractor
 //!   may read: a static keeps only a [`rb::Shareable`] value (a class or a
 //!   module), a pending exit is the native thread's own, and a wrapped
-//!   object never leaves its Ractor - its type is never one Ruby may make
-//!   shareable, and its class, having no allocator, cannot be copied or
-//!   moved to another. An extension opts in at `Init_`
+//!   object never leaves its Ractor - its class, having no allocator,
+//!   cannot be copied or moved to another, and its type is not one Ruby may
+//!   make shareable - unless the type is declared shareable
+//!   ([`typed::TypedType::shareable`]): then its payload is `Sync` by the
+//!   constructor's bound, and the object is frozen and made shareable, with
+//!   what its slots reach, as it is made. An extension opts in at `Init_`
 //!   ([`rb::method::declare_ractor_safe`]).
 //!
 //! Most of these are types and dependencies. What they cannot state rests on
@@ -151,8 +154,8 @@
 //!   an `allow` stating why. An extension that asks calls through
 //!   [`rb::call`], and holds nothing across the call that the callee could
 //!   invalidate: no payload borrow beyond a `Cell`, no `RefCell` guard, no
-//!   guard of its own, no Ruby collection walked in place (that module says
-//!   why each).
+//!   guard of its own, no slice of a Ruby collection (that module says why
+//!   each).
 //! - **Declared Ractor-safe, the extension's own state is too.** What the
 //!   layer keeps is safe across Ractors; what the extension keeps - its
 //!   statics, whatever its methods take the GVL to serialise (now only one
@@ -231,6 +234,10 @@ pub mod string;
 
 // Owned bytes checked to be UTF-8 (`Utf8Copy`), std alone.
 pub mod utf8_copy;
+
+// The first byte of a set in a slice, sixteen bytes at a time: the layer's
+// one SIMD, Ruby-free.
+pub mod bytes;
 
 // The OOM sweep's hooks, installed together (`rake oom`).
 #[cfg(feature = "alloc-inject")]
