@@ -72,11 +72,6 @@ impl DataFlags {
         }
     }
 
-    /// Whether a frozen object of the type may be shared between Ractors.
-    pub const fn is_shareable(self) -> bool {
-        self.shareable
-    }
-
     /// The `flags` word, as `rb_data_type_t` holds it.
     const fn bits(self) -> VALUE {
         const FREE_IMMEDIATELY: VALUE =
@@ -177,9 +172,9 @@ mod tests {
         assert_eq!(ty.0.flags, VALUE::from(FREE_IMMEDIATELY_FLAG));
     }
 
-    /// Neither kind of type is one Ruby may make shareable unless it asks.
+    /// Either kind of type that asks is one Ruby may make shareable.
     #[test]
-    fn no_type_is_frozen_shareable_unless_asked() {
+    fn a_type_that_asks_is_frozen_shareable() {
         const SHAREABLE_BIT: VALUE =
             rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_FROZEN_SHAREABLE as VALUE;
         for flags in [DataFlags::SEPARATE, DataFlags::EMBEDDABLE] {
@@ -193,10 +188,11 @@ mod tests {
             );
             assert_eq!(asked.0.flags & SHAREABLE_BIT, SHAREABLE_BIT);
         }
-        no_type_is_frozen_shareable();
     }
 
-    fn no_type_is_frozen_shareable() {
+    /// Neither kind of type is one Ruby may make shareable unless it asks.
+    #[test]
+    fn no_type_is_frozen_shareable_unless_asked() {
         const SHAREABLE: VALUE =
             rb_sys::rbimpl_typeddata_flags::RUBY_TYPED_FROZEN_SHAREABLE as VALUE;
         for flags in [DataFlags::SEPARATE, DataFlags::EMBEDDABLE] {

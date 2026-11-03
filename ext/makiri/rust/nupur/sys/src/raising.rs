@@ -185,6 +185,7 @@ raising! {
     fn rb_gc_register_mark_object(object: Value);
     fn rb_hash_aset(hash: Value, key: Value, val: Value) -> Value;
     fn rb_hash_bulk_insert(argc: core::ffi::c_long, argv: *const Value, hash: Value);
+    fn rb_hash_foreach(hash: Value, each: HashEach, arg: *mut c_void);
     fn rb_hash_lookup2(hash: Value, key: Value, def: Value) -> Value;
     fn rb_hash_new() -> Value;
     fn rb_id2sym(id: ID) -> Value;
@@ -231,19 +232,23 @@ pub unsafe fn rb_exc_raise(_: &Protected, exc: Value) -> ! {
 /// (`uintptr_t`), so this is the function C calls.
 pub type HashEach = unsafe extern "C" fn(key: Value, val: Value, arg: *mut c_void) -> c_int;
 
-/// `rb_hash_foreach`, inside the protection: `each` for every pair, with
-/// `arg`.
-///
-/// # Safety
-///
-/// `hash` is a Hash; `each` treats `arg` as what it is.
-#[inline(always)]
-pub unsafe fn rb_hash_foreach(_: &Protected, hash: Value, each: HashEach, arg: *mut c_void) {
-    // SAFETY: the same function pointer, as C declares it (see `HashEach`).
-    let each = unsafe {
-        core::mem::transmute::<HashEach, unsafe extern "C" fn(VALUE, VALUE, VALUE) -> c_int>(each)
-    };
-    // SAFETY: the contract; the token is the protection. The data travels as
-    // C's `VALUE`-wide argument.
-    unsafe { rb_sys::rb_hash_foreach(hash.as_raw(), Some(each), arg as VALUE) }
+impl IntoC<Option<unsafe extern "C" fn(VALUE, VALUE, VALUE) -> c_int>> for HashEach {
+    #[inline(always)]
+    fn into_c(self) -> Option<unsafe extern "C" fn(VALUE, VALUE, VALUE) -> c_int> {
+        // SAFETY: the same function pointer, as C declares it (see `HashEach`).
+        Some(unsafe {
+            core::mem::transmute::<HashEach, unsafe extern "C" fn(VALUE, VALUE, VALUE) -> c_int>(
+                self,
+            )
+        })
+    }
+}
+
+/// A callback's own data, as C's `VALUE`-wide argument carries it
+/// (`rb_hash_foreach`'s `arg`).
+impl IntoC<VALUE> for *mut c_void {
+    #[inline(always)]
+    fn into_c(self) -> VALUE {
+        self as VALUE
+    }
 }

@@ -56,6 +56,12 @@ impl Value {
         self.0 == other.0
     }
 
+    /// `nil`?
+    #[inline(always)]
+    pub fn is_nil(self) -> bool {
+        self.0 == rb_sys::Qnil as VALUE
+    }
+
     /// `Qundef`?
     #[inline(always)]
     pub fn is_undef(self) -> bool {

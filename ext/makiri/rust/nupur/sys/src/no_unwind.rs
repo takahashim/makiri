@@ -1,10 +1,11 @@
 //! The places in the Ruby layer that must not unwind, and the check that they
-//! cannot - the layer's own copy of the mechanism, for its sites (the GC
-//! callbacks, the protect thunk, the trampolines). It lives here, under
-//! nupur, because the protect thunk does ([`crate::protect`]); nupur
-//! re-exports it as `nupur::no_unwind`, where its other sites name it. An
-//! extension keeps its own for its types' `Drop`s and the engine's: the engine
-//! is built without Ruby, where this module does not exist.
+//! cannot - the layer's own copy of the mechanism. It lives here, under
+//! nupur, because the protect thunk does ([`crate::protect`]), which is the
+//! one site of this crate's; Nupur declares its own (the GC callbacks, the
+//! trampolines, its guards' `Drop`s) with [`no_unwind_sites!`](crate::no_unwind_sites) in
+//! `nupur::no_unwind`. An extension keeps its own for its types' `Drop`s and
+//! the engine's: the engine is built without Ruby, where this module does not
+//! exist.
 //!
 //! An unwind out of an `extern "C"` function aborts the process (Rust stops it
 //! at the boundary, since C frames have no unwind tables), and so does a panic
@@ -44,11 +45,17 @@ pub fn must_not_unwind<S: Site, R>(body: impl FnOnce() -> R) -> R {
     out
 }
 
-macro_rules! sites {
+/// Declare sites: each a [`Site`] whose guard, in the check build
+/// (`--cfg nupur_no_unwind`), calls the undefined symbol named beside it.
+/// Exported so that Nupur declares its own sites where they are, and this
+/// crate only the ones it holds; the cfg is the crate's that expands it,
+/// which the check build sets for both.
+#[macro_export]
+macro_rules! no_unwind_sites {
     ($($(#[$doc:meta])* $name:ident => $sym:literal,)*) => {$(
         $(#[$doc])*
         pub struct $name(());
-        impl Site for $name {
+        impl $crate::no_unwind::Site for $name {
             #[inline(always)]
             fn arm() -> $name {
                 $name(())
@@ -70,37 +77,9 @@ macro_rules! sites {
     )*};
 }
 
-sites! {
-    /// `typed`'s mark callback.
-    GcMark => "nupur_unwinds_gc_mark",
-    /// `typed`'s free callback: the data's whole drop glue.
-    GcFree => "nupur_unwinds_gc_free",
-    /// `typed`'s free callback for an embedded type.
-    GcFreeEmbedded => "nupur_unwinds_gc_free_embedded",
-    /// `typed`'s memsize callback.
-    GcMemsize => "nupur_unwinds_gc_memsize",
+no_unwind_sites! {
     /// [`crate::protect::call`]'s `rb_protect` thunk.
     ProtectThunk => "nupur_unwinds_protect_thunk",
-    /// `raw::hash_foreach`'s `rb_hash_foreach` callback.
-    HashEach => "nupur_unwinds_hash_each",
-    /// `gvl::without_gvl`'s body, run with the GVL released.
-    GvlBody => "nupur_unwinds_gvl_body",
-    /// `gvl::without_gvl_cancellable`'s unblock function, which Ruby calls
-    /// from another thread to ask the body to stop.
-    GvlUnblock => "nupur_unwinds_gvl_unblock",
-    /// A method's trampoline (`rb::method::finish`, which `finish_cary` runs
-    /// too).
-    Method => "nupur_unwinds_method",
-    /// The extension's `Init_` (`rb::method::run_init`).
-    Init => "nupur_unwinds_init",
-    /// `string::utf8_str_filled`'s guard, which empties a String a panic left
-    /// unfilled - while that panic unwinds.
-    DropUnfilled => "nupur_unwinds_drop_unfilled",
-    /// `rb::kept::Kept`'s `Drop`, which hands its value to `keep_alive`.
-    DropKept => "nupur_unwinds_drop_kept",
-    /// `RString::with_locked_bytes`'s guard, which unlocks the String - while
-    /// a panic unwinds, too.
-    DropUnlock => "nupur_unwinds_drop_unlock",
     /// The check's own control (`self_test`): a body that CAN unwind, so a
     /// check build that still works leaves exactly this symbol undefined.
     SelfTest => "nupur_unwinds_self_test",
