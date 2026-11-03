@@ -144,6 +144,82 @@ pub fn to_xml(
     write_with(doc, n, |b| xml::write(b, doc, n, indent, encoding))
 }
 
+/// What a string [`markup_strings`] hands out is, for a message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Markup {
+    /// An element's or an attribute's qualified name.
+    Name,
+    /// A doctype's name, public id or system id.
+    Doctype,
+    /// A comment's content.
+    Comment,
+    /// A CDATA section's content.
+    CData,
+    /// A processing instruction's target or data.
+    Pi,
+}
+
+impl Markup {
+    /// The kind, as a message names it.
+    pub fn what(self) -> &'static str {
+        match self {
+            Markup::Name => "an element or attribute name",
+            Markup::Doctype => "a doctype",
+            Markup::Comment => "a comment",
+            Markup::CData => "a CDATA section",
+            Markup::Pi => "a processing instruction",
+        }
+    }
+}
+
+/// Every string [`to_xml`] writes for `n`'s subtree as MARKUP rather than as
+/// character data - names, a doctype's parts, and the content of comments,
+/// CDATA sections and processing instructions - handed to `each` in document
+/// order; `Break` stops the walk.
+///
+/// A character reference stands for a character only in text and in an
+/// attribute value: written in a name it is ill-formed, and in a comment, a
+/// CDATA section or a processing instruction it is read back as its own
+/// characters. So these are the strings an output encoding has to hold
+/// whole, where text and values can fall back to a reference. The names are
+/// the qualified names held; a prefix the writer invents is ASCII.
+///
+/// A walk over the links, so a deep tree costs no native stack.
+pub fn markup_strings(
+    doc: &XmlDoc,
+    n: NodeId,
+    each: &mut dyn FnMut(Markup, &[u8]) -> core::ops::ControlFlow<()>,
+) -> core::ops::ControlFlow<()> {
+    let mut at = Some(n);
+    while let Some(id) = at {
+        let value = || doc.span(doc.node(id).value);
+        match doc.type_(id) {
+            Some(ArenaKind::Element) => {
+                each(Markup::Name, doc.span(doc.node(id).qname))?;
+                for attr in doc.attributes(id) {
+                    each(Markup::Name, doc.span(doc.node(attr).qname))?;
+                }
+            }
+            Some(ArenaKind::DocumentType) => {
+                each(Markup::Doctype, doc.local(id))?;
+                let ids = doc.doctype_ids(id).unwrap_or_default();
+                for part in [ids.public, ids.system].into_iter().flatten() {
+                    each(Markup::Doctype, part)?;
+                }
+            }
+            Some(ArenaKind::Comment) => each(Markup::Comment, value())?,
+            Some(ArenaKind::CDataSection) => each(Markup::CData, value())?,
+            Some(ArenaKind::Pi) => {
+                each(Markup::Pi, doc.span(doc.node(id).local))?;
+                each(Markup::Pi, value())?;
+            }
+            _ => {}
+        }
+        at = doc.preorder_next(n, id);
+    }
+    core::ops::ControlFlow::Continue(())
+}
+
 /// `n` as Inclusive Canonical XML 1.0, with or without comments.
 pub fn canonicalize(doc: &XmlDoc, n: NodeId, comments: bool) -> Result<Buf, Failure> {
     write_with(doc, n, |b| c14n::write(b, doc, n, comments))

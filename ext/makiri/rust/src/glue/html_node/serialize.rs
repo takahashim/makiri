@@ -17,11 +17,28 @@ use crate::html_dom::html::{HtmlNode, NodeType};
 use crate::html_dom::serialize::{serialize, Layout, Scope};
 use crate::init::MOD_HTML_NODE_METHODS;
 
-/// The optional `pretty:` keyword; any other is `ArgumentError`, so a
-/// misspelt one is not quietly the default.
+/// The optional `pretty:` and `encoding:` keywords; any other is
+/// `ArgumentError`, so a misspelt one is not quietly the default.
+///
+/// The serializer writes UTF-8, so `encoding:` - which code written for
+/// Nokogiri passes, most often as `"UTF-8"` - is taken when it names UTF-8
+/// and refused otherwise. Ignoring it answered a UTF-8 String to a caller
+/// that asked for another encoding.
 fn layout_opt(ruby: &Ruby, args: &[Value]) -> Result<Layout, Error> {
     let kw = Kwargs::scan(ruby, args)?;
-    let kw = kw.only(ruby, &["pretty"])?;
+    let kw = kw.only(ruby, &["pretty", "encoding"])?;
+    if let Some(v) = kw.value(ruby, "encoding")? {
+        /* Read as Ruby reads an encoding argument: an Encoding, or a String
+         * or Symbol naming one; an unknown name is Ruby's ArgumentError. */
+        let e = crate::bridge::string::to_encoding(ruby, v)?;
+        if e != crate::bridge::string::Encoding::utf8(ruby) {
+            let name = core::str::from_utf8(e.name()).unwrap_or("another encoding");
+            return Err(crate::bridge::ruby::arg_error(format_args!(
+                "HTML is serialized as UTF-8 alone, not {name}; encode the result with \
+                 String#encode"
+            )));
+        }
+    }
     Ok(if kw.flag(ruby, "pretty")? {
         Layout::Pretty
     } else {

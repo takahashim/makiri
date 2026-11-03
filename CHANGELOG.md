@@ -57,6 +57,11 @@
 * `XPathContext#register_namespaces` reads its Hash as every namespace Hash
   is read, natively, running none of the caller's Ruby; anything but a Hash
   is `TypeError`.
+* HTML `to_html`, `to_s`, `outer_html` and `inner_html` take `encoding:`
+  naming UTF-8 (a String, a Symbol or an `Encoding`), which code written
+  for Nokogiri passes, and refuse any other with `ArgumentError`: HTML is
+  written as UTF-8 alone. `NodeSet#to_html` passes its keywords to each
+  node's.
 
 ### Fixed
 
@@ -112,6 +117,13 @@
 * `Makiri::XML`'s `max_bytes:` past a 64-bit Integer is no limit, as the
   HTML parse's limits take one; it raised `RangeError`, as a negative
   Bignum did where a negative Fixnum is `ArgumentError`.
+* `to_xml(encoding:)` naming an encoding other than UTF-8 raises
+  `Makiri::Error` when an element or attribute name, a doctype, a comment,
+  a CDATA section or a processing instruction holds a character the
+  encoding has no form for. A character reference is markup only in text
+  and attribute values, and it wrote one there too, so a name came out
+  ill-formed and a comment read back as other text. Text and attribute
+  values still take a character reference.
 
 ## [0.17.0.rc2] - 2026-10-24
 

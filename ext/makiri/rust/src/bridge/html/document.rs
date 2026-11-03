@@ -40,9 +40,11 @@ use crate::html_dom::tree_guard::{GuardStop, ParseLimits};
 pub fn guard_error(stop: GuardStop, limit: ParseLimits) -> Error {
     match stop {
         GuardStop::TooDeep => tree_depth_error(limit),
+        /* The limit, named as the depth error names its own, and no keyword:
+         * `inner_html=`, `outer_html=` and `Node#parse` take none. */
         GuardStop::TooLarge => match limit.max_amplification() {
             Some(r) => makiri_error(format_args!(
-                "document size limit exceeded ({r} times the input; see max_amplification:)"
+                "document size limit exceeded ({r} times the input)"
             )),
             /* An unlimited parse is never refused for size. */
             None => crate::bridge::ruby::internal_error(
