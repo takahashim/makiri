@@ -1,9 +1,10 @@
 //! What this binary assumes of the Ruby that loads it, and the load checks
 //! that refuse a Ruby where an assumption fails, before anything is defined:
-//! the Ruby API version it was built against ([`check_running_api`]), and
-//! the `rb_protect` state a raise comes back with, which Ruby does not
-//! document and the layer tells an exception from a `throw` by
-//! ([`check_raise_state`]).
+//! the Ruby API version it was built against ([`check_running_api`]), the
+//! `rb_protect` state a raise comes back with, which Ruby does not document
+//! and the layer tells an exception from a `throw` by
+//! ([`check_raise_state`]), and that the extension's first class is not
+//! already defined ([`check_undefined`]).
 
 #![forbid(unsafe_code)]
 
@@ -60,7 +61,9 @@ pub fn check_running_api(name: &str, rebuild: &str) -> Result<(), crate::rb::Err
 /// `Err(LoadError)` when the constant `path` names (`["Makiri", "Node"]`,
 /// read from `Object`) is already defined - an autoload counting, and
 /// nothing loaded: the extension's classes are there before its `Init_` has
-/// made them. A `require` an exit cut short leaves them (Ruby marks the
+/// made them. An outer name that is an autoload not yet loaded holds
+/// nothing yet; one that is not a class or module is refused too, as `init`
+/// could not define under it. A `require` an exit cut short leaves them (Ruby marks the
 /// feature loaded only when `Init_` returns, so the next `require` runs it
 /// again), and so does code that defined one first. Asked in `check`, before
 /// anything is defined, it is a `LoadError` the caller may rescue; met in
@@ -71,23 +74,29 @@ pub fn check_undefined(ruby: &crate::rb::Ruby, path: &[&str]) -> Result<(), crat
     let Some((last, outer)) = path.split_last() else {
         return Ok(());
     };
-    let defined = |at: crate::rb::Value, name: &str| -> Result<bool, crate::rb::Error> {
-        let id = crate::rb::Id::intern(ruby, &crate::rb::class::c_name(name)?)?;
-        crate::raw::const_defined_at(at, id)
-    };
     let mut at = ruby.class_object().as_value();
-    for name in outer {
-        if !defined(at, name)? {
+    for (i, name) in outer.iter().enumerate() {
+        let id = crate::rb::Id::intern(ruby, &crate::rb::class::c_name(name)?)?;
+        /* Not there, or an autoload not yet loaded: nothing under it is
+         * defined either. Asked without loading, which would run Ruby. */
+        if !crate::raw::const_defined_at(at, id)? || crate::raw::autoload_pending(at, id)? {
             return Ok(());
         }
         let v = crate::raw::const_get(ruby, at, &crate::rb::class::c_name(name)?)?;
         if RModule::from_value(v).is_none() && RClass::from_value(v).is_none() {
-            /* Not a namespace: `init`'s definition under it refuses it. */
-            return Ok(());
+            /* `init` would define under it and fail there, as `fatal`. */
+            return Err(crate::rb::Error::new(
+                crate::rb::Builtin::LoadError,
+                format_args!(
+                    "{} is defined, but not as a class or module",
+                    Path(path.get(..=i).unwrap_or(path))
+                ),
+            ));
         }
         at = v;
     }
-    if !defined(at, last)? {
+    let id = crate::rb::Id::intern(ruby, &crate::rb::class::c_name(last)?)?;
+    if !crate::raw::const_defined_at(at, id)? {
         return Ok(());
     }
     Err(crate::rb::Error::new(

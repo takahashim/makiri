@@ -438,7 +438,16 @@ pub unsafe fn run_init(
                         ))
                     },
                 ),
-                Err(payload) => crate::caught::panic_message(payload),
+                /* A panic after an exit `init` dropped: the exit goes first,
+                 * as `finish`'s `Error::raise` resumes it over a panic's
+                 * internal error. */
+                Err(payload) => {
+                    let msg = crate::caught::panic_message(payload);
+                    match crate::raw::pending_exit() {
+                        Some(exit) => exit.raise(&ruby),
+                        None => msg,
+                    }
+                }
             },
             Ok(Err(e)) => e.raise(&ruby),
             Err(payload) => crate::caught::panic_message(payload),
