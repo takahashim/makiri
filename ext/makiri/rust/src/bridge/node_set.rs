@@ -340,7 +340,7 @@ impl NodeSetSelf {
 
 impl NodeSet {
     /// Borrow the contents, turning a borrow conflict into a Ruby error instead
-    /// of a panic (which would surface as `fatal`).
+    /// of a panic (which would surface as `Makiri::InternalError`).
     fn read(&self) -> Result<std::cell::Ref<'_, NodeVec>, Error> {
         self.nodes
             .try_borrow()

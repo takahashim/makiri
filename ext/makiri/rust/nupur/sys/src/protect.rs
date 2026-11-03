@@ -3,7 +3,7 @@
 //! a protected call that came back with a raise or a non-local exit leaves
 //! behind - the thread's error info (`$!`), and an exit pending until the
 //! trampoline resumes it - and the calls that leave on purpose
-//! ([`exc_raise`], [`resume`], [`exc_fatal`]).
+//! ([`exc_raise`], [`resume`]).
 //!
 //! Nothing here knows Nupur's types: a raise comes back as the raw
 //! exception ([`Caught`]), which Nupur makes its `Error`. Every function that
@@ -324,17 +324,6 @@ pub unsafe fn forget_errinfo() {
 pub unsafe fn exc_raise(exc: crate::value::Value) -> ! {
     // SAFETY: the contract.
     unsafe { rb_sys::rb_exc_raise(exc.as_raw()) }
-}
-
-/// `rb_exc_fatal`: raise `exc` as Ruby's `fatal`. Raises, by design.
-///
-/// # Safety
-///
-/// As [`exc_raise`].
-#[inline]
-pub unsafe fn exc_fatal(exc: crate::value::Value) -> ! {
-    // SAFETY: the contract.
-    unsafe { rb_sys::rb_exc_fatal(exc.as_raw()) }
 }
 
 /// What a non-zero `rb_protect` state stands for: the exception Ruby left in

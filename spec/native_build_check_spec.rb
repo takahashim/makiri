@@ -83,4 +83,46 @@ RSpec.describe "native extension build check" do
     expect(out).to include("LoadError: Makiri::Node is already defined")
     expect(out).to include("nothing defined")
   end
+
+  # Init stopped half-way - here by a hook of the program's, as a Timeout or
+  # a Thread#raise could - reaches the `require` as it was raised (or, for a
+  # `throw`, as it was thrown), not as `fatal`; the methods already defined
+  # refuse to run, and a second `require` is a LoadError.
+  { "an exception" => ['raise "stop here"', "rescue => e; puts \"stopped: \#{e.message}\""],
+    "a throw" => ["throw :stop", ""] }.each do |kind, (stop, rescue_clause)|
+    it "leaves the process running when #{kind} stops Init_, and the extension unusable" do
+      lib = File.expand_path("../lib", __dir__)
+      code = <<~RUBY
+        module Makiri
+          def self.singleton_method_added(m) = (#{stop} if m == :__panic)
+        end
+        catch(:stop) do
+          begin
+            require "makiri"
+            puts "loaded"
+          #{rescue_clause}
+          end
+        end
+        begin
+          Makiri.__alloc_inject?
+          puts "ran"
+        rescue Exception => e
+          puts "refused: \#{e.class}: \#{e.message}"
+        end
+        begin
+          require "makiri/makiri"
+        rescue LoadError => e
+          puts "again: \#{e.message}"
+        end
+      RUBY
+      out, err, status = Open3.capture3(
+        { "RUBY_FREE_AT_EXIT" => nil }, RbConfig.ruby, "-I#{lib}", "-e", code
+      )
+      expect(status).to be_success, err
+      expect(out.lines.map(&:chomp)).not_to include("loaded")
+      expect(out).to include("stopped: stop here") if kind == "an exception"
+      expect(out).to include("refused: Makiri::InternalError: the extension stopped while defining itself")
+      expect(out).to include("again: Makiri::Node is already defined")
+    end
+  end
 end

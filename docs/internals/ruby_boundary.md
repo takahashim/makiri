@@ -438,9 +438,9 @@ non-String) has a wrapper named for it, whose contract each caller upholds
 
 Only those over raw memory stay `unsafe`, and they are `nupur`'s alone:
 `typed_object_zalloc`, `check_typeddata` and `utf8_str_unwritten` (the raw
-half under `utf8_str_filled`), all `pub(crate)`. So are the three that
-longjmp - `exc_raise`, `resume` (over a private `jump_tag`), `exc_fatal` -
-which only a trampoline's raise may call. A String made in place is
+half under `utf8_str_filled`), all `pub(crate)`. So are the two that
+longjmp - `exc_raise` and `resume` (over a private `jump_tag`) - which only
+a trampoline's raise may call. A String made in place is
 `utf8_str_filled`, which is safe; its `fill` writes front to back through an
 `Unwritten` and must reach the end.
 
@@ -514,21 +514,24 @@ at; a `fatal` cannot be rescued in its own frame at all.
 Outside a registered method a panic does not become `InternalError`:
 
 - The GC callbacks abort (see "Panics and unwinding").
-- In `Init_makiri`, a panic - or an `Err` - once the extension has begun to
-  define itself is `fatal`, since `InternalError` may not exist yet and a
-  half-defined extension must not be used. A non-local exit is the
-  exception: a `throw` or a thread kill that stops `init` is resumed, as
-  `finish` resumes a method's, because it belongs to the thread, not to a
-  broken extension. Only the checks that come first raise an ordinary
-  `LoadError`: the Ruby API one (`nupur::abi::check_running_api`), that
-  `rb_protect`'s raise state is the one Nupur knows
-  (`nupur::abi::check_raise_state`), and that `Makiri::Node`, the first
-  class `init` defines, is not already there (`nupur::abi::check_undefined`)
-  (`bridge::rb::method::run_init(check, init)`). The last check refuses a
-  class that other code defined first, which `define_data_class` would
-  otherwise meet as `fatal`. It also refuses a second `Init_` after an exit
-  cut a `require` short: Ruby marks the feature loaded only when `Init_`
-  returns.
+- In `Init_makiri`, the checks that come first raise an ordinary
+  `LoadError` with nothing defined: the Ruby API one
+  (`nupur::abi::check_running_api`), that `rb_protect`'s raise state is the
+  one Nupur knows (`nupur::abi::check_raise_state`), and that
+  `Makiri::Node`, the first class `init` defines, is not already there
+  (`nupur::abi::check_undefined`)
+  (`bridge::rb::method::run_init(check, init)`). Whatever stops `init`
+  after them - an exception, a panic, a `throw` or a thread kill - leaves
+  the extension half-defined, and a half-defined extension must not be
+  used. It is not `fatal`, which would end the process for a stop the
+  program's own Ruby caused (a `Timeout`, an `inherited` hook that raised).
+  The exception is raised and the exit resumed, as `finish` does for a
+  method, and a flag marks the extension unfinished
+  (`nupur::rb::method::unfinished`): from then on every method's `finish`
+  refuses to run its body and raises `InternalError` instead. A second
+  `require` runs `Init_` again, because Ruby marks the feature loaded only
+  when `Init_` returns; `check_undefined` refuses it as a `LoadError`, as it
+  refuses a class that other code defined first.
 
 ## C integers
 

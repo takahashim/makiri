@@ -57,7 +57,7 @@ mod protect;
 pub(crate) use protect::set_raise_injector;
 use protect::{call, call_allocating};
 pub(crate) use protect::{
-    exc_fatal, exc_raise, forget_errinfo, keeping_errinfo, pending_exit, reset_pending_exit, resume,
+    exc_raise, forget_errinfo, keeping_errinfo, pending_exit, reset_pending_exit, resume,
 };
 
 /* ---- what the value-level wrappers share ---- */
