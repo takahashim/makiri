@@ -15,8 +15,9 @@
  * classes it names and hands every exit back. `forbid`, so no `allow`
  * reopens the rule. */
 #![cfg_attr(dylint_lib = "nupur_lints", forbid(discarded_ruby_error))]
-// A panic unwinds into `Makiri::InternalError` at a method's trampoline (or
-// `fatal` outside one) - a broken invariant, never an answer. `Cargo.toml`'s clippy lints therefore refuse a
+// A panic unwinds into `Makiri::InternalError` at a method's trampoline (and
+// at `Init_`'s, which also leaves the extension unusable) - a broken
+// invariant, never an answer. `Cargo.toml`'s clippy lints therefore refuse a
 // new `unwrap()` or `panic!` in the shipped crate; a site that genuinely wants
 // one carries an `#[allow]` saying why. Test code is exempt: there a panic IS
 // the failure report.

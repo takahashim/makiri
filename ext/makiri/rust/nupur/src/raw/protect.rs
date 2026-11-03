@@ -1,7 +1,7 @@
 //! How a raise becomes an `Err`, and how one is raised again, in Nupur's
 //! types: the protection every wrapper of [`super`] runs its C call under
 //! ([`call`]), the exit a protected call left pending, `$!`, and the calls
-//! that leave on purpose ([`exc_raise`], [`resume`], [`exc_fatal`]).
+//! that leave on purpose ([`exc_raise`], [`resume`]).
 //!
 //! The protection itself is `nupur_sys::protect`'s - the `rb_protect` thunk,
 //! the pending exit, `$!` - and each function here is its safe face: it holds
@@ -141,13 +141,4 @@ pub(crate) fn exc_raise(exc: Value) -> ! {
     // SAFETY: `exc` is a live exception object, a Ruby value and so the
     // proof of the GVL; the one caller owns nothing.
     unsafe { nupur_sys::protect::exc_raise(exc.as_sys()) }
-}
-
-/// `rb_exc_fatal`: raise `exc` as Ruby's `fatal` - for a panic in
-/// the extension's `Init_`, where a half-defined extension must not be used.
-/// Raises, by design.
-#[inline]
-pub(crate) fn exc_fatal(exc: Value) -> ! {
-    // SAFETY: as `exc_raise`.
-    unsafe { nupur_sys::protect::exc_fatal(exc.as_sys()) }
 }

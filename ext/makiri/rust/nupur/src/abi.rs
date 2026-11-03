@@ -63,12 +63,15 @@ pub fn check_running_api(name: &str, rebuild: &str) -> Result<(), crate::rb::Err
 /// nothing loaded: the extension's classes are there before its `Init_` has
 /// made them. An outer name that is an autoload not yet loaded holds
 /// nothing yet; one that is not a class or module is refused too, as `init`
-/// could not define under it. A `require` an exit cut short leaves them (Ruby marks the
-/// feature loaded only when `Init_` returns, so the next `require` runs it
-/// again), and so does code that defined one first. Asked in `check`, before
-/// anything is defined, it is a `LoadError` the caller may rescue; met in
-/// `init`, where `Module::define_data_class` refuses such a name, it would
-/// be `fatal`. Name the class the extension's `init` defines first.
+/// could not define under it. An `Init_` that stopped half-way leaves them
+/// (Ruby marks the feature loaded only when `Init_` returns, so the next
+/// `require` runs it again), and so does code that defined one first. Asked
+/// in `check`, before anything is defined, it is a `LoadError` the caller may
+/// rescue, the extension untouched; met in `init`, where
+/// `Module::define_data_class` refuses such a name, it would stop `init`
+/// half-way and leave the extension unusable
+/// ([`crate::rb::method::unfinished`]). Name the class the extension's
+/// `init` defines first.
 pub fn check_undefined(ruby: &crate::rb::Ruby, path: &[&str]) -> Result<(), crate::rb::Error> {
     use crate::rb::{RClass, RModule, ReprValue};
     let Some((last, outer)) = path.split_last() else {
@@ -84,7 +87,7 @@ pub fn check_undefined(ruby: &crate::rb::Ruby, path: &[&str]) -> Result<(), crat
         }
         let v = crate::raw::const_get(ruby, at, &crate::rb::class::c_name(name)?)?;
         if RModule::from_value(v).is_none() && RClass::from_value(v).is_none() {
-            /* `init` would define under it and fail there, as `fatal`. */
+            /* `init` would define under it and stop there, half-way. */
             return Err(crate::rb::Error::new(
                 crate::rb::Builtin::LoadError,
                 format_args!(

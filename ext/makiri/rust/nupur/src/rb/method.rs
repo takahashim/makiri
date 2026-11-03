@@ -22,6 +22,7 @@
 
 use core::ffi::c_int;
 use core::panic::AssertUnwindSafe;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use super::convert::{ReturnValue, TryConvert};
 use super::error::Error;
@@ -80,6 +81,9 @@ pub unsafe fn finish(f: impl FnOnce(&Ruby) -> Result<Value, Error>) -> Value {
          * makes sure. */
         // SAFETY: a method starts here, so no exit of its is pending.
         unsafe { crate::raw::reset_pending_exit() };
+        if unfinished() {
+            crate::rb::error::internal_error(UNFINISHED_MSG).raise(&ruby)
+        }
         let e = match std::panic::catch_unwind(AssertUnwindSafe(|| f(&ruby))) {
             /* An exit the method caught and dropped is resumed, not lost:
              * a `throw`'s catcher is waiting, a killed thread must end. */
@@ -382,19 +386,37 @@ pub fn declare_ractor_safe(ruby: &Ruby) {
     unsafe { nupur_sys::non_raising::rb_ext_ractor_safe(ruby.sys(), true) }
 }
 
+/// Set when `init` stopped half-way ([`run_init`]): the extension's own,
+/// as the layer is built into each extension. Read by every method, which
+/// then refuses; written once, by the thread that ran `Init_`. A flag of
+/// failure rather than of completion, so a method `init` calls on the way
+/// (through the extension's own Ruby) runs.
+static UNFINISHED: AtomicBool = AtomicBool::new(false);
+
+const UNFINISHED_MSG: &str = "the extension stopped while defining itself and cannot be used; \
+     restart the process to load it";
+
+/// Whether `Init_` stopped half-way, leaving the extension unusable.
+#[inline]
+pub fn unfinished() -> bool {
+    UNFINISHED.load(Ordering::Relaxed)
+}
+
 /// What the extension's `Init_` runs its two phases through.
 ///
 /// `check` runs first and defines nothing - a check that the binary suits
 /// the running Ruby, say - so its `Err` is raised as it is: a `LoadError`
-/// a caller may rescue, with nothing of the extension left behind. Once
-/// `init` has begun to define the extension, anything that stops it - an
-/// `Err` or a panic - is Ruby's `fatal`: an extension that stopped half-way
-/// through defining itself must not be used (its classes lack methods, and
-/// the internal error may not be registered yet), and a second `require`
-/// would only run `Init_` again over the half it left. A non-local exit (a
-/// `throw`, a thread kill) is the exception: it is resumed, as a method's
-/// is, and the half-defined extension is left for `check` to refuse when a
-/// second `require` runs `Init_` again ([`crate::abi::check_undefined`]).
+/// a caller may rescue, with nothing of the extension left behind.
+///
+/// Once `init` has begun to define the extension, whatever stops it - an
+/// exception (a `Timeout`, a hook of the program's that raised), a
+/// non-local exit (a `throw`, a thread kill), a panic - leaves an extension
+/// half-defined: classes without their methods, a registered constant not
+/// yet set. That is the thread's to see, not the process's end: the
+/// exception is raised and the exit resumed, as a method's are, and the
+/// extension is marked unfinished ([`unfinished`]), so every method of its
+/// refuses to run from then on. A second `require` runs `Init_` again, which
+/// the extension's `check` refuses ([`crate::abi::check_undefined`]).
 ///
 /// # Safety
 /// Called only from the extension's `Init_` function, which Ruby calls on its
@@ -407,7 +429,7 @@ pub unsafe fn run_init(
     crate::no_unwind::must_not_unwind::<crate::no_unwind::Init, _>(|| {
         // SAFETY: Ruby calls an extension's `Init_` on its thread, with the GVL.
         let ruby = unsafe { entry_token() };
-        let msg = match std::panic::catch_unwind(AssertUnwindSafe(|| check(&ruby))) {
+        match std::panic::catch_unwind(AssertUnwindSafe(|| check(&ruby))) {
             Ok(Ok(())) => match std::panic::catch_unwind(AssertUnwindSafe(|| {
                 /* What the layer asks Ruby once, before any of the extension
                  * runs - and after `check`, which is the first thing to
@@ -415,46 +437,30 @@ pub unsafe fn run_init(
                 crate::encoding::init(&ruby);
                 init(&ruby)
             })) {
-                /* An exit that stopped `init`, or that it dropped, is
-                 * resumed, as `finish` resumes a method's: a `throw`'s
-                 * catcher waits, a killed thread must end, and the next
-                 * method's start would forget it. Not `fatal`: the exit is
-                 * the thread's, not a broken extension's. The `require` is
-                 * left unfinished, so another runs `Init_` again, which the
-                 * extension's `check` refuses (`abi::check_undefined`). */
+                /* Complete. An exit `init` dropped is still resumed, as
+                 * `finish` resumes a method's: a `throw`'s catcher waits, a
+                 * killed thread must end. */
                 Ok(Ok(())) => match crate::raw::pending_exit() {
-                    None => return,
+                    None => (),
                     Some(exit) => exit.raise(&ruby),
                 },
-                Ok(Err(e)) if e.is_jump() || crate::raw::pending_exit().is_some() => e.raise(&ruby),
-                /* `quietly`: formatting is what the compiler cannot show
-                 * unwind-free (`rake no_unwind`). */
-                Ok(Err(e)) => crate::caught::quietly(
-                    crate::msg::Msg::copy("the extension stopped while defining itself"),
-                    || {
-                        crate::msg::Msg::format(format_args!(
-                            "the extension stopped while defining itself: {}",
-                            e.wording(&ruby)
-                        ))
-                    },
-                ),
-                /* A panic after an exit `init` dropped: the exit goes first,
-                 * as `finish`'s `Error::raise` resumes it over a panic's
-                 * internal error. */
+                /* Stopped half-way: marked, then raised (an exit pending
+                 * goes first, `Error::raise`). */
+                Ok(Err(e)) => {
+                    UNFINISHED.store(true, Ordering::Relaxed);
+                    e.raise(&ruby)
+                }
                 Err(payload) => {
-                    let msg = crate::caught::panic_message(payload);
-                    match crate::raw::pending_exit() {
-                        Some(exit) => exit.raise(&ruby),
-                        None => msg,
-                    }
+                    UNFINISHED.store(true, Ordering::Relaxed);
+                    crate::rb::error::internal_error(crate::caught::panic_message(payload))
+                        .raise(&ruby)
                 }
             },
             Ok(Err(e)) => e.raise(&ruby),
-            Err(payload) => crate::caught::panic_message(payload),
-        };
-        match crate::raw::exception_new(&ruby, ruby.exception_runtime_error(), msg.as_bytes()) {
-            Ok(exc) => crate::raw::exc_fatal(exc),
-            Err(e) => e.raise(&ruby),
+            /* Nothing is defined yet: the panic is raised, as a method's. */
+            Err(payload) => {
+                crate::rb::error::internal_error(crate::caught::panic_message(payload)).raise(&ruby)
+            }
         }
     })
 }

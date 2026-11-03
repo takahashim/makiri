@@ -220,12 +220,6 @@ impl Error {
         Error(Kind::Jump(state))
     }
 
-    /// A non-local exit (a `throw`, a `break`, a kill), not an exception.
-    #[inline]
-    pub(crate) fn is_jump(&self) -> bool {
-        matches!(self.0, Kind::Jump(_))
-    }
-
     /// An instance of `class`, or one that will be? `false` for an exit that
     /// is not an exception, and for a registered class not yet set, which
     /// names no class (its `RuntimeError` stands in for a raise alone, so a

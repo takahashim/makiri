@@ -312,10 +312,11 @@ fn seal_leaves(methods: RModule, leaves: &[DataClass]) -> Result<(), Error> {
 /// name is load-bearing - and the crate's one `#[no_mangle]` item, which is
 /// what keeps every other name out of the export table (`rake symbols`).
 ///
-/// [`check`]'s refusal is raised as a `LoadError`. An error or a panic from
-/// [`init`] is Ruby's `fatal` rather than `Makiri::InternalError`: that class
-/// may not exist yet, and an extension that stopped half-way through defining
-/// itself must not be used.
+/// [`check`]'s refusal is raised as a `LoadError`. Whatever stops [`init`]
+/// half-way - an error, a panic, a `throw` - is raised (or resumed) as it
+/// is, and every method already defined refuses to run from then on: an
+/// extension that stopped half-way through defining itself must not be used
+/// (`run_init`).
 #[allow(non_snake_case, unsafe_code)]
 #[no_mangle]
 pub extern "C" fn Init_makiri() {
@@ -327,7 +328,7 @@ pub extern "C" fn Init_makiri() {
 /// Before anything touches the interpreter's structs: a binary built for
 /// another Ruby misreads them (`nupur::abi::check_running_api`). Its refusal is a
 /// `LoadError`, with nothing defined yet; anything that stops `init` after
-/// it is `fatal` (`run_init`).
+/// it leaves the extension unusable (`run_init`).
 fn check(ruby: &Ruby) -> Result<(), Error> {
     crate::nupur::abi::check_running_api(
         "makiri",
@@ -335,8 +336,8 @@ fn check(ruby: &Ruby) -> Result<(), Error> {
     )?;
     crate::nupur::abi::check_raise_state(ruby)?;
     /* `Makiri::Node`, the first class `init` defines: there before it, it is
-     * a `require` an exit cut short, or another's class, and a `LoadError`
-     * here rather than `fatal` there. */
+     * an `Init_` that stopped half-way, or another's class - a `LoadError`
+     * here rather than an `init` stopped there. */
     crate::nupur::abi::check_undefined(ruby, &["Makiri", "Node"])
 }
 
