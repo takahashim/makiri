@@ -5,12 +5,9 @@ use super::*;
 /// `rb_sym2str`: raises `NoMemoryError` when a static Symbol's name String is
 /// made for the first time. Runs no Ruby code.
 #[inline]
-pub fn sym2str(sym: Symbol) -> Result<RString, Error> {
+pub(crate) fn sym2str(sym: Symbol) -> Result<RString, Error> {
     let v = sym.as_sys();
-    let s = call(|inside| unsafe {
-        injected_raise(inside);
-        nupur_sys::raising::rb_sym2str(inside, v)
-    })?;
+    let s = call_allocating(|inside| unsafe { nupur_sys::raising::rb_sym2str(inside, v) })?;
     typed(s, RString::from_value, "a C call made no String")
 }
 
@@ -20,7 +17,7 @@ pub fn sym2str(sym: Symbol) -> Result<RString, Error> {
 /// set - because the check still runs, protected. An unfrozen value, every
 /// mutator's normal case, makes no call.
 #[inline]
-pub fn check_frozen(v: Value) -> Result<(), Error> {
+pub(crate) fn check_frozen(v: Value) -> Result<(), Error> {
     if !crate::rb::ReprValue::is_frozen(v) {
         return Ok(());
     }
@@ -34,7 +31,7 @@ pub fn check_frozen(v: Value) -> Result<(), Error> {
 /// not Integers or nil is a `TypeError`, checked here: the C would convert
 /// such an end with its `to_int`.
 #[inline]
-pub fn range_beg_len(r: Range, count: usize) -> Result<Option<(usize, usize)>, Error> {
+pub(crate) fn range_beg_len(r: Range, count: usize) -> Result<Option<(usize, usize)>, Error> {
     /* Checked here, not left to the caller: an end of any other kind would
      * have its `to_int` run by the C, the caller's Ruby. */
     let (beg, end, _) = range_values(r)?;
@@ -69,6 +66,6 @@ pub fn range_beg_len(r: Range, count: usize) -> Result<Option<(usize, usize)>, E
 /// `rb_thread_check_ints`: raises a pending interrupt (`Interrupt`,
 /// `Thread#raise`'s exception, a `Timeout`), or ends the thread.
 #[inline]
-pub fn thread_check_ints(_: &Ruby) -> Result<(), Error> {
+pub(crate) fn thread_check_ints(_: &Ruby) -> Result<(), Error> {
     call(|inside| unsafe { nupur_sys::raising::rb_thread_check_ints(inside) })
 }
