@@ -165,9 +165,11 @@ module Makiri
 
     # Query with CSS or XPath, auto-detecting which from the string shape.
     # Strings that look like a location path (start with "/", "./", "..", "("
-    # or "@", are "." alone, or contain "::") are treated as XPath; everything
-    # else as CSS. No CSS selector starts with "." followed by "." or "/", or
-    # is "." alone.
+    # or "@", are "." alone, or name an axis, as "ancestor::div" does, outside
+    # a quoted string) are treated as XPath; everything else as CSS. No CSS
+    # selector starts with "." followed by "." or "/", or is "." alone; a
+    # "::" of a CSS pseudo-element ("p::before") or inside a quoted attribute
+    # value ("[title='a::b']") names no axis.
     # @return [Makiri::NodeSet, String, Float, Boolean]
     def search(path)
       xpath?(path) ? xpath(path) : css(path)
@@ -197,11 +199,23 @@ module Makiri
 
     private
 
+    # An XPath axis and its "::", not inside a longer name, a class or an id.
+    XPATH_AXIS = /(?<![\w.#-])(?:ancestor-or-self|ancestor|attribute|child|descendant-or-self|
+                  descendant|following-sibling|following|namespace|parent|
+                  preceding-sibling|preceding|self)\s*::/x
+    private_constant :XPATH_AXIS
+
+    # A quoted string, CSS's or XPath's: what it holds is no syntax.
+    QUOTED = /'[^']*'|"[^"]*"/
+    private_constant :QUOTED
+
     # Heuristic used by {#search}: does +path+ look like an XPath location path
     # rather than a CSS selector?
     def xpath?(path)
       s = path.to_s.strip
-      s == "." || s.start_with?("/", "./", "..", "(", "@") || s.include?("::")
+      return true if s == "." || s.start_with?("/", "./", "..", "(", "@")
+
+      s.gsub(QUOTED, "").match?(XPATH_AXIS)
     end
   end
 end

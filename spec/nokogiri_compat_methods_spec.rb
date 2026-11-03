@@ -118,7 +118,16 @@ RSpec.describe "Nokogiri-compatible convenience methods" do
       expect { ctx.register_namespaces("s" => nil) }.to raise_error(TypeError)
       expect { ctx.register_namespaces("s" => :uri) }.to raise_error(TypeError)
       expect { ctx.register_namespaces(1 => "urn:s") }.to raise_error(TypeError)
+      expect { ctx.register_namespaces([%w[s urn:s]]) }.to raise_error(TypeError)
       expect { ctx.register_variables(1 => "x") }.to raise_error(TypeError)
+    end
+
+    it "runs no method of a String subclass's key" do
+      key = Class.new(String) { def start_with?(*) = raise("ran the caller's Ruby") }.new("xmlns:s")
+      xml = Makiri::XML(%(<r xmlns:s="urn:s"><s:p/></r>))
+      ctx = Makiri::XPathContext.new(xml)
+      expect(ctx.register_namespaces(key => "urn:s")).to equal(ctx)
+      expect(ctx.evaluate("count(//s:p)")).to eq(1.0)
     end
   end
 

@@ -50,6 +50,20 @@ RSpec.describe "Makiri Nokogiri-compat API" do
       expect(doc.search("div.c a").map(&:text)).to eq(%w[L])
     end
 
+    it "treats a string naming an XPath axis as XPath" do
+      a = doc.at_css("a")
+      expect(a.search("ancestor::div").map(&:name)).to eq(["div"])
+      expect(a.search("preceding-sibling :: p").length).to eq(2)
+    end
+
+    it "treats a \"::\" outside an axis as CSS: a quoted value, a pseudo-element" do
+      expect(doc.search("a[href='/l::x'], a[href=\"::\"]")).to be_empty
+      expect(doc.search("a[data-k='x'], div[data-n='1']").map(&:name)).to eq(["div"])
+      div["title"] = "a::b"
+      expect(doc.search("div[title='a::b']").map(&:name)).to eq(["div"])
+      expect(doc.search("p::before")).to be_empty
+    end
+
     it "#at returns the first match for either syntax" do
       expect(doc.at("p").text).to eq("one")
       expect(doc.at("//a").text).to eq("L")

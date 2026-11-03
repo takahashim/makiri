@@ -1,7 +1,7 @@
 //! `Makiri::XPathContext`'s Ruby methods.
 //!
 //!   `XPathContext.new(node, namespace_matching: :strict)`, `#evaluate(expr)`,
-//!   `#register_namespace(prefix, uri)` / `#register_ns`,
+//!   `#register_namespace(prefix, uri)` / `#register_ns`, `#register_namespaces(bindings)`,
 //!   `#register_variable(name, value)`, `#node=`
 //!
 //! The context itself - its wrapped data, its AST cache, and the refusals that
@@ -77,6 +77,24 @@ fn register_namespace(
     Ok(ctx.value())
 }
 
+/// `#register_namespaces(bindings)` -> self: a `{prefix => uri}` Hash read as
+/// every namespace Hash is (`glue::namespaces::bind_each`) - a key written
+/// as a declaration, `"xmlns:p"`, binds `p`, the form `Node#namespaces`
+/// returns, and a key of a String subclass is a `TypeError`, its `#hash`
+/// being the caller's Ruby.
+fn register_namespaces(ruby: &Ruby, ctx: XPathCtxSelf, bindings: Value) -> Result<Value, Error> {
+    /* A frozen context keeps its bindings, as `#register_namespace`'s. */
+    crate::bridge::rb::ReprValue::check_frozen(ctx.value())?;
+    let Some(h) = crate::bridge::rb::RHash::from_value(bindings) else {
+        return Err(Error::new(
+            crate::bridge::rb::Builtin::TypeError,
+            "namespaces must be a Hash of prefix => uri",
+        ));
+    };
+    register_bindings(ruby, &ctx, h)?;
+    Ok(ctx.value())
+}
+
 /// `#register_variable(name, value)` -> self.
 fn register_variable(
     ruby: &Ruby,
@@ -97,6 +115,7 @@ pub fn init_xpath_context(ruby: &Ruby) -> Result<(), Error> {
     klass.define_singleton_method("new", function!(s_new, -1))?;
     klass.define_method("evaluate", method!(evaluate, 1))?;
     klass.define_method("register_namespace", method!(register_namespace, 2))?;
+    klass.define_method("register_namespaces", method!(register_namespaces, 1))?;
     klass.define_method("register_variable", method!(register_variable, 2))?;
     klass.define_method("node=", method!(set_node, 1))?;
     Ok(())

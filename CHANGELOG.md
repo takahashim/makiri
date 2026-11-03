@@ -50,9 +50,13 @@
 * On Windows, an index or a length (`NodeSet#[]`, `to_xml(indent:)`) takes
   the same range as on Linux and macOS, a 64-bit integer, where one past
   2^31 raised `RangeError`.
-* A namespace Hash's keys must be Symbols or plain Strings: a key of a
-  String subclass raises `TypeError`, since hashing it would run the
-  subclass's `#hash`.
+* A namespace binding given as a keyword (`doc.xpath(expr, k => uri)`,
+  `XPathContext.new(node, k => uri)`) must have a Symbol or plain String
+  key: a key of a String subclass raises `TypeError`, since copying it into
+  a Hash would run the subclass's `#hash`.
+* `XPathContext#register_namespaces` reads its Hash as every namespace Hash
+  is read, natively, running none of the caller's Ruby; anything but a Hash
+  is `TypeError`.
 
 ### Fixed
 
@@ -92,6 +96,22 @@
 * A fragment's String `context:` takes `"SVG"` or `"MATH"` in any case as
   the SVG or MathML root, as it takes an HTML tag in any case. Only the
   lower-case names were; another case named an HTML element.
+* An XML document that begins with a UTF-16 byte order mark and declares
+  `encoding="UTF-16"` - the form XML 1.0 gives a UTF-16 document - parses,
+  as does UTF-32's; it raised `Makiri::XML::SyntaxError` for an encoding
+  conflict, and so did `to_xml(encoding: "UTF-16")`'s output read back.
+* `to_xml(encoding:)` declares only a name `Makiri::XML` reads back:
+  `"BINARY"` (`"ASCII-8BIT"`) is `ArgumentError`, and Ruby's names for the
+  process's encodings (`"locale"`, `"external"`, ...) declare the
+  encoding's own name. Both wrote a declaration `Makiri::XML` refused.
+* `Node#search` and `#at` read a string as XPath when it names an axis
+  (`ancestor::div`) outside a quoted string, not for any `::`: a selector
+  with `::` in an attribute value (`a[title='a::b']`) was evaluated as XPath
+  and answered nothing, and one with a pseudo-element (`p::before`) raised
+  `Makiri::XPath::SyntaxError`.
+* `Makiri::XML`'s `max_bytes:` past a 64-bit Integer is no limit, as the
+  HTML parse's limits take one; it raised `RangeError`, as a negative
+  Bignum did where a negative Fixnum is `ArgumentError`.
 
 ## [0.17.0.rc2] - 2026-10-24
 

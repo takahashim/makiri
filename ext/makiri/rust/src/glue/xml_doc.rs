@@ -39,23 +39,23 @@ fn parse_limits(ruby: &Ruby, h: Option<RHash>) -> Result<ParseLimits, Error> {
     };
     /* An actual Integer, not merely something convertible: a Float (1.5) is a
      * TypeError rather than a silent truncation. */
-    let n = crate::bridge::rb::Integer::from_value(v)
-        .ok_or_else(|| {
-            Error::new(
-                crate::bridge::rb::Builtin::TypeError,
-                "max_bytes must be an Integer",
-            )
-        })?
-        .to_i64()?;
-    if n <= 0 {
+    let n = crate::bridge::rb::Integer::from_value(v).ok_or_else(|| {
+        Error::new(
+            crate::bridge::rb::Builtin::TypeError,
+            "max_bytes must be an Integer",
+        )
+    })?;
+    /* The sign read before any conversion, so a negative Bignum is the
+     * ArgumentError a negative Fixnum is, not a RangeError. */
+    if n.is_negative() || n.to_usize_within()? == Some(0) {
         return Err(Error::new(
             crate::bridge::rb::Builtin::ArgumentError,
             "max_bytes must be positive",
         ));
     }
-    /* Positive, and past a `usize` only where one is narrower than 64 bits:
-     * no limit there is one a document could reach. */
-    limits.max_bytes = Some(usize::try_from(n).unwrap_or(usize::MAX));
+    /* Positive, and past a `usize` - a Bignum included - is no limit a
+     * document could reach, as `max_tree_depth:`'s is on the HTML side. */
+    limits.max_bytes = Some(n.to_usize_within()?.unwrap_or(usize::MAX));
     Ok(limits)
 }
 

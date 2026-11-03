@@ -113,6 +113,24 @@ RSpec.describe "Makiri::XML#to_xml" do
       expect(Makiri::XML(out).root.text).to eq("é")
     end
 
+    it "writes UTF-16 and UTF-32 output that parses back" do
+      %w[UTF-16 UTF-16LE UTF-32 UTF-32BE].each do |enc|
+        out = Makiri::XML("<r>é日</r>").to_xml(encoding: enc)
+        expect(Makiri::XML(out).root.text).to eq("é日"), enc
+      end
+    end
+
+    it "declares only an encoding name Makiri::XML reads back" do
+      # BINARY names no charset: refused, as the parser refuses the declaration.
+      ["BINARY", "ASCII-8BIT", Encoding::BINARY].each do |enc|
+        expect { Makiri::XML("<r/>").to_xml(encoding: enc) }.to raise_error(ArgumentError, /ASCII-8BIT/)
+      end
+      # Ruby's names for the process's encodings declare the encoding's own name.
+      out = Makiri::XML("<r>é</r>").to_xml(encoding: "locale")
+      expect(out.encode("UTF-8")).to include(%(encoding="#{Encoding.find("locale").name}"))
+      expect(Makiri::XML(out).root.text).to eq("é")
+    end
+
     it "accepts an Encoding object and rejects an unknown name" do
       expect(Makiri::XML("<r/>").to_xml(encoding: Encoding::UTF_8)).to include("UTF-8")
       expect { Makiri::XML("<r/>").to_xml(encoding: "no-such-encoding") }.to raise_error(ArgumentError)

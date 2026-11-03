@@ -79,6 +79,12 @@ RSpec.describe "argument shapes and block exits" do
         .to raise_error(ArgumentError, "unknown keyword: :foo")
       expect { Makiri::XML::Document.parse("<r/>", { max_bytes: 2 }) }.to arity_error(2, 1)
     end
+
+    it "reads a max_bytes: past any size as no limit, and a negative Bignum as negative" do
+      expect(Makiri::XML::Document.parse("<r/>", max_bytes: 2**80).root.name).to eq("r")
+      expect { Makiri::XML::Document.parse("<r/>", max_bytes: -2**80) }
+        .to raise_error(ArgumentError, "max_bytes must be positive")
+    end
   end
 
   describe "a method that takes only keywords" do

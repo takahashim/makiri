@@ -175,7 +175,37 @@ pub fn init_xml_node_serialize(ruby: &Ruby) -> Result<(), Error> {
 /// to declare for it - the String or Symbol as the caller wrote it, or an
 /// `Encoding`'s own name. (An HTML parse's `encoding:` is read otherwise:
 /// `glue::html_doc`'s, which also knows the Encoding Standard's labels.)
+///
+/// Only a name `Makiri::XML` reads back is declared (`bridge::xml::decode`):
+/// one of Ruby's names for the process's encodings (`"locale"`) names no
+/// charset, so the encoding's own name is written for it, and ASCII-8BIT
+/// (`"BINARY"`) is no charset at all, so it is `ArgumentError`.
 fn xml_output_encoding_arg(
+    ruby: &Ruby,
+    v: Value,
+) -> Result<
+    (
+        crate::bridge::string::Encoding,
+        crate::ceiling_buf::OwnedBuf,
+    ),
+    Error,
+> {
+    let (e, name) = given_output_encoding(ruby, v)?;
+    if e.is_ascii8bit() {
+        return Err(crate::bridge::ruby::arg_error(
+            "to_xml cannot declare ASCII-8BIT (BINARY): it names no charset",
+        ));
+    }
+    if !crate::xml::encoding_names::is_ruby_special(name.as_slice()) {
+        return Ok((e, name));
+    }
+    crate::ceiling_buf::OwnedBuf::copy_from(e.name())
+        .map(|b| (e, b))
+        .ok_or_else(|| crate::bridge::ruby::makiri_error("out of memory reading an encoding name"))
+}
+
+/// The encoding `v` names, and the name as the caller wrote it.
+fn given_output_encoding(
     ruby: &Ruby,
     v: Value,
 ) -> Result<
