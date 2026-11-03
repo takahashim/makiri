@@ -113,7 +113,7 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
          * serializer's buffer: the lookup returns the error instead. The
          * name is a copy, so the bytes stay valid across the serializer's
          * call. */
-        let (e, bytes) = crate::bridge::string::encoding_arg(ruby, enc_opt)?;
+        let (e, bytes) = xml_output_encoding_arg(ruby, enc_opt)?;
         (Some(e), Some(bytes))
     };
 
@@ -167,4 +167,35 @@ pub fn init_xml_node_serialize(ruby: &Ruby) -> Result<(), Error> {
         m.define_method(name, method!(no_serialize, -1))?;
     }
     Ok(())
+}
+
+/// `to_xml`'s `encoding:` argument: the encoding to write in, and the name
+/// to declare for it - the String or Symbol as the caller wrote it, or an
+/// `Encoding`'s own name. (An HTML parse's `encoding:` is read otherwise:
+/// `glue::html_doc`'s, which also knows the Encoding Standard's labels.)
+fn xml_output_encoding_arg(
+    ruby: &Ruby,
+    v: Value,
+) -> Result<
+    (
+        crate::bridge::string::Encoding,
+        crate::ceiling_buf::OwnedBuf,
+    ),
+    Error,
+> {
+    let e = crate::bridge::string::to_encoding(ruby, v)?;
+    let name = match crate::bridge::rb::RString::from_value(v) {
+        Some(s) => s,
+        None if crate::bridge::rb::Symbol::from_value(v).is_some() => {
+            crate::bridge::ruby::name_arg(v)?
+        }
+        None => {
+            return crate::ceiling_buf::OwnedBuf::copy_from(e.name())
+                .map(|b| (e, b))
+                .ok_or_else(|| {
+                    crate::bridge::ruby::makiri_error("out of memory reading an encoding name")
+                });
+        }
+    };
+    Ok((e, crate::bridge::string::ruby_string_bytes(name)?))
 }

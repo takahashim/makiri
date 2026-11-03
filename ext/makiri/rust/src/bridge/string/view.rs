@@ -86,7 +86,7 @@ impl<C: Checked> Deref for RubyStr<C> {
 }
 
 impl RubyText {
-    /// The text as an engine input, borrowed for the guard's lifetime.
+    /// The text as an engine input, borrowed from this view's own copy.
     pub(crate) fn text(&self) -> crate::text::VerifiedText<'_> {
         /* The bridge checked the text contract when it built `self`. */
         crate::text::VerifiedText::from_checked(self)
@@ -95,26 +95,8 @@ impl RubyText {
 
 /* ---- the strict text contract ---- */
 
-/// What the strict-text check found.
-///
-/// The enum itself lives in [`crate::utf8_decode`] beside the pure [`text_verdict`];
-/// re-exported here so the bridge's callers keep naming it from this module.
-pub use crate::utf8_decode::TextVerdict;
-
-/// Check `bytes` against the strict contract, returning the specific
-/// violation so each caller can map it to its own error surface (`Makiri::Error`,
-/// `XML::SyntaxError`, or a reason string).
-///
-/// It resolves the String's cached coderange into an ordinary value, then
-/// delegates the actual check to the pure [`crate::utf8_decode::text_verdict`]; the
-/// logic is Ruby-free and testable under the always-compiled core.
-///
-/// `coderange_str` is consulted only for its CACHED coderange, which never
-/// scans and never allocates.
-pub fn text_check(coderange_str: RString, bytes: &[u8]) -> TextVerdict {
-    /* The cached coderange reads flags; it never scans and never allocates. */
-    crate::utf8_decode::text_verdict(bytes, coderange_str.cached_utf8())
-}
+/// What the strict-text check found ([`crate::utf8_decode`]'s).
+use crate::utf8_decode::TextVerdict;
 
 /// Why a String in another encoding was refused ([`ReadError::NoUtf8Form`]).
 const NOT_UTF8_CONVERTIBLE: &str = "could not be converted to UTF-8 from its encoding";

@@ -26,7 +26,8 @@ use crate::html_dom::post_parse::parse_html;
 pub use crate::html_dom::tree_guard::ParseLimits;
 use crate::init::CLASS_NODE;
 
-/// A fragment-parse failure as `Makiri::Error`.
+/// A fragment-parse failure as its exception: `Makiri::Error`, or what a
+/// tripped guard is (`guard_error`, which can be `InternalError`).
 fn fragment_error(e: FragmentError, limit: ParseLimits) -> Error {
     match e {
         FragmentError::Guard(stop) => crate::bridge::html::document::guard_error(stop, limit),
@@ -145,7 +146,7 @@ fn element_context(node: HtmlNode<'_>, target: HtmlDoc<'_>) -> Result<FragmentCo
     FragmentContext::element_into(node, target).map_err(|e| makiri_error(e.message()))
 }
 
-/// Parse `html` as a fragment in `context`. Nothing is changed yet: a String
+/// Parse `src` as a fragment in `context`. Nothing is changed yet: a String
 /// that fails to parse leaves every document as it was.
 ///
 /// `src` is converted already - the caller ran `HtmlSource::from_ruby` -
@@ -161,7 +162,7 @@ fn parse(
         .map_err(|e| fragment_error(e, limit))
 }
 
-/// Parse `html` in the context of the element `context` (WHATWG fragment
+/// Parse `src` in the context of the element `context` (WHATWG fragment
 /// parsing, as `inner_html=` and `outer_html=` do), and import the result into
 /// a fresh DOCUMENT_FRAGMENT of the edited document - detached, so the tree is
 /// still as it was.

@@ -452,9 +452,3 @@ pub(in crate::bridge) fn ivar_errors() -> crate::bridge::rb::HiddenId {
 pub fn init_ivars(ruby: &Ruby) -> Result<(), Error> {
     ERRORS.intern(ruby)
 }
-
-/// A Document's wrapper data, for the fields that are the wrapper's own
-/// rather than the content's - every one of them a cell, so this is shared.
-pub(super) fn doc_data_known(doc: &DocHandle) -> &DocData {
-    doc.data()
-}

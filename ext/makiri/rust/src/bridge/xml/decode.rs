@@ -20,9 +20,7 @@
 use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, RString};
 
-use crate::bridge::string::{
-    claims_no_encoding, prefix, ruby_string_bytes_from, text_check, Encoding,
-};
+use crate::bridge::string::{claims_no_encoding, prefix, ruby_string_bytes_from, Encoding};
 use crate::ceiling_buf::OwnedBuf;
 use crate::init::{EXC_XML_LIMIT_EXCEEDED, EXC_XML_SYNTAX_ERROR};
 use crate::xml::encoding_sniff::{sniff, SNIFF_WINDOW};
@@ -194,7 +192,7 @@ pub fn xml_decode_input(
      * whole String is consulted for its cached coderange (which covers the
      * stripped prefix too - the BOM is one complete UTF-8 character). */
     let bytes = ruby_string_bytes_from(s, off)?;
-    if let Some(problem) = text_check(s, bytes.as_slice()).problem() {
+    if let Some(problem) = xml_input_verdict(s, bytes.as_slice()).problem() {
         return Err(syntax_error(format_args!("XML input {problem}")));
     }
     if ascii_only && !bytes.as_slice().is_ascii() {
@@ -203,4 +201,17 @@ pub fn xml_decode_input(
         ));
     }
     Ok(bytes)
+}
+
+/// The strict text contract's verdict on `bytes`, an XML parse's input
+/// copied out of `s`: an embedded NUL or invalid UTF-8 is a violation.
+///
+/// Unlike a checked view (`string::ruby_verified_text`), this one takes
+/// `s`'s CACHED coderange as a shortcut past validating the copy - a flag
+/// read, which never scans and never allocates. It is a shortcut and no
+/// more: the answer builds no `&str`, and the parser decodes the bytes
+/// strictly as it reads them (`xml::chars::decode1`, `validate_chars`).
+/// A checked view, which does hand out a `&str`, never takes it.
+fn xml_input_verdict(s: RString, bytes: &[u8]) -> crate::utf8_decode::TextVerdict {
+    crate::utf8_decode::text_verdict(bytes, s.cached_utf8())
 }

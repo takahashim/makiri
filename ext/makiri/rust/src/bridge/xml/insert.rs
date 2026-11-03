@@ -168,11 +168,11 @@ pub fn import_copy(
     deep: bool,
 ) -> Result<NodeId, Error> {
     xml_doc_check(rb_self)?; /* TypeError for anything but an XML Document */
+    crate::bridge::dom_error::refuse_document_import(ruby, node_v)?;
     let copy = match node_repr(node_v) {
         NodeRepr::Xml => {
             /* Read, not written: the copy goes into the receiver's arena. */
-            let src_document = xml_node_document(ruby, node_v)?;
-            let src = xml_node_unwrap(ruby, node_v)?;
+            let (src, src_document) = xml_node_ref(ruby, node_v)?;
             let copied = if crate::bridge::ruby::same_value(src_document, rb_self) {
                 /* Same arena: the single-`&mut` clone path. */
                 clone_node(&mut *xml_write(&doc_known(rb_self))?, src, deep)

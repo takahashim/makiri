@@ -23,12 +23,14 @@ use crate::xml::model::NodeId;
 /// node id - the HTML arena's in an HTML document, an XML [`NodeId`] in an
 /// XML one.
 ///
-/// Which of the two it is is not stored beside it. It is the document's
-/// representation - the wrapper's TypedData type, a NodeSet's [`DocKind`] -
-/// decided once, so a word is read back only through the reader named for
-/// that kind ([`xml`](Self::xml), [`html`](Self::html), [`token`](Self::token)).
-/// This type is where the word crosses between the typed forms and the
-/// untyped one, and so the one place in the glue a stored node is cast.
+/// The word itself does not say which of the two it is: the document's
+/// representation does - the wrapper's TypedData type, a NodeSet's
+/// [`DocKind`] - decided once, so a word is read back only through the reader
+/// named for that kind ([`xml`](Self::xml), [`html`](Self::html),
+/// [`token`](Self::token)). This type is where the word crosses between the
+/// typed forms and the untyped one, and so the one place in the bridge a
+/// stored node is cast. (A wrapper's own handle, [`NodeHandle`], does carry
+/// its kind.)
 ///
 /// `repr(transparent)` over `usize`: a NodeSet's buffer keeps the layout it had
 /// as `*mut c_void`. (A [`NodeData`] does not use it any more - it stores an

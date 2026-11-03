@@ -53,15 +53,19 @@ struct AstCache(HashMap<Box<[u8]>, Box<Ast>>);
 
 /// `Makiri::XPathContext`.
 ///
-/// The two Ruby values it keeps alive - its Document and its context node -
-/// are hidden ivars of the context object ([`DOCUMENT`], [`NODE`]), so the struct holds none and its GC hooks have nothing to
-/// mark: `#node=` is an ivar write, and an `evaluate` reads the Document
-/// once, a few nanoseconds on work of microseconds.
+/// The Ruby value it keeps alive - its Document - is a hidden ivar of the
+/// context object ([`DOCUMENT`]), so the struct holds none and its GC hooks
+/// have nothing to mark; an `evaluate` reads the Document once, a few
+/// nanoseconds on work of microseconds. The context node needs no keepalive:
+/// it is a token into the Document's arena, whose nodes live as long as the
+/// Document does.
 ///
-/// The engine context sits outside the `RefCell` too: everything done with it
-/// takes `&Cx`. No Ruby runs while it evaluates (Makiri runs no
-/// custom-function handler), and the context itself refuses a change that
-/// would disturb a walk all the same.
+/// No Ruby runs while it evaluates (Makiri runs no custom-function handler),
+/// so neither guard below can be met from Ruby. The cache's `RefCell` is
+/// there to change the cache through `&self`, and a conflict on it is
+/// `InternalError`. The engine context sits outside it, everything done with
+/// it taking `&Cx`, and refuses a change during a walk all the same (its
+/// session's `is_evaluating`): the engine's own guard, kept as it is.
 pub struct XPathCtx {
     cache: RefCell<AstCache>,
     /// The bytes the cached ASTs hold, as reported to the GC - kept outside
@@ -88,14 +92,11 @@ impl Payload for XPathCtx {
 
 /// The hidden ivar a context keeps its Document in.
 static DOCUMENT: HiddenIvar = HiddenIvar::new(c"makiri_document");
-/// The hidden ivar a context keeps its context node in.
-static NODE: HiddenIvar = HiddenIvar::new(c"makiri_node");
 
-/// Intern the context's hidden ivars' names. From `Init_makiri`, before any
-/// method that reads one is defined.
+/// Intern the context's hidden ivar's name. From `Init_makiri`, before any
+/// method that reads it is defined.
 pub fn init_ivars(ruby: &Ruby) -> Result<(), Error> {
-    DOCUMENT.intern(ruby)?;
-    NODE.intern(ruby)
+    DOCUMENT.intern(ruby)
 }
 
 /// `Makiri::XPathContext`'s data type.
@@ -138,11 +139,8 @@ impl XPathCtxSelf {
         if self.ctx.is_evaluating() {
             return Err(makiri_error(BUSY));
         }
-        /* Then the keepalive, since the ivar write can raise (a frozen
-         * context, `NoMemoryError`): a failure there leaves the context node
-         * as it was. After it no Ruby has run, so no evaluate can have begun,
-         * and the engine takes the node: the two never disagree. */
-        crate::bridge::rb::object::ivar_set(self.value(), NODE.id(), rb_node)?;
+        /* A frozen context keeps its node, as it would keep an ivar. */
+        crate::bridge::rb::ReprValue::check_frozen(self.value())?;
         self.ctx.set_context_node(token).map_err(|_| {
             crate::bridge::ruby::internal_error("an evaluate began during XPathContext#node=")
         })
@@ -169,9 +167,9 @@ impl XPathCtx {
     }
 
     fn cache(&self) -> Result<core::cell::RefMut<'_, AstCache>, Error> {
-        self.cache
-            .try_borrow_mut()
-            .map_err(|_| makiri_error("XPath context is already in use"))
+        self.cache.try_borrow_mut().map_err(|_| {
+            crate::bridge::ruby::internal_error("an XPath context's cache borrowed twice")
+        })
     }
 }
 
@@ -214,10 +212,10 @@ impl XPathCtx {
                     },
                     roots: [],
                 },
-                /* The Document and the context node, as hidden ivars: ordinary
-                 * Ruby references. A write that raises leaves the context hidden,
-                 * where no Ruby code can find it without them. */
-                &[(DOCUMENT.id(), document), (NODE.id(), rb_node)],
+                /* The Document, as a hidden ivar: an ordinary Ruby reference.
+                 * A write that raises leaves the context hidden, where no Ruby
+                 * code can find it without it. */
+                &[(DOCUMENT.id(), document)],
                 /* Complete once its ivars are in: nothing to fill. */
                 |_| Ok(()),
             )

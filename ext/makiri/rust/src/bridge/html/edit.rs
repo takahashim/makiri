@@ -59,10 +59,7 @@ fn check_attr_owner_frozen(this: &HtmlSelf) -> Result<(), Error> {
             _ => None,
         }
     };
-    match owner {
-        Some(owner) => crate::bridge::wrapper::check_node_frozen(this.document(), owner),
-        None => Ok(()),
-    }
+    crate::bridge::wrapper::check_attr_owner_frozen(this.document(), owner)
 }
 
 impl<'a> HtmlEdit<'a> {

@@ -24,7 +24,7 @@ fn with_child_memo<R>(
     f: impl FnOnce(&mut ChildPositionMemo, u64) -> R,
 ) -> Result<R, Error> {
     let doc = doc_known(rb_doc);
-    let d = doc_data_known(&doc);
+    let d = doc.data();
     let version = d.edits.get().tree_version;
     let mut memo = d.child_memo.try_borrow_mut().map_err(|_| {
         crate::bridge::ruby::internal_error("a Document's child memo was found in use")

@@ -128,3 +128,17 @@ pub(in crate::bridge) fn check_node_frozen(
         None => Ok(()),
     }
 }
+
+/// [`check_node_frozen`] of an Attr's owner element, when the edited node is
+/// an Attr (`owner`: `None` otherwise): an Attr's edit changes its owner's
+/// attribute list, so a frozen owner refuses it as it refuses `delete`. How
+/// the owner is read is each DOM's; this is the rest, once.
+pub(in crate::bridge) fn check_attr_owner_frozen(
+    rb_doc: Value,
+    owner: Option<impl NodeHandleSource>,
+) -> Result<(), Error> {
+    match owner {
+        Some(owner) => check_node_frozen(rb_doc, owner),
+        None => Ok(()),
+    }
+}

@@ -68,7 +68,8 @@ pub fn xpath_error(err: &XPathError) -> Error {
 /// mutators between two evaluates edit that document, so [`run`](Self::run)
 /// borrows it from the Document for one evaluate at a time. Everything but
 /// the evaluate is the same operation on either backend, so `Cx` derefs to the
-/// session and the backend is chosen in exactly one place.
+/// session; which backend an evaluate runs on is read from the Document each
+/// time ([`Cx::run`]).
 pub struct Cx {
     session: Session,
 }
@@ -288,9 +289,12 @@ pub fn evaluate_query(
 /// `XPathContext#evaluate` - ends here.
 ///
 /// The AST and the context - owned (`Cx`, a query's throwaway) or borrowed
-/// (`&Cx`, an `XPathContext`'s) - are dropped BEFORE the conversion, which
+/// (`&Cx`, an `XPathContext`'s) - are let go BEFORE the conversion, which
 /// allocates Ruby objects and so may collect: the value owns its data and
-/// references neither, so they need not live through it.
+/// references neither, so they need not live through it. An owned AST is
+/// freed there; an `XPathContext`'s cached one stays in the cache, which its
+/// caller holds through the conversion - harmless, as nothing the
+/// conversion runs can reach the cache.
 pub fn evaluate_to_ruby<C: core::borrow::Borrow<Cx>>(
     ruby: &Ruby,
     ctx: C,
@@ -306,8 +310,9 @@ pub fn evaluate_to_ruby<C: core::borrow::Borrow<Cx>>(
 
 /// A query's value as Ruby, and for `at_xpath` the first node of a node-set.
 ///
-/// Callers free the AST and any context they own BEFORE this: the value owns
-/// its data and references neither.
+/// The value owns its data and references neither the AST nor the context,
+/// so a caller that owns them frees them before this ([`evaluate_to_ruby`]);
+/// `XPathContext`'s cached AST stays in its cache.
 pub fn query_result(
     ruby: &Ruby,
     value: XPathValue,

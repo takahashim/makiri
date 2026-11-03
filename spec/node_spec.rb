@@ -522,6 +522,13 @@ RSpec.describe Makiri::Node do
       expect { other.import_node(doc, true) }.to raise_error(Makiri::Error, /cannot import a document/)
       expect { other.import_node(other) }.to raise_error(Makiri::Error, /cannot import a document/)
     end
+
+    it "refuses a document of either kind into a document of either kind, alike" do
+      xml = Makiri::XML::Document.parse("<r/>")
+      [[xml, Makiri::XML::Document.parse("<s/>")], [xml, xml], [xml, doc], [other, xml]].each do |into, from|
+        expect { into.import_node(from, true) }.to raise_error(Makiri::Error, /cannot import a document/)
+      end
+    end
   end
 
   describe "#content_fragment (template contents)" do

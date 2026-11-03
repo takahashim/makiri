@@ -239,10 +239,7 @@ fn check_attr_owner_frozen(document: &DocHandle, id: NodeId) -> Result<(), Error
             _ => None,
         }
     };
-    match owner {
-        Some(owner) => crate::bridge::wrapper::check_node_frozen(document.value(), owner),
-        None => Ok(()),
-    }
+    crate::bridge::wrapper::check_attr_owner_frozen(document.value(), owner)
 }
 
 /// The receiver cleared for an edit - not frozen, nor an Attr whose owner is.

@@ -75,7 +75,7 @@ pub fn account_growth(ruby: &crate::bridge::rb::Ruby, rb_doc: Value) {
 /// (an edit's receiver, a loan's document), which holds it through the
 /// report.
 pub fn account_growth_of(ruby: &crate::bridge::rb::Ruby, doc: &DocHandle) {
-    if doc_data_known(doc).grown_enough() {
+    if doc.data().grown_enough() {
         account_data(ruby, doc.data());
     }
 }

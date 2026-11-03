@@ -5,7 +5,6 @@
 
 #![forbid(unsafe_code)]
 
-use crate::bridge::rb::Ruby;
 use crate::bridge::rb::{Error, RString};
 use crate::bridge::ruby::makiri_error;
 
@@ -82,30 +81,6 @@ impl HtmlSource {
     /// The bytes.
     pub fn bytes(&self) -> &[u8] {
         self.0.bytes()
-    }
-}
-
-/// The encoding `encoding:` names, read the way the String's own encoding
-/// is read: by Ruby's name for it first, so `"US-ASCII"`, `"BINARY"` and
-/// `Encoding::UTF_32LE` mean what a String tagged with them means, and an
-/// Encoding Standard label Ruby does not know (`"latin1"`, `"unicode"`)
-/// second.
-#[derive(Clone, Copy)]
-pub enum GivenEncoding {
-    /// An encoding Ruby knows.
-    Ruby(Encoding),
-    /// An Encoding Standard label Ruby does not know.
-    Label(&'static crate::html::encoding::Encoding),
-}
-
-impl GivenEncoding {
-    /// The encoding `name` names, or None for a name neither Ruby nor the
-    /// Encoding Standard knows. May autoload a Ruby encoding - see
-    /// [`Encoding::find`], whose `Err` (not an unknown name) is passed on.
-    pub fn resolve(ruby: &Ruby, name: &[u8]) -> Result<Option<GivenEncoding>, Error> {
-        Ok(Encoding::find(ruby, name)?
-            .map(GivenEncoding::Ruby)
-            .or_else(|| crate::html::encoding::for_label(name).map(GivenEncoding::Label)))
     }
 }
 
