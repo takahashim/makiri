@@ -40,5 +40,19 @@ RSpec.describe "fragment parsing in an API-made context" do
         expect { Makiri::DocumentFragment.parse("<b>", context: name) }.to raise_error(ArgumentError)
       end
     end
+
+    # A name that is no built-in tag was looked up in the document's own name
+    # table too, so it was a context where the document already held such an
+    # element and refused where it did not.
+    it "refuses a custom element's name whatever the document holds" do
+      with = Makiri::HTML("<my-el></my-el>")
+      expect { doc.fragment("<b>", context: "my-el") }.to raise_error(ArgumentError, /unknown fragment context/)
+      expect { with.fragment("<b>", context: "my-el") }.to raise_error(ArgumentError, /unknown fragment context/)
+      expect { Makiri::DocumentFragment.parse("<b>", context: "my-el") }.to raise_error(ArgumentError)
+    end
+
+    it "still takes a built-in tag in any case" do
+      expect(doc.fragment("<td>x", context: "TR").children.map(&:name)).to eq(["td"])
+    end
   end
 end

@@ -57,6 +57,13 @@
 
 ### Fixed
 
+* A fragment's String `context:` naming no built-in tag (`"my-el"`) is
+  `ArgumentError` ("unknown fragment context element") in every document.
+  `Document#fragment` took one when the document already held such an
+  element, so the same call answered differently by document.
+* An XML Document reports what its factories (`create_element`,
+  `create_text_node`, `clone_node`, ...) grow it by to the GC, as an HTML
+  one does, so a loop that only makes nodes is collected on memory pressure.
 * `Makiri::XML`'s `#css`, `#at_css` and `#matches?` take a selector as
   `Makiri::HTML`'s do, as 0.17.0.rc2 said every name argument does: a
   `String` or a `Symbol`, anything else a `TypeError`. They converted it

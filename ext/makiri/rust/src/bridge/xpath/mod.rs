@@ -18,7 +18,7 @@ use crate::bridge::node_set::FreshSet;
 use crate::bridge::node_wrap::wrap_doc_node;
 use crate::bridge::string::ruby_verified_text;
 use crate::bridge::wrapper::{doc_known, html_read, xml_read, DocKind, NodeWord, DOC_TYPE};
-use crate::bridge::xml::xml_node_unwrap;
+use crate::bridge::xml::{xml_node_document, xml_node_unwrap};
 use crate::engine_error::{Error as XPathError, ErrorKind};
 use crate::html_dom::xpath::HtmlDom;
 use crate::init::EXC_ERROR;
@@ -147,6 +147,14 @@ pub fn context_for(ruby: &Ruby, rb_node: Value, document: Value) -> Result<Cx, E
         /* The context NODE: `xml_node_unwrap` resolves a Document receiver to
          * its arena's document node, and any other node to itself. */
         let node = xml_node_unwrap(ruby, rb_node)?;
+        /* Checked, not assumed, to be `document`'s, as the HTML branch's
+         * node is: the token names the node by its id alone. A node of
+         * another document is a caller's broken pairing. */
+        if !crate::bridge::ruby::same_value(xml_node_document(ruby, rb_node)?, document) {
+            return Err(crate::bridge::ruby::internal_error(
+                "an XPath context node of another document",
+            ));
+        }
         return Ok(Cx {
             session: Session::new(Some(Token::xml(node.to_token()))),
         });

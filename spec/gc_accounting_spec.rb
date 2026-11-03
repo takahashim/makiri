@@ -162,6 +162,17 @@ RSpec.describe "GC accounting of document arenas" do
     end
   end
 
+  # An XML factory grows the arena with no edit after it, as an HTML one does,
+  # and reports it the same way: without that, a megabyte of text made into a
+  # node left the GC judging the document by its size at parse time.
+  it "lets memory pressure from XML documents grown by factories trigger a collection" do
+    text = ("x" * 1_000_000).freeze
+    GC.start
+    before = GC.count
+    64.times { Makiri::XML("<r/>").create_text_node(text) }
+    expect(GC.count).to be > before
+  end
+
   describe "the node cache survives compaction" do
     %w[HTML XML].each do |kind|
       it "keeps identity, attached state and reads across GC.compact (#{kind})" do

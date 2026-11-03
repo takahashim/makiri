@@ -228,7 +228,7 @@ pub fn clone_node(ruby: &Ruby, this: XmlSelf, args: &[Value]) -> Result<Value, E
     if crate::bridge::ruby::same_value(this.value, this.document()) {
         return Err(makiri_error("clone_node cannot copy a document; use #dup"));
     }
-    let copy = xml_mut_result(with_arena_for_new_node(this.document(), |d| {
+    let copy = xml_mut_result(with_arena_for_new_node(ruby, this.document(), |d| {
         mutate::clone_node(d, this.id, deep)
     })?)?;
     wrap(ruby, copy, this.document())
@@ -262,12 +262,12 @@ pub fn create_element(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Result<Val
     let nv = verified_name(ruby, name, "element name")?;
     let cv = optional(content, |v| verified_data(ruby, v, "element content"))?;
     let name = nv.as_bytes();
-    let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
+    let el = xml_mut_result(with_arena_for_new_node(ruby, rb_self, |d| {
         mutate::new_element(d, name)
     })?)?;
     if let Some(cv) = &cv {
         let text = cv.as_bytes();
-        xml_mut_result(with_arena_for_new_node(rb_self, |d| {
+        xml_mut_result(with_arena_for_new_node(ruby, rb_self, |d| {
             mutate::set_content(d, el, text)
         })?)?;
     }
@@ -316,7 +316,7 @@ pub fn create_element_ns(
     } else {
         Split::prefixed(len(prefix.len())?, len(local.len())?)
     };
-    let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
+    let el = xml_mut_result(with_arena_for_new_node(ruby, rb_self, |d| {
         mutate::new_dom_element_ns(d, qname, sp, ns)
     })?)?;
     wrap(ruby, el, rb_self)
@@ -346,7 +346,7 @@ pub fn create_loose_dom_element(
     let (sp, _) = split_loose_dom_name(qname, pv.as_ref().map(|p| p.as_bytes()), lv.as_bytes())
         .map_err(|e| Error::new(crate::bridge::rb::Builtin::ArgumentError, e.message()))?;
     let ns = nv.as_ref().map_or(&b""[..], |n| n.as_bytes());
-    let el = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
+    let el = xml_mut_result(with_arena_for_new_node(ruby, rb_self, |d| {
         mutate::new_loose_dom_element(d, qname, sp, ns)
     })?)?;
     wrap(ruby, el, rb_self)
@@ -374,7 +374,7 @@ pub fn create_document_type(ruby: &Ruby, rb_self: Value, args: &[Value]) -> Resu
         }
     }
     let (name, pub_id, sys_id) = (nv.as_bytes(), id(&pv), id(&sv));
-    let dt = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
+    let dt = xml_mut_result(with_arena_for_new_node(ruby, rb_self, |d| {
         mutate::new_document_type(d, name, pub_id, sys_id)
     })?)?;
     wrap(ruby, dt, rb_self)
@@ -390,7 +390,7 @@ fn create_chardata(
 ) -> Result<Value, Error> {
     let tv = verified_data(ruby, text, what)?;
     let bytes = tv.as_bytes();
-    let n = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
+    let n = xml_mut_result(with_arena_for_new_node(ruby, rb_self, |d| {
         mutate::new_chardata(d, type_, bytes)
     })?)?;
     wrap(ruby, n, rb_self)
@@ -410,7 +410,7 @@ pub fn create_pi(ruby: &Ruby, rb_self: Value, target: Value, data: Value) -> Res
     let tg = verified_name(ruby, target, "PI target")?;
     let dt = verified_data(ruby, data, "PI data")?;
     let (target, data) = (tg.as_bytes(), dt.as_bytes());
-    let pi = xml_mut_result(with_arena_for_new_node(rb_self, |d| {
+    let pi = xml_mut_result(with_arena_for_new_node(ruby, rb_self, |d| {
         mutate::new_pi(d, target, data)
     })?)?;
     wrap(ruby, pi, rb_self)

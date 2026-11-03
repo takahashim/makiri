@@ -28,13 +28,24 @@ use super::*;
 /// meanwhile would alias the borrow. That is why a method converts and checks
 /// its arguments FIRST and only then calls this, with nothing but engine calls
 /// inside - which are Ruby-free by construction.
+///
+/// A factory grows the arena with no edit after it, so it reports the growth
+/// here, after the loan, as `bridge::html`'s `lend_document` does
+/// (`account_growth`): the arguments were converted to copies before, and
+/// what `f` made is a bare node of the arena, which the Document keeps.
 pub fn with_arena_for_new_node<R>(
+    ruby: &Ruby,
     document: Value,
     f: impl FnOnce(&mut XmlDoc) -> R,
 ) -> Result<R, Error> {
     let document = doc_known(document);
-    let mut write = xml_write(&document)?;
-    Ok(f(&mut write))
+    /* The loan ends with this block, before the report below may collect. */
+    let r = {
+        let mut write = xml_write(&document)?;
+        f(&mut write)
+    };
+    crate::bridge::wrapper::account_growth_of(ruby, &document);
+    Ok(r)
 }
 
 /// The receiver cleared for an edit, and the PROOF of it.
