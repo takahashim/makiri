@@ -122,6 +122,17 @@ The task then runs their self-test (`src/lint_probe.rs`,
 lints it names. It needs the nightly that `rust-toolchain.toml` pins, plus
 cargo-dylint and dylint-link.
 
+An extension written on Nupur outside Makiri runs the same lints over
+itself by naming its crate in `MAKIRI_LINTS_EXTENSION`:
+
+```bash
+MAKIRI_LINTS_EXTENSION=nupur_json cargo dylint --path ../makiri/ext/makiri/rust/lints/makiri_lints --no-deps
+```
+
+The layer's lints then hold that crate to Nupur's rules. Makiri's own lints
+(`infallible_allocation`, `raw_node_crossing` and the module-layout ones)
+stay off there: the allocation policy and the module layout are Makiri's.
+
 ### `rake deny`
 
 `rake deny` runs cargo-deny over the extension's dependencies

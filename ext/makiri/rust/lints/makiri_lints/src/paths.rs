@@ -7,11 +7,11 @@
 //! spelled `nupur::...` whichever crate names them, and the crate under it
 //! that alone depends on rb-sys ([`NUPUR_SYS`], `nupur_sys::...`); the
 //! extension built on it
-//! ([`EXTENSION`]), whose items are `makiri::...`; and the engine the
+//! ([`extension`]), whose items are `makiri::...`; and the engine the
 //! extension is the Ruby surface of ([`ENGINE`]), whose items are
 //! `makiri_engine::...`. The layer's lints name only `nupur::` paths (and
 //! rb-sys's), so a copy of the layer under another extension changes
-//! [`EXTENSION`] alone; the extension's own lints name its modules, and the
+//! [`extension`] alone (`MAKIRI_LINTS_EXTENSION`); the extension's own lints name its modules, and the
 //! engine's, by their path inside the crate (`bridge`, `glue`,
 //! `html::dom::...`) - the extension re-exports the engine's at its root, so
 //! the two read alike.
@@ -29,9 +29,27 @@ pub const NUPUR: &str = "nupur";
 /// it. Held to the layer's rules, as part of the layer.
 pub const NUPUR_SYS: &str = "nupur_sys";
 
-/// The extension's crate name - the one name a copy of the layer's lints
-/// under another extension changes.
-pub const EXTENSION: &str = "makiri";
+/// The extension's crate name: `makiri`, unless `MAKIRI_LINTS_EXTENSION`
+/// names another - an extension written on Nupur outside Makiri runs these
+/// lints over itself by setting it (`MAKIRI_LINTS_EXTENSION=nupur_json cargo
+/// dylint --path .../makiri_lints`). The layer's lints then hold it to the
+/// layer's rules; the extension's own lints name Makiri's modules (`bridge`,
+/// `glue`), which another crate does not have, so they find nothing there.
+/// A name that is not a crate name (`[a-z0-9_]+`) is ignored, so a stray
+/// value cannot widen what counts as ours.
+pub fn extension() -> &'static str {
+    static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    NAME.get_or_init(|| {
+        std::env::var("MAKIRI_LINTS_EXTENSION")
+            .ok()
+            .filter(|n| {
+                !n.is_empty()
+                    && n.bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+            })
+            .unwrap_or_else(|| "makiri".to_owned())
+    })
+}
 
 /// The engine's crate name: Ruby-free by its dependencies, so the code a
 /// GVL-released body and an edit's closure may call.
@@ -55,7 +73,17 @@ pub fn path_of(cx: &LateContext<'_>, did: DefId) -> String {
 /// layer, not a build script or a test target.
 pub(crate) fn is_extension(cx: &LateContext<'_>) -> bool {
     let krate = cx.tcx.crate_name(rustc_span::def_id::LOCAL_CRATE);
-    [EXTENSION, ENGINE, NUPUR, NUPUR_SYS].contains(&krate.as_str())
+    [extension(), ENGINE, NUPUR, NUPUR_SYS].contains(&krate.as_str())
+}
+
+/// Whether Makiri's own policy lints (the extension's layout and its
+/// allocation rule, not the layer's guarantees) apply to the crate being
+/// linted: everywhere in Makiri, and nowhere in another extension that set
+/// [`extension`] to itself - its allocation policy is its own, and it has no
+/// `falloc` to allocate through.
+pub(crate) fn makiri_policy_applies(cx: &LateContext<'_>) -> bool {
+    let krate = cx.tcx.crate_name(rustc_span::def_id::LOCAL_CRATE);
+    extension() == "makiri" || krate.as_str() != extension()
 }
 
 /// The path of the module the code at `hir_id` is in, crate first.
@@ -69,7 +97,7 @@ pub(crate) fn module_of(cx: &LateContext<'_>, hir_id: HirId) -> String {
 /// as it is.
 pub(crate) fn in_extension_or_as_is(path: &str) -> &str {
     path.strip_prefix(ENGINE)
-        .or_else(|| path.strip_prefix(EXTENSION))
+        .or_else(|| path.strip_prefix(extension()))
         .and_then(|r| r.strip_prefix("::"))
         .unwrap_or(path)
 }
@@ -91,7 +119,7 @@ pub(crate) fn within(path: &str, m: &str) -> bool {
 /// Whether `path` is one of the three crates' own - the extension's, the
 /// engine's or the layer's - rather than a library's.
 pub(crate) fn ours(path: &str) -> bool {
-    in_layer(path) || path.starts_with(&format!("{EXTENSION}::")) || in_engine_crate(path)
+    in_layer(path) || path.starts_with(&format!("{}::", extension())) || in_engine_crate(path)
 }
 
 /// The function an expression calls, when it can be named: a path call or

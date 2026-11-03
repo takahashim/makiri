@@ -78,6 +78,19 @@ pub trait ReprValue: Copy {
         non_raising::special_const_p(v) || unsafe { non_raising::frozen_p(v) }
     }
 
+    /// Whether this value's class is `class` itself, as its header holds
+    /// it - what `RBASIC_CLASS(v) == class` reads in C. An instance of a
+    /// subclass is not, nor one with a singleton class (a `def s.to_json`
+    /// makes one), nor an immediate (a Fixnum, a Symbol, a flonum, `nil`),
+    /// which has no header. No method is called.
+    #[inline]
+    fn has_class(self, class: RClass) -> bool {
+        let v = self.as_value().0;
+        // SAFETY: `v` is a live value; a non-immediate has a header to read.
+        !non_raising::special_const_p(v)
+            && unsafe { non_raising::rbasic_klass(v) }.is(class.as_value().0)
+    }
+
     /// `Ok` unfrozen, and Ruby's own `FrozenError` frozen - the message
     /// naming the receiver, `#receiver` set - returned, not raised. The
     /// normal case, an unfrozen value, makes no call.
@@ -415,6 +428,18 @@ impl Integer {
         u64::try_from(bytes).is_ok_and(|b| b <= 8)
     }
 
+    /// The decimal digits, with a `-` for a negative value, as a new
+    /// String: a Fixnum written here, a Bignum by Ruby (`rb_big2str`). A
+    /// failed allocation is `NoMemoryError`.
+    pub fn to_decimal(self, ruby: &Ruby) -> Result<RString, Error> {
+        if non_raising::fixnum_p(self.0 .0) {
+            let mut buf = [0u8; 24];
+            let n = write_i64(non_raising::fix2long(self.0 .0), &mut buf);
+            return crate::string::utf8_str(ruby, buf.get(..n).unwrap_or_default());
+        }
+        crate::raw::big2str(self)
+    }
+
     /// Below zero? Reads the sign, converts nothing.
     #[inline]
     pub fn is_negative(self) -> bool {
@@ -423,6 +448,47 @@ impl Integer {
         }
         // SAFETY: a non-Fixnum Integer is a live Bignum.
         unsafe { non_raising::bignum_negative_p(self.0 .0) }
+    }
+}
+
+/// `n` in decimal into `buf`, which holds any `i64` (20 digits and a sign);
+/// how many bytes.
+fn write_i64(n: i64, buf: &mut [u8; 24]) -> usize {
+    let mut digits = [0u8; 20];
+    let mut m = n.unsigned_abs();
+    let mut k = 0;
+    loop {
+        if let Some(d) = digits.get_mut(k) {
+            *d = b'0' + u8::try_from(m % 10).unwrap_or(0);
+        }
+        k += 1;
+        m /= 10;
+        if m == 0 {
+            break;
+        }
+    }
+    let mut at = 0;
+    if n < 0 {
+        if let Some(sign) = buf.first_mut() {
+            *sign = b'-';
+        }
+        at = 1;
+    }
+    for d in digits.iter().take(k).rev() {
+        if let Some(slot) = buf.get_mut(at) {
+            *slot = *d;
+        }
+        at += 1;
+    }
+    at
+}
+
+impl Symbol {
+    /// The Symbol's name, as Ruby holds it (`rb_sym2str`): a frozen String
+    /// in the Symbol's own encoding.
+    #[inline]
+    pub fn name(self) -> Result<RString, Error> {
+        crate::raw::sym2str(self)
     }
 }
 

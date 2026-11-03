@@ -130,8 +130,10 @@ impl core::fmt::Display for AsText {
     }
 }
 
-/// The class name of a value, for a message.
-pub(crate) struct ClassName(pub(crate) Value);
+/// The class name of a value, for a message - "Object", "Hash", an
+/// anonymous class's `#<Class:0x...>` - read without a call, as
+/// `Describe` reads one.
+pub struct ClassName(pub Value);
 
 impl core::fmt::Display for ClassName {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

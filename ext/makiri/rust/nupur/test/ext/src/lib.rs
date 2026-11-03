@@ -8,7 +8,7 @@ use nupur::args::{integer_arg, string_arg, Kwargs, Shape};
 use nupur::encoding::Unconvertible;
 use nupur::rb::{
     prelude::*, Builtin, DataClass, Error, ExceptionClass, Float, RArray, RHash, RbConst, Ruby,
-    Value,
+    Symbol, Value,
 };
 use nupur::string::{ReadError, Transcode};
 use nupur::typed::{Birth, Payload, TypedType};
@@ -228,6 +228,81 @@ fn f64_bits_of(_: &Ruby, x: Value) -> Result<u64, Error> {
     Ok(x.to_f64().to_bits())
 }
 
+/* ---- classes, Integers, Symbols ---- */
+
+/// The name of the builtin class `v` is an instance of exactly - its header's
+/// class, so a subclass's instance and one with a singleton class are
+/// neither - or nil.
+fn exact_class(ruby: &Ruby, v: Value) -> Result<Value, Error> {
+    let classes = [
+        ("Array", ruby.class_array()),
+        ("Float", ruby.class_float()),
+        ("Hash", ruby.class_hash()),
+        ("Integer", ruby.class_integer()),
+        ("String", ruby.class_string()),
+        ("Symbol", ruby.class_symbol()),
+    ];
+    for (name, class) in classes {
+        if v.has_class(class) {
+            return Ok(nupur::build::symbol(ruby, name)?.as_value());
+        }
+    }
+    Ok(ruby.qnil())
+}
+
+/// `n`'s decimal digits, through `Integer::to_decimal`.
+fn decimal_of(ruby: &Ruby, n: Value) -> Result<Value, Error> {
+    Ok(integer_arg(n)?.to_decimal(ruby)?.as_value())
+}
+
+/// The Integer the bytes of `s` spell, through `build::int_from_decimal`.
+fn int_from_decimal(ruby: &Ruby, s: Value) -> Result<Value, Error> {
+    let bytes = nupur::string::read_bytes(string_arg(s)?)?;
+    Ok(nupur::build::int_from_decimal(ruby, &bytes)?.as_value())
+}
+
+/// A Symbol's name, through `Symbol::name`.
+fn symbol_name(_: &Ruby, s: Value) -> Result<Value, Error> {
+    let sym = Symbol::from_value(s).ok_or_else(|| nupur::rb::error::type_error("a Symbol"))?;
+    Ok(sym.name()?.as_value())
+}
+
+/* ---- calling a method ---- */
+
+static TO_S: nupur::rb::call::IdConst = nupur::rb::call::IdConst::new(c"to_s");
+
+/// `recv.public_send(name, *rest)`, through `rb::call::public_method`.
+fn send_public(ruby: &Ruby, args: &[Value]) -> Result<Value, Error> {
+    let a = nupur::args::scan(
+        ruby,
+        args,
+        Shape {
+            rest: true,
+            ..Shape::positional(2, 0)
+        },
+    )?;
+    let name = nupur::string::read_utf8(ruby, string_arg(a.required(1))?, |_| None::<()>)
+        .map_err(read_error)?;
+    let cname = std::ffi::CString::new(name.as_str())
+        .map_err(|_| nupur::rb::error::arg_error("a name with a NUL"))?;
+    let id = nupur::rb::Id::intern(ruby, &cname)?;
+    nupur::rb::call::public_method(a.required(0), id, a.rest())
+}
+
+/// Whether `recv` responds to `to_s` publicly, through `IdConst` and
+/// `rb::call::responds_to`.
+fn responds_to_s(ruby: &Ruby, recv: Value) -> Result<bool, Error> {
+    let id = TO_S.get(ruby)?;
+    nupur::rb::call::responds_to(recv, id)
+}
+
+/// Whether `Object` holds the constant `name`, through `Module::const_defined`.
+fn object_const_defined(ruby: &Ruby, name: Value) -> Result<bool, Error> {
+    let name =
+        nupur::string::read_utf8(ruby, string_arg(name)?, |_| None::<()>).map_err(read_error)?;
+    ruby.class_object().const_defined(ruby, name.as_str())
+}
+
 /* ---- Init ---- */
 
 static INTERNAL: RbConst<ExceptionClass> = RbConst::new();
@@ -271,6 +346,13 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     m.define_module_function("booleans", function!(booleans, 0))?;
     m.define_module_function("usize_of", function!(usize_of, 1))?;
     m.define_module_function("f64_bits_of", function!(f64_bits_of, 1))?;
+    m.define_module_function("exact_class", function!(exact_class, 1))?;
+    m.define_module_function("decimal_of", function!(decimal_of, 1))?;
+    m.define_module_function("int_from_decimal", function!(int_from_decimal, 1))?;
+    m.define_module_function("symbol_name", function!(symbol_name, 1))?;
+    m.define_module_function("send_public", function!(send_public, -1))?;
+    m.define_module_function("responds_to_s", function!(responds_to_s, 1))?;
+    m.define_module_function("object_const_defined", function!(object_const_defined, 1))?;
     Ok(())
 }
 

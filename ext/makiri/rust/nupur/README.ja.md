@@ -78,10 +78,13 @@ pub extern "C" fn Init_nupur_test() {
 
 テスト用拡張ライブラリでは、スロットを持つオブジェクトのラップ（`TypedType`, `Birth`）、引数とキーワードの読み取り（`args`）、Hash のトラバース、String の読み取り、GVL 解放状態での処理の実行などもカバーしています。
 
-拡張ライブラリ側のビルドで知っておくべきことが二つあります。
+拡張ライブラリ側のビルドで知っておくべきことが三つあります。
 
 - `rb::Error` はメッセージをインラインで持つ（256 バイト）ので、生成時にメモリ割り当てが起きません。その代わり `Result<_, Error>` はどれも clippy の `result_large_err` の既定値を超えます。Makiri と同じく、拡張ライブラリの `clippy.toml` に `large-error-threshold = 288` を書いてください。
 - プロファイルは Nupur のテスト用拡張ライブラリと同じく `panic = "unwind"` にします。`abort` だと、メソッド内の panic が内部エラーとして Ruby に届く前にホストプロセスを殺してしまいます。
+- Nupur の lint を `allow` するときは `cfg_attr(dylint_lib = "makiri_lints", ...)` の下に書くので、拡張ライブラリの `Cargo.toml` に cfg を登録してください。登録しないと、その `allow` のたびに警告が出ます。書き方は `[lints.rust] unexpected_cfgs = { level = "warn", check-cfg = ['cfg(dylint_lib, values(any()))'] }` です。lint は `MAKIRI_LINTS_EXTENSION=<crate 名> cargo dylint --path <makiri>/ext/makiri/rust/lints/makiri_lints --no-deps` で拡張ライブラリに掛かります。
+
+渡されたオブジェクトのメソッドを呼ぶ拡張ライブラリ（`to_json` を呼ぶ JSON の生成器など）は、`rb::call` を通して呼びます。安全に呼ぶための規則はそのモジュールの文書にあり、要点は一つです。呼び出された側が無効にしうるものを、呼び出しをまたいで持たないことです。
 
 ## Magnus との比較
 
@@ -108,7 +111,7 @@ Magnus のほうが記述は容易です。引数や返り値を自動変換し�
 
 | Nupur | 含まれる内容 |
 | --- | --- |
-| `rb` | `Value` とクラスチェック付きハンドル、`Error`、`method!` / `function!` トランポリン、クラス・モジュール定義 |
+| `rb` | `Value` とクラスチェック付きハンドル、`Error`、`method!` / `function!` トランポリン、クラス・モジュール定義、任意のオブジェクトの public メソッドを呼ぶ `rb::call` |
 | `typed` | TypedData: Rust のペイロードを Ruby オブジェクトとしてラップ、そのスロットと GC コールバック、GC へ報告するメモリ |
 | `gvl` | GVL を解放した状態での処理実行 |
 | `build` | Array、Hash、数値、Symbol、UTF-8 String の構築 |

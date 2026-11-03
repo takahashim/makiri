@@ -88,7 +88,7 @@
 //! Most of these are types and dependencies. What they cannot state rests on
 //! checks of the code: in Makiri `rake dylint` (`lints/makiri_lints`, whose
 //! first group is the layer's and names only `nupur::` and `nupur_sys::`
-//! paths, so a copy changes its `paths::EXTENSION` alone), `rake no_unwind`
+//! paths, so another extension sets `MAKIRI_LINTS_EXTENSION` to its crate name and runs them), `rake no_unwind`
 //! and `rake unsafe:boundaries`. A copy of this layer elsewhere needs its
 //! own:
 //!
@@ -148,7 +148,11 @@
 //!   today, yet not a guarantee. Checked by `ruby_in_gvl_released_body`.
 //! - **Nothing runs the caller's Ruby unasked** - a `to_s`, a block, a
 //!   method call. Checked by `runs_callers_ruby`, with each sanctioned call
-//!   an `allow` stating why.
+//!   an `allow` stating why. An extension that asks calls through
+//!   [`rb::call`], and holds nothing across the call that the callee could
+//!   invalidate: no payload borrow beyond a `Cell`, no `RefCell` guard, no
+//!   guard of its own, no Ruby collection walked in place (that module says
+//!   why each).
 //! - **Declared Ractor-safe, the extension's own state is too.** What the
 //!   layer keeps is safe across Ractors; what the extension keeps - its
 //!   statics, whatever its methods take the GVL to serialise (now only one

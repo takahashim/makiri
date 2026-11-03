@@ -27,8 +27,8 @@ use rustc_lint::LateContext;
 use rustc_span::Span;
 
 use crate::paths::{
-    NUPUR, NUPUR_SYS, callee, in_engine_crate, in_layer, is_extension, module_of, ours, path_of,
-    within,
+    NUPUR, NUPUR_SYS, callee, in_engine_crate, in_layer, is_extension, makiri_policy_applies,
+    module_of, ours, path_of, within,
 };
 use crate::{
     INFALLIBLE_ALLOCATION, RAW_NODE_CROSSING, RUBY_IN_GVL_RELEASED_BODY, RUBY_LAYER_IN_ENGINE,
@@ -120,7 +120,10 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
     if !is_extension(cx) {
         return;
     }
-    check_raw_node_crossing(cx, expr);
+    let makiri = makiri_policy_applies(cx);
+    if makiri {
+        check_raw_node_crossing(cx, expr);
+    }
     if let ExprKind::MethodCall(..) = expr.kind
         && let Some(did) = callee(cx, expr)
     {
@@ -131,13 +134,15 @@ pub fn check_expr<'tcx>(cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
     };
     let path = path_of(cx, did);
 
-    if INFALLIBLE.iter().any(|p| {
-        if p.starts_with("::") {
-            path.ends_with(p)
-        } else {
-            path == *p
-        }
-    }) && !ours(&path)
+    if makiri
+        && INFALLIBLE.iter().any(|p| {
+            if p.starts_with("::") {
+                path.ends_with(p)
+            } else {
+                path == *p
+            }
+        })
+        && !ours(&path)
     {
         span_lint_and_help(
             cx,
@@ -238,6 +243,10 @@ fn runs_callers_ruby(path: &str) -> bool {
         path,
         "nupur::raw::define::call_method"
             | "nupur::raw::iterate::yield_value"
+            | "nupur::raw::define::call_public"
+            | "nupur::raw::define::respond_to"
+            | "nupur::rb::call::public_method"
+            | "nupur::rb::call::responds_to"
             | "nupur::rb::class::Module::call_method"
             | "nupur::rb::method::yield_value"
     )
