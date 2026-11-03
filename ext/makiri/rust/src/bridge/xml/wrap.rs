@@ -62,10 +62,14 @@ pub(super) fn wrap_xml_node_of_type(
     ty: Option<ArenaKind>,
     document: Value,
 ) -> Result<Value, Error> {
-    if ty == Some(ArenaKind::Document) {
+    /* A node the arena does not have is a broken invariant, refused rather
+     * than wrapped as a plain node (HTML's `mint_html_key` refuses it too). */
+    let ty =
+        ty.ok_or_else(|| crate::bridge::ruby::internal_error("a node its document does not have"))?;
+    if ty == ArenaKind::Document {
         return Ok(document);
     }
-    let klass = XML_NODE_CLASSES.class_for(ruby, ty.map_or(CrateKind::Other, Into::into))?;
+    let klass = XML_NODE_CLASSES.class_for(ruby, ty.into())?;
 
     crate::bridge::wrapper::wrap_cached(ruby, &XML_NODE_TYPE, klass, id, document)
 }

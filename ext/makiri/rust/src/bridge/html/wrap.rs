@@ -96,8 +96,10 @@ fn mint_html_key(node: RawNode, document: Value) -> HtmlNodeKey {
         .expect("wrap_html_node: the node must belong to the document it is wrapped under")
 }
 
+/// A node wrapper without its node: node classes have no allocator, so only
+/// a broken invariant makes one (as XML's `wrapper_without_node`).
 fn uninitialized() -> Error {
-    crate::bridge::ruby::type_error("uninitialized HTML node")
+    crate::bridge::ruby::internal_error("an HTML node wrapper without its node")
 }
 
 /// The key and keepalive Document of an HTML node or HTML Document.
