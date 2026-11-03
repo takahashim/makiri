@@ -46,7 +46,7 @@ impl Adoption<'_> {
 /// table is asked ([`check_node_frozen`]), and an insertion of anything but
 /// a fragment asks nothing.
 #[cfg_attr(
-    dylint_lib = "nupur_lints",
+    dylint_lib = "makiri_lints",
     allow(
         raw_node_crossing,
         reason = "a fragment child, as the node table's key; it does not escape"

@@ -89,9 +89,9 @@
 //!   ([`rb::method::declare_ractor_safe`]).
 //!
 //! Most of these are types and dependencies. What they cannot state rests on
-//! checks of the code: in Makiri `rake dylint` (`lints/nupur_lints`, whose
-//! first group is the layer's and names only `nupur::` and `nupur_sys::`
-//! paths, so another extension sets `NUPUR_LINTS_EXTENSION` to its crate name and runs them), `rake no_unwind`
+//! checks of the code: in Makiri `rake dylint` (`lints/nupur_lints`, which
+//! names only `nupur::` and `nupur_sys::` paths, so another extension runs
+//! them over itself, telling them of itself in its `dylint.toml`), `rake no_unwind`
 //! and `rake unsafe:boundaries`. A copy of this layer elsewhere needs its
 //! own:
 //!
@@ -198,6 +198,16 @@
  * in the extension: the layer's one drop is `describe::for_message`, a
  * message's lookup, allowed there with its reason. */
 #![cfg_attr(dylint_lib = "nupur_lints", deny(discarded_ruby_error))]
+
+/* "No panic reaches C" rests on the host's profile, not this crate's: a
+ * dependency's `[profile]` is ignored, so `panic = "abort"` in the
+ * extension's would leave every trampoline's catch dead and a panic killing
+ * the host. Refused here, where the guarantee is made. */
+#[cfg(not(panic = "unwind"))]
+compile_error!(
+    "nupur needs `panic = \"unwind\"`: set it in the extension's [profile.*] - \
+     with `abort`, a panic in a method kills the host instead of raising"
+);
 
 // The lints' self-test for this crate (`rake dylint`).
 #[cfg(nupur_lint_probe)]

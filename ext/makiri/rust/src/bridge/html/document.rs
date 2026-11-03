@@ -130,7 +130,7 @@ pub fn new_empty_document(
 /// the root is removed (the HTML parser inserts html/head/body even for empty
 /// input).
 #[cfg_attr(
-    dylint_lib = "nupur_lints",
+    dylint_lib = "makiri_lints",
     allow(
         raw_node_crossing,
         reason = "the root element, wrapped once the read is over"

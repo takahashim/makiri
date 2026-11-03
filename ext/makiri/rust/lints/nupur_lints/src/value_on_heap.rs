@@ -1,4 +1,4 @@
-//! `ruby_value_on_heap`: a Ruby value (a `bridge::rb::ReprValue` type) kept where
+//! `ruby_value_on_heap`: a Ruby value (a `nupur::rb::ReprValue` type) kept where
 //! Ruby's GC cannot see it.
 //!
 //! Ruby's GC finds a value by scanning the machine stack. One in a `Vec`, a
@@ -19,7 +19,7 @@
 //! value.
 //!
 //! What is not reported: a value behind a reference or a raw pointer (the
-//! value itself is elsewhere), and one inside `bridge::rb::Opaque`, which is
+//! value itself is elsewhere), and one inside `nupur::rb::Opaque`, which is
 //! registered as a mark root. Nor what the types do not show: a value behind
 //! `dyn Trait` once coerced (its expression before the coercion is checked),
 //! a generic function's body for the `T` it is called with, or a raw `VALUE`
@@ -246,7 +246,7 @@ pub(crate) fn check_item<'tcx>(cx: &LateContext<'tcx>, item: &'tcx Item<'tcx>) {
                     span,
                     "a static holds a Ruby value, which the GC does not see".to_owned(),
                     None,
-                    "keep it in `bridge::rb::Opaque` (a registered root)",
+                    "keep it in `nupur::rb::Opaque` (a registered root)",
                 );
             } else {
                 check_ty(cx, ty, span, "this static");

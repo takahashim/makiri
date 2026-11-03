@@ -12,7 +12,7 @@ task :lexbor do
 end
 
 # The lint gate, with CI's OWN arguments (ci.yml's Clippy, Rust formatting and
-# Fuzz crate checks steps, and the lints crate's fmt in its nupur_lints job). It exists because a narrower spelling
+# Fuzz crate checks steps, and the lints' fmt in its nupur_lints job). It exists because a narrower spelling
 # looks like it passes and is not: a command run in the workspace root reaches
 # the root crate alone, so five `clippy.toml` violations in a crate it did not
 # reach went unseen locally and turned CI red. So every crate is named here,
@@ -38,10 +38,10 @@ task lint: :lexbor do
     sh "cargo", "clippy", "--all-features", "--tests", "--", "-D", "warnings"
     sh "cargo", "fmt", "--", "--check"
   end
-  # The lints are a crate of their own (rake dylint builds them); their
+  # The lints are a workspace of their own (rake dylint builds them); their
   # formatting is checked here, with everything else's.
-  Dir.chdir("ext/makiri/rust/lints/nupur_lints") do
-    sh "cargo", "fmt", "--", "--check"
+  Dir.chdir("ext/makiri/rust/lints") do
+    sh "cargo", "fmt", "--all", "--", "--check"
   end
   # nupur's test extension is a crate of its own too (rake nupur:spec).
   Dir.chdir("ext/makiri/rust/nupur/test/ext") do
@@ -56,38 +56,42 @@ task lint: :lexbor do
   end
 end
 
-# `rake dylint` - the crate's own lint (ext/makiri/rust/lints/nupur_lints),
-# `ruby_value_on_heap`: a Ruby value kept where the GC's stack scan does not
-# see it (a heap container, a static or thread-local, a wrapped object's data
-# outside a traced field), the rule every Ruby extension keeps by hand, checked
-# by type. The lint is a rustc plugin, so it builds on the nightly its
-# rust-toolchain.toml pins, with cargo-dylint and dylint-link installed. The
-# second run is the self-test: `lint_probe.rs`, compiled only under
-# `--cfg makiri_lint_probe`, ends each line a lint must report with `//~` and
-# the lints' names, and the task fails unless exactly those (line, lint)
-# pairs are reported - so a lint that has stopped seeing a case cannot pass
-# by reporting nothing, nor behind another lint reporting the same line.
-DYLINT = %w[cargo dylint --path lints/nupur_lints --no-deps -- -p makiri_rs].freeze
-# The engine: what it may allocate (`infallible_allocation`) and call
-# (`runs_callers_ruby` has nothing to find there - it cannot name Ruby - but
-# the shipped crate is the extension and the engine together).
-DYLINT_ENGINE = %w[cargo dylint --path lints/nupur_lints --no-deps -- -p makiri_engine].freeze
+# `rake dylint` - the crate's own lints (ext/makiri/rust/lints): two dylint
+# libraries, loaded together on every run. `nupur_lints` holds the binding
+# layer's guarantees - `ruby_value_on_heap`, for one: a Ruby value kept where
+# the GC's stack scan does not see it (a heap container, a static or
+# thread-local, a wrapped object's data outside a traced field), the rule
+# every Ruby extension keeps by hand, checked by type - and names nothing of
+# Makiri's: what it knows of Makiri is ext/makiri/rust/dylint.toml.
+# `makiri_lints` holds Makiri's own policy (its allocation rule, the lines
+# between its glue and bridge). The lints are rustc plugins, so they build
+# on the nightly lints/rust-toolchain.toml pins, with cargo-dylint and
+# dylint-link installed. The second run is the self-test: `lint_probe.rs`,
+# compiled only under `--cfg makiri_lint_probe`, ends each line a lint must
+# report with `//~` and the lints' names, and the task fails unless exactly
+# those (line, lint) pairs are reported - so a lint that has stopped seeing a
+# case cannot pass by reporting nothing, nor behind another lint reporting
+# the same line.
+DYLINT_LIBS = %w[cargo dylint --path lints --pattern nupur_lints --pattern makiri_lints --no-deps --].freeze
+DYLINT = [*DYLINT_LIBS, "-p", "makiri_rs"].freeze
+# The engine: what it may allocate (`infallible_allocation`), and its `Drop`s
+# under its own no-unwind guard (`dylint.toml` declares it Ruby-free, with
+# that guard).
+DYLINT_ENGINE = [*DYLINT_LIBS, "-p", "makiri_engine"].freeze
 # The binding layer, a workspace member of its own: the same lints, which
 # read its items as `nupur::...` (`paths::path_of`).
 # With `alloc-inject` on, so the raise sweep's hook (`set_raise_injector`,
 # the armed path of `injected_raise`) is linted too: nupur has no code that
 # only a build without it compiles.
-DYLINT_NUPUR = %w[cargo dylint --path lints/nupur_lints --no-deps -- -p nupur
-                  --features alloc-inject].freeze
+DYLINT_NUPUR = [*DYLINT_LIBS, "-p", "nupur", "--features", "alloc-inject"].freeze
 # The crate under it that alone depends on rb-sys (`nupur/sys/`): the
 # protect thunk, `$!` and the `no_unwind` guards, held to the layer's rules.
 # With `alloc-inject` on, as nupur's run: the raise hook's armed path
 # (`protect::injected_raise`, `set_raise_injector`) lives here now, and
 # nupur's run, being `--no-deps`, does not lint it.
-DYLINT_NUPUR_SYS = %w[cargo dylint --path lints/nupur_lints --no-deps -- -p nupur_sys
-                      --features alloc-inject].freeze
+DYLINT_NUPUR_SYS = [*DYLINT_LIBS, "-p", "nupur_sys", "--features", "alloc-inject"].freeze
 
-desc "Run the crate's own lint (nupur_lints; needs cargo-dylint and its nightly)"
+desc "Run the crate's own lints (nupur_lints, makiri_lints; needs cargo-dylint and its nightly)"
 task :dylint do
   require "json"
   require "open3"
@@ -108,8 +112,8 @@ task :dylint do
       # matching.
       sh({ "RUSTFLAGS" => "-D unfulfilled_lint_expectations" }, *cmd)
     end
-    # The self-test, once per crate: the extension's probe, and the binding
-    # layer's, which holds the cases only code naming rb-sys can write. Each
+    # The self-test, once per crate, both libraries at once: the extension's
+    # probe, and the binding layer's, which holds the cases only code naming rb-sys can write. Each
     # `//~` names the lints that must report its line, and the reports must
     # be exactly those pairs: matched by line alone, a line that two lints
     # report kept passing with one of them dead (`ruby_in_gvl_released_body`
@@ -123,13 +127,13 @@ task :dylint do
     # quiet; and one added must come with its probe line.
     tables = File.read("lints/nupur_lints/src/paths.rs")
                  .scan(/pub const (CALLERS_RUBY_RUNNERS|GVL_RELEASED_CALLS|BYTES_LENDING_METHODS): &\[&str\] = &\[(.*?)\];/m)
-    abort "nupur_lints' self-test: paths.rs' tables not found" unless tables.size == 3
+    abort "dylint self-test: paths.rs' tables not found" unless tables.size == 3
     named = tables.flat_map { |_, body| body.scan(/"([^"]+)"/).flatten }
     seen = []
     total = probes.sum do |cmd, probe, cfg|
       expected = File.readlines(probe).each_with_index.flat_map do |line, i|
         names = line[%r{//~((?: [a-z_]+)*)\s*\z}, 1] or next []
-        abort "nupur_lints' self-test: #{probe}:#{i + 1}'s //~ names no lint" if names.strip.empty?
+        abort "dylint self-test: #{probe}:#{i + 1}'s //~ names no lint" if names.strip.empty?
         names.split.map { |lint| [i + 1, lint] }
       end.sort
       out, = Open3.capture2e({ "RUSTFLAGS" => "--cfg #{cfg} -D unfulfilled_lint_expectations" }, *cmd,
@@ -145,14 +149,14 @@ task :dylint do
       end.uniq.sort
       unless reported == expected
         messages.each { |m| puts m["rendered"] }
-        abort "nupur_lints' self-test on #{probe}: missing #{(expected - reported).inspect}, " \
+        abort "dylint self-test on #{probe}: missing #{(expected - reported).inspect}, " \
               "unexpected #{(reported - expected).inspect} ([line, lint])"
       end
       expected.size
     end
     unprobed = named - seen
-    abort "nupur_lints' self-test: no probe reports #{unprobed.inspect} (paths.rs' tables)" unless unprobed.empty?
-    puts "nupur_lints: self-test reported all #{total} cases, and every one of the #{named.size} named functions"
+    abort "dylint self-test: no probe reports #{unprobed.inspect} (paths.rs' tables)" unless unprobed.empty?
+    puts "dylint: self-test reported all #{total} cases, and every one of the #{named.size} named functions"
   end
   # The table the raising lints read (`NON_RAISING`) against Ruby's own
   # headers, as rb-sys's bindings carry them: an entry documented to raise,

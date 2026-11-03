@@ -1,7 +1,7 @@
 //! `c_integer_outside_int`: a C integer handled outside the one module that
 //! converts them, `nupur_sys::int`.
 //!
-//! A C `long` is 64 bits where Makiri is built and 32 bits on Windows (LLP64),
+//! A C `long` is 64 bits where the code is built and 32 bits on Windows (LLP64),
 //! and `c_long` is a type alias: on the machines the code is written and
 //! linted on it IS `i64`, so `n as c_long` is a cast from `i64` to `i64`, and
 //! neither rustc nor clippy can see that it truncates elsewhere. Ruby's own
@@ -11,7 +11,8 @@
 //!
 //! So the conversions live in one module, written once and tested at both
 //! widths, and outside it the Ruby boundary - the binding layer and the
-//! extension's `bridge`, `glue` and `init` - may neither
+//! extension's crate (not its Ruby-free crates, which hand Ruby no integer) -
+//! may neither
 //!
 //! - write an integer-to-integer `as` cast (the source's type may be an
 //!   alias the lint cannot see either - `rb_sys`'s answers are `c_long`), nor
@@ -28,18 +29,13 @@ use rustc_lint::LateContext;
 use rustc_middle::ty;
 
 use crate::C_INTEGER_OUTSIDE_INT;
-use crate::paths::{NUPUR, NUPUR_SYS, module_of, ours, path_of, within};
+use crate::paths::{in_extension, in_layer, module_of, path_of, within};
 
 /// Whether code in `module` is held to the rule: the binding layer and the
-/// extension's Ruby boundary, bar the module that converts. The self-tests'
-/// probes are in both crates.
+/// extension's crate, bar the module that converts. The self-tests' probes
+/// are in both.
 fn held(module: &str) -> bool {
-    if !ours(module) || within(module, "nupur_sys::int") {
-        return false;
-    }
-    [NUPUR, NUPUR_SYS, "bridge", "glue", "init", "lint_probe"]
-        .iter()
-        .any(|m| within(module, m))
+    (in_layer(module) || in_extension(module)) && !within(module, "nupur_sys::int")
 }
 
 /// Whether code in `module` may not name `c_long` / `c_ulong`: [`held`],

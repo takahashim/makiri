@@ -81,8 +81,8 @@ pub extern "C" fn Init_nupur_test() {
 拡張ライブラリ側のビルドで知っておくべきことが三つあります。
 
 - `rb::Error` はメッセージをインラインで持つ（256 バイト）ので、生成時にメモリ割り当てが起きません。その代わり `Result<_, Error>` はどれも clippy の `result_large_err` の既定値を超えます。Makiri と同じく、拡張ライブラリの `clippy.toml` に `large-error-threshold = 288` を書いてください。
-- プロファイルは Nupur のテスト用拡張ライブラリと同じく `panic = "unwind"` にします。`abort` だと、メソッド内の panic が内部エラーとして Ruby に届く前にホストプロセスを殺してしまいます。
-- Nupur の lint を `allow` するときは `cfg_attr(dylint_lib = "nupur_lints", ...)` の下に書くので、拡張ライブラリの `Cargo.toml` に cfg を登録してください。登録しないと、その `allow` のたびに警告が出ます。書き方は `[lints.rust] unexpected_cfgs = { level = "warn", check-cfg = ['cfg(dylint_lib, values(any()))'] }` です。lint は `NUPUR_LINTS_EXTENSION=<crate 名> cargo dylint --path <makiri>/ext/makiri/rust/lints/nupur_lints --no-deps` で拡張ライブラリに掛かります。
+- プロファイルは Nupur のテスト用拡張ライブラリと同じく `panic = "unwind"` にします。`abort` だと、メソッド内の panic が内部エラーとして Ruby に届く前にホストプロセスを殺してしまいます。依存先の crate の profile は効かないので Nupur からは設定できず、`unwind` でなければ Nupur はコンパイルを拒否します。
+- Nupur の lint を `allow` するときは `cfg_attr(dylint_lib = "nupur_lints", ...)` の下に書くので、拡張ライブラリの `Cargo.toml` に cfg を登録してください。登録しないと、その `allow` のたびに警告が出ます。書き方は `[lints.rust] unexpected_cfgs = { level = "warn", check-cfg = ['cfg(dylint_lib, values(any()))'] }` です。lint は拡張ライブラリのワークスペースで `cargo dylint --path <makiri>/ext/makiri/rust/lints --pattern nupur_lints --no-deps` と実行すると掛かります。ほかの crate も一緒に lint するときの拡張ライブラリの crate 名、Ruby に依存しない crate、独自の巻き戻り禁止ガードは、ワークスペースの `dylint.toml` の `[nupur_lints]` に書きます（`lints/nupur_lints/README.md`）。
 
 渡されたオブジェクトのメソッドを呼ぶ拡張ライブラリ（`to_json` を呼ぶ JSON の生成器など）は、`rb::call` を通して呼びます。安全に呼ぶための規則はそのモジュールの文書にあり、要点は一つです。呼び出された側が無効にしうるものを、呼び出しをまたいで持たないことです。
 

@@ -253,7 +253,7 @@ pub fn node_token_in(ruby: &Ruby, rb_node: Value, document: Value) -> Result<Tok
 /// The Document branch is kind-aware: an XML Document resolves to its arena's
 /// document node, an HTML one to the HTML arena's.
 #[cfg_attr(
-    dylint_lib = "nupur_lints",
+    dylint_lib = "makiri_lints",
     allow(raw_node_crossing, reason = "a node's word, for identity alone")
 )]
 pub fn node_raw(ruby: &Ruby, rb_node: Value) -> Result<NodeWord, Error> {

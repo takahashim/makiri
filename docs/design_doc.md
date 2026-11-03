@@ -686,7 +686,8 @@ These can change if circumstances do.
   and new ones were missing. As a crate, the boundary is the dependency
   graph, and the lists go, as does what the lint guarding them
   (`ruby_layer_in_engine`) checks in the engine; the lint stays only for one
-  Ruby-free module in `nupur`, `utf8_copy`. This is the same idea as
+  Ruby-free module in `nupur`, `utf8_copy` (as `nupur_lints`'
+  `ruby_in_ruby_free_module`). This is the same idea as
   splitting off the boundary layer (`nupur`), and LTO over the single cdylib
   build keeps the performance.
 * Parsing is lenient and the APIs are strict. HTML parsing decodes as a

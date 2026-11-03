@@ -1,4 +1,4 @@
-//! What the extension's lints (`lints/nupur_lints`) must report in the
+//! What the layer's lints (`lints/nupur_lints`) must report in the
 //! binding layer, the cases only code that names `nupur_sys` can write - the
 //! extension cannot, since it does not depend on it. A call of rb-sys's own
 //! C cannot be written here at all (`nupur_sys` re-exports no function): its
@@ -108,6 +108,19 @@ mod raw {
     /* A call of a raising wrapper is what a protected call is for: passes. */
     fn protecting_a_raise(_: &crate::rb::Ruby) {
         let _ = call_protected(|inside| unsafe { nupur_sys::raising::rb_hash_new(inside) });
+    }
+}
+
+/// Stands in for the layer's Ruby-free module, `utf8_copy`:
+/// `ruby_in_ruby_free_module` treats `lint_probe::ruby_free` as one.
+#[rustfmt::skip] // keeps each marker on the line reported
+mod ruby_free {
+    pub fn names_the_ruby_layer() -> crate::rb::Error { //~ ruby_in_ruby_free_module
+        crate::rb::error::type_error("x") //~ ruby_in_ruby_free_module
+    }
+
+    pub fn names_only_std(b: &[u8]) -> bool {
+        core::str::from_utf8(b).is_ok()
     }
 }
 

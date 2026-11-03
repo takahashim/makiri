@@ -107,7 +107,7 @@ fn uninitialized() -> Error {
 /// `XML_NODE_TYPE`) does not satisfy. The Document node is keyed too: it is its own `owner_document`, so
 /// `mint_key` accepts it.
 #[cfg_attr(
-    dylint_lib = "nupur_lints",
+    dylint_lib = "makiri_lints",
     allow(raw_node_crossing, reason = "a Document's own node, minted as its key")
 )]
 pub(in crate::bridge) fn html_node_key(
@@ -134,7 +134,7 @@ pub(in crate::bridge) fn html_node_key(
 
 /// [`wrap_html_node`] for an optional handle.
 #[cfg_attr(
-    dylint_lib = "nupur_lints",
+    dylint_lib = "makiri_lints",
     allow(
         raw_node_crossing,
         reason = "a node wrapped: the wrapper keeps its key, and its document alive"
@@ -192,7 +192,7 @@ pub(in crate::bridge) fn with_html_node<R>(
 /// crosses. The one place a checked key leaves the bridge's handles as a
 /// reference.
 #[cfg_attr(
-    dylint_lib = "nupur_lints",
+    dylint_lib = "makiri_lints",
     allow(
         raw_node_crossing,
         reason = "a checked key as a reference into its document, for an edit that holds it"
