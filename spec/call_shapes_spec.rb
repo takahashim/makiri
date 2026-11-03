@@ -62,9 +62,9 @@ RSpec.describe "argument shapes and block exits" do
         .to raise_error(ArgumentError, "namespace_matching: must be :strict or :lax, got :nope")
     end
 
-    it "reads Document#fragment's keywords, ignores an unknown one, refuses a braced Hash" do
+    it "reads Document#fragment's keywords, refuses an unknown one, refuses a braced Hash" do
       expect(doc.fragment("<td>x</td>", context: "tr").children.map(&:name)).to eq(["td"])
-      expect(doc.fragment("<b>x</b>", foo: 1).children.map(&:name)).to eq(["b"])
+      expect { doc.fragment("<b>x</b>", foo: 1) }.to raise_error(ArgumentError, "unknown keyword: :foo")
       expect { doc.fragment("<td>x</td>", { context: "tr" }) }.to arity_error(2, 1)
       expect { doc.fragment("<b><b><b>x</b></b></b>", max_tree_depth: 2) }
         .to raise_error(Makiri::Error, "document tree depth limit exceeded (2)")
@@ -82,14 +82,32 @@ RSpec.describe "argument shapes and block exits" do
   end
 
   describe "a method that takes only keywords" do
-    it "reads them, ignores an unknown one, and refuses positional arguments" do
+    it "reads them, refuses an unknown one, and refuses positional arguments" do
       p = doc.at_css("p")
       expect(p.to_html(pretty: true)).to eq(%(<p>\n  "a"\n</p>\n))
-      expect(p.to_html(foo: 1)).to eq("<p>a</p>")
+      # A misspelt keyword is not quietly the default.
+      expect { p.to_html(foo: 1) }.to raise_error(ArgumentError, "unknown keyword: :foo")
+      expect { p.inner_html(prety: true) }.to raise_error(ArgumentError, "unknown keyword: :prety")
+      expect { xml.to_xml(indnt: 2) }.to raise_error(ArgumentError, "unknown keyword: :indnt")
+      expect { xml.canonicalize(coments: true) }.to raise_error(ArgumentError, "unknown keyword: :coments")
+      expect(xml.to_xml(pretty: true, indent: 2, encoding: "UTF-8")).to be_a(String)
+      expect(xml.canonicalize(comments: true)).to be_a(String)
       expect { p.to_html({ pretty: true }) }.to arity_error(1, 0)
       expect { p.to_html(1, 2) }.to arity_error(2, 0)
       expect(xml.to_xml(indent: 2)).to be_a(String)
       expect { xml.to_xml({ indent: 2 }) }.to arity_error(1, 0)
+    end
+  end
+
+  describe "a fragment parse's keywords" do
+    it "refuses an unknown one, so a misspelt limit never leaves the default in place" do
+      expect { Makiri::HTML::DocumentFragment.parse("<p>x</p>", max_amplificaton: 1) }
+        .to raise_error(ArgumentError, "unknown keyword: :max_amplificaton")
+      expect { doc.fragment("<td>x</td>", contxt: "table") }
+        .to raise_error(ArgumentError, "unknown keyword: :contxt")
+      frag = Makiri::HTML::DocumentFragment.parse("<td>x</td>", context: "table", max_tree_depth: 10,
+                                                                    max_amplification: 100)
+      expect(frag.to_html).to include("<td>x</td>")
     end
   end
 

@@ -17,9 +17,12 @@ use crate::html_dom::html::{HtmlNode, NodeType};
 use crate::html_dom::serialize::{serialize, Layout, Scope};
 use crate::init::MOD_HTML_NODE_METHODS;
 
-/// The optional `pretty:` keyword.
+/// The optional `pretty:` keyword; any other is `ArgumentError`, so a
+/// misspelt one is not quietly the default.
 fn layout_opt(ruby: &Ruby, args: &[Value]) -> Result<Layout, Error> {
-    Ok(if Kwargs::scan(ruby, args)?.flag(ruby, "pretty")? {
+    let kw = Kwargs::scan(ruby, args)?;
+    let kw = kw.only(&["pretty"])?;
+    Ok(if kw.flag(ruby, "pretty")? {
         Layout::Pretty
     } else {
         Layout::Plain

@@ -208,7 +208,7 @@ Nupur is not published, and is used only inside Makiri's workspace.
 | `gvl` | Running a body with the GVL released (`without_gvl`), or one that stops when Ruby asks for the thread back (`without_gvl_cancellable`, its body asking a `Cancel`) |
 | `build` | Building Arrays, Hashes, numbers, Symbols and UTF-8 Strings |
 | `string`, `encoding`, `utf8_copy` | Reading Strings by copying, as checked UTF-8 (`read_utf8`) or as bytes (`read_bytes`); making UTF-8 Strings, of text marked valid (`utf8_str`, which takes a `&str`) or of bytes the caller holds to be UTF-8 (`utf8_str_trusting`), and ASCII-8BIT ones (`binary_str`); encodings |
-| `args`, `hash` | Reading a method's arguments and keywords; walking a Hash |
+| `args`, `hash` | Reading a method's arguments, and its keywords once it has declared them (`Kwargs::only`, any other refused); walking a Hash |
 | `describe`, `msg` | Writing Ruby values into an exception message without a call or an allocation |
 | `abi` | What the binary assumes of the running Ruby, and the load-time checks of it |
 | `caught`, `no_unwind` | Catching a panic at a C boundary; the bodies that must not unwind |

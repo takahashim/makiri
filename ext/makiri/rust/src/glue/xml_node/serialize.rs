@@ -18,6 +18,9 @@ use crate::xml::serialize::{self as xml_serialize, Failure};
 
 fn to_xml_opts(ruby: &Ruby, args: &[Value]) -> Result<(i32, Value), Error> {
     let kw = Kwargs::scan(ruby, args)?;
+    /* Any other keyword is `ArgumentError`: a misspelt one is not quietly
+     * the default. */
+    let kw = kw.only(&["pretty", "indent", "encoding"])?;
     let mut width = 0i32;
     if kw.flag(ruby, "pretty")? {
         width = 2;
@@ -136,7 +139,9 @@ fn to_xml(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Er
 }
 
 fn canonicalize(ruby: &Ruby, this: super::XmlSelf, args: &[Value]) -> Result<Value, Error> {
-    let comments = Kwargs::scan(ruby, args)?.flag(ruby, "comments")?;
+    let kw = Kwargs::scan(ruby, args)?;
+    let kw = kw.only(&["comments"])?;
+    let comments = kw.flag(ruby, "comments")?;
     let buf = xml_serialize::canonicalize(&*this.read()?, this.id, comments)
         .map_err(|f| failure_error(f, "canonicalize"))?;
     Ok(crate::bridge::string::utf8_str(ruby, buf.as_slice())?.as_value())

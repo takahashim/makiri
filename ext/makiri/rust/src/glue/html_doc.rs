@@ -135,6 +135,9 @@ fn fragment_from_args(
 ) -> Result<Value, Error> {
     let a = crate::bridge::args::scan(ruby, args, crate::bridge::args::Shape::with_keywords(1, 0))?;
     let kw = crate::bridge::args::Kwargs::from_scan(a.keywords());
+    /* Any other keyword is `ArgumentError`: a misspelt limit must not leave
+     * the parse under the default one. */
+    let kw = kw.only(&["context", "max_tree_depth", "max_amplification"])?;
     let context = kw.value(ruby, "context")?;
     /* Read before the backing document is made, so a bad value costs nothing. */
     let limit = crate::glue::kwargs::parse_limits(

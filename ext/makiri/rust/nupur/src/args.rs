@@ -194,13 +194,28 @@ pub fn arity_error(given: usize, min: usize, max: Option<usize>) -> Error {
 
 /* ---- keywords ---- */
 
-/// The keywords of a method that takes only keywords.
+/// A method's keywords, before it has said which it takes. They are read
+/// only through [`only`](Self::only), which refuses any other - as Ruby
+/// refuses a keyword a method does not declare - and answers the [`Known`]
+/// that reads them; or taken apart whole by [`split_off`](Self::split_off),
+/// for a method whose other keywords are open by design (XPath's namespace
+/// bindings). There is no lookup that ignores the rest: a misspelt keyword
+/// must not quietly leave a default - a limit, an encoding - in place.
 ///
 /// The no-argument call is `Kwargs(None)`, answered before any scan. It is
 /// the overwhelmingly common one - `to_html` with a keyword is the exception -
 /// and on a small element the call does little else.
 #[derive(Clone, Copy)]
 pub struct Kwargs(Option<RHash>);
+
+/// The keywords of a method that has declared the ones it takes
+/// ([`Kwargs::only`]): every keyword given is one of them, and only they
+/// can be read.
+#[derive(Clone, Copy)]
+pub struct Known {
+    h: Option<RHash>,
+    names: &'static [&'static str],
+}
 
 impl Kwargs {
     pub fn scan(ruby: &Ruby, args: &[Value]) -> Result<Kwargs, Error> {
@@ -216,30 +231,15 @@ impl Kwargs {
         Kwargs(h)
     }
 
-    /// Keyword `name`, or `None` when it is absent or `nil`. A plain lookup
-    /// rather than `get_kwargs`, which allocates a second hash for the keys it
-    /// was not asked about - so unknown keywords are ignored.
-    pub fn value(self, ruby: &Ruby, name: &str) -> Result<Option<Value>, Error> {
-        let Some(h) = self.0 else {
-            return Ok(None);
-        };
-        Ok(h.get(crate::build::symbol(ruby, name)?)?
-            .filter(|v: &Value| !v.is_nil()))
-    }
-
-    /// Refuses any keyword not in `known`, as Ruby refuses one a method does
-    /// not take: `ArgumentError`, worded as Ruby words it
-    /// (`unknown keyword: :mcost`, the first one found). [`value`](Self::value)
-    /// is a plain lookup that ignores the rest, so a method whose keywords
-    /// set something - a cost, a limit - calls this first: a misspelt one
-    /// must not quietly leave the default in place.
-    pub fn only(self, known: &[&str]) -> Result<(), Error> {
-        let Some(h) = self.0 else {
-            return Ok(());
+    /// The keywords, held to `names`: any other is `ArgumentError`, worded as
+    /// Ruby words it (`unknown keyword: :prety`, the first one found), and
+    /// a key given as a String (`**{"name" => v}`) is unknown whatever it
+    /// says, since a method's keywords are Symbols.
+    pub fn only(self, names: &'static [&'static str]) -> Result<Known, Error> {
+        let Some(h) = self.0.filter(|h| !h.is_empty()) else {
+            return Ok(Known { h: None, names });
         };
         crate::hash::hash_foreach(h, |k, _| {
-            /* A key given with `**{"name" => v}` is a String; one a method
-             * takes is a Symbol, so a String is unknown whatever it says. */
             let Some(sym) = crate::rb::Symbol::from_value(k) else {
                 return Err(crate::rb::error::arg_error(format_args!(
                     "unknown keyword: {} key",
@@ -247,20 +247,15 @@ impl Kwargs {
                 )));
             };
             let name = crate::string::read_bytes(sym.name()?)?;
-            if known.iter().any(|n| n.as_bytes() == name.as_slice()) {
+            if names.iter().any(|n| n.as_bytes() == name.as_slice()) {
                 return Ok(());
             }
             Err(match core::str::from_utf8(&name) {
                 Ok(n) => crate::rb::error::arg_error(format_args!("unknown keyword: :{n}")),
                 Err(_) => crate::rb::error::arg_error("unknown keyword"),
             })
-        })
-    }
-
-    /// Keyword `name`, read for truthiness: absent and `nil` are false, any
-    /// other value - `0` included, this being Ruby - true.
-    pub fn flag(self, ruby: &Ruby, name: &str) -> Result<bool, Error> {
-        Ok(self.value(ruby, name)?.is_some_and(|v| v.to_bool()))
+        })?;
+        Ok(Known { h: Some(h), names })
     }
 
     /// Keyword `name`, and the OTHER keywords as a fresh Hash (`None` when none
@@ -296,5 +291,29 @@ impl Kwargs {
             Ok(())
         })?;
         Ok((taken, rest))
+    }
+}
+
+impl Known {
+    /// Keyword `name`, or `None` when it is absent or `nil`. `name` must be
+    /// one [`Kwargs::only`] was given: reading another is the method's own
+    /// mistake, and an internal error rather than a quiet `None`.
+    pub fn value(self, ruby: &Ruby, name: &str) -> Result<Option<Value>, Error> {
+        if !self.names.contains(&name) {
+            return Err(crate::rb::error::internal_error(format_args!(
+                "the keyword {name} was read but not declared"
+            )));
+        }
+        let Some(h) = self.h else {
+            return Ok(None);
+        };
+        Ok(h.get(crate::build::symbol(ruby, name)?)?
+            .filter(|v: &Value| !v.is_nil()))
+    }
+
+    /// Keyword `name`, read for truthiness: absent and `nil` are false, any
+    /// other value - `0` included, this being Ruby - true.
+    pub fn flag(self, ruby: &Ruby, name: &str) -> Result<bool, Error> {
+        Ok(self.value(ruby, name)?.is_some_and(|v| v.to_bool()))
     }
 }
