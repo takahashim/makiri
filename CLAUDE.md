@@ -233,37 +233,6 @@ edits the baseline in the same commit as the behaviour change.
 - `spec/fuzz/*.rb` are deliberately not `*_spec.rb`; findings land in
   `spec/fuzz/regressions/` (gitignored).
 
-## Layout (`layout.md`)
-
-```
-lib/makiri/              the Ruby API
-ext/makiri/rust/         the extension crate (makiri_rs, lib `makiri`) and its workspace
-  extconf.rb             cdylib only (an rlib turns LTO off), the link arguments
-  src/init.rs            Init_makiri: the class hierarchy
-  src/bridge/            the Ruby boundary over nupur; forbid(unsafe_code)
-  src/glue/              every Ruby method, one module per feature; unsafe-free
-  nupur/                 the Ruby binding layer (read its src/lib.rs first)
-    sys/                 nupur_sys: the one crate that depends on rb-sys
-  falloc/                fallible allocation; the one `unsafe` outside nupur
-  engine/                makiri_engine: no Ruby, no Lexbor, forbid(unsafe_code)
-    src/html/            the ported parser (tokenizer/, tree/) and the arena DOM (dom/)
-    src/xml/             the XML reader, arena, serializers
-    src/xpath/           the XPath 1.0 engine, generic over `Dom`
-    src/css_match/       the CSS matcher, over either DOM
-    src/selectors/       the ported CSS selector and stylesheet parser
-  reference/             makiri_lexbor: Lexbor via bindgen, for the tests only
-  fuzz/  lints/  verus/  cargo-fuzz harnesses, makiri_lints, Verus proofs
-vendor/lexbor/           git submodule, pinned, never patched
-spec/                    rspec; fuzz/, invariants/, differential/ beside it
-bench/                   the Nokogiri comparison
-docs/                    design docs, parser differences, internals/
-```
-
-Features are per crate: the engine has `html-dom` (default), `alloc-inject`
-(`rake oom`) and `lexbor-compat` (reference only); the extension has
-`alloc-inject` alone; the reference has `css-reference` and
-`lexbor-reference`, for the differential fuzz targets.
-
 ## Subsystems (`subsystems.md`)
 
 - **Text input.** A document parse decodes bytes as a browser does (the
