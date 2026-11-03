@@ -228,6 +228,13 @@ RSpec.describe "nupur" do
       expect { NupurTest::Shared.new(1, not_shareable) }.to raise_error(Ractor::Error)
     end
 
+    it "is shareable when its type derives from a shareable one" do
+      obj = NupurTest::SharedDerived.new(3, "x")
+      expect(obj).to be_frozen
+      expect(Ractor.shareable?(obj)).to be(true)
+      expect(obj.n).to eq(3)
+    end
+
     it "is not shareable when its type does not ask to be" do
       expect(Ractor.shareable?(NupurTest::Holder.new(1))).to be(false)
       expect { Ractor.make_shareable(NupurTest::Holder.new(1)) }.to raise_error(Ractor::Error)

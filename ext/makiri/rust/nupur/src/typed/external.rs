@@ -36,29 +36,41 @@ impl External {
     /// a String's bytes. The new figure is recorded first, for a collection
     /// that reads it.
     pub fn report(&self, ruby: &crate::rb::Ruby, bytes: usize) {
-        let then = self.0.load(core::sync::atomic::Ordering::Relaxed);
-        let delta = if bytes >= then {
-            nupur_sys::ssize_t::try_from(bytes - then)
-        } else {
-            nupur_sys::ssize_t::try_from(then - bytes).map(|d| -d)
-        };
-        let Ok(delta) = delta else { return };
-        if delta == 0 {
-            return;
-        }
-        self.0.store(bytes, core::sync::atomic::Ordering::Relaxed);
-        // SAFETY: a plain counter adjustment, with the GVL held (`&Ruby`).
-        unsafe { nupur_sys::non_raising::rb_gc_adjust_memory_usage(ruby.sys(), delta) };
+        self.move_to(ruby, |_| bytes);
     }
 
     /// [`report`](Self::report) `more` bytes than were.
     #[inline]
     pub fn grow(&self, ruby: &crate::rb::Ruby, more: usize) {
-        self.report(
-            ruby,
-            self.0
-                .load(core::sync::atomic::Ordering::Relaxed)
-                .saturating_add(more),
-        );
+        self.move_to(ruby, |then| then.saturating_add(more));
+    }
+
+    /// Record `to(then)` in place of `then` and report the difference.
+    ///
+    /// A shareable payload is reached from several Ractors at once, each
+    /// holding its own lock and not a process-wide one, so the figure is
+    /// swapped by compare-and-exchange: the delta reported is always from
+    /// the figure it replaced, and two reports never count one change twice.
+    fn move_to(&self, ruby: &crate::rb::Ruby, to: impl Fn(usize) -> usize) {
+        use core::sync::atomic::Ordering::Relaxed;
+        let mut then = self.0.load(Relaxed);
+        let delta = loop {
+            let bytes = to(then);
+            let delta = if bytes >= then {
+                nupur_sys::ssize_t::try_from(bytes - then)
+            } else {
+                nupur_sys::ssize_t::try_from(then - bytes).map(|d| -d)
+            };
+            let Ok(delta) = delta else { return };
+            if delta == 0 {
+                return;
+            }
+            match self.0.compare_exchange_weak(then, bytes, Relaxed, Relaxed) {
+                Ok(_) => break delta,
+                Err(now) => then = now,
+            }
+        };
+        // SAFETY: a plain counter adjustment, with the GVL held (`&Ruby`).
+        unsafe { nupur_sys::non_raising::rb_gc_adjust_memory_usage(ruby.sys(), delta) };
     }
 }

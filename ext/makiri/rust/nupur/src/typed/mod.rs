@@ -27,8 +27,12 @@
 
 mod callbacks;
 mod data_type;
+mod embedded;
 mod external;
+// An object kept hidden while its data is completed (`TypedType::wrap_hidden`).
+mod hidden;
 
+pub use embedded::{EmbeddedType, EMBED_ALIGN, EMBED_MAX};
 pub use external::External;
 
 use callbacks::{free_cb, free_embedded_cb, mark_cb, memsize_cb};
@@ -147,14 +151,6 @@ pub struct TypedType<T: Payload, const N: usize = 0> {
 }
 
 impl<T: Payload, const N: usize> TypedType<T, N> {
-    const fn with_parent(
-        name: &'static CStr,
-        parent: Option<&'static DataType>,
-        embedded: bool,
-    ) -> TypedType<T, N> {
-        Self::with_flags(name, parent, embedded, false)
-    }
-
     const fn with_flags(
         name: &'static CStr,
         parent: Option<&'static DataType>,
@@ -197,7 +193,7 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
     /// `ObjectSpace`, read as a C string for the life of the process - so a
     /// `'static` one, NUL-terminated by type.
     pub const fn base(name: &'static CStr) -> TypedType<T, N> {
-        Self::with_parent(name, None, false)
+        Self::with_flags(name, None, false, false)
     }
 
     /// A base type whose objects are shared between Ractors: each is frozen
@@ -214,18 +210,20 @@ impl<T: Payload, const N: usize> TypedType<T, N> {
     }
 
     /// A type deriving from `parent`, which holds the same payload and
-    /// slots: an object of this type is also one of `parent`'s.
+    /// slots: an object of this type is also one of `parent`'s, and is
+    /// shareable between Ractors when `parent`'s are (whose `T: Sync` was
+    /// asked when `parent` was made).
     ///
     /// `parent` is `'static`: its `rb_data_type_t`'s address is kept, and
     /// Ruby follows it for the life of the process.
     pub const fn derived(name: &'static CStr, parent: &'static TypedType<T, N>) -> TypedType<T, N> {
-        Self::with_parent(name, Some(&parent.raw), false)
+        Self::with_flags(name, Some(&parent.raw), false, parent.shareable)
     }
 
     /// Whether `v` is an object of this type or one deriving from it. Never
     /// raises.
     #[inline]
-    pub fn is(&self, v: Value) -> bool {
+    pub fn is(&'static self, v: Value) -> bool {
         nupur_sys::non_raising::rb_typeddata_is_kind_of(v.as_sys(), &self.raw)
     }
 
@@ -373,184 +371,3 @@ impl<T: Payload + 'static, const N: usize> Typed<T, N> {
         Value::from_sys(unsafe { self.envelope().roots[I].value() })
     }
 }
-
-impl<T: Payload + 'static, const N: usize> TypedType<T, N> {
-    /// [`wrap`](Self::wrap) an object whose data is not complete when it is
-    /// made - one whose content arrives after it - and keep it HIDDEN
-    /// (`rb_obj_hide`: no class, so `ObjectSpace` does not list it and no
-    /// Ruby code can find it) while `fill` completes the data; then show it
-    /// with its class and return it.
-    ///
-    /// The object is never handed out before that: a hidden object has no
-    /// class, and Ruby code given one - a return value, an Array element -
-    /// would crash on it. `fill` sees only the data, and may run anything
-    /// (a GVL-released parse included), since nothing can reach the object.
-    /// An `Err` from `fill`, or a failure to show the object, leaves it
-    /// hidden for the GC to free, and is returned. The object comes back as
-    /// the [`Typed`] handle that held it through `fill`, so a caller that
-    /// goes on using it before handing it to Ruby still holds it.
-    ///
-    /// It is not hidden from birth. `ivars`, its hidden ivars (names without
-    /// `@`), are written first, while it still has its class - generic ivar
-    /// storage may read an object's class, so nothing is set on one that has
-    /// none - and then it is hidden. What keeps Ruby code from finding it in
-    /// between is that none runs there: the ivar writes may allocate, and so
-    /// collect, but a collection runs no Ruby code. A step added between the
-    /// wrap and the hide that can run Ruby code breaks that. A failed
-    /// allocation of a non-embedded type's data leaves an object of the class
-    /// with no data, visible, which every reader refuses (`typed_data`).
-    ///
-    /// Nothing but this call refers to the object until it is shown, so its
-    /// data is lent to `fill` through the handle the wrap made, held as a
-    /// `Hidden` - which lends the data and shows the object, and hands out
-    /// nothing else.
-    pub fn wrap_hidden<R: Root>(
-        &'static self,
-        ruby: &crate::rb::Ruby,
-        birth: Birth<T, R, N>,
-        ivars: &[(crate::rb::HiddenId, Value)],
-        fill: impl FnOnce(&T) -> Result<(), Error>,
-    ) -> Result<Typed<T, N>, Error> {
-        let klass = birth.klass;
-        let made = self.wrap(ruby, birth)?;
-        let written = ivars
-            .iter()
-            .try_for_each(|&(id, v)| crate::raw::ivar_set(made.value(), id, v));
-        // SAFETY: the object just made, which nothing but `made` refers to.
-        let hidden = unsafe { Hidden::hide(made, klass) };
-        written?;
-        fill(hidden.data())?;
-        hidden.show()
-    }
-}
-
-/// An object [`TypedType::wrap_hidden`] has hidden: its data can be lent
-/// and it can be shown, but its value cannot be had - a hidden object has no
-/// class, and Ruby code given one would crash on it. Dropped unshown, it
-/// stays hidden for the GC to free.
-struct Hidden<T: Payload + 'static, const N: usize> {
-    made: Typed<T, N>,
-    klass: crate::rb::DataClass,
-}
-
-impl<T: Payload + 'static, const N: usize> Hidden<T, N> {
-    /// Hide `made`, to be shown as an instance of `klass`.
-    ///
-    /// # Safety
-    /// `made` is an object just made that nothing else refers to - no Ruby
-    /// code holds it, and none will be handed it while it is hidden.
-    unsafe fn hide(made: Typed<T, N>, klass: crate::rb::DataClass) -> Hidden<T, N> {
-        // SAFETY: the caller's contract; hiding writes only the object's
-        // class field, which `show` restores.
-        unsafe { crate::rb::object::obj_hide(made.value()) };
-        Hidden { made, klass }
-    }
-
-    /// The payload, lent while the object is hidden.
-    fn data(&self) -> &T {
-        self.made.data()
-    }
-
-    /// Show the object with its class again, and hand it out. A failure (out
-    /// of memory) leaves it hidden, for the GC.
-    fn show(self) -> Result<Typed<T, N>, Error> {
-        crate::raw::obj_reveal(
-            self.made.value(),
-            crate::rb::ReprValue::as_value(self.klass),
-        )?;
-        Ok(self.made)
-    }
-}
-
-/// A [`TypedType`] whose envelope is kept IN the object's slot
-/// (`RUBY_TYPED_EMBEDDABLE`): no allocation beside the object's own, and
-/// none to free. Only for a small payload (see [`EMBED_MAX`]).
-///
-/// Compaction moves embedded data with its object, so a `&T` held across
-/// anything that can run the collector - an allocation - would point at
-/// where the data was. This type is what keeps that from being written: it
-/// has no `get`. A reader takes [`read`](Self::read)'s copy - the payload is
-/// `Copy` - and only the GC callbacks see the data in place.
-pub struct EmbeddedType<T: Payload + Copy, const N: usize = 0>(TypedType<T, N>);
-
-impl<T: Payload + Copy, const N: usize> EmbeddedType<T, N> {
-    /// An embedded type deriving from `parent` (null for a base type), its
-    /// envelope held to what an object's slot takes.
-    const fn with_parent(
-        name: &'static CStr,
-        parent: Option<&'static DataType>,
-    ) -> EmbeddedType<T, N> {
-        const { assert!(core::mem::size_of::<Envelope<T, N>>() <= EMBED_MAX) };
-        const { assert!(core::mem::align_of::<Envelope<T, N>>() <= EMBED_ALIGN) };
-        EmbeddedType(TypedType::with_parent(name, parent, true))
-    }
-
-    /// A base type.
-    pub const fn base(name: &'static CStr) -> EmbeddedType<T, N> {
-        Self::with_parent(name, None)
-    }
-
-    /// A base type whose objects are shared between Ractors, as
-    /// [`TypedType::shareable`]'s are.
-    pub const fn shareable(name: &'static CStr) -> EmbeddedType<T, N>
-    where
-        T: Sync,
-    {
-        const { assert!(core::mem::size_of::<Envelope<T, N>>() <= EMBED_MAX) };
-        const { assert!(core::mem::align_of::<Envelope<T, N>>() <= EMBED_ALIGN) };
-        EmbeddedType(TypedType::with_flags(name, None, true, true))
-    }
-
-    /// A type deriving from `parent`, which holds the same payload and slots.
-    ///
-    /// `parent` is `'static`, as [`TypedType::derived`]'s.
-    pub const fn derived(
-        name: &'static CStr,
-        parent: &'static EmbeddedType<T, N>,
-    ) -> EmbeddedType<T, N> {
-        Self::with_parent(name, Some(&parent.0.raw))
-    }
-
-    /// Whether `v` is an object of this type or one deriving from it. Never
-    /// raises.
-    #[inline]
-    pub fn is(&self, v: Value) -> bool {
-        self.0.is(v)
-    }
-
-    /// A copy of `v`'s payload and slots, or Ruby's own `TypeError`. The
-    /// data is read in place and copied out at once: no reference into the
-    /// object is held past this call.
-    #[inline]
-    pub fn read(&'static self, v: Value) -> Result<(T, [Value; N]), Error> {
-        let p = typed_data(v, &self.0.raw)? as *const Envelope<T, N>;
-        // SAFETY: `typed_data` verified the type; the envelope is copied out
-        // (`T: Copy`) with nothing run between, and the slots hold live values
-        // the caller's `v` keeps marked.
-        let (data, roots) = unsafe { ((*p).data, (*p).roots) };
-        // SAFETY: as above.
-        Ok((data, roots.map(|r| Value::from_sys(unsafe { r.value() }))))
-    }
-
-    /// [`TypedType::wrap`], as a bare `Value`: an embedded payload is never
-    /// borrowed (only [`read`](Self::read)'s copy), so there is nothing for
-    /// a [`Typed`] to hold.
-    pub fn wrap<R: Root>(
-        &'static self,
-        ruby: &crate::rb::Ruby,
-        birth: Birth<T, R, N>,
-    ) -> Result<Value, Error> {
-        self.0.wrap_value(ruby, birth)
-    }
-}
-
-/// The largest envelope an embedded type takes: with `RTypedData`'s header it fits
-/// the 80-byte slot, well inside Ruby's largest (640), so
-/// `rb_data_typed_object_zalloc` embeds it. Were it not embedded, the object
-/// would still be right - its data allocated apart, which Ruby frees.
-pub const EMBED_MAX: usize = 40;
-
-/// The strictest alignment an embedded `T` may have: its data starts right
-/// after `RTypedData`'s header, which a slot places at an 8-byte boundary
-/// only - not the 16 `wrap_built` allows for `xcalloc`'s data.
-pub const EMBED_ALIGN: usize = 8;

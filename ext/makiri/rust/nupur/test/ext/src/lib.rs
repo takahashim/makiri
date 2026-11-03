@@ -437,11 +437,29 @@ static SHARED_CLASS: RbConst<DataClass> = RbConst::new();
 /// `Shared.new(n, v)`: an object holding `n`, keeping `v` in its slot, made
 /// shareable as it is made.
 fn shared_new(ruby: &Ruby, n: Value, v: Value) -> Result<Value, Error> {
-    let class = SHARED_CLASS.defined(ruby)?;
-    let made = SHARED.wrap(
+    shared_made(ruby, &SHARED, &SHARED_CLASS, n, v)
+}
+
+/* A type deriving from a shareable one is shareable too. */
+static SHARED_DERIVED: TypedType<Shared, 1> =
+    TypedType::derived(c"NupurTest::SharedDerived", &SHARED);
+static SHARED_DERIVED_CLASS: RbConst<DataClass> = RbConst::new();
+
+fn shared_derived_new(ruby: &Ruby, n: Value, v: Value) -> Result<Value, Error> {
+    shared_made(ruby, &SHARED_DERIVED, &SHARED_DERIVED_CLASS, n, v)
+}
+
+fn shared_made(
+    ruby: &Ruby,
+    ty: &'static TypedType<Shared, 1>,
+    class: &'static RbConst<DataClass>,
+    n: Value,
+    v: Value,
+) -> Result<Value, Error> {
+    let made = ty.wrap(
         ruby,
         Birth {
-            klass: class,
+            klass: class.defined(ruby)?,
             data: Shared {
                 n: integer_arg(n)?.to_i64()?,
             },
@@ -451,7 +469,6 @@ fn shared_new(ruby: &Ruby, n: Value, v: Value) -> Result<Value, Error> {
     Ok(made.value())
 }
 
-/// `#n` and `#held`.
 fn shared_n(_: &Ruby, this: Value) -> Result<i64, Error> {
     Ok(SHARED.check(this)?.data().n)
 }
@@ -483,6 +500,9 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     shared.define_singleton_method("new", function!(shared_new, 2))?;
     shared.define_method("n", method!(shared_n, 0))?;
     shared.define_method("held", method!(shared_held, 0))?;
+    let shared_derived = m.define_data_class("SharedDerived", Some(shared))?;
+    SHARED_DERIVED_CLASS.set(shared_derived)?;
+    shared_derived.define_singleton_method("new", function!(shared_derived_new, 2))?;
 
     let holder = m.define_data_class("Holder", None)?;
     HOLDER_CLASS.set(holder)?;
