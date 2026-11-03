@@ -51,8 +51,9 @@ pub fn public_method(recv: impl ReprValue, id: Id, args: &[Value]) -> Result<Val
 
 /// `recv.name(*args)`: any method, private ones included (`rb_funcallv`) -
 /// what a class's own `new` or `members` is called through. `name` is
-/// interned on each call; a name called often is a [`public_method`] of an
-/// [`IdConst`].
+/// interned on each call. A name called often that is public is a
+/// [`public_method`] of an [`IdConst`]; that call refuses a private method,
+/// which this one runs.
 #[cfg_attr(
     dylint_lib = "nupur_lints",
     expect(

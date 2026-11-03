@@ -334,10 +334,13 @@ impl RHash {
     }
 }
 
-/// A Hash key whose lookup runs no Ruby: hashed and compared in C. A String
-/// is one only when its class is String itself (`plain_key`): Ruby takes
-/// the C path for two Strings only then, and calls `eql?` - the caller's
-/// Ruby - for a subclass's instance, so the lookup refuses one.
+/// A Hash key Ruby hashes in C, and compares in C with a key of its own
+/// kind. A String is one only when its class is String itself
+/// (`plain_key`): Ruby takes the C path for two Strings only then, and
+/// calls `eql?` - the caller's Ruby - for a subclass's instance, so the
+/// lookup refuses one. A stored key of another kind whose hash collides is
+/// still compared through `eql?` ([`RHash::get`]), which is why the lookup
+/// returns `Result`.
 pub trait HashKey: ReprValue {}
 impl HashKey for Symbol {}
 impl HashKey for RString {}
@@ -392,8 +395,8 @@ impl Float {
 
 /// What a value is, for a reader that dispatches on it: one read of its
 /// type (`rb_type`), and the handle for it, rather than a type test per
-/// kind. A Bignum and a heap Float are told from a Fixnum and a flonum by
-/// [`Kind::Bignum`] and [`Kind::Float`] alike - both are the handle.
+/// kind. A Bignum is told from a Fixnum ([`Kind::Bignum`], [`Kind::Fixnum`]);
+/// a heap Float and a flonum are not - both are [`Kind::Float`].
 #[derive(Clone, Copy)]
 pub enum Kind {
     Nil,

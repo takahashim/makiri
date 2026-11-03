@@ -221,9 +221,17 @@ impl Error {
     }
 
     /// An instance of `class`, or one that will be? `false` for an exit that
-    /// is not an exception.
+    /// is not an exception, and for a registered class not yet set, which
+    /// names no class (its `RuntimeError` stands in for a raise alone, so a
+    /// handler of it must not catch every `RuntimeError`).
     pub fn is_kind_of(&self, ruby: &Ruby, class: impl Into<ErrorClass>) -> bool {
-        let class = class.into().resolve(ruby);
+        let class = class.into();
+        if let ErrorClass::Registered(c) = class {
+            if c.get(ruby).is_none() {
+                return false;
+            }
+        }
+        let class = class.resolve(ruby);
         match &self.0 {
             Kind::New(c, _) => {
                 crate::rb::object::class_inherits(c.resolve(ruby).as_value(), class.as_value())
