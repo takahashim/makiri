@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.17.0.rc3] - 2026-11-04
 
 ### Security
 
