@@ -72,7 +72,7 @@ jobs:
         include:
           - { os: ubuntu-latest, ruby: "3.3", rust: msrv }
           - { os: ubuntu-latest, ruby: "4.0", rust: stable }
-          - { os: macos-14,      ruby: "3.4", rust: stable }
+          - { os: macos-latest,  ruby: "3.4", rust: stable }
     steps:
       - uses: actions/checkout@v6   # for Cargo.toml's rust-version only
       - name: Read the Rust version to install
@@ -151,7 +151,7 @@ jobs:
         include:
           - { platform: x86_64-linux,   os: ubuntu-latest }
           - { platform: aarch64-linux,  os: ubuntu-24.04-arm }
-          - { platform: arm64-darwin,   os: macos-14 }
+          - { platform: arm64-darwin,   os: macos-latest }
           - { platform: x64-mingw-ucrt, os: windows-latest }
     steps:
       - uses: actions/checkout@v6   # the crate alone: no submodule
@@ -235,7 +235,7 @@ jobs:
         - platform: aarch64-linux
           os: ubuntu-24.04-arm
         - platform: arm64-darwin
-          os: macos-14
+          os: macos-latest
         - platform: x64-mingw-ucrt
           os: windows-latest
     steps:
