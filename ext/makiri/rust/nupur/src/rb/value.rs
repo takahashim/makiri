@@ -213,7 +213,9 @@ handle!(
 handle!(
     /// A Range (or an instance of a subclass).
     Range,
-    |v| v.is_kind_of(RClass::from_known(Value::from_sys(non_raising::rb_cRange(v.0.ruby()))))
+    |v| v.is_kind_of(RClass::from_known(Value::from_sys(non_raising::rb_cRange(
+        v.0.ruby()
+    ))))
 );
 handle!(
     /// A Class.

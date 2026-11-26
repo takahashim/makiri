@@ -197,10 +197,13 @@ thread_local! {
 pub(crate) fn fixed(fix: Fix) -> bool {
     let _ = fix;
     #[cfg(any(test, feature = "lexbor-compat"))]
-    if AS_LEXBOR.with(core::cell::Cell::get) {
-        return false;
+    {
+        !AS_LEXBOR.with(core::cell::Cell::get)
     }
-    true
+    #[cfg(not(any(test, feature = "lexbor-compat")))]
+    {
+        true
+    }
 }
 
 /// Run `f` with every fix off: the port parses as Lexbor did. For the
