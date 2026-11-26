@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.17.0] - 2026-11-26
+
+The same code as 0.17.0.rc3. What changed since 0.16.0 is in the
+0.17.0.rc1, rc2 and rc3 entries below.
+
 ## [0.17.0.rc3] - 2026-11-08
 
 ### Security
